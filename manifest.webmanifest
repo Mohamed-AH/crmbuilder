@@ -1,13 +1,13 @@
 {
   "name": "CRM Builder",
   "short_name": "CRM Builder",
-  "description": "Build your own modular CRM for your small business. Pick the modules you need, add custom fields, and work offline.",
+  "description": "Build your own modular CRM for your small business. Pick the modules you need, add custom fields, sync across devices, and work offline.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#12141c",
-  "theme_color": "#4f46e5",
+  "background_color": "#0c111d",
+  "theme_color": "#1570ef",
   "categories": ["business", "productivity"],
   "icons": [
     {

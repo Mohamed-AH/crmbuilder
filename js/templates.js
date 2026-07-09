@@ -6,8 +6,8 @@ const TEMPLATES = [
   {
     key: 'contacts',
     name: 'Contacts',
-    icon: '👤',
-    color: '#4f46e5',
+    icon: 'users',
+    color: '#1570ef',
     description: 'People you do business with — customers, suppliers, partners.',
     fields: [
       { key: 'name', label: 'Full name', type: 'text', required: true, showInList: true },
@@ -25,8 +25,8 @@ const TEMPLATES = [
   {
     key: 'companies',
     name: 'Companies',
-    icon: '🏢',
-    color: '#0891b2',
+    icon: 'building-2',
+    color: '#0e9384',
     description: 'Organizations you work with, and everything you know about them.',
     fields: [
       { key: 'name', label: 'Company name', type: 'text', required: true, showInList: true },
@@ -43,8 +43,8 @@ const TEMPLATES = [
   {
     key: 'deals',
     name: 'Deals',
-    icon: '💰',
-    color: '#059669',
+    icon: 'handshake',
+    color: '#099250',
     description: 'Track sales opportunities through your pipeline, kanban style.',
     defaultView: 'kanban',
     fields: [
@@ -63,8 +63,8 @@ const TEMPLATES = [
   {
     key: 'tasks',
     name: 'Tasks',
-    icon: '✅',
-    color: '#d97706',
+    icon: 'square-check-big',
+    color: '#dc6803',
     description: 'To-dos and follow-ups so nothing slips through the cracks.',
     fields: [
       { key: 'title', label: 'Task', type: 'text', required: true, showInList: true },
@@ -80,8 +80,8 @@ const TEMPLATES = [
   {
     key: 'leads',
     name: 'Leads',
-    icon: '🎯',
-    color: '#db2777',
+    icon: 'target',
+    color: '#c11574',
     description: 'Capture and qualify potential customers before they become deals.',
     defaultView: 'kanban',
     fields: [
@@ -97,8 +97,8 @@ const TEMPLATES = [
   {
     key: 'notes',
     name: 'Notes',
-    icon: '📝',
-    color: '#7c3aed',
+    icon: 'sticky-note',
+    color: '#6938ef',
     description: 'Meeting notes, ideas, and anything else worth writing down.',
     fields: [
       { key: 'title', label: 'Title', type: 'text', required: true, showInList: true },

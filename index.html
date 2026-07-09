@@ -4,35 +4,38 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>CRM Builder</title>
-  <meta name="description" content="Build your own modular CRM for your small business. Pick the modules you need, add custom fields, and work offline — your data stays on your device.">
-  <meta name="theme-color" content="#4f46e5">
+  <meta name="description" content="Build your own modular CRM for your small business. Pick the modules you need, add custom fields, sync across devices, and work offline.">
+  <meta name="theme-color" content="#1570ef">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="preload" href="fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <div id="app">
     <header id="topbar">
-      <button id="menu-btn" class="icon-btn" aria-label="Toggle menu">☰</button>
-      <span class="brand-mini">CRM Builder</span>
+      <button id="menu-btn" class="icon-btn" aria-label="Toggle menu" data-lucide="menu"></button>
+      <span class="brand-mini" id="workspace-name-mini">CRM Builder</span>
     </header>
     <aside id="sidebar">
       <div class="brand">
         <span class="brand-logo" aria-hidden="true"></span>
-        <span class="brand-name">CRM Builder</span>
+        <span class="brand-name" id="workspace-name">CRM Builder</span>
       </div>
       <nav id="nav-main">
-        <a href="#/" data-route="dashboard" class="nav-link"><span class="nav-icon">◫</span> Dashboard</a>
+        <a href="#/" data-route="dashboard" class="nav-link"><span class="nav-icon" data-lucide="layout-dashboard"></span> Dashboard</a>
+        <a href="#/admin" id="nav-admin" class="nav-link hidden"><span class="nav-icon" data-lucide="shield"></span> Admin</a>
       </nav>
       <div class="nav-section">
         <span class="nav-section-title">Modules</span>
-        <button id="add-module-btn" class="icon-btn" title="New module" aria-label="New module">+</button>
+        <button id="add-module-btn" class="icon-btn icon-btn-sm" title="New module" aria-label="New module" data-lucide="plus"></button>
       </div>
       <nav id="nav-modules"></nav>
       <div class="sidebar-footer">
-        <a href="#/settings" data-route="settings" class="nav-link"><span class="nav-icon">⚙</span> Settings</a>
-        <button id="install-btn" class="btn btn-ghost hidden">⬇ Install app</button>
+        <div id="user-area"></div>
+        <a href="#/settings" data-route="settings" class="nav-link"><span class="nav-icon" data-lucide="settings"></span> Settings</a>
+        <button id="install-btn" class="btn btn-ghost hidden">Install app</button>
         <span id="offline-badge" class="offline-badge hidden">Offline — changes saved locally</span>
       </div>
     </aside>
@@ -41,8 +44,18 @@
   </div>
   <div id="modal-root"></div>
   <div id="toast-root" aria-live="polite"></div>
+  <script src="js/icons.js"></script>
+  <script>
+    // Fill static data-lucide placeholders before app boot paints.
+    document.addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('[data-lucide]').forEach((el) => {
+        el.innerHTML = icon(el.dataset.lucide, el.classList.contains('icon-btn') ? 17 : 16);
+      });
+    });
+  </script>
   <script src="js/db.js"></script>
   <script src="js/templates.js"></script>
+  <script src="js/cloud.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
