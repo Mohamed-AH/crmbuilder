@@ -450,6 +450,47 @@ test.describe('guided tour', () => {
     await expect(page.locator('#nav-modules .nav-link')).toHaveCount(6);
   });
 
+  test('sets up each screen it describes, and never stalls', async ({ page }) => {
+    await page.goto('/');
+    await page.click('#onboard-tour');
+    await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
+
+    const settle = async () => {
+      const t0 = Date.now();
+      await expect(page.locator('.tour-pop:not(.is-loading)')).toBeVisible();
+      // Steps used to burn a 6s target-polling budget when navigation silently
+      // failed, which read as the app freezing.
+      expect(Date.now() - t0, 'step took too long to settle').toBeLessThan(4000);
+    };
+
+    await settle();                                  // 1 — dashboard
+    await page.click('[data-tour-next]');
+    await settle();                                  // 2 — must be the board
+    await expect(page.locator('.kanban')).toBeVisible();
+
+    await page.click('[data-tour-next]');
+    await settle();                                  // 3 — must be the sorted table
+    await expect(page.locator('.records-table')).toBeVisible();
+    await expect(page.locator('th[aria-sort="descending"]')).toContainText('Value');
+
+    await page.click('[data-tour-next]');
+    await settle();                                  // 4 — import lives on a module page
+    await expect(page.locator('#import-csv-btn')).toBeVisible();
+
+    // No step may narrate over the onboarding screen.
+    await expect(page.locator('.template-card')).toHaveCount(0);
+  });
+
+  test('refuses to start when the sample data is unavailable', async ({ page }) => {
+    // The reported failure: without demo data the tour ran anyway, leaving
+    // steps 2-4 describing screens that were never opened.
+    await page.route('**/js/demo-data.js', (route) => route.abort());
+    await page.goto('/');
+    await page.click('#onboard-tour');
+    await expect(page.locator('.toast').last()).toContainText('sample data could not be loaded');
+    await expect(page.locator('.tour-pop')).toHaveCount(0);
+  });
+
   test('can be skipped, and does not trap the page', async ({ page }) => {
     await page.goto('/');
     await page.click('#onboard-tour');

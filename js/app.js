@@ -616,8 +616,10 @@
   // demo-data.js, so a demo or evaluation starts on a CRM that looks used.
   async function loadDemoData({ replace }) {
     if (typeof DEMO_DATA === 'undefined') {
-      toast('Demo data is unavailable');
-      return;
+      // demo-data.js did not load — usually a stale service-worker cache or an
+      // incomplete deploy. Say so; a silent no-op leaves callers guessing.
+      toast('Sample data could not be loaded — try reloading the page');
+      return false;
     }
     const demo = resolveDemoDates(DEMO_DATA);
     if (replace) {
@@ -652,14 +654,17 @@
     toast('Demo data loaded');
     location.hash = '#/';
     route();
+    return true;
   }
 
   // ---------------------------------------------------------------- guided tour
   // Six stops that show the product working rather than describing it. Each
   // waits for its own target, so a slow render never leaves a stranded pointer.
+  const moduleIdByName = (name) => (modules.find((m) => m.name === name) || {}).id;
+  const dealsId = () => moduleIdByName('Deals');
+  const contactsId = () => moduleIdByName('Contacts');
+
   function tourSteps() {
-    const dealsId = () => (modules.find((m) => m.name === 'Deals') || {}).id;
-    const contactsId = () => (modules.find((m) => m.name === 'Contacts') || {}).id;
     return [
       {
         title: 'This is a CRM you assemble',
@@ -672,14 +677,32 @@
         title: 'Your pipeline, your stages',
         body: 'Drag a card between columns to change its stage. The columns are the options of a dropdown field, so they read however your business actually works. Totals update live.',
         route: () => `#/m/${dealsId()}`,
+        // Don't inherit whichever view the visitor last used — put the board up.
+        before: async () => {
+          const id = dealsId();
+          if (!id) return;
+          state(id).view = 'kanban';
+          await renderModule(id);
+        },
         target: '.kanban',
         place: 'below',
       },
       {
         title: 'Sort the way you think',
-        body: 'Switch to the table and click any column. Money sorts numerically, dates chronologically, and stages sort in pipeline order — Lead, Qualified, Proposal — never alphabetically.',
+        body: 'Money sorts numerically, dates chronologically, and stages sort in pipeline order — Lead, Qualified, Proposal — never alphabetically. This table is sorted by value, highest first.',
         route: () => `#/m/${dealsId()}`,
-        target: '.seg',
+        // Show it rather than describe it: switch to the table and sort it.
+        before: async () => {
+          const id = dealsId();
+          const mod = getModule(id);
+          if (!mod) return;
+          const money = mod.fields.find((f) => f.type === 'currency');
+          const st = state(id);
+          st.view = 'table';
+          if (money) st.sort = { key: money.key, dir: 'desc' };
+          await renderModule(id);
+        },
+        target: '.records-table thead',
         place: 'below',
       },
       {
@@ -711,21 +734,40 @@
       steps: tourSteps(),
       goto: async (route) => {
         const hash = typeof route === 'function' ? route() : route;
-        if (!hash || hash.includes('undefined')) return;
-        if (location.hash === hash) return;
+        // Returning false tells the tour to skip this step rather than narrate
+        // it over whatever screen happens to be showing.
+        if (!hash || hash.includes('undefined')) return false;
+        if (location.hash === hash) return true;
         location.hash = hash;
         // route() is async; give the view a moment to mount before anchoring.
-        await new Promise((r) => setTimeout(r, 260));
+        await new Promise((r) => setTimeout(r, 240));
+        return true;
       },
-      // The tour points at a populated pipeline, so make sure one exists.
-      ensureData: async () => {
-        if (!modules.length) await loadDemoData({ replace: false });
+      // The tour points at a populated pipeline, so one has to exist. If it
+      // cannot be created the tour does not start — a walkthrough narrated
+      // over an empty app is worse than no walkthrough.
+      ensureReady: async () => {
+        if (modules.length) return { ok: true };
+        if (typeof DEMO_DATA === 'undefined') {
+          return { ok: false, reason: 'The sample data could not be loaded. Reload the page and try again.' };
+        }
+        await loadDemoData({ replace: false });
+        await loadModules();
+        if (!modules.length) {
+          return { ok: false, reason: 'The sample workspace could not be created on this device.' };
+        }
+        return { ok: true };
       },
       onEnd: ({ skipped }) => {
+        // Undo the sort the tour applied so the visitor starts from a clean view.
+        const id = dealsId();
+        if (id && viewState.has(id)) state(id).sort = null;
         if (!skipped) toast('That’s the tour — the workspace is yours to play with');
       },
     });
-    Tour.start();
+    Tour.start().then((result) => {
+      if (result && result.ok === false) toast(result.reason);
+    });
   }
 
   // ---------------------------------------------------------------- module view

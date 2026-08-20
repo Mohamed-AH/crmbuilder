@@ -13,22 +13,26 @@ const Tour = (() => {
   const SEEN_KEY = 'crmb:tourSeen';
   const PAD = 6;
 
+  let allSteps = [];
   let steps = [];
   let index = 0;
   let active = false;
-  let hooks = { goto: null, ensureData: null, onEnd: null };
+  let hooks = { goto: null, ensureReady: null, onEnd: null };
   let root = null;
   let cleanupFns = [];
 
   function configure(options) {
     hooks = { ...hooks, ...options };
-    if (options.steps) steps = options.steps;
+    if (options.steps) allSteps = options.steps;
   }
 
   const hasSeen = () => localStorage.getItem(SEEN_KEY) === '1';
   const markSeen = () => { try { localStorage.setItem(SEEN_KEY, '1'); } catch { /* private mode */ } };
 
-  function waitFor(selector, timeout = 6000) {
+  // Short on purpose. A target that is going to appear appears within a frame
+  // or two of the route rendering; a longer budget just buys dead air when it
+  // is never going to appear at all.
+  function waitFor(selector, timeout = 2000) {
     return new Promise((resolve) => {
       const found = document.querySelector(selector);
       if (found) return resolve(found);
@@ -150,7 +154,16 @@ const Tour = (() => {
     const pop = root.querySelector('.tour-pop');
     pop.classList.add('is-loading');
 
-    if (step.route && hooks.goto) await hooks.goto(step.route);
+    if (step.route && hooks.goto) {
+      const moved = await hooks.goto(step.route);
+      if (!stillRunning()) return;
+      if (moved === false) {
+        // Pre-flight passed but the screen went away since. Rather than
+        // narrating this step over the wrong background, move past it.
+        console.warn(`Tour step "${step.title}" skipped: could not open its screen.`);
+        return go(index + 1);
+      }
+    }
     if (!stillRunning()) return;
 
     if (step.before) {
@@ -160,6 +173,11 @@ const Tour = (() => {
 
     currentTarget = step.target ? await waitFor(step.target) : null;
     if (!stillRunning()) return;
+    if (step.target && !currentTarget) {
+      // Show the step centred rather than sitting in a loading state: the copy
+      // still stands on its own, and a stalled card reads as a frozen app.
+      console.warn(`Tour step "${step.title}": "${step.target}" never appeared; showing it unanchored.`);
+    }
 
     if (currentTarget) {
       currentTarget.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -185,17 +203,52 @@ const Tour = (() => {
     await render();
   }
 
-  async function start({ force = false } = {}) {
-    if (active) return;
-    if (!steps.length) return;
-    if (hooks.ensureData) {
-      try { await hooks.ensureData(); } catch (err) { console.warn('Tour data setup failed:', err); }
+  /*
+   * Pre-flight, then run.
+   *
+   * The tour points at real screens, so it is only honest if those screens can
+   * exist. Two things are checked before anything is shown:
+   *   1. the workspace it describes is actually there
+   *   2. every step's route resolves — a step whose module is missing would
+   *      otherwise be narrated over whatever happened to be on screen
+   * Steps that cannot work are dropped, so "Step 2 of 5" stays true.
+   */
+  async function start() {
+    if (active) return { ok: false, reason: 'The tour is already running.' };
+    if (!allSteps.length) return { ok: false, reason: 'No tour steps are configured.' };
+
+    if (hooks.ensureReady) {
+      let ready;
+      try {
+        ready = await hooks.ensureReady();
+      } catch (err) {
+        console.error('Tour setup failed:', err);
+        return { ok: false, reason: err.message || 'The sample workspace could not be prepared.' };
+      }
+      if (!ready || ready.ok !== true) {
+        return { ok: false, reason: (ready && ready.reason) || 'The sample workspace could not be prepared.' };
+      }
     }
+
+    steps = allSteps.filter((step) => {
+      if (!step.route) return true;
+      const hash = typeof step.route === 'function' ? step.route() : step.route;
+      // Unusable means an unresolved id: "#/m/undefined" or "#/m/". Plain
+      // "#/" is the dashboard and is perfectly valid — an endsWith('/') check
+      // would silently drop it.
+      const usable = !!hash
+        && !/\b(undefined|null)\b/.test(hash)
+        && !/#\/m\/?$/.test(hash);
+      if (!usable) console.warn(`Tour step "${step.title}" skipped: its screen is unavailable.`);
+      return usable;
+    });
+    if (!steps.length) return { ok: false, reason: 'None of the tour screens are available.' };
+
     active = true;
     index = 0;
     buildChrome();
     await render();
-    if (force) markSeen();
+    return { ok: true };
   }
 
   function stop(skipped) {
