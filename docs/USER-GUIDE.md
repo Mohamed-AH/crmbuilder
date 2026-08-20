@@ -233,11 +233,18 @@ continue with Google.
 **Signing out leaves your data on the device.** It stops syncing; it doesn't
 erase anything.
 
-**How conflicts are resolved:** sync is last-write-wins on the whole workspace.
-If the same account edits on two devices while one is offline, the most recent
-save wins — changes aren't merged record by record. In practice this is a
-non-issue for one person on a laptop and a phone; if several people need to
-edit the same workspace simultaneously, give each of them their own account.
+**How conflicts are resolved:** sync works one record at a time. If you edit a
+contact on your laptop and a different contact on your phone, both survive —
+each record is sent and merged individually, not as part of a whole-workspace
+upload. Only if the *same* record is edited in two places does anything have to
+be chosen, and there the most recent edit wins.
+
+Deleting a record deletes it everywhere, including on a device that was offline
+when you deleted it: the delete is remembered and travels like any other
+change, rather than the record quietly reappearing on the next sync.
+
+Sync also sends only what changed, so an edit costs the same whether your
+workspace has fifty records or fifty thousand.
 
 ---
 

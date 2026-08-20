@@ -15,7 +15,10 @@ belongs to exactly one org, and a signup creates one and owns it:
 ```
 orgs     { id, name, createdAt, createdBy }
 users    { id, email, name, orgId, role, disabled, createdAt, lastActiveAt }
-data     { userId, orgId, modules[], records[], settings, moduleCount, recordCount, updatedAt }
+modules  { userId, orgId, id, updatedAt, serverAt, deletedAt, deletedOn, doc }
+records  { userId, orgId, id, updatedAt, serverAt, deletedAt, deletedOn, doc }
+data     { userId, orgId, settings, settingsUpdatedAt, settingsServerAt,
+           moduleCount, recordCount, perRecord, updatedAt }
 events   { type, userId, orgId, day, at }
 ```
 
@@ -23,8 +26,9 @@ Roles are `platformAdmin` (operates the deployment, sees across orgs), `owner`
 (administers their own org only) and `member`.
 
 **Workspaces are still per-account, deliberately.** An org groups people for
-administration; it does not yet give them a shared workspace. That distinction
-is what keeps whole-document sync safe — see §2.2.
+administration; it does not yet give them a shared workspace. That is a
+product decision now rather than a safety one — per-record sync removed the
+data-loss reason for the split (§2.2).
 
 ### Measured sizes
 
@@ -60,11 +64,15 @@ not confirm that the account exists. An org owner cannot grant `platformAdmin`.
 Eight tests in `tests/api.test.mjs` assert the attack rather than the happy
 path, plus two end-to-end tests covering the same boundary through the UI.
 
-### 2.2 Sync writes the entire workspace on every change
+### 2.2 ✅ Sync writes the entire workspace on every change — resolved
 
-`PUT /api/data` replaces the whole document. Editing one phone number on a
-5,000-record workspace uploads 1.28 MB. This is the real ceiling long before
-storage is:
+**Resolved.** Sync is now per record. Everything below describes what the
+whole-snapshot model cost and is kept because it is the reasoning that
+justified replacing it; skip to *What replaced it* for the current design.
+
+`PUT /api/data` replaced the whole document. Editing one phone number on a
+5,000-record workspace uploaded 1.28 MB. This was the real ceiling long before
+storage was:
 
 - Bandwidth and Atlas write throughput scale with *workspace size*, not edit size
 - Two devices editing concurrently resolve last-write-wins across the whole
@@ -86,10 +94,52 @@ so nothing is lost — but the user is editing against a workspace that has not
 been persisted, and last-write-wins across a whole document means a concurrent
 edit from another device can discard it entirely.
 
-Moving to per-record sync is the single highest-leverage change on this list.
-**Treat it as part of the multi-user work, not as a follow-up** — the moment two
-people share an organisation, whole-document replacement is a silent data-loss
-mechanism, not merely a slow one.
+#### What replaced it
+
+Every module and record is its own row, in `modules` and `records`, carrying
+two clocks:
+
+- **`updatedAt`** — the client's edit time. Conflicts resolve by
+  last-write-wins *per record*, so two devices editing different records both
+  keep their work.
+- **`serverAt`** — a monotonic stamp assigned by the server. The delta cursor
+  walks this, never `updatedAt`, so a device with a skewed clock cannot push
+  the cursor past changes other devices have not seen. It ticks forward on a
+  collision: two rows written in the same millisecond with a cursor landing
+  between them would otherwise strand the second one forever.
+
+One round trip is one `POST /api/sync`: everything this device changed since
+its last accepted push, and in the response everything anyone changed since
+its cursor, minus the rows it just pushed and won. `GET /api/sync?since=N`
+pulls without pushing.
+
+What an edit now costs:
+
+| Workspace | Uploaded on one edit, before | After |
+|---|---|---|
+| 500 records | 135 KB | ~270 bytes |
+| 5,000 records | 1.28 MB | ~270 bytes |
+| 20,000 records | 5.14 MB | ~270 bytes |
+
+**Deletes are tombstones, not removals.** A row that simply vanishes is
+indistinguishable from one a device has never seen, so the next push would
+hand it straight back. A deleted row keeps its id and clocks, drops its
+payload, and is filtered out of every read. Tombstones expire after
+`TOMBSTONE_RETENTION_DAYS` (180) — which is also the longest a device may sit
+offline and still be told about a delete.
+
+**Settings stay a single small document.** Last-write-wins is honest at that
+granularity: there is no partial edit worth merging in a currency choice.
+
+`PUT`/`GET /api/data` still work, reading and writing the same rows, so a
+client running cached older JS keeps syncing through a deploy; the client
+falls back to them if `/api/sync` 404s. `migrateToPerRecord()` splits existing
+snapshots on boot, preserves ids exactly, and is idempotent.
+
+**Shared team workspaces are now unblocked** — this was the gate. They remain
+unbuilt: an org still groups people for administration only, and each account
+still has its own workspace. What changed is that building them no longer
+means shipping silent data loss along with them.
 
 ### 2.3 `events` grows without bound
 
@@ -256,17 +306,27 @@ per request from the signed-in user's `orgId`.
 Their own Render service, their own Atlas cluster, their own domain, their own
 OAuth credentials. Just this repo deployed again with different env vars.
 
-- **This already works today** — it is exactly what `render.yaml` + `DEPLOYMENT.md`
-  describe. No code changes needed at all
+- **This already works today**, and now has its own blueprint:
+  `render.dedicated.yaml`, alongside the pooled `render.yaml`. The two are the
+  same application with different isolation boundaries; `DEPLOYMENT.md`
+  §"Choosing a deployment shape" carries the environment matrix and the
+  pooled→dedicated migration runbook
+- `DEPLOYMENT_MODE`, `TENANT_NAME` and `HEALTH_DETAIL` make an instance
+  identifiable from `/health`. `HEALTH_DETAIL=1` is safe here and only here:
+  on a dedicated deployment the org and user counts are the operator's own,
+  whereas on the pooled one they are a customer count on a public endpoint
 - Maximum isolation; the client can hold their own database credentials and take
   the whole thing in-house
 - **Cost:** ~$7/mo Render Starter + their Atlas tier, per client
 - **Effort:** ~15 minutes per client to stand up; ongoing cost is *upgrades* —
   every client is a separate deployment to keep current
 
-### Option E — Hybrid: pooled + dedicated from one codebase ✅ *recommended*
+### Option E — Hybrid: pooled + dedicated from one codebase ✅ *shipped*
 
 Build Option B, keep Option D available, and let the same image serve both.
+Both blueprints are in the repo (`render.yaml`, `render.dedicated.yaml`) and
+neither forks the code — a deployment's shape is entirely a matter of which
+environment variables it was given.
 
 ```
 Pooled tier      →  one Render service + one Atlas cluster, many orgs
@@ -330,18 +390,24 @@ per org.
    account in its own org, and eight isolation tests that assert the attack.
    **Shared team workspaces are deliberately NOT part of this** — each account
    still has its own workspace, so no concurrent-edit data loss was introduced.
-4. **Per-record sync — required before shared workspaces.** Org scoping made
-   shared hosting safe; per-record sync is what makes a shared *workspace* safe.
-   Putting several colleagues on one workspace while sync still replaces the
-   whole document would introduce silent data loss on the day the feature
-   becomes useful. This is the gate on team accounts, not an optimisation.
-5. **Database-per-tenant (Option C)** — only if a client's compliance
+4. **Per-record sync** — ✅ shipped. Per-row `updatedAt`/`serverAt`, a
+   watermark delta protocol, tombstoned deletes with a TTL, an idempotent
+   split of existing snapshots, and the legacy endpoints kept working on the
+   same rows. Sixteen sync tests plus two two-device browser journeys, each
+   checked against the broken state. See §2.2.
+5. **Shared team workspaces** — now unblocked, still unbuilt. The remaining
+   work is an invite/join flow, workspace ownership at the org rather than the
+   account, and a permission model for who may edit which module. None of it
+   risks data loss any more, which was the point of doing (4) first.
+6. **Database-per-tenant (Option C)** — only if a client's compliance
    requirements demand it and dedicated deployment isn't acceptable.
 
-The one sequencing point worth defending: it is tempting to ship org scoping
-first and treat sync as an optimisation. Don't. Scoping without per-record sync
-gives several colleagues one workspace where the last person to save wins over
-everyone else, silently.
+The sequencing point, now settled: it was tempting to ship org scoping and
+treat sync as an optimisation to follow. Scoping without per-record sync would
+have given several colleagues one workspace where the last person to save wins
+over everyone else, silently. Org scoping shipped first *without* shared
+workspaces, and per-record sync landed before them — which is why there is no
+migration to write and no data-loss window to explain.
 
 ## 8. What to answer a prospect today
 
@@ -352,6 +418,9 @@ everyone else, silently.
   deployment with its own database (Option D), available now.
 - *"Can we host it ourselves?"* — Yes. It is a standard Node app; you supply the
   Mongo connection string and Google credentials.
-- *"How much data can we put in?"* — Comfortable to a few thousand records per
-  workspace today. Beyond that, we move you to per-record sync or dedicated
-  infrastructure.
+- *"How much data can we put in?"* — Sync sends only what changed, so edit
+  cost no longer scales with workspace size. The remaining ceiling is the
+  16 MB per-document limit on the settings/meta document — irrelevant in
+  practice — and Atlas M0's 512 MB shared across tenants. Tens of thousands of
+  records per workspace are comfortable; beyond that we move you to dedicated
+  infrastructure for the storage, not for the sync.

@@ -4,6 +4,79 @@ CRM Builder deploys as a single Node web service. This guide covers the
 recommended free stack: **Render (free tier) + MongoDB Atlas (free tier) +
 Google OAuth**. Total cost: $0.
 
+## Choosing a deployment shape
+
+There are two supported shapes, and they are the same application — only the
+isolation boundary differs.
+
+| | **Pooled** (Option B) | **Dedicated** (Option D) |
+|---|---|---|
+| Blueprint | `render.yaml` | `render.dedicated.yaml` |
+| Render service | one, shared | one per client |
+| MongoDB | one cluster, shared | one cluster per client |
+| Isolation | `orgId` on every scoped query | infrastructural — nothing is shared |
+| URL | one for everyone | the client's own |
+| Cost per client | ~$0 | one service + one cluster |
+| Onboarding a client | they sign up | you provision, ~30 min |
+| `DEPLOYMENT_MODE` | `pooled` | `dedicated` |
+
+**Start pooled.** It is the default, it is what
+`crmbuilder-v1.onrender.com` runs, and the tenant isolation it relies on is
+covered by eight tests in `tests/api.test.mjs` that assert the attack — an
+owner in org B reaching for org A's accounts, workspaces and stats — rather
+than the happy path.
+
+**Move a client to dedicated** when the reason is one pooled hosting cannot
+answer: contractual single-tenancy, data residency in a particular region, a
+retention or audit regime of their own, or volume that warrants resources
+nobody else can consume. "They are an important customer" is not one of
+those reasons; `orgId` scoping does not get stronger by being lonely.
+
+What dedicated actually buys is that a bug in a query filter cannot cross a
+tenant boundary, because there is no other tenant in the database. What it
+costs is that every deploy, every migration and every incident is now N
+times the work.
+
+### Environment matrix
+
+| Variable | Pooled | Dedicated | Notes |
+|---|---|---|---|
+| `NODE_ENV` | `production` | `production` | |
+| `SESSION_SECRET` | generated | generated | per service; rotating it signs everyone out |
+| `MONGODB_URI` | shared cluster | the client's own cluster | never point a dedicated service at the pooled cluster |
+| `APP_URL` | the shared URL | the client's URL | must match the OAuth redirect URI exactly |
+| `GOOGLE_CLIENT_ID` / `_SECRET` | one pair | the client's own pair | a shared pair would list every client's URL as an origin |
+| `ADMIN_EMAILS` | your operators | see below | |
+| `DEPLOYMENT_MODE` | `pooled` | `dedicated` | reported by `/health` |
+| `TENANT_NAME` | unset | the client's short name | reported by `/health`, so instances are distinguishable |
+| `HEALTH_DETAIL` | **unset** | `1` | exposes org/user counts on public `/health` — a customer count on a pooled deployment |
+| `EVENT_RETENTION_DAYS` | `90` (default) | as contracted | analytics events TTL |
+| `TOMBSTONE_RETENTION_DAYS` | `180` (default) | as contracted | how long a deleted record's tombstone survives, i.e. how long a device may be offline and still learn about the delete |
+
+`ADMIN_EMAILS` grants `platformAdmin`, which crosses orgs. On the pooled
+deployment that means your operators and nobody else — never a customer. On a
+dedicated deployment there is only one customer, so it can be their own IT
+lead; decide which before the first sign-in, because **the first account ever
+to sign in becomes a platform admin regardless**.
+
+### Moving an existing client from pooled to dedicated
+
+There is no automated migration, and inventing one would be worse than the
+manual path for the handful of times this happens.
+
+1. Stand up the dedicated deployment and verify `/health` reports
+   `"deployment":"dedicated"` and the right `tenant`.
+2. Have the client export a backup from **Settings → Export** on a device
+   that shows `Synced`. This is the authoritative copy — it is a full
+   workspace including every record.
+3. Sign in on the new deployment and use **Settings → Import**. An import
+   re-dates every row to now, deliberately, so it wins the first sync.
+4. Confirm the record count matches what the pooled admin dashboard showed.
+5. Only then remove their org from the pooled deployment.
+
+Do not skip step 4. The pooled account keeps working until you delete it,
+which means a mistake at step 3 is recoverable — right up until it isn't.
+
 ## 1. MongoDB Atlas (free tier)
 
 1. Create an account at [mongodb.com/cloud/atlas](https://www.mongodb.com/cloud/atlas) and create a **free M0 cluster** (any region close to your Render region).
@@ -11,7 +84,7 @@ Google OAuth**. Total cost: $0.
 3. Under **Network Access**, add `0.0.0.0/0` (Render's free tier has no static outbound IPs).
 4. Click **Connect → Drivers** and copy the connection string, e.g.
    `mongodb+srv://<user>:<password>@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority`
-   This becomes `MONGODB_URI`. The app creates its collections (`users`, `data`, `events`) automatically in the `crmbuilder` database.
+   This becomes `MONGODB_URI`. The app creates its collections (`users`, `orgs`, `modules`, `records`, `data`, `events`) and their indexes automatically in the `crmbuilder` database on first boot.
 
 ## 2. Google OAuth credentials
 
@@ -41,7 +114,7 @@ The repo contains a `render.yaml` blueprint.
    | `GOOGLE_CLIENT_SECRET` | from step 2 |
    | `ADMIN_EMAILS` | comma-separated emails that should get the admin role |
 
-4. Deploy. Health checks hit `/healthz`.
+4. Deploy. Health checks hit `/health`.
 
 Alternatively skip the blueprint: **New → Web Service**, runtime Node,
 build command `npm install --omit=dev`, start command `npm start`, plan Free,
@@ -56,9 +129,12 @@ and set the env vars above plus `NODE_ENV=production` and a random `SESSION_SECR
 ## 4. Verify the deployment
 
 1. Open `https://<your-app>.onrender.com` — the onboarding screen should load.
-2. `https://<your-app>.onrender.com/healthz` should return `{"ok":true,"storage":"mongodb"}` — if it says `"file"`, `MONGODB_URI` isn't set.
+2. `https://<your-app>.onrender.com/health` should report `"storage":"mongodb"` and `"sync":"per-record"` — if storage says `"file"`, `MONGODB_URI` isn't set. It must **not** report `counts` on a pooled deployment; if it does, `HEALTH_DETAIL` is set and should not be.
+   (`/healthz` still answers `{"ok":true,"storage":"..."}` for anything already probing it.)
 3. Sign in with Google, create a module, then open the site in a private window and sign in again — your workspace should sync down.
 4. Install it: browser menu → *Install CRM Builder* (desktop) or *Add to Home Screen* (mobile).
+5. Run the audit from a machine that can reach the URL:
+   `BASE_URL=https://<your-app>.onrender.com npm run test:smoke`
 
 ## Local development
 

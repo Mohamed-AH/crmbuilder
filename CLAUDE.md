@@ -17,7 +17,7 @@ No build step, no frontend framework — plain ES5-ish scripts loaded in order b
 `index.html`.
 
 ```
-server.js             Express: static PWA, OAuth, /api/data sync, /api/admin/*, /api/org
+server.js             Express: static PWA, OAuth, /api/sync + /api/data, /api/admin/*, /api/org, /health
 index.html            app shell (script order matters — see §3)
 css/style.css         Inter + blue/slate palette, light/dark, desktop-first
 js/icons.js           inline Lucide SVGs (generated — see §6)
@@ -37,7 +37,7 @@ docs/                 user guide, onboarding playbook, demo script, architecture
 
 ## 2. Current status
 
-**All green:** 48 Node tests + 38 Playwright tests.
+**All green:** 64 Node tests + 37 Playwright tests.
 
 ```sh
 npm install
@@ -54,16 +54,21 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
 ### Shipped
 - Modules/fields/records, table + kanban views, type-aware column sorting
 - CSV import (column mapping, inline field creation, type coercion) and export
-- Google OAuth, workspace sync (last-write-wins), full offline operation
+- Google OAuth, full offline operation
+- **Per-record delta sync** with tombstoned deletes — see §10
 - Admin dashboard with analytics; **organisations with per-tenant scoping**
+- **Pooled and dedicated deployment blueprints** (`render.yaml`,
+  `render.dedicated.yaml`) and a `/health` endpoint
 - One-click demo business (107 records) and a 6-step guided tour
 - Docs: USER-GUIDE, ONBOARDING, DEMO-SCRIPT, ARCHITECTURE, product-tour.html
 
 ### Not built yet
 - **Shared team workspaces** — an org groups people for *administration* only;
-  each account still has its own workspace. See §5.
-- **Per-record sync** — this is the gate on shared workspaces.
-- Invites/join-an-org flow, email sending, third-party integrations.
+  each account still has its own workspace. See §5. Per-record sync (the old
+  gate on this) is now shipped, so what remains is product work: invites,
+  workspace ownership at the org rather than the account, and a permission
+  model for who may edit which module.
+- Email sending, third-party integrations.
 
 ---
 
@@ -86,9 +91,18 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v4`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v5`).
 
 **Tenancy scoping comes from the session, never a request.** See §5.
+
+**Sync clocks are two different things and must not be conflated.** `updatedAt`
+is the client's edit time and decides last-write-wins per record; `serverAt` is
+the server's monotonic stamp and is the only thing the delta cursor walks. A
+device with a skewed clock must never be able to move the cursor. See §10.
+
+**Deletes are tombstones everywhere** — `DB.delete` on the client, `deletedAt`
+on the server. A row that simply disappears is indistinguishable from one a
+device has never seen, so the next sync hands it straight back.
 
 **Only `http/https/mailto/tel` may reach an `href`** (`safeHref` in app.js) —
 record values arrive from CSV imports and shared backups.
@@ -144,10 +158,13 @@ call. A compound command mentioning `server.js` matches itself.
 ## 5. Organisations and tenancy (shipped)
 
 ```
-orgs   { id, name, createdAt, createdBy }
-users  { id, email, name, orgId, role, disabled, createdAt, lastActiveAt }
-data   { userId, orgId, modules[], records[], settings, ... }
-events { type, userId, orgId, day, at }
+orgs    { id, name, createdAt, createdBy }
+users   { id, email, name, orgId, role, disabled, createdAt, lastActiveAt }
+modules { userId, orgId, id, updatedAt, serverAt, deletedAt, deletedOn, doc }
+records { userId, orgId, id, updatedAt, serverAt, deletedAt, deletedOn, doc }
+data    { userId, orgId, settings, settingsUpdatedAt, settingsServerAt,
+          moduleCount, recordCount, perRecord, updatedAt }   ← meta only now
+events  { type, userId, orgId, day, at }
 ```
 
 Roles: `platformAdmin` (operates the deployment, crosses orgs) · `owner`
@@ -165,10 +182,10 @@ Roles: `platformAdmin` (operates the deployment, crosses orgs) · `owner`
 - **Eight isolation tests in `tests/api.test.mjs` assert the attack**, not the
   happy path. Keep them passing; they are the gate on this area.
 
-**Why workspaces are still per-account:** whole-document sync is last-write-wins.
-Putting colleagues on one shared workspace before per-record sync would silently
-discard each other's edits. Per-record sync is the prerequisite — see
-`docs/ARCHITECTURE.md` §2.2 and §7.
+**Why workspaces are still per-account:** this used to be a safety constraint —
+whole-document sync would have discarded colleagues' edits. Per-record sync
+removed that reason (§10). What remains is unbuilt product: invites, org-owned
+workspaces, and per-module permissions. See `docs/ARCHITECTURE.md` §2.2, §7.
 
 ---
 
@@ -202,9 +219,9 @@ rather than assuming inherited view state.
 
 ## 8. Known gaps and honest limits
 
-- **Sync is whole-snapshot last-write-wins.** A 5,000-record workspace uploads
-  1.28 MB per edit; degradation is a latency problem long before the 16 MB
-  MongoDB document ceiling (~62,000 records, where saves fail outright).
+- **Sync is per record**, so an edit costs ~270 bytes regardless of workspace
+  size. The remaining storage ceiling is Atlas M0's 512 MB shared across
+  tenants, not a per-document limit.
 - **Free-tier cold starts.** The app paints instantly regardless, but sign-in and
   sync wait for the server. Warm the URL before a demo.
 - **This session cannot reach `*.onrender.com`** — the egress proxy returns 403.
@@ -221,3 +238,50 @@ rather than assuming inherited view state.
   broken state — a test that passes on the bug is worthless.
 - Prefer measuring over asserting: sizes, timings and layout are checked by
   driving the real app, not by reasoning about the code.
+
+---
+
+## 10. Per-record sync
+
+Replaced whole-snapshot last-write-wins. The failure it fixes: two devices
+editing *different* records lost one of the edits, because whoever saved second
+uploaded their entire workspace over the other's.
+
+**Shape.** Each module and record is its own row: `{ userId, orgId, id,
+updatedAt, serverAt, deletedAt, deletedOn, doc }`. `POST /api/sync` is one
+round trip — push what changed here since the last accepted push, receive what
+changed there since the cursor. `GET /api/sync?since=N` pulls only.
+
+**Traps, all of which bit during implementation:**
+
+- **`Number(x) || now` restamps a legitimate zero.** A device signing in for
+  the first time sends `settingsUpdatedAt: 0`; the server read that as "now",
+  so its blank defaults won and wiped the workspace's real settings. Use
+  `Number.isFinite`. The E2E two-device test is what caught it.
+- **A push must not echo back what it just sent**, but those rows' `serverAt`
+  still has to count toward the returned cursor — otherwise they arrive on the
+  very next pull.
+- **Server stamps tick forward on collision.** Two rows written in the same
+  millisecond with a cursor landing between them strand the second one forever.
+- **Client selection uses `>=` on its watermark, not `>`,** for the same reason
+  in the other direction. Re-sending the boundary row is free: the server's tie
+  goes to the stored copy, so it is skipped.
+- **MongoDB TTL is single-field only** (same trap as the events TTL). Tombstones
+  expire on `deletedOn`, a real `Date` that only tombstones carry — the TTL
+  monitor skips non-Date values, so live rows are untouched by it.
+- **IndexedDB transactions commit when the microtask queue drains.** Bulk
+  tombstoning issues every `put` in one tick via `Promise.all`; awaiting between
+  writes finds the transaction already closed.
+
+**Backwards compatibility.** `GET`/`PUT /api/data` still work, reading and
+writing the same rows, so a client on cached older JS keeps syncing through a
+deploy; the client falls back to them on a 404. `migrateToPerRecord()` splits
+existing snapshots on boot, **preserves ids exactly** (minting new ones would
+duplicate every row instead of matching what devices already hold), and is
+idempotent via `perRecord` on the meta doc.
+
+**Deployment shapes.** `render.yaml` is pooled (Option B); `render.dedicated.yaml`
+is one deployment per client (Option D). Same code, different env vars.
+`HEALTH_DETAIL=1` exposes org/user counts on the public `/health` — correct on a
+dedicated deployment, a customer count on a pooled one. `DEPLOYMENT.md`
+§"Choosing a deployment shape" has the matrix and the migration runbook.

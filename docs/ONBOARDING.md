@@ -122,9 +122,10 @@ the point of the product — say so, so they don't feel they got it wrong.
 2. Promote whoever should administer the instance (Admin → promote), or add
    their address to `ADMIN_EMAILS`.
 3. Point them at [USER-GUIDE.md](USER-GUIDE.md) — it's written for end users.
-4. Set the expectation that the workspace is **per account**: sync is
-   last-write-wins on a whole workspace, so it's built for one person across
-   several devices, not several people editing one shared workspace at once.
+4. Set the expectation that the workspace is **per account**: it's built for
+   one person across several devices — where per-record sync means edits on a
+   laptop and a phone merge rather than overwrite — not for several people
+   editing one shared workspace at once.
 
 ---
 

@@ -171,10 +171,11 @@ with pipelines, boards and currency built in, and works offline as an installed
 app. Narrower on purpose.
 
 **"Multi-user?"**
-Each person gets an account and a workspace, and sync is last-write-wins across
-their own devices. Simultaneous multi-user editing of one shared workspace is
-not what it does today. Say this plainly — being caught out later costs more
-than the honest answer now.
+Each person gets an account and their own workspace. Sync is per record, so one
+person across a laptop and a phone can edit different records on each and keep
+both. Several people editing *one shared workspace* is not what it does today —
+the sync groundwork for it is in place, the shared workspace itself is not. Say
+that plainly; being caught out later costs more than the honest answer now.
 
 **"Permissions / field-level security?"**
 Not today. Admins manage accounts, not per-field access.

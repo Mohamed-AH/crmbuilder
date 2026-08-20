@@ -1,4 +1,11 @@
-# Render Blueprint — deploys CRM Builder on Render's free tier.
+# Render Blueprint — Option B: the pooled deployment.
+#
+# One service, one MongoDB, many customers, separated by orgId. This is the
+# default and what crmbuilder-v1 runs. For a customer who needs their own
+# service and their own database, use render.dedicated.yaml instead — the two
+# files are the same application with different isolation boundaries, and
+# DEPLOYMENT.md §"Choosing a deployment shape" says when each applies.
+#
 # Docs: https://render.com/docs/blueprint-spec
 services:
   - type: web
@@ -7,13 +14,20 @@ services:
     plan: free
     buildCommand: npm install --omit=dev
     startCommand: npm start
-    healthCheckPath: /healthz
+    # /health reports storage, sync model and uptime. /healthz is the older
+    # liveness probe and still works.
+    healthCheckPath: /health
     autoDeploy: true
     envVars:
       - key: NODE_ENV
         value: production
       - key: SESSION_SECRET
         generateValue: true
+      - key: DEPLOYMENT_MODE
+        value: pooled
+      # HEALTH_DETAIL is deliberately absent. On a pooled deployment the
+      # number of orgs is a customer count, and /health is public.
+      #
       # Set these in the Render dashboard (see DEPLOYMENT.md):
       - key: MONGODB_URI
         sync: false

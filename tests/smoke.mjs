@@ -215,6 +215,25 @@ await check('storage backend', async () => {
   };
 });
 
+await check('sync model', async () => {
+  const { res, err } = await get('/health');
+  if (err) throw new Error(`${err.message} — /health unreachable`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const h = await res.json();
+  // Counts on a public /health are a customer count — fine on a single-tenant
+  // deployment where they are the operator's own, not fine on a pooled one.
+  if (h.counts && h.deployment !== 'dedicated') {
+    return {
+      status: 'WARN',
+      detail: `tenant counts are public on a ${h.deployment} deployment — unset HEALTH_DETAIL`,
+    };
+  }
+  if (h.sync !== 'per-record') {
+    return { status: 'WARN', detail: `${h.sync || 'unknown'} — this deployment predates per-record sync` };
+  }
+  return `per-record · ${h.deployment}${h.tenant ? ` · ${h.tenant}` : ''} · up ${h.uptimeSec}s`;
+});
+
 await check('sign-in method', async () => {
   if (me?.googleEnabled) return 'Google OAuth enabled';
   if (isLocal) return { status: 'INFO', detail: 'no OAuth (local dev)' };

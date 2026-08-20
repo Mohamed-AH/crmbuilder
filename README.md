@@ -91,4 +91,4 @@ MARKETING.md          B2B/B2C copy + launch threads
 - **Record**: `{ id, moduleId, data: { [fieldKey]: value }, createdAt, updatedAt }`
 - **Settings**: `{ businessName, currency }`
 
-Client data lives in the `crmbuilder` IndexedDB database (mirrored to localStorage). When signed in, the full snapshot syncs (last-write-wins) to MongoDB collections `users`, `data`, and `events`.
+Client data lives in the `crmbuilder` IndexedDB database (mirrored to localStorage). When signed in, each module and record syncs individually to the MongoDB collections `modules` and `records`, carrying an `updatedAt` (the edit clock, which resolves conflicts per record) and a `serverAt` (the delta cursor). Deletes are tombstones, so a device that was offline learns about them instead of resurrecting the row. Accounts, orgs, settings and analytics live in `users`, `orgs`, `data` and `events`.

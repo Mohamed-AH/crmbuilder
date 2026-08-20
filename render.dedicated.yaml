@@ -1,0 +1,72 @@
+# Render Blueprint — Option D: one deployment per client.
+#
+# Same application as render.yaml. The difference is the boundary: this client
+# gets their own Render service, their own MongoDB cluster, their own OAuth
+# credentials and their own URL. Nothing is shared, so nothing can leak across
+# a tenant boundary by way of a bug — the isolation is infrastructural rather
+# than a filter in a query.
+#
+# Use it when a client requires their own data residency, their own retention
+# or contractual single-tenancy, or when their volume warrants dedicated
+# resources. Everyone else belongs on render.yaml; see DEPLOYMENT.md.
+#
+# To deploy for a client:
+#   1. Copy this file, replace ACME everywhere with the client's short name.
+#   2. Create a MongoDB cluster for them and set MONGODB_URI.
+#   3. Create Google OAuth credentials for their URL and set the client id,
+#      secret and APP_URL.
+#   4. Set ADMIN_EMAILS to the person who operates it (see the note below).
+#   5. Deploy the blueprint. First boot creates the collections and indexes.
+#
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: crmbuilder-acme
+    runtime: node
+    # Starter, not free: a dedicated client is paying not to wait through a
+    # cold start. Raise it with their volume.
+    plan: starter
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: false # a dedicated client's deploys are scheduled, not automatic
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DEPLOYMENT_MODE
+        value: dedicated
+      - key: TENANT_NAME
+        value: acme # shown by /health so an operator can tell instances apart
+      # Safe here and only here: this deployment has exactly one customer, so
+      # the org and user counts on /health are the operator's own numbers.
+      - key: HEALTH_DETAIL
+        value: '1'
+      # A dedicated deployment is one client's data. Keep events longer than
+      # the pooled default of 90 days if their reporting needs it.
+      - key: EVENT_RETENTION_DAYS
+        value: '365'
+      # How long a deleted record's tombstone is kept so every device learns
+      # about the delete. Longer than the pooled default: a dedicated client
+      # is likelier to have devices that sit idle for months.
+      - key: TOMBSTONE_RETENTION_DAYS
+        value: '365'
+      #
+      # Per-client, set in the Render dashboard:
+      - key: MONGODB_URI
+        sync: false # this client's own cluster — never the pooled one
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: APP_URL
+        sync: false # e.g. https://crm.acme.example
+      - key: ADMIN_EMAILS
+        sync: false
+      #
+      # ADMIN_EMAILS makes those addresses platformAdmin, which on a dedicated
+      # deployment means "administers this client's instance". Whether that is
+      # the client's own IT lead or your support team is a contractual
+      # question — decide it before the first sign-in, because the first
+      # account to sign in becomes a platform admin regardless.
