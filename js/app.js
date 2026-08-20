@@ -1137,15 +1137,17 @@
         <select class="input bf-type">
           ${FIELD_TYPES.map(([val, label]) => `<option value="${val}" ${f.type === val ? 'selected' : ''}>${label}</option>`).join('')}
         </select>
+        <div class="bf-actions">
+          <label class="bf-flag" title="Required"><input type="checkbox" class="bf-required" ${f.required ? 'checked' : ''}>Req</label>
+          <label class="bf-flag" title="Show in list view"><input type="checkbox" class="bf-list" ${f.showInList ? 'checked' : ''}>List</label>
+          <button class="icon-btn bf-up" title="Move up">${icon('chevron-up', 15)}</button>
+          <button class="icon-btn bf-remove" title="Remove field">${icon('x', 15)}</button>
+        </div>
         <input class="input bf-options ${f.type === 'select' ? '' : 'hidden'}" type="text"
           placeholder="Options, comma separated" value="${esc((f.options || []).join(', '))}">
         <select class="input bf-related ${f.type === 'relation' ? '' : 'hidden'}">
           ${modules.map((m) => `<option value="${m.id}" ${f.relatedModule === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
         </select>
-        <label class="bf-flag" title="Required"><input type="checkbox" class="bf-required" ${f.required ? 'checked' : ''}>Req</label>
-        <label class="bf-flag" title="Show in list view"><input type="checkbox" class="bf-list" ${f.showInList ? 'checked' : ''}>List</label>
-        <button class="icon-btn bf-up" title="Move up">${icon('chevron-up', 15)}</button>
-        <button class="icon-btn bf-remove" title="Remove field">${icon('x', 15)}</button>
       </div>`;
   }
 
@@ -1303,14 +1305,30 @@
   // ---------------------------------------------------------------- settings
   async function renderSettings() {
     const main = $('#main');
-    const allRecords = await DB.getAll('records');
+    // Only used for a count. Settings is where someone lands to export or
+    // reset when storage is misbehaving, so it must render regardless.
+    let allRecords = [];
+    let storageOk = true;
+    try {
+      allRecords = await DB.getAll('records');
+    } catch (err) {
+      storageOk = false;
+      console.error('Could not read records for Settings:', err);
+    }
     const authed = Cloud.isAuthed;
     main.innerHTML = `
       <div class="page">
         <div class="page-head">
           <h1>Settings</h1>
-          <p class="subtitle">${modules.length} module${modules.length === 1 ? '' : 's'} · ${allRecords.length} record${allRecords.length === 1 ? '' : 's'}${authed ? ' — synced to your account' : ' — stored privately on this device'}.</p>
+          <p class="subtitle">${storageOk
+            ? `${modules.length} module${modules.length === 1 ? '' : 's'} · ${allRecords.length} record${allRecords.length === 1 ? '' : 's'}${authed ? ' — synced to your account' : ' — stored privately on this device'}.`
+            : 'This browser is blocking local storage, so records cannot be read on this device.'}</p>
         </div>
+        ${storageOk ? '' : `
+          <div class="card danger-zone">
+            <div class="card-head"><h2>Local storage unavailable</h2></div>
+            <p class="settings-hint">The app could not open its database in this browser. That usually means private browsing, or a privacy setting or extension blocking site storage. Your synced data is unaffected — try a normal window, or allow storage for this site.</p>
+          </div>`}
         <div class="card">
           <div class="card-head"><h2>Workspace</h2></div>
           <div class="settings-grid">
@@ -1676,16 +1694,43 @@
     modules = (await DB.getAll('modules')).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   }
 
+  function renderRouteError(err) {
+    console.error('Render failed:', err);
+    $('#main').innerHTML = `
+      <div class="page"><div class="card">
+        <div class="card-head"><h2>This page could not be loaded</h2></div>
+        <p class="empty-hint">${esc(err && err.message ? err.message : 'Unexpected error')}</p>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="route-retry">Try again</button>
+          <a class="btn" href="#/">Go to dashboard</a>
+        </div>
+      </div></div>`;
+    const retry = $('#route-retry');
+    if (retry) retry.addEventListener('click', () => route());
+  }
+
   function route() {
     closeSidebar();
     closeModal();
     const hash = location.hash.replace(/^#\/?/, '');
     const [section, id] = hash.split('/');
-    renderSidebar();
-    if (section === 'm' && id) renderModule(id);
-    else if (section === 'settings') renderSettings();
-    else if (section === 'admin') renderAdmin();
-    else renderDashboard();
+    // A view that throws must not leave the previous screen up — that reads as
+    // a dead link. Sidebar and body are guarded separately so a failure in one
+    // does not take out the other.
+    try {
+      renderSidebar();
+    } catch (err) {
+      console.error('Sidebar render failed:', err);
+    }
+    const render = section === 'm' && id ? () => renderModule(id)
+      : section === 'settings' ? renderSettings
+        : section === 'admin' ? renderAdmin
+          : renderDashboard;
+    try {
+      Promise.resolve(render()).catch(renderRouteError);
+    } catch (err) {
+      renderRouteError(err);
+    }
   }
 
   // Sync happens after the first paint, so it must not disturb whatever the
@@ -1705,26 +1750,12 @@
     route();
   }
 
+  // Everything below is best-effort. The one hard guarantee is that the app
+  // paints and responds to navigation — a failure reading local storage must
+  // degrade to an empty workspace, never to the bare HTML shell with dead links.
   async function init() {
-    await loadModules();
-
-    // If IndexedDB was evicted but the localStorage snapshot survived, restore it.
-    if (!modules.length) {
-      try {
-        const snap = JSON.parse(localStorage.getItem('crmb:snapshot'));
-        if (snap && Array.isArray(snap.modules) && snap.modules.length) {
-          await importState(snap);
-          toast('Restored from local backup');
-        }
-      } catch { /* no snapshot */ }
-    }
-
-    const params = new URLSearchParams(location.search);
-    if (params.get('auth_error')) {
-      toast(params.get('auth_error') === 'disabled' ? 'This account has been disabled' : 'Sign-in failed — please try again');
-      history.replaceState(null, '', location.pathname + location.hash);
-    }
-
+    // Wire the chrome first: if anything later fails, the app is still
+    // navigable rather than inert.
     window.addEventListener('hashchange', route);
     $('#add-module-btn').addEventListener('click', () => openBuilder(null));
     $('#install-btn').addEventListener('click', promptInstall);
@@ -1732,9 +1763,42 @@
     $('#scrim').addEventListener('click', closeSidebar);
     updateOnlineBadge();
 
-    // Paint from local data immediately. A sleeping free-tier server must never
-    // stand between the user and their own data — /api/me is not awaited here.
-    route();
+    const params = new URLSearchParams(location.search);
+    if (params.get('auth_error')) {
+      toast(params.get('auth_error') === 'disabled' ? 'This account has been disabled' : 'Sign-in failed — please try again');
+      history.replaceState(null, '', location.pathname + location.hash);
+    }
+
+    // Watchdog: if local data is slow or wedged, show the UI anyway. Whatever
+    // loads afterwards triggers a second render.
+    let painted = false;
+    const paint = () => { painted = true; route(); };
+    const watchdog = setTimeout(() => { if (!painted) paint(); }, 2500);
+
+    try {
+      await loadModules();
+
+      // If IndexedDB was evicted but the localStorage snapshot survived, restore it.
+      if (!modules.length) {
+        try {
+          const snap = JSON.parse(localStorage.getItem('crmb:snapshot'));
+          if (snap && Array.isArray(snap.modules) && snap.modules.length) {
+            await importState(snap);
+            toast('Restored from local backup');
+          }
+        } catch { /* no snapshot */ }
+      }
+    } catch (err) {
+      console.error('Could not read local data:', err);
+      modules = [];
+      toast('Could not open local storage — your data is safe, try reloading');
+    } finally {
+      clearTimeout(watchdog);
+      // Paint from local data. A sleeping free-tier server must never stand
+      // between the user and their own data — /api/me is not awaited here.
+      paint();
+    }
+
     syncInBackground();
 
     if ('serviceWorker' in navigator) {
@@ -1746,5 +1810,19 @@
     }
   }
 
-  init();
+  // Last resort. If init() itself fails, the shell would otherwise sit there
+  // looking loaded but doing nothing, which is worse than an honest error.
+  init().catch((err) => {
+    console.error('Startup failed:', err);
+    try {
+      route();
+    } catch {
+      $('#main').innerHTML = `
+        <div class="page"><div class="card">
+          <h2>Something went wrong starting the app</h2>
+          <p class="empty-hint">Reload the page to try again. Your data is stored on this device and has not been lost.</p>
+          <button class="btn btn-primary" onclick="location.reload()">Reload</button>
+        </div></div>`;
+    }
+  });
 })();

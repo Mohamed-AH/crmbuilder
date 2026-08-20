@@ -9,10 +9,36 @@ const DB = (() => {
   const VERSION = 1;
   let dbPromise = null;
 
+  // Opening must always settle. A hung open() stalls every await behind it,
+  // and the app is built to boot from local data — so a database that never
+  // answers would leave the user staring at an unrendered shell.
+  const OPEN_TIMEOUT = 8000;
+
   function open() {
     if (dbPromise) return dbPromise;
     dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(NAME, VERSION);
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn(value);
+      };
+      const timer = setTimeout(
+        () => finish(reject, new Error(`IndexedDB did not open within ${OPEN_TIMEOUT}ms`)),
+        OPEN_TIMEOUT
+      );
+
+      let req;
+      try {
+        // Private-browsing modes and hardened privacy settings can refuse
+        // outright, sometimes by throwing rather than firing onerror.
+        req = indexedDB.open(NAME, VERSION);
+      } catch (err) {
+        finish(reject, err);
+        return;
+      }
+
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains('modules')) {
@@ -23,9 +49,14 @@ const DB = (() => {
           store.createIndex('moduleId', 'moduleId', { unique: false });
         }
       };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+      req.onsuccess = () => finish(resolve, req.result);
+      req.onerror = () => finish(reject, req.error);
+      // Another tab holding an older version open blocks this one indefinitely.
+      req.onblocked = () => finish(reject, new Error('IndexedDB is blocked by another tab'));
     });
+    // A failed open must not be cached, or one bad moment disables storage
+    // for the whole session.
+    dbPromise.catch(() => { dbPromise = null; });
     return dbPromise;
   }
 

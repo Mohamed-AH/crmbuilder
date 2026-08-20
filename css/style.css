@@ -485,14 +485,24 @@ body.modal-open { overflow: hidden; }
 .swatch.color { border-color: transparent; }
 .swatch.color.on { outline: 2px solid var(--text); outline-offset: 2px; }
 #builder-fields { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+/* Flex, not grid: the options/relation input needs a line of its own, and with
+   grid the trailing controls were auto-placed into columns sized for the first
+   line — squashing "Req" to 16px so its label painted over "List". Flex lets
+   the extra input claim a full line without disturbing anything before it. */
 .builder-field {
-  display: grid;
-  grid-template-columns: 16px 1fr 130px auto auto auto auto;
-  gap: 8px; align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   background: var(--surface-2);
   border-radius: 9px; padding: 8px;
 }
-.builder-field .bf-options, .builder-field .bf-related { grid-column: 2 / -1; }
+.builder-field .drag-dots { flex: 0 0 auto; }
+.builder-field .bf-label { flex: 1 1 150px; min-width: 0; }
+.builder-field .bf-type { flex: 0 0 150px; } /* fits "Link to module" untruncated */
+.bf-actions { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 8px; }
+/* flex-basis:100% puts these on their own line, below everything above. */
+.builder-field .bf-options, .builder-field .bf-related { flex: 1 1 100%; margin-left: 24px; }
 .drag-dots { color: var(--text-faint); display: inline-flex; }
 .bf-flag {
   display: inline-flex; align-items: center; gap: 4px;
@@ -574,8 +584,9 @@ body.modal-open { overflow: hidden; }
   .search-wrap { width: 100%; }
   .module-actions { width: 100%; }
   .onboard-biz-grid { grid-template-columns: 1fr; }
-  .builder-field { grid-template-columns: 16px 1fr auto; }
-  .builder-field .bf-type { grid-column: 2 / -1; }
+  .builder-field .bf-label { flex: 1 1 100%; }
+  .builder-field .bf-type { flex: 1 1 auto; }
+  .bf-actions { margin-left: 0; }
   .records-table thead { display: none; }
   .records-table tbody tr { display: block; padding: 10px 14px; border-bottom: 1px solid var(--border); }
   .records-table td { display: flex; gap: 10px; padding: 3px 0; border: none; }

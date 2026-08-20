@@ -50,8 +50,12 @@ test.beforeEach(async ({ page }, testInfo) => {
   testInfo.consoleErrors = errors;
 });
 test.afterEach(async ({ page }, testInfo) => {
-  if (testInfo.status === 'passed' && testInfo.consoleErrors?.length) {
-    throw new Error(`Console errors during test:\n${testInfo.consoleErrors.join('\n')}`);
+  // Tests that deliberately break something declare the errors they expect via
+  // test.info().expectedConsoleErrors — those are diagnostics, not defects.
+  const allowed = testInfo.expectedConsoleErrors || [];
+  const unexpected = (testInfo.consoleErrors || []).filter((e) => !allowed.some((re) => re.test(e)));
+  if (testInfo.status === 'passed' && unexpected.length) {
+    throw new Error(`Console errors during test:\n${unexpected.join('\n')}`);
   }
 });
 
@@ -84,6 +88,33 @@ test.describe('boot', () => {
     expect(paintedMs, `UI took ${paintedMs}ms to paint while /api/me hung`).toBeLessThan(5000);
     // And it should say it is still connecting rather than lying about state.
     await expect(page.locator('.boot-chip')).toBeVisible();
+  });
+
+  // A returning user once saw the bare HTML shell — sidebar chrome present,
+  // main area blank, nav links inert — because a stalled await in init() meant
+  // route() never ran. Local storage must never be able to do that.
+  test('still renders when IndexedDB refuses to open', async ({ page }) => {
+    test.info().expectedConsoleErrors = [/storage blocked/, /Could not read/];
+    await page.addInitScript(() => {
+      indexedDB.open = () => { throw new Error('storage blocked'); };
+    });
+    await page.goto('/');
+    await expect(page.locator('.template-card').first()).toBeVisible({ timeout: 10000 });
+    // And navigation still works, which is what "unresponsive" really meant.
+    await page.click('a[href="#/settings"]');
+    await expect(page.locator('h1')).toHaveText('Settings');
+  });
+
+  test('still renders when IndexedDB hangs forever', async ({ page }) => {
+    test.info().expectedConsoleErrors = [/did not open within/, /Could not read/];
+    await page.addInitScript(() => {
+      // Never fires success, error or blocked — the case with no timeout hung.
+      indexedDB.open = () => ({ onsuccess: null, onerror: null, onblocked: null, onupgradeneeded: null });
+    });
+    await page.goto('/');
+    await expect(page.locator('.template-card').first()).toBeVisible({ timeout: 10000 });
+    await page.click('a[href="#/settings"]');
+    await expect(page.locator('h1')).toHaveText('Settings');
   });
 
   test('works with no server at all (static hosting)', async ({ page }) => {
@@ -221,6 +252,42 @@ test.describe('kanban', () => {
 });
 
 test.describe('module builder', () => {
+  // Dropdown and Link-to-module reveal an extra input on its own line. That
+  // used to disturb the row's layout and squash the "Req" label to 16px, so
+  // its text painted over "List". Check the controls hold their shape.
+  for (const [type, label] of [['text', 'Text'], ['select', 'Dropdown'], ['relation', 'Link to module']]) {
+    test(`field controls stay aligned when the type is ${label}`, async ({ page }) => {
+      await onboard(page);
+      await page.click('#add-module-btn');
+      await page.locator('.builder-field .bf-type').first().selectOption(type);
+
+      const metrics = await page.evaluate(() => {
+        const row = document.querySelector('.builder-field');
+        const flags = [...row.querySelectorAll('.bf-flag')].map((el) => {
+          const r = el.getBoundingClientRect();
+          return {
+            text: el.textContent.trim(),
+            x: r.x, y: r.y, right: r.right, width: r.width,
+            clipped: el.scrollWidth > el.clientWidth + 1,
+          };
+        });
+        return { flags, rowRight: row.getBoundingClientRect().right };
+      });
+
+      const [req, list] = metrics.flags;
+      expect(req.text).toBe('Req');
+      expect(list.text).toBe('List');
+      expect(req.y, 'Req and List should sit on the same line').toBe(list.y);
+      expect(list.x, 'Req must not overlap List').toBeGreaterThanOrEqual(req.right);
+      // A starved box is what made the label text spill over its neighbour.
+      expect(req.width, 'Req is too narrow for its label').toBeGreaterThan(35);
+      expect(list.width, 'List is too narrow for its label').toBeGreaterThan(35);
+      expect(req.clipped, 'Req label is clipped').toBe(false);
+      expect(list.clipped, 'List label is clipped').toBe(false);
+      expect(list.right).toBeLessThanOrEqual(metrics.rowRight);
+    });
+  }
+
   test('creates a custom module with a dropdown and a relation', async ({ page }) => {
     await onboard(page);
     await page.click('#add-module-btn');
