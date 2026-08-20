@@ -4,7 +4,7 @@
  * API/auth requests are network-only (never cached).
  * Bump CACHE_VERSION whenever any precached asset changes.
  */
-const CACHE_VERSION = 'crmbuilder-v2';
+const CACHE_VERSION = 'crmbuilder-v3';
 const APP_SHELL = [
   './',
   './index.html',
@@ -13,7 +13,9 @@ const APP_SHELL = [
   './fonts/inter-var-latin.woff2',
   './js/icons.js',
   './js/db.js',
+  './js/csv.js',
   './js/templates.js',
+  './js/demo-data.js',
   './js/cloud.js',
   './js/app.js',
   './icons/icon-192.png',
@@ -46,10 +48,22 @@ self.addEventListener('fetch', (event) => {
   // Dynamic data is never cached — the client handles offline itself.
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/')) return;
 
-  // SPA navigations always resolve to the cached shell when offline.
+  // Navigations serve the cached shell immediately and refresh it in the
+  // background. Free-tier hosts sleep when idle, and network-first here meant
+  // a returning visitor stared at nothing while the server woke up; the shell
+  // is self-contained, so there is nothing to wait for.
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).catch(() => caches.match('./index.html'))
+      caches.match('./index.html').then((cached) => {
+        const fresh = fetch(request).then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_VERSION).then((cache) => cache.put('./index.html', copy));
+          }
+          return response;
+        });
+        return cached || fresh.catch(() => caches.match('./index.html'));
+      })
     );
     return;
   }

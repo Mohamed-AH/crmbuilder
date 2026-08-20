@@ -1,0 +1,517 @@
+/*
+ * e2e.spec.js — user journeys through the real UI.
+ *
+ *   npm run test:e2e
+ *
+ * Each test gets a fresh browser context, so IndexedDB and localStorage start
+ * empty and the app opens on onboarding. Accounts are shared across tests via
+ * the server, so each test that signs in uses its own email.
+ */
+const { test, expect } = require('@playwright/test');
+
+// --- helpers ---------------------------------------------------------------
+
+async function onboard(page, { name = 'Test Co', currency = 'USD', templates = null } = {}) {
+  await page.goto('/');
+  await expect(page.locator('.template-card').first()).toBeVisible();
+  await page.fill('#onboard-name', name);
+  await page.selectOption('#onboard-currency', currency);
+  if (templates) {
+    // Cards are labels wrapping a visually hidden checkbox; click the card.
+    await page.evaluate(() => document.querySelectorAll('input[data-template]').forEach((cb) => { cb.checked = false; }));
+    for (const t of templates) await page.locator(`.template-card:has-text("${t}")`).click();
+  }
+  await page.click('#onboard-create');
+  await expect(page.locator('#nav-modules .nav-link').first()).toBeVisible();
+}
+
+async function signIn(page, email) {
+  const trigger = page.locator('#signin-btn, #onboard-signin').first();
+  await trigger.waitFor({ state: 'visible' });
+  await trigger.click();
+  await page.fill('#dev-email', email);
+  await page.click('#dev-login-form button[type=submit]');
+  await expect(page.locator('.user-chip')).toBeVisible({ timeout: 15000 });
+}
+
+function uniqueEmail(prefix) {
+  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e4)}@example.com`;
+}
+
+// Fail loudly on unexpected console errors; offline tests opt out.
+test.beforeEach(async ({ page }, testInfo) => {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => {
+    if (m.type() !== 'error') return;
+    if (/ERR_INTERNET_DISCONNECTED|Failed to fetch|net::ERR/.test(m.text())) return; // expected offline noise
+    errors.push(m.text());
+  });
+  testInfo.consoleErrors = errors;
+});
+test.afterEach(async ({ page }, testInfo) => {
+  if (testInfo.status === 'passed' && testInfo.consoleErrors?.length) {
+    throw new Error(`Console errors during test:\n${testInfo.consoleErrors.join('\n')}`);
+  }
+});
+
+// --- boot & resilience -----------------------------------------------------
+
+test.describe('boot', () => {
+  test('renders the onboarding screen with real icons and fonts', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('.template-card')).toHaveCount(6);
+    // Every template tile draws a real Lucide SVG, not an emoji fallback.
+    await expect(page.locator('.template-icon svg.lucide')).toHaveCount(6);
+    await expect(page.locator('.template-icon svg.lucide').first()).toBeVisible();
+    const font = await page.evaluate(() => getComputedStyle(document.body).fontFamily);
+    expect(font).toContain('Inter');
+  });
+
+  test('paints immediately even when the server is asleep', async ({ page }) => {
+    // Render's free tier can take ~a minute to wake. The UI must not wait for
+    // it: this is the regression test for the blank-page-on-cold-start bug.
+    await page.route('**/api/me', async (route) => {
+      await new Promise((r) => setTimeout(r, 8000));
+      await route.continue();
+    });
+
+    const started = Date.now();
+    await page.goto('/', { waitUntil: 'commit' });
+    await expect(page.locator('.template-card').first()).toBeVisible({ timeout: 5000 });
+    const paintedMs = Date.now() - started;
+
+    expect(paintedMs, `UI took ${paintedMs}ms to paint while /api/me hung`).toBeLessThan(5000);
+    // And it should say it is still connecting rather than lying about state.
+    await expect(page.locator('.boot-chip')).toBeVisible();
+  });
+
+  test('works with no server at all (static hosting)', async ({ page }) => {
+    await page.route('**/api/**', (route) => route.abort());
+    await page.goto('/');
+    await onboardWithoutServer(page);
+    async function onboardWithoutServer(p) {
+      await expect(p.locator('.template-card').first()).toBeVisible();
+      await p.click('#onboard-create');
+      await expect(p.locator('#nav-modules .nav-link').first()).toBeVisible();
+    }
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Local Only Contact');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Local Only Contact")')).toBeVisible();
+  });
+});
+
+// --- core CRM --------------------------------------------------------------
+
+test.describe('records', () => {
+  test('create, edit, search and delete', async ({ page }) => {
+    await onboard(page);
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Sara Lindqvist');
+    await page.fill('#f-email', 'sara@nordicplants.se');
+    await page.fill('#f-company', 'Nordic Plants');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Sara Lindqvist")')).toBeVisible();
+
+    // Edit
+    await page.click('tr:has-text("Sara Lindqvist")');
+    await page.fill('#f-phone', '+46 70 123 4567');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("+46 70 123 4567")')).toBeVisible();
+
+    // Search narrows, then clears
+    await page.fill('#record-search', 'nordic');
+    await expect(page.locator('.records-table tbody tr')).toHaveCount(1);
+    await page.fill('#record-search', 'zzzznomatch');
+    await expect(page.locator('.empty-hint')).toContainText('No contacts match');
+    await page.fill('#record-search', '');
+    await expect(page.locator('.records-table tbody tr').first()).toBeVisible();
+
+    // Delete
+    page.once('dialog', (d) => d.accept());
+    await page.click('tr:has-text("Sara Lindqvist")');
+    await page.click('#record-delete');
+    await expect(page.locator('tr:has-text("Sara Lindqvist")')).toHaveCount(0);
+  });
+
+  test('required fields block an empty save', async ({ page }) => {
+    await onboard(page);
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#add-record-btn');
+    await page.click('#record-save');
+    await expect(page.locator('#record-form')).toBeVisible(); // modal stayed open
+  });
+
+  test('data survives a reload', async ({ page }) => {
+    await onboard(page);
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Persistent Percy');
+    await page.click('#record-save');
+    await page.reload();
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(page.locator('tr:has-text("Persistent Percy")')).toBeVisible();
+  });
+});
+
+test.describe('table sorting', () => {
+  test('sorts by value numerically and cycles back to default', async ({ page }) => {
+    await onboard(page);
+    await page.click('#nav-modules .nav-link:has-text("Deals")');
+    await page.click('.seg-btn[data-view="table"]');
+
+    const header = page.locator('th:has-text("Value")');
+    const values = async () => (await page.locator('.records-table tbody tr td:nth-child(2)').allTextContents())
+      .map((t) => Number(t.replace(/[^0-9.-]/g, '')))
+      .filter((n) => !Number.isNaN(n));
+
+    // Re-rendering is async, so wait for the header state before reading rows;
+    // otherwise the previous render is sampled and the assertion is meaningless.
+    await header.click();
+    await expect(header).toHaveAttribute('aria-sort', 'ascending');
+    const asc = await values();
+    expect(asc).toEqual([...asc].sort((a, b) => a - b));
+
+    await header.click();
+    await expect(header).toHaveAttribute('aria-sort', 'descending');
+    const desc = await values();
+    expect(desc).toEqual([...desc].sort((a, b) => b - a));
+    expect(desc).toEqual([...asc].reverse());
+
+    await header.click();
+    await expect(header).toHaveAttribute('aria-sort', 'none');
+  });
+
+  test('sorts dropdowns in pipeline order, not alphabetically', async ({ page }) => {
+    await onboard(page);
+    await page.click('#nav-modules .nav-link:has-text("Deals")');
+    await page.click('.seg-btn[data-view="table"]');
+    await page.click('th:has-text("Stage")');
+    const stages = (await page.locator('.records-table tbody tr td:nth-child(3)').allTextContents()).map((s) => s.trim());
+    // Lead precedes Proposal in the option list even though P < L alphabetically.
+    const order = ['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Won', 'Lost'];
+    const idx = stages.filter((s) => order.includes(s)).map((s) => order.indexOf(s));
+    expect(idx).toEqual([...idx].sort((a, b) => a - b));
+  });
+});
+
+test.describe('kanban', () => {
+  test('drag between columns persists across a reload', async ({ page }) => {
+    await onboard(page);
+    await page.click('#nav-modules .nav-link:has-text("Deals")');
+    await expect(page.locator('.kanban')).toBeVisible();
+
+    const card = page.locator('.kanban-card:has-text("Monthly supplies contract")');
+    await card.dragTo(page.locator('.kanban-col[data-col="Qualified"] .kanban-cards'));
+    await expect(page.locator('.kanban-col[data-col="Qualified"] .kanban-card:has-text("Monthly supplies")')).toBeVisible();
+
+    await page.reload();
+    await page.click('#nav-modules .nav-link:has-text("Deals")');
+    await expect(page.locator('.kanban-col[data-col="Qualified"] .kanban-card:has-text("Monthly supplies")')).toBeVisible();
+  });
+
+  test('column totals use the workspace currency', async ({ page }) => {
+    await onboard(page, { currency: 'EUR' });
+    await page.click('#nav-modules .nav-link:has-text("Deals")');
+    await expect(page.locator('.kanban-card-value').first()).toContainText('€');
+  });
+});
+
+test.describe('module builder', () => {
+  test('creates a custom module with a dropdown and a relation', async ({ page }) => {
+    await onboard(page);
+    await page.click('#add-module-btn');
+    await page.fill('#b-name', 'Projects');
+    await page.locator('.builder-field .bf-label').first().fill('Project name');
+
+    await page.click('#b-add-field');
+    let row = page.locator('.builder-field').last();
+    await row.locator('.bf-label').fill('Status');
+    await row.locator('.bf-type').selectOption('select');
+    await row.locator('.bf-options').fill('Planned, Active, Done');
+    await row.locator('.bf-list').check();
+
+    await page.click('#b-add-field');
+    row = page.locator('.builder-field').last();
+    await row.locator('.bf-label').fill('Client');
+    await row.locator('.bf-type').selectOption('relation');
+
+    await page.click('#b-save');
+    await expect(page.locator('#nav-modules .nav-link:has-text("Projects")')).toBeVisible();
+
+    // The relation picker should list real records from the linked module.
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Website revamp');
+    await page.selectOption('#f-status', 'Active');
+    const options = await page.locator('#f-client option').allTextContents();
+    expect(options.length).toBeGreaterThan(1);
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Website revamp")')).toBeVisible();
+
+    // A dropdown field unlocks the board view.
+    await page.click('.seg-btn[data-view="kanban"]');
+    await expect(page.locator('.kanban-col[data-col="Active"] .kanban-card:has-text("Website revamp")')).toBeVisible();
+  });
+});
+
+// --- CSV -------------------------------------------------------------------
+
+test.describe('CSV', () => {
+  test('exports the current view', async ({ page }) => {
+    await onboard(page);
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.click('#export-csv-btn'),
+    ]);
+    expect(download.suggestedFilename()).toMatch(/^contacts-\d{4}-\d{2}-\d{2}\.csv$/);
+    const stream = await download.createReadStream();
+    const text = await new Promise((resolve) => {
+      let out = '';
+      stream.on('data', (c) => { out += c; });
+      stream.on('end', () => resolve(out));
+    });
+    expect(text).toContain('Full name');
+    expect(text).toContain('Amira Hassan');
+  });
+
+  test('imports with column mapping, type coercion and new fields', async ({ page }) => {
+    await onboard(page);
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+
+    const csv = [
+      'Full name,Email,Phone,Loyalty tier',
+      '"Okafor, Tunde",tunde@example.com,+1 555 0101,Gold',
+      'Marta Ruiz,marta@example.com,+1 555 0102,Silver',
+      '"Quote ""Q"" Person",q@example.com,,Bronze',
+      ',,,', // blank row: should be skipped, not imported as an empty record
+    ].join('\n');
+
+    await page.setInputFiles('#import-csv-file', {
+      name: 'contacts.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from(csv, 'utf8'),
+    });
+
+    // Known headers should be auto-mapped; the unknown one offered as new.
+    await expect(page.locator('.map-row')).toHaveCount(5); // header row + 4 columns
+    const nameSelect = page.locator('.map-select[data-col="0"]');
+    await expect(nameSelect).toHaveValue('name');
+    await page.locator('.map-select[data-col="3"]').selectOption('__new__');
+
+    await page.click('#csv-import-go');
+    await expect(page.locator('tr:has-text("Okafor, Tunde")')).toBeVisible();
+    await expect(page.locator('tr:has-text("Quote \\"Q\\" Person")')).toBeVisible();
+    await expect(page.locator('tr:has-text("Marta Ruiz")')).toBeVisible();
+
+    // The new field was created and populated. Click the name cell, not the
+    // row centre: email/phone cells are real links that deliberately swallow
+    // the click rather than opening the record.
+    await page.locator('tr:has-text("Marta Ruiz") td').first().click();
+    await expect(page.locator('#f-loyalty_tier')).toHaveValue('Silver');
+  });
+
+  test('round-trips an export back through import', async ({ page }) => {
+    await onboard(page);
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    const before = await page.locator('.records-table tbody tr').count();
+
+    const [download] = await Promise.all([page.waitForEvent('download'), page.click('#export-csv-btn')]);
+    const path = await download.path();
+    await page.setInputFiles('#import-csv-file', path);
+    await page.click('#csv-import-go');
+
+    await expect(page.locator('.records-table tbody tr')).toHaveCount(before * 2);
+  });
+});
+
+// --- demo data -------------------------------------------------------------
+
+test.describe('demo data', () => {
+  test('fills every module and makes the dashboard look alive', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('#onboard-demo')).toBeVisible();
+    await page.click('#onboard-demo');
+
+    await expect(page.locator('#workspace-name')).toHaveText('Lumen Studio', { timeout: 20000 });
+    await expect(page.locator('#nav-modules .nav-link')).toHaveCount(6);
+    await expect(page.locator('.stat-tile-value')).toBeVisible();
+
+    // Deals populate several pipeline columns, which is the point of the demo.
+    await page.click('#nav-modules .nav-link:has-text("Deals")');
+    await expect(page.locator('.kanban-card')).toHaveCount(18);
+    const filled = await page.locator('.kanban-col:has(.kanban-card)').count();
+    expect(filled).toBeGreaterThanOrEqual(4);
+
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(page.locator('.count-badge')).toHaveText('40');
+  });
+});
+
+// --- accounts, sync, admin -------------------------------------------------
+
+test.describe('accounts and sync', () => {
+  test('signing in uploads local work, and a new device gets it back', async ({ page, browser }) => {
+    const email = uniqueEmail('sync');
+    await onboard(page, { name: 'Sync Co', currency: 'GBP' });
+    await signIn(page, email);
+
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+    const cloud = await (await page.request.get('/api/data')).json();
+    expect(cloud.modules.length).toBeGreaterThan(0);
+    expect(cloud.settings.currency).toBe('GBP');
+
+    // A brand new browser profile signing in as the same person.
+    const fresh = await browser.newContext();
+    const page2 = await fresh.newPage();
+    await page2.goto('/');
+    await signIn(page2, email);
+    await expect(page2.locator('#workspace-name')).toHaveText('Sync Co', { timeout: 20000 });
+    await expect(page2.locator('#nav-modules .nav-link').first()).toBeVisible();
+    await fresh.close();
+  });
+
+  test('edits made offline sync once the connection returns', async ({ page, context }) => {
+    await onboard(page);
+    await signIn(page, uniqueEmail('offline'));
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await page.reload(); // become controlled by the service worker
+
+    await context.setOffline(true);
+    await page.reload();
+    await expect(page.locator('#nav-modules .nav-link:has-text("Tasks")')).toBeVisible({ timeout: 15000 });
+    await page.click('#nav-modules .nav-link:has-text("Tasks")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-title', 'Written while offline');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Written while offline")')).toBeVisible();
+
+    await context.setOffline(false);
+    await expect(async () => {
+      const data = await (await page.request.get('/api/data')).json();
+      expect(data.records.some((r) => r.data.title === 'Written while offline')).toBe(true);
+    }).toPass({ timeout: 20000 });
+  });
+
+  test('signing out keeps the data on the device', async ({ page }) => {
+    await onboard(page);
+    await signIn(page, uniqueEmail('logout'));
+    await page.goto('/#/settings');
+    await page.click('#signout-btn');
+    await expect(page.locator('#signin-btn')).toBeVisible();
+    await page.goto('/#/');
+    await expect(page.locator('#nav-modules .nav-link').first()).toBeVisible();
+  });
+});
+
+test.describe('admin', () => {
+  test('shows metrics and manages accounts', async ({ page, browser }) => {
+    // ADMIN_EMAILS in playwright.config.js guarantees this address is an admin
+    // regardless of which test created the first account.
+    await page.goto('/');
+    await signIn(page, 'e2e-admin@example.com');
+    await expect(page.locator('#nav-admin')).toBeVisible();
+
+    await page.click('#nav-admin');
+    await expect(page.locator('.admin-stats .stat-card')).toHaveCount(5);
+    await expect(page.locator('.chart .bar').first()).toBeVisible();
+
+    // Chart tooltips are the only way to read exact values.
+    await page.locator('.bar-g').last().hover();
+    await expect(page.locator('#chart-tip')).toBeVisible();
+
+    // A second account appears in the table and can be disabled.
+    const victimEmail = uniqueEmail('victim');
+    const other = await browser.newContext();
+    const page2 = await other.newPage();
+    await page2.goto('/');
+    await signIn(page2, victimEmail);
+    await expect(page2.locator('#nav-admin')).toBeHidden();
+    expect((await page2.request.get('/api/admin/stats')).status()).toBe(403);
+
+    await page.click('#nav-admin');
+    await page.reload();
+    await page.click('#nav-admin');
+    const row = page.locator(`.admin-row:has-text("${victimEmail}")`);
+    await expect(row).toBeVisible();
+
+    page.once('dialog', (d) => d.accept());
+    await row.locator('[data-act="disable"]').click();
+    await expect(page.locator(`.admin-row:has-text("${victimEmail}") .pill-danger`)).toBeVisible();
+    expect((await page2.request.get('/api/data')).status()).toBe(401);
+
+    await other.close();
+  });
+
+  test('non-admins are told the page is not for them', async ({ page }) => {
+    await page.goto('/');
+    await signIn(page, uniqueEmail('plain'));
+    await page.goto('/#/admin');
+    await expect(page.locator('.empty-hint')).toContainText('administrators only');
+  });
+});
+
+// --- settings --------------------------------------------------------------
+
+test.describe('settings', () => {
+  test('changing currency reformats money everywhere', async ({ page }) => {
+    await onboard(page, { currency: 'USD' });
+    await page.goto('/#/settings');
+    await page.selectOption('#set-currency', 'JPY');
+    await page.click('#save-workspace');
+    await page.click('#nav-modules .nav-link:has-text("Deals")');
+    await expect(page.locator('.kanban-card-value').first()).toContainText('¥');
+  });
+
+  test('exports and re-imports a JSON backup', async ({ page }) => {
+    await onboard(page, { name: 'Backup Co' });
+    await page.goto('/#/settings');
+    const [download] = await Promise.all([page.waitForEvent('download'), page.click('#export-btn')]);
+    const path = await download.path();
+
+    page.once('dialog', (d) => d.accept());
+    await page.setInputFiles('#import-file', path);
+    await expect(page.locator('#nav-modules .nav-link').first()).toBeVisible();
+    await expect(page.locator('#workspace-name')).toHaveText('Backup Co');
+  });
+
+  test('rejects a file that is not a CRM Builder backup', async ({ page }) => {
+    await onboard(page);
+    await page.goto('/#/settings');
+    await page.setInputFiles('#import-file', {
+      name: 'nope.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from('{"hello":"world"}', 'utf8'),
+    });
+    await expect(page.locator('.toast').last()).toContainText('does not look like');
+  });
+});
+
+// --- security --------------------------------------------------------------
+
+test('javascript: URLs in link fields are not rendered as executable hrefs', async ({ page }) => {
+  await onboard(page, { templates: ['Companies'] });
+  await page.click('#nav-modules .nav-link:has-text("Companies")');
+  await page.click('#add-record-btn');
+  await page.fill('#f-name', 'Sketchy Ltd');
+  await page.fill('#f-website', 'https://ok.example');
+  await page.click('#record-save');
+
+  // Write a hostile value straight into storage, as a malicious CSV or a
+  // tampered backup would, then confirm it never becomes a javascript: href.
+  await page.evaluate(async () => {
+    const all = await DB.getAll('records');
+    const rec = all.find((r) => r.data.name === 'Sketchy Ltd');
+    rec.data.website = 'javascript:window.__pwned = true';
+    await DB.put('records', rec);
+  });
+  await page.reload();
+  await page.click('#nav-modules .nav-link:has-text("Companies")');
+
+  const hrefs = await page.locator('.records-table a').evaluateAll((els) => els.map((e) => e.getAttribute('href')));
+  expect(hrefs.some((h) => (h || '').toLowerCase().startsWith('javascript:'))).toBe(false);
+  expect(await page.evaluate(() => window.__pwned)).toBeUndefined();
+});

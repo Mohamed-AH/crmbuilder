@@ -1,49 +1,74 @@
 ---
 name: verify
-description: Build/launch/drive recipe for verifying CRM Builder (Express + PWA) end-to-end in a headless browser.
+description: How to run and extend the CRM Builder test suite, and how to drive the app by hand.
 ---
 
 # Verifying CRM Builder
 
-Node/Express server (`server.js`) serving the static PWA plus auth/sync/admin APIs.
-Surface = browser GUI + JSON API.
+Node/Express server (`server.js`) serving a static PWA plus auth/sync/admin APIs.
+There is a real test suite now — **run it before hand-driving anything.**
 
-## Launch
+## Run the tests
 
 ```sh
 npm install
-rm -rf data                     # reset the file store for a clean run
-ALLOW_DEV_LOGIN=1 node server.js   # http://localhost:8321, storage=file, dev login on
+npm test              # unit + API + e2e (playwright boots its own server)
+npm run test:unit     # tests/csv.test.mjs      — CSV parse/stringify
+npm run test:api      # tests/api.test.mjs      — spawns a server on a random port
+npm run test:e2e      # tests/e2e.spec.js       — Playwright, 24 journeys
+npm run test:smoke    # tests/smoke.mjs         — deployment audit, localhost
+
+BASE_URL=https://your-app.onrender.com npm run test:smoke   # audit a live deploy
 ```
 
-- `curl localhost:8321/healthz` → `{"ok":true,"storage":"file"}`.
-- No MONGODB_URI → JSON file store in `./data/` (git-ignored). Same API as Mongo.
-- CAREFUL killing it: `pkill -f "server.js"` matches your own shell if the compound
-  command mentions server.js — run `pkill -f "[s]erver\.js"` in a **separate** command.
-- Static-only mode (no accounts) still works: `python3 -m http.server`.
+- `npm run test:api` and `test:e2e` each boot their own server with `DATA_DIR`
+  pointed at a throwaway directory — no cleanup needed, nothing shared with dev data.
+- `playwright.config.js` pins `ADMIN_EMAILS=e2e-admin@example.com` so admin tests
+  don't depend on which test created the first account.
+- Playwright browsers are preinstalled (`PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`).
+  Never run `playwright install` here.
 
-## Drive (headless Chromium via globally installed playwright)
+## Driving it by hand
 
 ```sh
-NODE_PATH=/opt/node22/lib/node_modules node <script>.js
+ALLOW_DEV_LOGIN=1 node server.js     # http://localhost:8321, file storage, dev login on
 ```
 
-Fresh `browser.newContext()` = fresh IndexedDB/localStorage → onboarding screen.
+Dev login takes any email, no password. The first account (or anything in
+`ADMIN_EMAILS`) is an admin.
 
-## Flows worth driving
+**Killing the server:** `pkill -f "[s]erver\.js"` in a **separate** Bash call —
+a compound command that mentions `server.js` matches itself and kills the shell.
 
-- Onboarding: `#onboard-name`, `#onboard-currency`, template cards (click the **card**, not the hidden checkbox — `.check()` fails on opacity-0 inputs), `#onboard-create`.
-- Dev sign-in: `#signin-btn` (sidebar) or `#onboard-signin` → `#dev-email` → submit → page reloads itself. First account becomes admin.
-- Sync: after edits wait ~2.5s (1.5s debounce), then `page.request.get('/api/data')` to assert cloud state. Sign-in on a fresh context restores the workspace.
-- Offline: `navigator.serviceWorker.ready` → reload → `ctx.setOffline(true)` → reload → app + CRUD must work; auth state survives via `crmb:auth`/`crmb:user` localStorage cache; after `setOffline(false)` the 'online' handler pushes dirty state.
-- Admin (`#/admin`): `.admin-stats .stat-count`, `.chart .bar` (44 bars = 30+14 days), `#chart-tip` on `.bar-g` hover, `.admin-row` actions `[data-act=role|disable|delete]` (accept dialogs).
-- API probes: non-admin `/api/admin/*` → 403; disabled user `/api/data` → 401.
-- Records/kanban/builder: `#f-<fieldKey>`, `#record-save`, drag `.kanban-card` → `.kanban-col[data-col] .kanban-cards`, builder rows `.bf-*`.
+## Gotchas that have bitten before
 
-## Gotchas
+- **Async re-render races.** `renderModuleBodyOnly` is async and not awaited by
+  click handlers. In tests, wait on rendered state (`aria-sort`, a row appearing)
+  before reading the DOM — reading immediately samples the *previous* render and
+  produces assertions that pass for the wrong reason.
+- **Row clicks land on links.** Email/phone/URL cells are anchors that stop
+  propagation. Click `tr td:first-child`, not the row centre, to open a record.
+- **Template cards** wrap a visually hidden checkbox — `.check()` fails; click the
+  `.template-card` itself.
+- **Hidden-but-present elements.** `#topbar` is `display:none` on desktop and
+  `#import-csv-file` is always hidden; don't `waitForSelector` on them, and don't
+  assert `svg.lucide` `.first()` is visible (the first one is in the hidden topbar).
+- **Navigating between modules is async** — waiting for `#export-csv-btn` resolves
+  against the *old* page. Wait for something identifying, e.g. `h1:has-text("Contacts")`.
+- **Renaming a field keeps its key**, so the default builder field stays `#f-name`.
+- Bump `CACHE_VERSION` in `sw.js` whenever a precached asset changes.
+- `js/icons.js` is generated from lucide-static: extract the **inner** content of
+  `<svg>` (the files open with a license comment; a naive first-`>` regex nests
+  svgs and swallows trailing text).
 
-- Renaming a field's *label* keeps its original *key* (default builder field stays `#f-name`).
-- `js/icons.js` is generated from lucide-static: extract the **inner** content of `<svg>` (files start with a license comment — a naive first-`>` regex nests svgs and swallows trailing button text).
-- Currency formatting follows Settings → currency everywhere (kanban totals, tables, dashboard tile).
-- Bump `CACHE_VERSION` in `sw.js` when changing any precached asset.
-- Expected console noise: `/api/me` fetch fails with ERR_INTERNET_DISCONNECTED when booting offline — the app handles it.
+## Invariants worth protecting
+
+- **The UI must paint before any network call resolves.** `init()` in `js/app.js`
+  calls `route()` and only then `syncInBackground()`. There is a regression test
+  ("paints immediately even when the server is asleep") that hangs `/api/me` for
+  8s and requires paint under 5s. Free-tier hosts sleep; this is why.
+- All `Cloud` API calls carry an `AbortSignal.timeout`. Nothing may block forever.
+- `openRecord` and `openCSVImport` re-resolve their module via `getModule(id)`;
+  rendered rows can outlive the module definition they were drawn from.
+- Only `http/https/mailto/tel` may reach an `href` (`safeHref`) — record values
+  arrive from CSV imports and shared backups.

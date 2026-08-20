@@ -51,6 +51,17 @@
     return LUCIDE[mod.icon] ? icon(mod.icon, size) : `<span class="emoji-icon">${esc(mod.icon)}</span>`;
   }
 
+  // Module names are plural ("Deals", "Companies") but buttons read better in
+  // the singular ("New deal"). Enough English to cover realistic module names.
+  function singular(name) {
+    const s = String(name).trim();
+    if (/(ss|us|is)$/i.test(s)) return s;                        // Status, Analysis, Address
+    if (/[^aeiou]ies$/i.test(s)) return `${s.slice(0, -3)}y`;    // Companies → Company
+    if (/(s|x|z|ch|sh)es$/i.test(s)) return s.slice(0, -2);      // Boxes → Box
+    if (/s$/i.test(s)) return s.slice(0, -1);                    // Deals → Deal
+    return s;                                                    // Equipment → Equipment
+  }
+
   function slug(label, taken = new Set()) {
     let base = label.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'field';
     let key = base;
@@ -78,9 +89,66 @@
   function state(moduleId) {
     if (!viewState.has(moduleId)) {
       const mod = getModule(moduleId);
-      viewState.set(moduleId, { q: '', view: mod && mod.defaultView === 'kanban' && kanbanField(mod) ? 'kanban' : 'table' });
+      viewState.set(moduleId, {
+        q: '',
+        view: mod && mod.defaultView === 'kanban' && kanbanField(mod) ? 'kanban' : 'table',
+        sort: null, // { key, dir: 'asc'|'desc' }; null = most recently edited
+      });
     }
     return viewState.get(moduleId);
+  }
+
+  // Sort values by what the field means, not by how it renders: currency and
+  // numbers numerically, dates chronologically, blanks always last.
+  function compareBy(field, dir) {
+    const sign = dir === 'desc' ? -1 : 1;
+    return (a, b) => {
+      const av = a.data[field.key];
+      const bv = b.data[field.key];
+      const aEmpty = av === undefined || av === null || av === '';
+      const bEmpty = bv === undefined || bv === null || bv === '';
+      if (aEmpty && bEmpty) return 0;
+      if (aEmpty) return 1;
+      if (bEmpty) return -1;
+
+      switch (field.type) {
+        case 'number':
+        case 'currency':
+          return sign * (Number(av) - Number(bv));
+        case 'checkbox':
+          return sign * ((av ? 1 : 0) - (bv ? 1 : 0));
+        case 'date':
+          return sign * (String(av) < String(bv) ? -1 : String(av) > String(bv) ? 1 : 0);
+        case 'select': {
+          // Dropdowns sort in the order the options were defined (pipeline
+          // order), which is far more useful than alphabetical.
+          const opts = field.options || [];
+          const ai = opts.indexOf(av);
+          const bi = opts.indexOf(bv);
+          if (ai !== -1 || bi !== -1) return sign * ((ai === -1 ? 1e6 : ai) - (bi === -1 ? 1e6 : bi));
+          return sign * String(av).localeCompare(String(bv));
+        }
+        case 'relation':
+          return sign * String(relationNameCache.get(av) || '').localeCompare(String(relationNameCache.get(bv) || ''), undefined, { sensitivity: 'base' });
+        default:
+          return sign * String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' });
+      }
+    };
+  }
+
+  // Single source of truth for "what rows does this module view show right now".
+  async function visibleRecords(mod) {
+    const st = state(mod.id);
+    let records = await DB.recordsByModule(mod.id);
+    await primeRelationCache(mod, records);
+    const q = st.q.trim().toLowerCase();
+    if (q) {
+      records = records.filter((r) => Object.values(r.data).some((v) => String(v ?? '').toLowerCase().includes(q)));
+    }
+    const sortField = st.sort && mod.fields.find((f) => f.key === st.sort.key);
+    if (sortField) records.sort(compareBy(sortField, st.sort.dir));
+    else records.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    return records;
   }
 
   function kanbanField(mod) {
@@ -120,6 +188,21 @@
 
   const relationNameCache = new Map(); // recordId -> display name
 
+  // Only ever emit hrefs we control the scheme of — record values arrive from
+  // CSV imports and shared backups, and `javascript:` in an href is executable.
+  const SAFE_SCHEME = /^(https?:|mailto:|tel:)/i;
+  function safeHref(value, prefix = '') {
+    const raw = `${prefix}${String(value).trim()}`;
+    if (SAFE_SCHEME.test(raw)) return esc(raw);
+    if (!prefix && /^[^\s:]+\.[^\s]/.test(raw)) return esc(`https://${raw}`); // bare domain
+    return '';
+  }
+
+  function linkHTML(href, text) {
+    if (!href) return esc(text);
+    return `<a href="${href}" ${href.startsWith('http') ? 'target="_blank" rel="noopener"' : ''} onclick="event.stopPropagation()">${esc(text)}</a>`;
+  }
+
   function fmtValue(field, value) {
     if (value === undefined || value === null || value === '') return '<span class="muted">—</span>';
     switch (field.type) {
@@ -127,9 +210,9 @@
       case 'number': return `<span class="num">${esc(Number(value).toLocaleString())}</span>`;
       case 'date': return esc(fmtDate(value));
       case 'checkbox': return value ? `<span class="check-yes">${icon('check', 15)}</span>` : '<span class="muted">—</span>';
-      case 'url': return `<a href="${esc(value)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(String(value).replace(/^https?:\/\//, ''))}</a>`;
-      case 'email': return `<a href="mailto:${esc(value)}" onclick="event.stopPropagation()">${esc(value)}</a>`;
-      case 'phone': return `<a href="tel:${esc(value)}" onclick="event.stopPropagation()">${esc(value)}</a>`;
+      case 'url': return linkHTML(safeHref(value), String(value).replace(/^https?:\/\//, ''));
+      case 'email': return linkHTML(safeHref(value, 'mailto:'), value);
+      case 'phone': return linkHTML(safeHref(value, 'tel:'), value);
       case 'select': return `<span class="pill">${esc(value)}</span>`;
       case 'relation': return esc(relationNameCache.get(value) || '(linked record)');
       case 'textarea': {
@@ -191,37 +274,39 @@
   }
 
   // Reconcile local vs cloud on startup (last-write-wins on the snapshot).
+  // Returns true when local data was replaced, so the caller knows to repaint.
   async function reconcileWithCloud() {
     let remote;
-    try { remote = await Cloud.pull(); } catch { return; }
+    try { remote = await Cloud.pull(); } catch { return false; }
     const localHas = modules.length > 0;
     const lastSync = Number(localStorage.getItem('crmb:lastSync')) || 0;
     const lastEdit = Number(localStorage.getItem('crmb:lastEdit')) || 0;
     const dirty = !!localStorage.getItem('crmb:dirty');
 
-    if (!remote || remote.modules === null) {
-      if (localHas) await Cloud.pushNow();
-      return;
-    }
-    if (!localHas) {
+    const adopt = async (msg) => {
       await importState(remote);
       localStorage.setItem('crmb:lastSync', String(Date.now()));
       localStorage.removeItem('crmb:dirty');
-      if (remote.modules.length) toast('Workspace restored from your account');
-      return;
+      if (msg) toast(msg);
+      return true;
+    };
+
+    if (!remote || remote.modules === null) {
+      if (localHas) await Cloud.pushNow();
+      return false;
+    }
+    if (!localHas) {
+      return adopt(remote.modules.length ? 'Workspace restored from your account' : '');
     }
     if (remote.updatedAt > lastSync) {
       if (!dirty || remote.updatedAt > lastEdit) {
-        await importState(remote);
-        localStorage.setItem('crmb:lastSync', String(Date.now()));
-        localStorage.removeItem('crmb:dirty');
-        toast('Synced latest data from your account');
-      } else {
-        await Cloud.pushNow(); // local edits are newer
+        return adopt('Synced latest data from your account');
       }
-    } else if (dirty) {
-      await Cloud.pushNow();
+      await Cloud.pushNow(); // local edits are newer
+      return false;
     }
+    if (dirty) await Cloud.pushNow();
+    return false;
   }
 
   // ---------------------------------------------------------------- modal
@@ -252,11 +337,16 @@
 
   // ---------------------------------------------------------------- sidebar
   function syncStatusHTML() {
+    // Boot paints before /api/me answers (a sleeping free-tier host can take
+    // most of a minute), so "we don't know yet" is a real state to show.
+    if (!Cloud.ready && !Cloud.isAuthed) {
+      return `<span class="sync-status boot-chip" data-status="connecting"><span class="sync-dot"></span>Connecting…</span>`;
+    }
     if (!Cloud.me.serverAvailable) return '';
     if (!Cloud.isAuthed) {
       return `<button class="btn btn-outline btn-block" id="signin-btn">${icon('log-in', 15)} Sign in to sync</button>`;
     }
-    const labels = { synced: 'Synced', syncing: 'Syncing…', error: 'Sync error — retrying', offline: 'Offline — will sync', local: 'Local' };
+    const labels = { synced: 'Synced', syncing: 'Syncing…', connecting: 'Connecting…', error: 'Sync error — retrying', offline: 'Offline — will sync', local: 'Local' };
     const u = Cloud.user;
     return `
       <div class="user-chip">
@@ -411,7 +501,7 @@
               <div class="card-head"><h2>Quick add</h2></div>
               <div class="quick-add">
                 ${modules.slice(0, 6).map((m) => `
-                  <button class="btn btn-outline" data-quick-add="${m.id}">${icon('plus', 14)} ${esc(m.name.replace(/s$/, ''))}</button>`).join('')}
+                  <button class="btn btn-outline" data-quick-add="${m.id}">${icon('plus', 14)} ${esc(singular(m.name))}</button>`).join('')}
               </div>
             </div>
           </div>
@@ -459,8 +549,9 @@
           <label class="checkbox-line"><input type="checkbox" id="onboard-samples" checked> Include a few sample records</label>
           <div class="onboard-buttons">
             <button class="btn btn-primary btn-lg" id="onboard-create">Create my CRM</button>
-            <button class="btn btn-ghost" id="onboard-custom">Start with a custom module instead</button>
+            <button class="btn" id="onboard-demo">${icon('database', 15)} Explore with demo data</button>
           </div>
+          <button class="btn btn-ghost" id="onboard-custom">Start with a custom module instead</button>
           ${Cloud.me.serverAvailable && !Cloud.isAuthed ? `<button class="btn btn-ghost" id="onboard-signin">${icon('log-in', 15)} Already have an account? Sign in</button>` : ''}
         </div>
       </div>`;
@@ -482,6 +573,7 @@
       toast('Your CRM is ready');
     });
     $('#onboard-custom').addEventListener('click', () => openBuilder(null));
+    $('#onboard-demo').addEventListener('click', () => loadDemoData({ replace: false }));
     const signin = $('#onboard-signin');
     if (signin) signin.addEventListener('click', openSignIn);
   }
@@ -506,6 +598,49 @@
     return mod;
   }
 
+  // ---------------------------------------------------------------- demo data
+  // Builds every template module and fills it with the fictional business in
+  // demo-data.js, so a demo or evaluation starts on a CRM that looks used.
+  async function loadDemoData({ replace }) {
+    if (typeof DEMO_DATA === 'undefined') {
+      toast('Demo data is unavailable');
+      return;
+    }
+    const demo = resolveDemoDates(DEMO_DATA);
+    if (replace) {
+      await DB.clear('records');
+      await DB.clear('modules');
+      relationNameCache.clear();
+    }
+    await loadModules();
+
+    for (const template of TEMPLATES) {
+      const rows = demo.records[template.key];
+      if (!rows || !rows.length) continue;
+      // Reuse a module of the same name if the user already has one.
+      let mod = modules.find((m) => m.name.toLowerCase() === template.name.toLowerCase());
+      if (!mod) mod = await createFromTemplate(template, false);
+      const now = Date.now();
+      let i = 0;
+      for (const data of rows) {
+        i += 1;
+        // Stagger updatedAt so "recent activity" has a believable order.
+        await DB.put('records', { id: uid(), moduleId: mod.id, data: { ...data }, createdAt: now - i * 60000, updatedAt: now - i * 60000 });
+      }
+    }
+
+    SETTINGS.businessName = demo.businessName;
+    SETTINGS.currency = demo.currency;
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS));
+
+    await loadModules();
+    await persist();
+    renderSidebar();
+    toast('Demo data loaded');
+    location.hash = '#/';
+    route();
+  }
+
   // ---------------------------------------------------------------- module view
   async function renderModule(id) {
     const mod = getModule(id);
@@ -515,13 +650,7 @@
       return;
     }
     const st = state(id);
-    let records = await DB.recordsByModule(id);
-    await primeRelationCache(mod, records);
-    const q = st.q.trim().toLowerCase();
-    if (q) {
-      records = records.filter((r) => Object.values(r.data).some((v) => String(v ?? '').toLowerCase().includes(q)));
-    }
-    records.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const records = await visibleRecords(mod);
     const kf = kanbanField(mod);
 
     main.innerHTML = `
@@ -536,6 +665,9 @@
                 <button class="seg-btn ${st.view === 'table' ? 'on' : ''}" data-view="table" title="Table view">${icon('table-properties', 15)}</button>
                 <button class="seg-btn ${st.view === 'kanban' ? 'on' : ''}" data-view="kanban" title="Board view">${icon('square-kanban', 15)}</button>
               </div>` : ''}
+            <button class="icon-btn" id="export-csv-btn" title="Export to CSV">${icon('download', 15)}</button>
+            <button class="icon-btn" id="import-csv-btn" title="Import from CSV">${icon('upload', 15)}</button>
+            <input type="file" id="import-csv-file" accept=".csv,text/csv" class="hidden">
             <button class="icon-btn" id="edit-module-btn" title="Edit module">${icon('pencil', 15)}</button>
             <button class="btn btn-primary" id="add-record-btn">${icon('plus', 15)} Add</button>
           </div>
@@ -556,18 +688,15 @@
     }));
     $('#add-record-btn').addEventListener('click', () => openRecord(mod, null));
     $('#edit-module-btn').addEventListener('click', () => openBuilder(mod));
+    $('#export-csv-btn').addEventListener('click', () => exportModuleCSV(mod));
+    $('#import-csv-btn').addEventListener('click', () => $('#import-csv-file').click());
+    $('#import-csv-file').addEventListener('change', (e) => openCSVImport(mod, e));
     bindModuleBody(mod);
   }
 
   async function renderModuleBodyOnly(mod) {
     const st = state(mod.id);
-    let records = await DB.recordsByModule(mod.id);
-    await primeRelationCache(mod, records);
-    const q = st.q.trim().toLowerCase();
-    if (q) {
-      records = records.filter((r) => Object.values(r.data).some((v) => String(v ?? '').toLowerCase().includes(q)));
-    }
-    records.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const records = await visibleRecords(mod);
     const kf = kanbanField(mod);
     const body = $('#module-body');
     if (!body) return;
@@ -579,13 +708,26 @@
 
   function tableHTML(mod, records) {
     const cols = listFields(mod);
+    const st = state(mod.id);
     if (!records.length) {
-      return `<div class="card"><p class="empty-hint">Nothing here yet. Hit <strong>Add</strong> to create your first ${esc(mod.name.toLowerCase().replace(/s$/, ''))}.</p></div>`;
+      const searching = st.q.trim().length > 0;
+      return `<div class="card"><p class="empty-hint">${searching
+        ? `No ${esc(mod.name.toLowerCase())} match “${esc(st.q)}”.`
+        : `Nothing here yet. Hit <strong>Add</strong> to create your first ${esc(singular(mod.name).toLowerCase())}, or import a CSV.`}</p></div>`;
     }
+    const sortIcon = (f) => {
+      if (!st.sort || st.sort.key !== f.key) return `<span class="sort-hint">${icon('chevron-up', 13)}</span>`;
+      return `<span class="sort-on ${st.sort.dir}">${icon('chevron-up', 13)}</span>`;
+    };
     return `
       <div class="card table-wrap">
         <table class="records-table">
-          <thead><tr>${cols.map((f) => `<th class="${['currency', 'number'].includes(f.type) ? 'th-num' : ''}">${esc(f.label)}</th>`).join('')}</tr></thead>
+          <thead><tr>${cols.map((f) => `
+            <th class="th-sortable ${['currency', 'number'].includes(f.type) ? 'th-num' : ''} ${st.sort && st.sort.key === f.key ? 'th-sorted' : ''}"
+                data-sort-key="${esc(f.key)}"
+                aria-sort="${st.sort && st.sort.key === f.key ? (st.sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}"
+                tabindex="0" role="button"
+                title="Sort by ${esc(f.label)}">${esc(f.label)}${sortIcon(f)}</th>`).join('')}</tr></thead>
           <tbody>
             ${records.map((r) => `
               <tr data-record="${r.id}" tabindex="0">
@@ -629,6 +771,22 @@
   }
 
   function bindModuleBody(mod) {
+    // Header clicks cycle: ascending → descending → back to "recently edited".
+    $$('#module-body [data-sort-key]').forEach((th) => {
+      const apply = () => {
+        const st = state(mod.id);
+        const key = th.dataset.sortKey;
+        if (!st.sort || st.sort.key !== key) st.sort = { key, dir: 'asc' };
+        else if (st.sort.dir === 'asc') st.sort = { key, dir: 'desc' };
+        else st.sort = null;
+        renderModuleBodyOnly(mod);
+      };
+      th.addEventListener('click', apply);
+      th.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); apply(); }
+      });
+    });
+
     $$('#module-body [data-record]').forEach((node) => {
       node.addEventListener('click', async () => {
         const record = await DB.get('records', node.dataset.record);
@@ -667,6 +825,203 @@
         await persist();
         renderModuleBodyOnly(mod);
       });
+    });
+  }
+
+  // ---------------------------------------------------------------- csv
+  function downloadFile(name, text, type) {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // Exports exactly what the user is looking at — current search and sort
+  // included — because that is what "export" means everywhere else.
+  async function exportModuleCSV(mod) {
+    const records = await visibleRecords(mod);
+    if (!records.length) {
+      toast('Nothing to export');
+      return;
+    }
+    const fields = mod.fields;
+    const rows = [fields.map((f) => f.label)];
+    records.forEach((r) => {
+      rows.push(fields.map((f) => {
+        const v = r.data[f.key];
+        if (v === undefined || v === null) return '';
+        if (f.type === 'checkbox') return v ? 'yes' : 'no';
+        if (f.type === 'relation') return relationNameCache.get(v) || '';
+        return v;
+      }));
+    });
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadFile(`${mod.name.toLowerCase().replace(/\s+/g, '-')}-${stamp}.csv`, CSV.stringify(rows), 'text/csv;charset=utf-8');
+    toast(`Exported ${records.length} ${records.length === 1 ? 'row' : 'rows'}`);
+  }
+
+  function coerceForField(field, raw) {
+    const v = String(raw ?? '').trim();
+    if (v === '') return '';
+    switch (field.type) {
+      case 'number':
+      case 'currency': {
+        // Tolerate "€1,234.00", "1 234", "(500)" as spreadsheets emit them.
+        const neg = /^\(.*\)$/.test(v);
+        const n = Number(v.replace(/[()]/g, '').replace(/[^0-9.-]/g, ''));
+        return Number.isNaN(n) ? '' : (neg ? -n : n);
+      }
+      case 'checkbox':
+        return /^(yes|y|true|1|done|x|✓)$/i.test(v);
+      case 'date': {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+        const d = new Date(v);
+        return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+      }
+      case 'select': {
+        // Match an existing option case-insensitively; otherwise keep the raw
+        // text so nothing is silently dropped.
+        const hit = (field.options || []).find((o) => o.toLowerCase() === v.toLowerCase());
+        return hit || v;
+      }
+      default:
+        return v;
+    }
+  }
+
+  function guessFieldFor(header, fields, used) {
+    const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const h = norm(header);
+    if (!h) return '';
+    const free = fields.filter((f) => !used.has(f.key));
+    return (free.find((f) => norm(f.label) === h)
+      || free.find((f) => norm(f.key) === h)
+      || free.find((f) => norm(f.label).includes(h) || h.includes(norm(f.label)))
+      || { key: '' }).key;
+  }
+
+  async function openCSVImport(staleMod, event) {
+    // Same reason as openRecord: use the live module definition, not the one
+    // captured when this page was rendered.
+    const mod = getModule(staleMod.id) || staleMod;
+    const file = event.target.files[0];
+    event.target.value = '';
+    if (!file) return;
+
+    let rows;
+    try {
+      rows = CSV.parse(await file.text());
+    } catch {
+      toast('Could not read that CSV file');
+      return;
+    }
+    if (rows.length < 2) {
+      toast('That CSV has no data rows');
+      return;
+    }
+
+    const headers = rows[0];
+    const dataRows = rows.slice(1);
+    const used = new Set();
+    const guesses = headers.map((h) => {
+      const key = guessFieldFor(h, mod.fields, used);
+      if (key) used.add(key);
+      return key;
+    });
+    const matched = guesses.filter(Boolean).length;
+
+    const modal = openModal(`
+      <div class="modal-head">
+        <h2>Import into ${esc(mod.name)}</h2>
+        <button class="icon-btn" data-close aria-label="Close">${icon('x', 16)}</button>
+      </div>
+      <div class="modal-body">
+        <p class="settings-hint">
+          <strong>${dataRows.length}</strong> row${dataRows.length === 1 ? '' : 's'} found in
+          <strong>${esc(file.name)}</strong>. ${matched} of ${headers.length} columns matched automatically —
+          check the mapping below.
+        </p>
+        <div class="map-table">
+          <div class="map-row map-head"><span>CSV column</span><span>Sample value</span><span>Import as</span></div>
+          ${headers.map((h, i) => `
+            <div class="map-row">
+              <span class="map-col"><strong>${esc(h || `(column ${i + 1})`)}</strong></span>
+              <span class="map-sample muted">${esc((dataRows.find((r) => (r[i] || '').trim())?.[i] || '—').slice(0, 40))}</span>
+              <select class="input map-select" data-col="${i}">
+                <option value="">— skip this column —</option>
+                ${mod.fields.map((f) => `<option value="${esc(f.key)}" ${guesses[i] === f.key ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}
+                <option value="__new__">+ Create new field "${esc(h || `column ${i + 1}`)}"</option>
+              </select>
+            </div>`).join('')}
+        </div>
+        <label class="checkbox-line import-mode"><input type="checkbox" id="csv-replace"> Replace all existing ${esc(mod.name.toLowerCase())} instead of adding</label>
+      </div>
+      <div class="modal-foot">
+        <span></span>
+        <div class="modal-foot-right">
+          <button class="btn btn-ghost" data-close>Cancel</button>
+          <button class="btn btn-primary" id="csv-import-go">Import ${dataRows.length} row${dataRows.length === 1 ? '' : 's'}</button>
+        </div>
+      </div>`, { wide: true });
+
+    $$('[data-close]', modal).forEach((b) => b.addEventListener('click', closeModal));
+    $('#csv-import-go', modal).addEventListener('click', async () => {
+      const mapping = $$('.map-select', modal).map((sel) => ({ col: Number(sel.dataset.col), target: sel.value }));
+      const active = mapping.filter((m) => m.target);
+      if (!active.length) {
+        toast('Map at least one column');
+        return;
+      }
+
+      // Columns marked "create new field" extend the module before importing.
+      const created = [];
+      const taken = new Set(mod.fields.map((f) => f.key));
+      active.forEach((m) => {
+        if (m.target !== '__new__') return;
+        const label = (headers[m.col] || `Column ${m.col + 1}`).trim();
+        const key = slug(label, taken);
+        taken.add(key);
+        const field = { key, label, type: 'text', showInList: mod.fields.filter((f) => f.showInList).length < 6 };
+        created.push(field);
+        m.target = key;
+      });
+      if (created.length) {
+        mod.fields = [...mod.fields, ...created];
+        await DB.put('modules', mod);
+        await loadModules();
+      }
+
+      if ($('#csv-replace', modal).checked) {
+        if (!confirm(`Delete all existing ${mod.name.toLowerCase()} and replace them with ${dataRows.length} imported rows?`)) return;
+        await DB.deleteRecordsByModule(mod.id);
+      }
+
+      const fieldByKey = new Map(getModule(mod.id).fields.map((f) => [f.key, f]));
+      let imported = 0;
+      let skipped = 0;
+      for (const row of dataRows) {
+        const data = {};
+        let hasValue = false;
+        active.forEach(({ col, target }) => {
+          const field = fieldByKey.get(target);
+          if (!field) return;
+          const value = coerceForField(field, row[col]);
+          if (value !== '' && value !== false) hasValue = true;
+          data[target] = value;
+        });
+        if (!hasValue) { skipped += 1; continue; } // blank line in the sheet
+        const now = Date.now();
+        await DB.put('records', { id: uid(), moduleId: mod.id, data, createdAt: now, updatedAt: now });
+        imported += 1;
+      }
+
+      await persist();
+      closeModal();
+      renderSidebar();
+      await renderModule(mod.id);
+      toast(`Imported ${imported} row${imported === 1 ? '' : 's'}${skipped ? ` · skipped ${skipped} blank` : ''}`);
     });
   }
 
@@ -711,7 +1066,11 @@
     }
   }
 
-  async function openRecord(mod, record) {
+  async function openRecord(staleMod, record) {
+    // Rows can outlive the module definition they were rendered from (a CSV
+    // import adds fields, the builder edits them), so always open the form
+    // against the current definition rather than the captured one.
+    const mod = getModule(staleMod.id) || staleMod;
     const isNew = !record;
     const data = record ? record.data : {};
     const fieldsHTML = (await Promise.all(mod.fields.map(async (f) => `
@@ -722,7 +1081,7 @@
 
     const modal = openModal(`
       <div class="modal-head">
-        <h2>${isNew ? `New ${esc(mod.name.replace(/s$/, ''))}` : esc(recordName(mod, record))}</h2>
+        <h2>${isNew ? `New ${esc(singular(mod.name).toLowerCase())}` : esc(recordName(mod, record))}</h2>
         <button class="icon-btn" data-close aria-label="Close">${icon('x', 16)}</button>
       </div>
       <form id="record-form" class="modal-body">${fieldsHTML}</form>
@@ -994,7 +1353,9 @@
           <div class="btn-row">
             <button class="btn ${deferredInstall ? '' : 'hidden'}" id="settings-install">${icon('download', 15)} Install on this device</button>
             <button class="btn" id="add-template-btn">${icon('plus', 15)} Add module from template</button>
+            <button class="btn" id="load-demo-btn">${icon('database', 15)} Load demo data</button>
           </div>
+          <p class="settings-hint" style="margin:12px 0 0">Demo data fills every module with a sample business so you can explore or present without entering records first. It is added alongside anything you already have.</p>
         </div>
         <div class="card danger-zone">
           <div class="card-head"><h2>Danger zone</h2></div>
@@ -1029,6 +1390,11 @@
     const installBtn = $('#settings-install');
     if (installBtn) installBtn.addEventListener('click', promptInstall);
     $('#add-template-btn').addEventListener('click', openTemplatePicker);
+    $('#load-demo-btn').addEventListener('click', async () => {
+      const replace = modules.length > 0
+        && confirm('Replace your current modules and records with the demo business?\n\nOK = replace everything (your current data is deleted)\nCancel = add demo data alongside what you have');
+      await loadDemoData({ replace });
+    });
     const signinBtn = $('#settings-signin');
     if (signinBtn) signinBtn.addEventListener('click', openSignIn);
     const signoutBtn = $('#signout-btn');
@@ -1322,6 +1688,23 @@
     else renderDashboard();
   }
 
+  // Sync happens after the first paint, so it must not disturb whatever the
+  // user is already doing. Repaint only when the cloud actually replaced our
+  // data, and never out from under an open modal.
+  async function syncInBackground() {
+    await Cloud.init(fullState);
+    renderSidebar();
+    // The onboarding screen offers "already have an account?" only once we know
+    // a server exists, so repaint it now that we do.
+    if (!modules.length && !$('#modal-root').firstChild) route();
+    if (!Cloud.isAuthed) return;
+    const changed = await reconcileWithCloud();
+    if (!changed) return;
+    await loadModules();
+    if ($('#modal-root').firstChild) return; // mid-edit: leave the screen alone
+    route();
+  }
+
   async function init() {
     await loadModules();
 
@@ -1336,12 +1719,6 @@
       } catch { /* no snapshot */ }
     }
 
-    await Cloud.init(fullState);
-    if (Cloud.isAuthed) {
-      await reconcileWithCloud();
-      await loadModules();
-    }
-
     const params = new URLSearchParams(location.search);
     if (params.get('auth_error')) {
       toast(params.get('auth_error') === 'disabled' ? 'This account has been disabled' : 'Sign-in failed — please try again');
@@ -1354,7 +1731,11 @@
     $('#menu-btn').addEventListener('click', () => document.body.classList.toggle('sidebar-open'));
     $('#scrim').addEventListener('click', closeSidebar);
     updateOnlineBadge();
+
+    // Paint from local data immediately. A sleeping free-tier server must never
+    // stand between the user and their own data — /api/me is not awaited here.
     route();
+    syncInBackground();
 
     if ('serviceWorker' in navigator) {
       try {

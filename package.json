@@ -5,7 +5,12 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "ALLOW_DEV_LOGIN=1 node server.js"
+    "dev": "ALLOW_DEV_LOGIN=1 node server.js",
+    "test": "node --test tests/*.test.mjs && playwright test",
+    "test:api": "node --test tests/api.test.mjs",
+    "test:unit": "node --test tests/csv.test.mjs",
+    "test:e2e": "playwright test",
+    "test:smoke": "node tests/smoke.mjs"
   },
   "engines": {
     "node": ">=18"
@@ -16,5 +21,8 @@
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
     "mongodb": "^6.12.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
   }
 }

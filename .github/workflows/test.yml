@@ -1,0 +1,86 @@
+name: Tests
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  schedule:
+    # Every morning, check the live deployment is still healthy.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      live_url:
+        description: 'Deployment to smoke test (defaults to the LIVE_URL variable)'
+        required: false
+        type: string
+
+jobs:
+  test:
+    name: Unit, API and end-to-end
+    # Scheduled runs only need the live smoke test.
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Unit tests (CSV)
+        run: npm run test:unit
+
+      - name: API contract tests
+        run: npm run test:api
+
+      - name: End-to-end tests
+        run: npm run test:e2e
+
+      - name: Smoke test the local build
+        run: |
+          DATA_DIR=./data/ci node server.js &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8321/healthz >/dev/null && break
+            sleep 1
+          done
+          node tests/smoke.mjs
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  live:
+    name: Live deployment health
+    # Runs on schedule, on manual dispatch, and after a push to the default branch.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Smoke test the live deployment
+        env:
+          # Set a repository variable named LIVE_URL (Settings → Secrets and
+          # variables → Actions → Variables), e.g. https://crmbuilder-0hv1.onrender.com
+          BASE_URL: ${{ inputs.live_url || vars.LIVE_URL }}
+        run: |
+          if [ -z "$BASE_URL" ]; then
+            echo "No LIVE_URL configured — skipping live smoke test."
+            echo "Set a repository variable named LIVE_URL to enable it."
+            exit 0
+          fi
+          echo "Smoke testing $BASE_URL"
+          node tests/smoke.mjs

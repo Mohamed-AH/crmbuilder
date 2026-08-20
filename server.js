@@ -139,7 +139,8 @@ class MongoStore {
 
 const store = process.env.MONGODB_URI
   ? new MongoStore(process.env.MONGODB_URI)
-  : new FileStore(path.join(__dirname, 'data', 'store.json'));
+  // DATA_DIR lets tests point the file store at a throwaway directory.
+  : new FileStore(path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'store.json'));
 
 // ------------------------------------------------------------------ auth
 function publicUser(u) {

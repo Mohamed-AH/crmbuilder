@@ -11,8 +11,39 @@ A **modular CRM builder for small businesses** — an installable, offline-first
 - **Accounts & sync (OAuth)** — sign in with Google and your workspace syncs to MongoDB; use it from any device. Signed out or offline, everything is saved on-device (IndexedDB + a localStorage backup copy) and syncs when you're back.
 - **Workspace settings** — business name and currency (30 currencies; all money fields format accordingly).
 - **Admin dashboard** — account management (promote, disable, delete) plus business analytics: total/active users, workspaces, records, signups per day, and daily active users.
+- **Spreadsheet import/export** — CSV export of the current view, and CSV import with automatic column matching, a mapping step, on-the-fly field creation, and type coercion for money, dates and yes/no columns.
+- **Sortable columns** — click any header; sorting is type-aware (numbers numerically, dates chronologically, dropdowns in pipeline order).
+- **Demo data** — one click fills every module with a coherent fictional business (107 records) for evaluations and demos.
 - **Backup & restore** — export/import the whole workspace as JSON.
 - **PWA** — installable on desktop and mobile, fully offline via a service worker, light & dark mode, Inter typography, Lucide icons.
+
+## Documentation
+
+| Document | For |
+|---|---|
+| **[User Guide](docs/USER-GUIDE.md)** | End users — every feature, in the order you need it. Also published as a [shareable web manual](docs/manual.html). |
+| **[Onboarding Playbook](docs/ONBOARDING.md)** | Whoever rolls this out to a business: session plans, data migration, week-1 check-in. |
+| **[Demo Script](docs/DEMO-SCRIPT.md)** | A timed 10-minute demo aimed at people who already use professional CRMs. |
+| **[Deployment](DEPLOYMENT.md)** | Getting it running on Render + MongoDB Atlas + Google OAuth. |
+| **[Marketing](MARKETING.md)** | B2B/B2C copy and launch threads. |
+
+## Testing
+
+```sh
+npm test              # unit + API contract + end-to-end
+npm run test:unit     # CSV parser/serializer
+npm run test:api      # API contracts (boots a throwaway server)
+npm run test:e2e      # Playwright user journeys
+npm run test:smoke    # deployment health audit (localhost)
+
+# Audit a live deployment — reachability, assets, API contracts, and whether
+# storage/OAuth/dev-login are configured safely for production:
+BASE_URL=https://your-app.onrender.com npm run test:smoke
+```
+
+CI (`.github/workflows/test.yml`) runs the full suite on every push and smoke-tests
+the live deployment daily. Set a repository variable `LIVE_URL` to enable the
+scheduled live check.
 
 ## Quick start (local)
 
@@ -39,8 +70,12 @@ css/style.css         styles (Inter, light/dark, desktop-first)
 js/icons.js           inline Lucide SVG icons
 js/db.js              promise-based IndexedDB wrapper
 js/cloud.js           account + sync layer (server ⇄ local fallback)
+js/csv.js             RFC 4180 CSV reader/writer
 js/templates.js       prebuilt module templates
+js/demo-data.js       fictional business used by "Load demo data"
 js/app.js             router, views, module builder, kanban, admin dashboard
+tests/                smoke, API, CSV unit and Playwright end-to-end tests
+docs/                 user guide, onboarding playbook, demo script, web manual
 sw.js                 offline-first service worker (bump CACHE_VERSION on asset changes)
 manifest.webmanifest  PWA manifest
 fonts/, icons/        self-hosted Inter + app icons
