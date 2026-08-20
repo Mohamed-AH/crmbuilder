@@ -219,7 +219,22 @@ await check('sync model', async () => {
   const { res, err } = await get('/health');
   if (err) throw new Error(`${err.message} — /health unreachable`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const h = await res.json();
+
+  // A deployment predating /health has no route for it, so the SPA catch-all
+  // answers with index.html. That is an out-of-date deployment, which is worth
+  // saying out loud — but it is not a broken one, and failing the whole audit
+  // over it points the reader at the wrong problem.
+  const body = await res.text();
+  let h;
+  try {
+    h = JSON.parse(body);
+  } catch {
+    return {
+      status: 'WARN',
+      detail: 'no /health endpoint — this deployment predates it; redeploy to pick it up',
+    };
+  }
+
   // Counts on a public /health are a customer count — fine on a single-tenant
   // deployment where they are the operator's own, not fine on a pooled one.
   if (h.counts && h.deployment !== 'dedicated') {
