@@ -31,7 +31,11 @@ const CSV = (() => {
         continue;
       }
 
-      if (ch === '"') { inQuotes = true; i += 1; continue; }
+      // A quote only opens a quoted field at the very start of that field.
+      // Mid-field quotes are literal — hand-edited files contain things like
+      //   Daniel "Danny" Boyd
+      // and treating that quote as an opener silently swallows both marks.
+      if (ch === '"' && field === '') { inQuotes = true; i += 1; continue; }
       if (ch === ',') { row.push(field); field = ''; i += 1; continue; }
       if (ch === '\r') { i += 1; continue; } // CRLF and lone CR both end the line
       if (ch === '\n') { row.push(field); rows.push(row); row = []; field = ''; i += 1; continue; }

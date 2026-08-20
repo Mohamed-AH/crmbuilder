@@ -33,6 +33,21 @@ describe('CSV.parse', () => {
     assert.deepEqual(CSV.parse('q\n"She said ""hi"""'), [['q'], ['She said "hi"']]);
   });
 
+  test('treats a mid-field quote as a literal character', () => {
+    // Not strictly RFC 4180, but hand-edited files do this and silently
+    // dropping the quotes corrupts the value.
+    assert.deepEqual(CSV.parse('name\nDaniel "Danny" Boyd'), [['name'], ['Daniel "Danny" Boyd']]);
+    assert.deepEqual(CSV.parse('a,b\n5" pipe,ok'), [['a', 'b'], ['5" pipe', 'ok']]);
+  });
+
+  test('still treats a leading quote as a field opener', () => {
+    assert.deepEqual(CSV.parse('name\n"Boyd, Daniel"'), [['name'], ['Boyd, Daniel']]);
+    // An empty quoted field is preserved when the row has other content. A row
+    // that is *only* an empty quoted field is indistinguishable from the
+    // trailing blank line spreadsheets emit, and is trimmed with them.
+    assert.deepEqual(CSV.parse('a,b\n"",x'), [['a', 'b'], ['', 'x']]);
+  });
+
   test('keeps newlines inside quoted fields', () => {
     assert.deepEqual(CSV.parse('note\n"line one\nline two"'), [['note'], ['line one\nline two']]);
   });

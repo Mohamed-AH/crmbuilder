@@ -18,8 +18,12 @@ data model. This one is assembled around yours. Everything else is support.
       demo data* on a fresh browser). You get 40 contacts, an 18-deal pipeline
       worth ~$166k, tasks, leads and notes.
 - [ ] Have a **second browser profile** ready and signed out — for the sync moment.
-- [ ] Have a small **CSV file** on the desktop, ready to drag in. Two or three
-      columns, one of them something the CRM doesn't have a field for yet.
+- [ ] Put **`docs/demo-data/demo-contacts.csv`** on your desktop, ready to pick.
+      It's built for this moment: 8 rows, 4 of its 5 columns auto-match the
+      Contacts module, and the fifth (*Referred by*) doesn't exist yet — that's
+      the column you create live during the import.
+      Optional second file, **`demo-deals.csv`**, is for the "does it handle real
+      spreadsheet mess?" question — see [the sidebar below](#the-second-csv).
 - [ ] Zoom the browser to ~110% so the table is readable on a shared screen.
 
 ---
@@ -81,10 +85,25 @@ unmatched column:
 > making me go and create it first, I can create the field right from the
 > import."
 
-Import. Show the rows landing.
+Import. Show the rows landing — then point at the first row, `Okafor, Tunde`:
 
-> "It handles what spreadsheets actually produce: quoted commas, Excel's
-> encoding, money as `$1,234`, negatives in brackets, yes/no as checkboxes."
+> "That name has a comma in it, and it survived. It handles what spreadsheets
+> actually produce: quoted commas, escaped quotes, Excel's encoding, money as
+> `$1,234`, negatives in brackets, yes/no as checkboxes."
+
+<a id="the-second-csv"></a>
+**If they push on that** — and someone who has migrated a CRM before usually
+will — open Deals and import `demo-deals.csv` instead of asserting it. Every
+row in that file is deliberately messy, and the mapping screen shows it landing
+clean:
+
+| In the file | Becomes |
+|---|---|
+| `"$12,500.00"`, `"€8,400"`, `"1 950"` | `12500`, `8400`, `1950` |
+| `(450)` | `-450` — accounting-style negative |
+| `proposal`, `QUALIFIED`, `won` | matched to the real Stage options |
+| `Oct 3 2026`, `15 Nov 2026` | proper dates, sortable |
+| `Probability` | a column Deals doesn't have — create it inline |
 
 ### 5:30 — Table craft *(45 seconds)*
 
