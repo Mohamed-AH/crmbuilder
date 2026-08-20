@@ -73,14 +73,10 @@ jobs:
 
       - name: Smoke test the live deployment
         env:
-          # Set a repository variable named LIVE_URL (Settings → Secrets and
-          # variables → Actions → Variables), e.g. https://crmbuilder-0hv1.onrender.com
-          BASE_URL: ${{ inputs.live_url || vars.LIVE_URL }}
+          # Defaults to the production deployment. Override per-run via the
+          # workflow_dispatch input, or permanently with a repository variable
+          # named LIVE_URL (Settings → Secrets and variables → Actions → Variables).
+          BASE_URL: ${{ inputs.live_url || vars.LIVE_URL || 'https://crmbuilder-v1.onrender.com' }}
         run: |
-          if [ -z "$BASE_URL" ]; then
-            echo "No LIVE_URL configured — skipping live smoke test."
-            echo "Set a repository variable named LIVE_URL to enable it."
-            exit 0
-          fi
           echo "Smoke testing $BASE_URL"
           node tests/smoke.mjs

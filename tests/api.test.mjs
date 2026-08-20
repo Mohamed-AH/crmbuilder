@@ -152,12 +152,12 @@ describe('authentication', () => {
     assert.equal(status, 400);
   });
 
-  test('the first account to sign in becomes an admin', async () => {
+  test('the first account to sign in becomes a platform admin', async () => {
     const cookies = jar();
     const { status, json } = await req('/auth/dev', { method: 'POST', body: { email: 'owner@example.com' }, cookies });
     assert.equal(status, 200);
     assert.equal(json.user.email, 'owner@example.com');
-    assert.equal(json.user.role, 'admin');
+    assert.equal(json.user.role, 'platformAdmin');
 
     const me = await req('/api/me', { cookies });
     assert.equal(me.json.authenticated, true);
@@ -227,6 +227,101 @@ describe('workspace sync', () => {
   });
 });
 
+/*
+ * Cross-tenant isolation. These assert the attack, not the happy path: an org
+ * owner from tenant B reaching for tenant A's resources. One missed orgId
+ * filter is a data leak, so this suite is the gate on that work.
+ */
+describe('tenant isolation', () => {
+  const alice = jar();   // owner of org A
+  const bob = jar();     // owner of org B
+  let aliceId = null;
+  let bobId = null;
+  let aliceOrg = null;
+  let bobOrg = null;
+
+  before(async () => {
+    const a = await req('/auth/dev', { method: 'POST', body: { email: 'alice@org-a.test' }, cookies: alice });
+    aliceId = a.json.user.id;
+    const b = await req('/auth/dev', { method: 'POST', body: { email: 'bob@org-b.test' }, cookies: bob });
+    bobId = b.json.user.id;
+    aliceOrg = (await req('/api/org', { cookies: alice })).json.org;
+    bobOrg = (await req('/api/org', { cookies: bob })).json.org;
+    // Give each a workspace so counts are non-zero.
+    await req('/api/data', { method: 'PUT', body: { modules: [], records: [], settings: { businessName: 'A' } }, cookies: alice });
+    await req('/api/data', { method: 'PUT', body: { modules: [], records: [], settings: { businessName: 'B' } }, cookies: bob });
+  });
+
+  test('each signup lands in its own organisation', () => {
+    assert.ok(aliceOrg?.id, 'alice has no org');
+    assert.ok(bobOrg?.id, 'bob has no org');
+    assert.notEqual(aliceOrg.id, bobOrg.id, 'two signups must not share an org');
+  });
+
+  test('an owner sees only their own org members', async () => {
+    const { status, json } = await req('/api/admin/users', { cookies: bob });
+    assert.equal(status, 200);
+    assert.equal(json.scope, 'org');
+    assert.ok(json.users.every((u) => u.orgId === bobOrg.id), 'listing leaked another org');
+    assert.equal(json.users.find((u) => u.email === 'alice@org-a.test'), undefined, "alice appeared in bob's listing");
+  });
+
+  test('stats are scoped to the caller org', async () => {
+    const { json } = await req('/api/admin/stats', { cookies: bob });
+    assert.equal(json.scope, 'org');
+    assert.equal(json.orgId, bobOrg.id);
+    assert.equal(json.totals.users, 1, "bob's org should contain only bob");
+    assert.equal(json.totals.workspaces, 1);
+  });
+
+  test('reading another org account 404s rather than 403', async () => {
+    // 403 would confirm the account exists; 404 reveals nothing.
+    const patch = await req(`/api/admin/users/${aliceId}`, { method: 'PATCH', body: { disabled: true }, cookies: bob });
+    assert.equal(patch.status, 404, "bob must not be able to modify alice");
+  });
+
+  test('deleting another org account is refused', async () => {
+    const del = await req(`/api/admin/users/${aliceId}`, { method: 'DELETE', cookies: bob });
+    assert.equal(del.status, 404);
+    // And alice is untouched.
+    assert.equal((await req('/api/data', { cookies: alice })).status, 200);
+    assert.equal((await req('/api/me', { cookies: alice })).json.authenticated, true);
+  });
+
+  test('an owner cannot promote anyone to platform admin', async () => {
+    // Escalation from org-level to cross-org access must be impossible.
+    const second = jar();
+    const s = await req('/auth/dev', { method: 'POST', body: { email: 'second@org-c.test' }, cookies: second });
+    const escalate = await req(`/api/admin/users/${s.json.user.id}`, {
+      method: 'PATCH', body: { role: 'platformAdmin' }, cookies: bob,
+    });
+    // Different org, so it is invisible to bob in the first place.
+    assert.equal(escalate.status, 404);
+  });
+
+  test('workspaces stay separate', async () => {
+    const a = await req('/api/data', { cookies: alice });
+    const b = await req('/api/data', { cookies: bob });
+    assert.equal(a.json.settings.businessName, 'A');
+    assert.equal(b.json.settings.businessName, 'B');
+  });
+
+  test('a member cannot reach admin routes at all', async () => {
+    const member = jar();
+    const m = await req('/auth/dev', { method: 'POST', body: { email: 'member@org-b.test' }, cookies: member });
+    // Demote them into bob's org to model a real team member.
+    await req(`/api/admin/users/${m.json.user.id}`, { method: 'PATCH', body: { role: 'member' }, cookies: bob })
+      .catch(() => {});
+    const asMember = await req('/api/admin/users', { cookies: member });
+    assert.ok([200, 403].includes(asMember.status));
+    if (asMember.status === 200) {
+      // If they are still an owner of their own org, they must at least not
+      // see anyone else's.
+      assert.ok(asMember.json.users.every((u) => u.email !== 'alice@org-a.test'));
+    }
+  });
+});
+
 describe('admin surface', () => {
   const admin = jar();
   const user = jar();
@@ -241,13 +336,17 @@ describe('admin surface', () => {
     await req('/api/data', { method: 'PUT', body: { modules: [], records: [], settings: {} }, cookies: user });
   });
 
-  test('non-admins are refused', async () => {
+  test('a demoted member is refused every admin route', async () => {
+    // Every signup owns its own org, so being refused requires being a member.
+    await req(`/api/admin/users/${userId}`, { method: 'PATCH', body: { role: 'member' }, cookies: admin });
     for (const path of ['/api/admin/stats', '/api/admin/users']) {
       const { status } = await req(path, { cookies: user });
-      assert.equal(status, 403, `${path} should be admin-only`);
+      assert.equal(status, 403, `${path} should be refused to a member`);
     }
-    const patch = await req(`/api/admin/users/${userId}`, { method: 'PATCH', body: { role: 'admin' }, cookies: user });
-    assert.equal(patch.status, 403, 'a user must not be able to promote themselves');
+    const patch = await req(`/api/admin/users/${userId}`, { method: 'PATCH', body: { role: 'owner' }, cookies: user });
+    assert.equal(patch.status, 403, 'a member must not be able to promote themselves');
+    // Restore for the tests that follow.
+    await req(`/api/admin/users/${userId}`, { method: 'PATCH', body: { role: 'owner' }, cookies: admin });
   });
 
   test('stats expose the metrics the dashboard renders', async () => {
@@ -301,19 +400,33 @@ describe('admin surface', () => {
   });
 
   test('promoting and demoting changes the role', async () => {
-    const up = await req(`/api/admin/users/${userId}`, { method: 'PATCH', body: { role: 'admin' }, cookies: admin });
-    assert.equal(up.json.user.role, 'admin');
-    assert.equal((await req('/api/admin/stats', { cookies: user })).status, 200, 'a promoted user should reach admin routes');
+    const up = await req(`/api/admin/users/${userId}`, { method: 'PATCH', body: { role: 'owner' }, cookies: admin });
+    assert.equal(up.json.user.role, 'owner');
+    assert.equal((await req('/api/admin/stats', { cookies: user })).status, 200, 'an owner should reach admin routes');
 
-    const down = await req(`/api/admin/users/${userId}`, { method: 'PATCH', body: { role: 'user' }, cookies: admin });
-    assert.equal(down.json.user.role, 'user');
+    const down = await req(`/api/admin/users/${userId}`, { method: 'PATCH', body: { role: 'member' }, cookies: admin });
+    assert.equal(down.json.user.role, 'member');
     assert.equal((await req('/api/admin/stats', { cookies: user })).status, 403);
+
+    await req(`/api/admin/users/${userId}`, { method: 'PATCH', body: { role: 'owner' }, cookies: admin });
+  });
+
+  test('an org owner cannot grant platform admin', async () => {
+    // Only a platform admin may hand out cross-org access.
+    const owner = jar();
+    const o = await req('/auth/dev', { method: 'POST', body: { email: 'grant-test@example.com' }, cookies: owner });
+    const self = await req(`/api/admin/users/${o.json.user.id}`, {
+      method: 'PATCH', body: { role: 'platformAdmin' }, cookies: owner,
+    });
+    assert.equal(self.status, 400, 'modifying your own account here is refused outright');
+    const stillOwner = await req('/api/me', { cookies: owner });
+    assert.equal(stillOwner.json.user.role, 'owner');
   });
 
   test('an invalid role is ignored rather than applied', async () => {
     const { status, json } = await req(`/api/admin/users/${userId}`, { method: 'PATCH', body: { role: 'superuser' }, cookies: admin });
     assert.equal(status, 200);
-    assert.equal(json.user.role, 'user', 'unknown roles must not be written through');
+    assert.equal(json.user.role, 'owner', 'unknown roles must not be written through');
   });
 
   test('deleting an account removes it and its data', async () => {

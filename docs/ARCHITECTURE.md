@@ -9,17 +9,22 @@ Every number below is measured against the real demo workspace, not estimated.
 
 ## 1. Where we are today
 
-**One tenant = one user account.** A person signs in, and their whole workspace
-lives in a single MongoDB document keyed by `userId`:
+**One tenant = one organisation; one workspace = one account.** Every user
+belongs to exactly one org, and a signup creates one and owns it:
 
 ```
-users    { id, email, name, role, disabled, createdAt, lastActiveAt }
-data     { userId, modules[], records[], settings, moduleCount, recordCount, updatedAt }
-events   { type, userId, day, at }
+orgs     { id, name, createdAt, createdBy }
+users    { id, email, name, orgId, role, disabled, createdAt, lastActiveAt }
+data     { userId, orgId, modules[], records[], settings, moduleCount, recordCount, updatedAt }
+events   { type, userId, orgId, day, at }
 ```
 
-There is no concept of a business, an organisation, or a team. Two employees of
-the same company get two unrelated workspaces.
+Roles are `platformAdmin` (operates the deployment, sees across orgs), `owner`
+(administers their own org only) and `member`.
+
+**Workspaces are still per-account, deliberately.** An org groups people for
+administration; it does not yet give them a shared workspace. That distinction
+is what keeps whole-document sync safe — see §2.2.
 
 ### Measured sizes
 
@@ -40,20 +45,20 @@ records.** Past that, saves fail outright — not gracefully.
 
 ## 2. Three things limit growth
 
-### 2.1 🔴 The admin role is global — fix before onboarding a second business
+### 2.1 ✅ Admin scoping — resolved
 
-`requireAdmin` checks one thing: `req.user.role !== 'admin'`. There is no
-scoping. Any admin calling `GET /api/admin/users` receives **every account on
-the deployment**, with each one's email, join date, last activity, and record
-and module counts.
+This previously read: *`requireAdmin` checks one thing, so any admin calling
+`GET /api/admin/users` receives every account on the deployment.* That was the
+blocker on onboarding customers who administer themselves.
 
-That is fine today, when the only admin is you. It becomes a data-protection
-problem the moment you make a customer an admin of their own business while
-another customer's data is in the same deployment — they would see the other
-customer's account list.
+It is now two separate middlewares. `requireOrgAdmin` pins the caller to
+`req.scopeOrgId`, taken from the session and never from a parameter;
+`requirePlatformAdmin` is a distinct gate for cross-org access. Fetching an
+account outside the caller's org returns **404, not 403**, so the response does
+not confirm that the account exists. An org owner cannot grant `platformAdmin`.
 
-**Consequence:** in the shared/pooled model, either you remain the only admin,
-or org scoping ships first. Treat this as a prerequisite, not a nice-to-have.
+Eight tests in `tests/api.test.mjs` assert the attack rather than the happy
+path, plus two end-to-end tests covering the same boundary through the UI.
 
 ### 2.2 Sync writes the entire workspace on every change
 
@@ -92,11 +97,8 @@ mechanism, not merely a slow one.
 row forever. At 100 active users syncing 50×/day that is ~1.8M documents a year,
 quietly consuming the same 512 MB the customer data needs.
 
-**Fix (one line, do it now):**
-```js
-await this.events.createIndex({ at: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 90 });
-```
-The dashboard only reads 30 days back, so a 90-day TTL costs nothing.
+✅ **Resolved.** Events expire after 90 days (`EVENT_RETENTION_DAYS`). The
+dashboard only reads 30 days back, so the retention costs nothing.
 
 ---
 
@@ -113,9 +115,9 @@ Assuming small businesses averaging ~500 records each (~135 KB):
 | Render free spin-down (15 min idle) | Cold starts | Mitigated in the client, not eliminated |
 | Practical support load | **~20–50 paying customers** | One shared deployment, you as sole admin |
 
-**Honest answer: the infrastructure would hold several hundred small workspaces;
-the binding limits are the global admin role and your own support capacity long
-before storage.**
+**Honest answer: the infrastructure would hold several hundred small workspaces,
+and with org scoping shipped the binding limit is now your own support capacity
+rather than anything technical.**
 
 Where it breaks down sooner: any single customer exceeding ~5,000 records makes
 every save slow, and ~62,000 records makes saves fail.
@@ -128,9 +130,10 @@ every save slow, and ~62,000 records makes saves fail.
 boundary on every read and write. Two businesses' records cannot leak into each
 other through the normal app surface.
 
-**But not safely with customer admins**, for the reason in §2.1, and **not for a
-business with more than one employee**, because there is no way to share a
-workspace between accounts.
+**Safely with customer admins too**, now that §2.1 is resolved — an org owner
+sees only their own org. What is still missing is a **shared workspace**: two
+colleagues in one org each have their own records. That needs per-record sync
+first (§2.2).
 
 ---
 
@@ -189,13 +192,34 @@ turns every scoped read into a collection scan as the pooled document count
 grows:
 
 ```js
-await users.createIndex({ orgId: 1, email: 1 }, { unique: true });
-await data.createIndex({ orgId: 1, userId: 1 }, { unique: true });
-await events.createIndex({ orgId: 1, at: 1 }, { expireAfterSeconds: 7776000 });
+// Email stays GLOBALLY unique: sign-in resolves an account by email alone.
+await users.createIndex({ email: 1 }, { unique: true });
+await data.createIndex({ userId: 1 }, { unique: true });
+
+// orgId LEADS every scoped index.
+await users.createIndex({ orgId: 1, createdAt: -1 });
+await data.createIndex({ orgId: 1 });
+await events.createIndex({ orgId: 1, at: 1 });
+
+// TTL stays on its own single-field index — see below.
+await events.createIndex({ at: 1 }, { expireAfterSeconds: 7776000 });
 ```
 
-The `orgId` must be the **leading** field — an index on `{ userId: 1, orgId: 1 }`
+`orgId` must be the **leading** field — an index on `{ userId: 1, orgId: 1 }`
 does not serve a query filtered on `orgId` alone.
+
+Two traps found while implementing this, both of which fail *silently*:
+
+**Do not make email unique per org.** `{ orgId: 1, email: 1 }` unique looks
+symmetrical but is the wrong constraint here: sign-in resolves an account from
+an email address alone, with no org in hand. Allowing the same address in two
+orgs makes `getUserByEmail` ambiguous and login non-deterministic. Email is
+globally unique; the org is a property of the account it finds.
+
+**TTL cannot live on a compound index.** MongoDB TTL indexes are single-field
+only — `expireAfterSeconds` on `{ orgId: 1, at: 1 }` is accepted without error
+and then *ignored*, so nothing ever expires and you find out months later when
+storage fills. Keep `{ at: 1 }` for expiry and `{ orgId: 1, at: 1 }` for queries.
 
 **Isolation tests in CI, asserting the attack rather than the happy path.**
 Signing in as tenant B and requesting tenant A's resources must 403/404 — for
@@ -300,12 +324,18 @@ per org.
    existing deployments.
 2. **Sell dedicated (Option D) immediately** — needs no code and is the honest
    answer to any enterprise client asking about isolation right now.
-3. **Per-org scoping (Option B) *with* per-record sync** — these ship together,
-   not in sequence. Org scoping is what makes shared hosting safe; per-record
-   sync is what makes a shared *organisation* safe. Landing multi-user on top of
-   whole-document replacement would introduce silent data loss between colleagues
-   on the very day the feature becomes useful.
-4. **Database-per-tenant (Option C)** — only if a client's compliance
+3. **Per-org scoping (Option B)** — ✅ shipped. `orgs` collection, `orgId` on
+   users, workspaces and events, separate `requireOrgAdmin` / `requirePlatformAdmin`
+   middleware, composite indexes, an idempotent backfill that puts each existing
+   account in its own org, and eight isolation tests that assert the attack.
+   **Shared team workspaces are deliberately NOT part of this** — each account
+   still has its own workspace, so no concurrent-edit data loss was introduced.
+4. **Per-record sync — required before shared workspaces.** Org scoping made
+   shared hosting safe; per-record sync is what makes a shared *workspace* safe.
+   Putting several colleagues on one workspace while sync still replaces the
+   whole document would introduce silent data loss on the day the feature
+   becomes useful. This is the gate on team accounts, not an optimisation.
+5. **Database-per-tenant (Option C)** — only if a client's compliance
    requirements demand it and dedicated deployment isn't acceptable.
 
 The one sequencing point worth defending: it is tempting to ship org scoping

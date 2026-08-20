@@ -31,6 +31,8 @@
     ['relation', 'Link to module'],
   ];
 
+  const ROLE_LABELS = { platformAdmin: 'platform admin', owner: 'owner', member: 'member' };
+
   const MODULE_COLORS = ['#1570ef', '#0e9384', '#099250', '#dc6803', '#c11574', '#6938ef', '#d92d20', '#475467'];
   const MODULE_ICONS = ['package', 'users', 'building-2', 'handshake', 'square-check-big', 'target', 'sticky-note', 'calendar', 'receipt', 'briefcase', 'wrench', 'truck', 'star', 'tag', 'clipboard-list', 'folder', 'map-pin', 'globe', 'phone', 'mail', 'heart', 'database'];
 
@@ -367,8 +369,17 @@
         <span class="nav-label">${esc(m.name)}</span>
       </a>`).join('') || '<p class="nav-empty">No modules yet</p>';
 
+    // Show Admin to whoever it is actually useful to: the platform operator,
+    // and org owners whose org has someone else in it. A solo signup owns an
+    // org of one, and a dashboard listing only themselves is just noise.
     const adminLink = $('#nav-admin');
-    adminLink.classList.toggle('hidden', !(Cloud.user && Cloud.user.role === 'admin'));
+    const user = Cloud.user;
+    const org = Cloud.me.org;
+    const showAdmin = !!user && (
+      user.role === 'platformAdmin'
+      || (user.role === 'owner' && org && org.memberCount > 1)
+    );
+    adminLink.classList.toggle('hidden', !showAdmin);
 
     $$('#nav-main .nav-link, .sidebar-footer .nav-link').forEach((a) => {
       a.classList.toggle('active', a.getAttribute('href') === (current || '#/'));
@@ -1424,7 +1435,7 @@
         <div class="card">
           <div class="card-head"><h2>Account & sync</h2></div>
           ${authed ? `
-            <p class="settings-hint">Signed in as <strong>${esc(Cloud.user.email)}</strong>${Cloud.user.role === 'admin' ? ' (admin)' : ''}. Your workspace syncs automatically; changes made offline sync when you're back online.</p>
+            <p class="settings-hint">Signed in as <strong>${esc(Cloud.user.email)}</strong>${Cloud.user.role === 'platformAdmin' ? ' (platform admin)' : Cloud.user.role === 'owner' ? ' (owner)' : ''}. Your workspace syncs automatically; changes made offline sync when you're back online.</p>
             <div class="btn-row">
               <button class="btn" id="sync-now-btn">${icon('refresh-cw', 15)} Sync now</button>
               <button class="btn" id="signout-btn">${icon('log-out', 15)} Sign out</button>
@@ -1638,7 +1649,7 @@
 
   async function renderAdmin() {
     const main = $('#main');
-    if (!Cloud.user || Cloud.user.role !== 'admin') {
+    if (!Cloud.user || !['platformAdmin', 'owner'].includes(Cloud.user.role)) {
       main.innerHTML = `<div class="page"><div class="card"><p class="empty-hint">${Cloud.isAuthed ? 'This page is for administrators only.' : 'Sign in with an admin account to view this page.'}</p></div></div>`;
       return;
     }
@@ -1647,7 +1658,13 @@
     try {
       [stats, usersRes] = await Promise.all([Cloud.admin.stats(), Cloud.admin.users()]);
     } catch (err) {
-      main.innerHTML = `<div class="page"><div class="card"><p class="empty-hint">Could not load admin data: ${esc(err.message)}</p></div></div>`;
+      // The signed-in role is whatever it was at sign-in; an administrator can
+      // change it since. A 403 here means exactly that, so say the plain thing
+      // rather than surfacing the API's wording.
+      const denied = err.status === 403;
+      main.innerHTML = `<div class="page"><div class="card"><p class="empty-hint">${denied
+        ? 'This page is for administrators only.'
+        : `Could not load admin data: ${esc(err.message)}`}</p></div></div>`;
       return;
     }
     const t = stats.totals;
@@ -1688,7 +1705,7 @@
               ${usersRes.users.map((u) => `
                 <tr data-email="${esc(u.email)}" data-name="${esc(u.name || '')}" class="admin-row">
                   <td data-label="User"><strong>${esc(u.name || '—')}</strong><br><span class="muted">${esc(u.email)}</span></td>
-                  <td data-label="Role"><span class="pill ${u.role === 'admin' ? 'pill-accent' : ''}">${esc(u.role)}</span></td>
+                  <td data-label="Role"><span class="pill ${u.role === 'platformAdmin' || u.role === 'owner' ? 'pill-accent' : ''}">${esc(ROLE_LABELS[u.role] || u.role)}</span></td>
                   <td data-label="Status">${u.disabled ? '<span class="pill pill-danger">disabled</span>' : '<span class="pill pill-ok">active</span>'}</td>
                   <td data-label="Modules" class="td-num">${u.moduleCount}</td>
                   <td data-label="Records" class="td-num">${u.recordCount}</td>
@@ -1696,7 +1713,7 @@
                   <td data-label="Last active">${fmtWhen(u.lastActiveAt)}</td>
                   <td data-label="Actions" class="admin-actions">
                     ${u.id === Cloud.user.id ? '<span class="muted">you</span>' : `
-                      <button class="icon-btn" data-act="role" data-id="${u.id}" data-role="${u.role === 'admin' ? 'user' : 'admin'}" title="${u.role === 'admin' ? 'Demote to user' : 'Promote to admin'}">${icon(u.role === 'admin' ? 'user' : 'shield-check', 15)}</button>
+                      <button class="icon-btn" data-act="role" data-id="${u.id}" data-role="${u.role === 'owner' ? 'member' : 'owner'}" title="${u.role === 'owner' ? 'Demote to member' : 'Make an owner'}">${icon(u.role === 'owner' ? 'user' : 'shield-check', 15)}</button>
                       <button class="icon-btn" data-act="disable" data-id="${u.id}" data-disabled="${u.disabled ? '0' : '1'}" title="${u.disabled ? 'Re-enable account' : 'Disable account'}">${icon('ban', 15)}</button>
                       <button class="icon-btn" data-act="delete" data-id="${u.id}" title="Delete account and data">${icon('trash-2', 15)}</button>`}
                   </td>

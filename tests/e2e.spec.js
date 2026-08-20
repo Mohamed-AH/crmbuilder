@@ -549,8 +549,12 @@ test.describe('admin', () => {
     const page2 = await other.newPage();
     await page2.goto('/');
     await signIn(page2, victimEmail);
+    // A solo signup owns an org of one, so no Admin link is offered — and if
+    // they call the API directly they see only their own org, never ours.
     await expect(page2.locator('#nav-admin')).toBeHidden();
-    expect((await page2.request.get('/api/admin/stats')).status()).toBe(403);
+    const theirStats = await (await page2.request.get('/api/admin/stats')).json();
+    expect(theirStats.scope).toBe('org');
+    expect(theirStats.totals.users, 'another tenant leaked into their stats').toBe(1);
 
     await page.click('#nav-admin');
     await page.reload();
@@ -566,11 +570,58 @@ test.describe('admin', () => {
     await other.close();
   });
 
-  test('non-admins are told the page is not for them', async ({ page }) => {
+  test('one tenant never sees another in the admin view', async ({ page, browser }) => {
+    // Two unrelated businesses on the same deployment.
+    const aEmail = uniqueEmail('tenant-a');
+    const bEmail = uniqueEmail('tenant-b');
+
     await page.goto('/');
-    await signIn(page, uniqueEmail('plain'));
-    await page.goto('/#/admin');
-    await expect(page.locator('.empty-hint')).toContainText('administrators only');
+    await signIn(page, aEmail);
+
+    const second = await browser.newContext();
+    const pageB = await second.newPage();
+    await pageB.goto('/');
+    await signIn(pageB, bEmail);
+
+    // B's admin surface must contain B and nobody else.
+    const listing = await (await pageB.request.get('/api/admin/users')).json();
+    expect(listing.scope).toBe('org');
+    expect(listing.users.map((u) => u.email)).toEqual([bEmail]);
+
+    // And the org ids genuinely differ.
+    const orgA = await (await page.request.get('/api/org')).json();
+    const orgB = await (await pageB.request.get('/api/org')).json();
+    expect(orgA.org.id).not.toBe(orgB.org.id);
+
+    await second.close();
+  });
+
+  test('a member is told the admin page is not for them', async ({ page, browser }) => {
+    const ownerEmail = uniqueEmail('team-owner');
+    const memberEmail = uniqueEmail('team-member');
+
+    await page.goto('/');
+    await signIn(page, ownerEmail);
+
+    const ctx = await browser.newContext();
+    const memberPage = await ctx.newPage();
+    await memberPage.goto('/');
+    await signIn(memberPage, memberEmail);
+    const memberId = (await (await memberPage.request.get('/api/me')).json()).user.id;
+
+    // Demote them via the platform admin, who can reach across orgs.
+    const admin = await browser.newContext();
+    const adminPage = await admin.newPage();
+    await adminPage.goto('/');
+    await signIn(adminPage, 'e2e-admin@example.com');
+    const res = await adminPage.request.patch(`/api/admin/users/${memberId}`, { data: { role: 'member' } });
+    expect(res.status()).toBe(200);
+
+    await memberPage.goto('/#/admin');
+    await expect(memberPage.locator('.empty-hint')).toContainText('administrators only');
+
+    await ctx.close();
+    await admin.close();
   });
 });
 
