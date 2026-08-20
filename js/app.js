@@ -550,6 +550,7 @@
           <div class="onboard-buttons">
             <button class="btn btn-primary btn-lg" id="onboard-create">Create my CRM</button>
             <button class="btn" id="onboard-demo">${icon('database', 15)} Explore with demo data</button>
+            <button class="btn" id="onboard-tour">${icon('map-pin', 15)} Take the tour</button>
           </div>
           <button class="btn btn-ghost" id="onboard-custom">Start with a custom module instead</button>
           ${Cloud.me.serverAvailable && !Cloud.isAuthed ? `<button class="btn btn-ghost" id="onboard-signin">${icon('log-in', 15)} Already have an account? Sign in</button>` : ''}
@@ -574,6 +575,7 @@
     });
     $('#onboard-custom').addEventListener('click', () => openBuilder(null));
     $('#onboard-demo').addEventListener('click', () => loadDemoData({ replace: false }));
+    $('#onboard-tour').addEventListener('click', startTour);
     const signin = $('#onboard-signin');
     if (signin) signin.addEventListener('click', openSignIn);
   }
@@ -639,6 +641,80 @@
     toast('Demo data loaded');
     location.hash = '#/';
     route();
+  }
+
+  // ---------------------------------------------------------------- guided tour
+  // Six stops that show the product working rather than describing it. Each
+  // waits for its own target, so a slow render never leaves a stranded pointer.
+  function tourSteps() {
+    const dealsId = () => (modules.find((m) => m.name === 'Deals') || {}).id;
+    const contactsId = () => (modules.find((m) => m.name === 'Contacts') || {}).id;
+    return [
+      {
+        title: 'This is a CRM you assemble',
+        body: 'Every item in this sidebar is a module you chose — not a fixed part of the product. Add, rename or remove them whenever your business changes.',
+        route: '#/',
+        target: '#nav-modules',
+        place: 'right',
+      },
+      {
+        title: 'Your pipeline, your stages',
+        body: 'Drag a card between columns to change its stage. The columns are the options of a dropdown field, so they read however your business actually works. Totals update live.',
+        route: () => `#/m/${dealsId()}`,
+        target: '.kanban',
+        place: 'below',
+      },
+      {
+        title: 'Sort the way you think',
+        body: 'Switch to the table and click any column. Money sorts numerically, dates chronologically, and stages sort in pipeline order — Lead, Qualified, Proposal — never alphabetically.',
+        route: () => `#/m/${dealsId()}`,
+        target: '.seg',
+        place: 'below',
+      },
+      {
+        title: 'Bring your spreadsheet',
+        body: 'Import a CSV and map its columns to your fields. Anything it does not recognise can become a new field right there, without leaving the import.',
+        route: () => `#/m/${contactsId()}`,
+        target: '#import-csv-btn',
+        place: 'below',
+      },
+      {
+        title: 'Build a module in a minute',
+        body: 'Name it, pick fields, done. A custom module gets the same table, board, search and export as the built-in ones — there is no second-class kind of data here.',
+        route: '#/',
+        target: '#add-module-btn',
+        place: 'right',
+      },
+      {
+        title: 'Works offline, exports anytime',
+        body: 'Everything is stored on your device first, so it keeps working with no connection and syncs when you are back. Export the whole workspace whenever you like — there is no lock-in.',
+        route: '#/settings',
+        target: '#export-btn',
+        place: 'above',
+      },
+    ];
+  }
+
+  function startTour() {
+    Tour.configure({
+      steps: tourSteps(),
+      goto: async (route) => {
+        const hash = typeof route === 'function' ? route() : route;
+        if (!hash || hash.includes('undefined')) return;
+        if (location.hash === hash) return;
+        location.hash = hash;
+        // route() is async; give the view a moment to mount before anchoring.
+        await new Promise((r) => setTimeout(r, 260));
+      },
+      // The tour points at a populated pipeline, so make sure one exists.
+      ensureData: async () => {
+        if (!modules.length) await loadDemoData({ replace: false });
+      },
+      onEnd: ({ skipped }) => {
+        if (!skipped) toast('That’s the tour — the workspace is yours to play with');
+      },
+    });
+    Tour.start();
   }
 
   // ---------------------------------------------------------------- module view
@@ -1372,6 +1448,7 @@
             <button class="btn ${deferredInstall ? '' : 'hidden'}" id="settings-install">${icon('download', 15)} Install on this device</button>
             <button class="btn" id="add-template-btn">${icon('plus', 15)} Add module from template</button>
             <button class="btn" id="load-demo-btn">${icon('database', 15)} Load demo data</button>
+            <button class="btn" id="replay-tour-btn">${icon('map-pin', 15)} Replay the tour</button>
           </div>
           <p class="settings-hint" style="margin:12px 0 0">Demo data fills every module with a sample business so you can explore or present without entering records first. It is added alongside anything you already have.</p>
         </div>
@@ -1408,6 +1485,7 @@
     const installBtn = $('#settings-install');
     if (installBtn) installBtn.addEventListener('click', promptInstall);
     $('#add-template-btn').addEventListener('click', openTemplatePicker);
+    $('#replay-tour-btn').addEventListener('click', startTour);
     $('#load-demo-btn').addEventListener('click', async () => {
       const replace = modules.length > 0
         && confirm('Replace your current modules and records with the demo business?\n\nOK = replace everything (your current data is deleted)\nCancel = add demo data alongside what you have');

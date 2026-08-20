@@ -1,0 +1,453 @@
+<title>Build Your Own CRM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,400;7..72,600;7..72,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+
+<style>
+  :root {
+    --paper:        #ffffff;
+    --paper-sunk:   #f7f8fa;
+    --paper-raised: #ffffff;
+    --ink:          #101828;
+    --ink-soft:     #475467;
+    --ink-faint:    #8b95a7;
+    --rule:         #e4e7ec;
+    --rule-strong:  #d0d5dd;
+    --accent:       #1570ef;
+    --accent-deep:  #175cd3;
+    --accent-quiet: #1570ef14;
+    --good:         #0e9384;
+    --good-quiet:   #0e93840f;
+    --shadow:       0 1px 2px rgb(16 24 40 / 6%);
+    --shadow-lg:    0 12px 28px -8px rgb(16 24 40 / 16%);
+    --serif: 'Literata', Georgia, serif;
+    --sans:  'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --mono:  'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #0c111d; --paper-sunk: #111725; --paper-raised: #151c2b;
+      --ink: #e8edf5; --ink-soft: #9aa7bd; --ink-faint: #66738b;
+      --rule: #232c3d; --rule-strong: #33405a;
+      --accent: #5f9df7; --accent-deep: #8ab8fa; --accent-quiet: #5f9df71f;
+      --good: #3cbfae; --good-quiet: #3cbfae14;
+      --shadow: 0 1px 2px rgb(0 0 0 / 40%); --shadow-lg: 0 12px 28px -8px rgb(0 0 0 / 55%);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0c111d; --paper-sunk: #111725; --paper-raised: #151c2b;
+    --ink: #e8edf5; --ink-soft: #9aa7bd; --ink-faint: #66738b;
+    --rule: #232c3d; --rule-strong: #33405a;
+    --accent: #5f9df7; --accent-deep: #8ab8fa; --accent-quiet: #5f9df71f;
+    --good: #3cbfae; --good-quiet: #3cbfae14;
+    --shadow: 0 1px 2px rgb(0 0 0 / 40%); --shadow-lg: 0 12px 28px -8px rgb(0 0 0 / 55%);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px; line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 28px; }
+  a { color: var(--accent); }
+
+  /* ---------------------------------------------------------------- hero */
+  .hero { padding: 76px 0 56px; border-bottom: 1px solid var(--rule); background: var(--paper-sunk); }
+  .kicker {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--accent);
+    background: var(--accent-quiet); border-radius: 99px; padding: 5px 13px;
+    margin-bottom: 20px;
+  }
+  h1 {
+    font-family: var(--serif); font-weight: 700;
+    font-size: clamp(2.35rem, 5.4vw, 3.7rem); line-height: 1.05;
+    letter-spacing: -0.025em; margin: 0 0 20px; max-width: 17ch;
+    text-wrap: balance;
+  }
+  .lede { font-size: 1.16rem; color: var(--ink-soft); max-width: 58ch; margin: 0 0 30px; }
+  .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    font: inherit; font-weight: 600; font-size: 15px;
+    padding: 12px 22px; border-radius: 9px;
+    border: 1px solid var(--rule-strong); background: var(--paper-raised);
+    color: var(--ink); text-decoration: none;
+    transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .btn:hover { transform: translateY(-1px); box-shadow: var(--shadow-lg); }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .hero-note { font-size: 13.5px; color: var(--ink-faint); margin: 16px 0 0; }
+
+  /* ---------------------------------------------------------------- sections */
+  section { padding: 62px 0; border-bottom: 1px solid var(--rule); }
+  h2 {
+    font-family: var(--serif); font-weight: 700;
+    font-size: clamp(1.6rem, 3vw, 2.05rem); line-height: 1.18;
+    letter-spacing: -0.018em; margin: 0 0 14px; text-wrap: balance;
+  }
+  .section-lede { color: var(--ink-soft); max-width: 62ch; margin: 0 0 32px; font-size: 1.04rem; }
+  p { margin: 0 0 15px; }
+
+  /* problem / answer pair */
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border: 1px solid var(--rule); border-radius: 14px; overflow: hidden; }
+  .pair > div { padding: 26px 28px; }
+  .pair-problem { background: var(--paper-sunk); }
+  .pair-answer { background: var(--paper-raised); border-left: 1px solid var(--rule); }
+  .pair h3 {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.12em;
+    text-transform: uppercase; margin: 0 0 12px;
+  }
+  .pair-problem h3 { color: var(--ink-faint); }
+  .pair-answer h3 { color: var(--good); }
+  .pair p:last-child { margin-bottom: 0; }
+
+  /* numbered walkthrough */
+  .steps { counter-reset: s; display: flex; flex-direction: column; gap: 2px; }
+  .step {
+    counter-increment: s;
+    display: grid; grid-template-columns: 62px 1fr; gap: 22px;
+    padding: 26px 0; border-top: 1px solid var(--rule);
+  }
+  .step:first-child { border-top: none; }
+  .step-num {
+    font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums;
+    color: var(--accent); padding-top: 4px;
+  }
+  .step-num::before { content: counter(s, decimal-leading-zero); }
+  .step h3 { font-size: 1.16rem; font-weight: 600; margin: 0 0 8px; letter-spacing: -0.008em; }
+  .step p { color: var(--ink-soft); max-width: 62ch; }
+  .step .aside {
+    margin-top: 12px; padding: 12px 16px;
+    border-left: 2px solid var(--accent); background: var(--accent-quiet);
+    border-radius: 0 8px 8px 0; font-size: 14px; color: var(--ink-soft);
+  }
+  .step .aside b { color: var(--ink); font-weight: 600; }
+
+  /* capability grid */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 14px; }
+  .tile {
+    background: var(--paper-raised); border: 1px solid var(--rule);
+    border-radius: 12px; padding: 20px; box-shadow: var(--shadow);
+  }
+  .tile h3 { font-size: 15px; font-weight: 600; margin: 0 0 7px; }
+  .tile p { font-size: 14px; color: var(--ink-soft); margin: 0; }
+
+  /* comparison */
+  .table-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 12px; background: var(--paper-raised); }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  th {
+    text-align: left; font-family: var(--mono); font-weight: 500;
+    font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--ink-faint); padding: 13px 18px; border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  td { padding: 13px 18px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  td:first-child { font-weight: 500; }
+  .yes { color: var(--good); font-weight: 600; }
+
+  /* faq */
+  details {
+    border-bottom: 1px solid var(--rule); padding: 16px 0;
+  }
+  details summary {
+    cursor: pointer; font-weight: 600; font-size: 15.5px;
+    list-style: none; display: flex; justify-content: space-between; gap: 16px;
+  }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::after { content: "+"; color: var(--accent); font-weight: 400; font-size: 20px; line-height: 1; }
+  details[open] summary::after { content: "–"; }
+  details p { color: var(--ink-soft); margin: 12px 0 0; max-width: 68ch; font-size: 15px; }
+
+  /* closing */
+  .close { padding: 68px 0 84px; text-align: center; border-bottom: none; }
+  .close h2 { max-width: 20ch; margin-left: auto; margin-right: auto; }
+  .close .section-lede { margin-left: auto; margin-right: auto; }
+  .close .hero-actions { justify-content: center; }
+
+  footer { padding: 28px 0 40px; color: var(--ink-faint); font-size: 13.5px; text-align: center; }
+
+  @media (max-width: 760px) {
+    .pair { grid-template-columns: 1fr; }
+    .pair-answer { border-left: none; border-top: 1px solid var(--rule); }
+    .step { grid-template-columns: 1fr; gap: 6px; }
+    .hero { padding: 52px 0 40px; }
+    section { padding: 46px 0; }
+  }
+  @media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
+</style>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="kicker">CRM Builder</span>
+    <h1>The CRM that fits the business you actually run</h1>
+    <p class="lede">
+      Most CRMs make a small business bend to fit software designed for enterprise
+      sales teams. CRM Builder works the other way round: you choose what it
+      tracks, in five minutes, with no code and no consultant.
+    </p>
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="#walkthrough">See how it works</a>
+      <a class="btn" href="#compare">Compare with what you use now</a>
+    </div>
+    <p class="hero-note">Works offline · Installs like an app · Export everything, anytime</p>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>The problem isn't discipline</h2>
+    <p class="section-lede">
+      A five-person business signs up for a big-name CRM, uses three features,
+      pays for forty, and is back in a spreadsheet within two months. That isn't
+      a failure of follow-through.
+    </p>
+    <div class="pair">
+      <div class="pair-problem">
+        <h3>What usually happens</h3>
+        <p>
+          The software arrives with its own idea of how business works —
+          Accounts, Opportunities, Leads — and the job becomes translating
+          your world into its vocabulary.
+        </p>
+        <p>
+          A plumber doesn't have a sales funnel. They have jobs, quotes and
+          callbacks. Fields that don't apply get left blank, blank fields make
+          the data untrustworthy, and untrustworthy data gets abandoned.
+        </p>
+      </div>
+      <div class="pair-answer">
+        <h3>What CRM Builder does</h3>
+        <p>
+          It asks a question no other CRM asks first: <b>what do you want to
+          track?</b> Then it builds around that answer.
+        </p>
+        <p>
+          Jobs, quotes and callbacks — or job sites, equipment, bookings,
+          patients, commissions. Whatever your business runs on becomes a
+          first-class part of the system, with the same tables, boards, search
+          and export as anything built in.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="walkthrough">
+  <div class="wrap">
+    <h2>Five minutes, start to finish</h2>
+    <p class="section-lede">
+      This is the whole setup — not a trimmed-down trial version of it.
+    </p>
+
+    <div class="steps">
+      <div class="step">
+        <span class="step-num"></span>
+        <div>
+          <h3>Choose what you track</h3>
+          <p>
+            Start from ready-made modules — Contacts, Deals, Tasks, Leads,
+            Companies, Notes — and tick the ones that match how you work. Set
+            your business name and currency while you're there.
+          </p>
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-num"></span>
+        <div>
+          <h3>Bring the spreadsheet you already have</h3>
+          <p>
+            Your real CRM today is probably a spreadsheet, so importing one is
+            treated as the main event rather than an afterthought. Upload a CSV
+            and columns are matched to fields automatically; anything unmatched
+            can become a new field without leaving the screen.
+          </p>
+          <div class="aside">
+            It handles what spreadsheets actually produce: quoted commas,
+            Excel's encoding, <b>$1,234.00</b> and <b>€1 234</b> as amounts,
+            bracketed negatives, yes/no as tick boxes, and dates in whatever
+            format the file happens to use.
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-num"></span>
+        <div>
+          <h3>Work your pipeline on a board</h3>
+          <p>
+            Any module with a dropdown gets a drag-and-drop board. Its columns
+            are your own options, in your own order — Quoted, Scheduled,
+            Invoiced, Paid, if that's the business you're in. Each column shows
+            its count and total, so the board doubles as a live value report.
+          </p>
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-num"></span>
+        <div>
+          <h3>Build anything that's missing</h3>
+          <p>
+            Need something the templates don't cover? Name it, choose fields
+            from eleven types — including links between modules — and it's
+            ready. Under two minutes, no admin console, no support ticket.
+          </p>
+        </div>
+      </div>
+
+      <div class="step">
+        <span class="step-num"></span>
+        <div>
+          <h3>Take it with you</h3>
+          <p>
+            Install it to your home screen or desktop. It keeps working with no
+            connection at all — on site, in a van, in a basement — and syncs
+            when you're back. Records added offline are never lost.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>What comes as standard</h2>
+    <p class="section-lede">No tiers that withhold the basics.</p>
+    <div class="grid">
+      <div class="tile">
+        <h3>Eleven field types</h3>
+        <p>Text, numbers, currency, dates, dropdowns, tick boxes, email, phone, links — and relationships between modules.</p>
+      </div>
+      <div class="tile">
+        <h3>Search that reaches everything</h3>
+        <p>Matches every field, including ones you've chosen not to show as columns.</p>
+      </div>
+      <div class="tile">
+        <h3>Sorting that understands data</h3>
+        <p>Money sorts numerically, dates chronologically, and pipeline stages sort in pipeline order — not alphabetically.</p>
+      </div>
+      <div class="tile">
+        <h3>Genuine offline use</h3>
+        <p>Not a cached read-only copy. Add, edit and delete with no signal; it reconciles when you reconnect.</p>
+      </div>
+      <div class="tile">
+        <h3>Your data, exportable</h3>
+        <p>CSV per module, JSON for the whole workspace. No export limits, no plan gate, no lock-in.</p>
+      </div>
+      <div class="tile">
+        <h3>Admin and analytics</h3>
+        <p>Running it for a team or for clients? Accounts, activity, signups and usage are built in.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="compare">
+  <div class="wrap">
+    <h2>Where it fits</h2>
+    <p class="section-lede">
+      Being clear about what this is — and isn't — saves everyone time.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>If you're using…</th><th>The difference</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>A spreadsheet</td>
+            <td>Keep the flexibility, gain pipelines, search, reminders and a phone-friendly interface — and import the sheet in one step rather than starting again.</td>
+          </tr>
+          <tr>
+            <td>A large CRM</td>
+            <td>Narrower on purpose. No per-seat pricing, no configuration project, and nothing to switch off. You build the ten percent you use.</td>
+          </tr>
+          <tr>
+            <td>A general database tool</td>
+            <td>Those start as a blank canvas you must design. This opens as a working CRM — pipelines, currency, boards — and installs as an offline app.</td>
+          </tr>
+          <tr>
+            <td>Nothing yet</td>
+            <td>Start with three modules and one habit: enter every enquiry the day it arrives. Add the rest once you know what you're missing.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Questions worth asking</h2>
+    <details>
+      <summary>Can our whole team use it?</summary>
+      <p>
+        Today each person has their own account and their own workspace, syncing
+        across their devices. Several people editing one shared workspace at the
+        same time isn't what it does yet — we'd rather say so now than have you
+        discover it later. Shared team workspaces are the next major piece of work.
+      </p>
+    </details>
+    <details>
+      <summary>Where does our data live?</summary>
+      <p>
+        On your device first, always. If you sign in, a copy syncs to the database
+        behind your deployment. For businesses that need physical separation, we
+        offer a dedicated deployment with its own database and its own domain.
+      </p>
+    </details>
+    <details>
+      <summary>What if we want to leave?</summary>
+      <p>
+        Export everything as JSON or per-module CSV, whenever you like, with no
+        limits. It's also a standard web application, so you can host it yourself
+        and keep running it without us.
+      </p>
+    </details>
+    <details>
+      <summary>How much data can it hold?</summary>
+      <p>
+        Comfortably into the thousands of records per workspace. Beyond that we'd
+        move you onto dedicated infrastructure — which is a change we make, not a
+        migration you have to run.
+      </p>
+    </details>
+    <details>
+      <summary>Does it connect to our other tools?</summary>
+      <p>
+        CSV in and out is the integration route today. There's no email sending or
+        third-party sync built in yet, and we'd rather be straight about that than
+        imply otherwise.
+      </p>
+    </details>
+  </div>
+</section>
+
+<section class="close">
+  <div class="wrap">
+    <h2>Try it with a business already in it</h2>
+    <p class="section-lede">
+      Open it and load the sample company: a full pipeline, forty contacts,
+      tasks and leads. Nothing to install, nothing to sign up for. Or take the
+      guided tour and let it show you round.
+    </p>
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="#">Open the demo</a>
+      <a class="btn" href="#">Read the manual</a>
+    </div>
+    <p class="hero-note">Replace these two links with your deployment URL and manual link before sharing.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">CRM Builder — modular CRM for small businesses.</div>
+</footer>

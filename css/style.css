@@ -597,3 +597,48 @@ body.modal-open { overflow: hidden; }
   }
   .th-num, .td-num { text-align: left; }
 }
+
+/* ------------------------------------------------------------ guided tour */
+body.tour-open { overflow: hidden; }
+.tour-root { position: fixed; inset: 0; z-index: 80; }
+.tour-scrim { position: absolute; inset: 0; background: rgb(9 12 20 / 55%); }
+/* The "hole": a ring drawn around the target rather than a clipped overlay,
+   so the highlighted control stays fully legible and correctly coloured. */
+.tour-ring {
+  position: absolute;
+  border-radius: 10px;
+  box-shadow: 0 0 0 3px var(--accent), 0 0 0 9999px rgb(9 12 20 / 55%);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+  opacity: 0;
+}
+.tour-pop {
+  position: absolute;
+  width: min(360px, calc(100vw - 24px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  padding: 18px 20px 16px;
+  transition: left 0.25s ease, top 0.25s ease, opacity 0.15s ease;
+}
+.tour-pop.is-loading { opacity: 0.35; }
+.tour-count {
+  margin: 0 0 6px; font-size: 11.5px; font-weight: 600;
+  letter-spacing: 0.07em; text-transform: uppercase; color: var(--accent);
+}
+.tour-pop h3 { margin: 0 0 7px; font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+.tour-body { margin: 0 0 16px; font-size: 13.5px; color: var(--text-soft); }
+.tour-actions { display: flex; align-items: center; gap: 8px; }
+.tour-spacer { flex: 1; }
+.tour-actions .btn { padding: 7px 14px; font-size: 13px; }
+.tour-skip { color: var(--text-faint); }
+
+@media (prefers-reduced-motion: reduce) {
+  .tour-ring, .tour-pop { transition: none; }
+}
+@media (max-width: 760px) {
+  /* Anchoring to a specific control is unreliable once the sidebar is a
+     drawer; pin the card to the bottom instead. */
+  .tour-pop { left: 12px !important; right: 12px; top: auto !important; bottom: 14px; width: auto; }
+}

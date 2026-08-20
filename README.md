@@ -23,7 +23,8 @@ A **modular CRM builder for small businesses** — an installable, offline-first
 |---|---|
 | **[User Guide](docs/USER-GUIDE.md)** | End users — every feature, in the order you need it. Also published as a [shareable web manual](docs/manual.html). |
 | **[Onboarding Playbook](docs/ONBOARDING.md)** | Whoever rolls this out to a business: session plans, data migration, week-1 check-in. |
-| **[Demo Script](docs/DEMO-SCRIPT.md)** | A timed 10-minute demo aimed at people who already use professional CRMs. |
+| **[Demo Script](docs/DEMO-SCRIPT.md)** | A timed 10-minute demo aimed at people who already use professional CRMs. Presenter-facing, deliberately imperative. |
+| **[Product Tour](docs/product-tour.html)** | Customer-facing overview for prospects, leads and recruiters. Third person; pairs with the in-app guided tour. |
 | **[Architecture](docs/ARCHITECTURE.md)** | Capacity limits, multi-tenancy options, and the pooled vs dedicated deployment paths. |
 | **[Deployment](DEPLOYMENT.md)** | Getting it running on Render + MongoDB Atlas + Google OAuth. |
 | **[Marketing](MARKETING.md)** | B2B/B2C copy and launch threads. |

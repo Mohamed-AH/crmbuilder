@@ -418,6 +418,59 @@ test.describe('demo data', () => {
   });
 });
 
+test.describe('guided tour', () => {
+  test('runs all six steps, loading demo data on the way', async ({ page }) => {
+    await page.goto('/');
+    await page.click('#onboard-tour');
+    await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
+
+    for (let step = 1; step <= 6; step += 1) {
+      await expect(page.locator('.tour-pop:not(.is-loading)')).toBeVisible();
+      await expect(page.locator('[data-tour-count]')).toHaveText(`Step ${step} of 6`);
+
+      // The card must stay on screen and must not cover the thing it points at.
+      const layout = await page.evaluate(() => {
+        const pop = document.querySelector('.tour-pop').getBoundingClientRect();
+        const ring = document.querySelector('.tour-ring').getBoundingClientRect();
+        return {
+          onScreen: pop.left >= 0 && pop.top >= 0
+            && pop.right <= window.innerWidth + 1 && pop.bottom <= window.innerHeight + 1,
+          coversTarget: !(pop.right < ring.left || pop.left > ring.right
+            || pop.bottom < ring.top || pop.top > ring.bottom),
+        };
+      });
+      expect(layout.onScreen, `step ${step} card is off screen`).toBe(true);
+      expect(layout.coversTarget, `step ${step} card covers its own highlight`).toBe(false);
+
+      await page.click('[data-tour-next]');
+    }
+
+    await expect(page.locator('.tour-pop')).toHaveCount(0);
+    // It landed on a populated workspace rather than an empty one.
+    await expect(page.locator('#nav-modules .nav-link')).toHaveCount(6);
+  });
+
+  test('can be skipped, and does not trap the page', async ({ page }) => {
+    await page.goto('/');
+    await page.click('#onboard-tour');
+    await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
+    await page.click('[data-tour-skip]');
+    await expect(page.locator('.tour-pop')).toHaveCount(0);
+    await expect(page.locator('body')).not.toHaveClass(/tour-open/);
+    // The app underneath is still usable.
+    await page.click('#nav-modules .nav-link:has-text("Deals")');
+    await expect(page.locator('h1')).toContainText('Deals');
+  });
+
+  test('Escape closes it', async ({ page }) => {
+    await page.goto('/');
+    await page.click('#onboard-tour');
+    await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.tour-pop')).toHaveCount(0);
+  });
+});
+
 // --- accounts, sync, admin -------------------------------------------------
 
 test.describe('accounts and sync', () => {

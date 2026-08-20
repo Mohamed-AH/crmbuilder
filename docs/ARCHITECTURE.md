@@ -66,8 +66,25 @@ storage is:
   workspace, so one can silently discard the other's changes
 - It rules out real-time collaboration entirely
 
-Moving to per-record sync is the single highest-leverage change on this list,
-and it is a prerequisite for genuine multi-user businesses.
+**The practical ceiling is far below the 16 MB one.** Degradation starts around
+a few thousand records, and it is a write-latency problem before it is a storage
+problem:
+
+| Workspace | Uploaded on every single edit | On a poor mobile connection (~1 Mbps up) |
+|---|---|---|
+| 500 records | 135 KB | ~1s — fine |
+| 5,000 records | 1.28 MB | ~10s — hits the 45s timeout under congestion |
+| 20,000 records | 5.14 MB | ~40s — routinely times out; edits silently queue |
+
+Once writes start timing out, `pushNow()` marks the workspace dirty and retries,
+so nothing is lost — but the user is editing against a workspace that has not
+been persisted, and last-write-wins across a whole document means a concurrent
+edit from another device can discard it entirely.
+
+Moving to per-record sync is the single highest-leverage change on this list.
+**Treat it as part of the multi-user work, not as a follow-up** — the moment two
+people share an organisation, whole-document replacement is a silent data-loss
+mechanism, not merely a slow one.
 
 ### 2.3 `events` grows without bound
 
@@ -138,15 +155,65 @@ users    { ..., orgId, role: 'owner' | 'member' | 'platformAdmin' }
 data     { ..., orgId }
 ```
 
-- Scope every query by `orgId`; scope `requireAdmin` to `orgAdmin` within an org,
-  with a separate `platformAdmin` for you
 - One shared Render service and one shared Atlas cluster
 - Customers see only their own business; you see everything
 
 **Good for:** the low-volume, non-technical tier — exactly the "pool them and
-hide the backend" case. **Effort:** ~2–3 days. **Risk:** every query must be
-scoped; one missed `orgId` filter is a cross-tenant leak, so this needs tests
-that specifically assert isolation.
+hide the backend" case. **Effort:** ~2–3 days.
+
+Three things this must get right:
+
+**Two distinct admin layers, not one role with exceptions.** `platformAdmin`
+must be a separate middleware that bypasses org scoping explicitly, rather than
+an `if` inside the org check. Anything shaped like
+`if (user.role === 'admin' || user.orgId === target.orgId)` will eventually be
+copied into a handler where the precedence is wrong.
+
+```js
+// Scoped by default. Every org-facing route uses this.
+const requireOrg = (req, res, next) => {
+  req.orgId = req.user.orgId;                       // never from the request body
+  if (!req.orgId) return res.status(403).json({ error: 'No organisation' });
+  next();
+};
+// Deliberately separate, deliberately narrow, and never mixed into the above.
+const requirePlatformAdmin = (req, res, next) =>
+  (req.user.role === 'platformAdmin' ? next() : res.status(403).json({ error: 'Admin only' }));
+```
+
+The scoping key must always come from the *session*, never from a parameter a
+caller can set.
+
+**Composite indexes, not just a new field.** Adding `orgId` without reindexing
+turns every scoped read into a collection scan as the pooled document count
+grows:
+
+```js
+await users.createIndex({ orgId: 1, email: 1 }, { unique: true });
+await data.createIndex({ orgId: 1, userId: 1 }, { unique: true });
+await events.createIndex({ orgId: 1, at: 1 }, { expireAfterSeconds: 7776000 });
+```
+
+The `orgId` must be the **leading** field — an index on `{ userId: 1, orgId: 1 }`
+does not serve a query filtered on `orgId` alone.
+
+**Isolation tests in CI, asserting the attack rather than the happy path.**
+Signing in as tenant B and requesting tenant A's resources must 403/404 — for
+reads *and* writes, and for every admin route. The suite already has the shape
+for this (`tests/api.test.mjs` has two-account tests); these become the gate
+that stops a missed `orgId` filter reaching production:
+
+```js
+// For each route: B must never see or touch A's data.
+GET    /api/data            as B  → only B's workspace, never A's
+PUT    /api/data            as B  → cannot write into A's org
+GET    /api/admin/users     as B  → only B's org members
+PATCH  /api/admin/users/:aId as B → 404, not 403 (don't confirm A exists)
+DELETE /api/admin/users/:aId as B → 404
+```
+
+**Risk:** one missed filter is a cross-tenant leak. The tests above are what
+make this option safe to ship, not optional hardening after it.
 
 ### Option C — Database-per-tenant, shared application
 
@@ -184,9 +251,31 @@ Dedicated tier   →  same image, own service + own cluster, single org
 
 The only difference between a pooled and a dedicated deployment is environment
 variables and how many orgs exist in it. One codebase, one CI pipeline, one
-upgrade path. A customer can start pooled and be migrated to dedicated by
-exporting their org and importing it into a fresh deployment — which the
-existing JSON export/import already does.
+upgrade path.
+
+### Migrating a customer from pooled to dedicated
+
+The existing JSON export/import is the mechanism, and it is safe for this
+**because the app's identifiers are application-owned, not database-owned.**
+Records carry a `crypto.randomUUID()` `id`, reference their module by that same
+`moduleId`, and relation fields store the target record's `id`. Mongo's `_id` is
+never exposed, never referenced, and is stripped on read (`projection: {_id: 0}`).
+So a round-trip preserves every cross-reference by construction.
+
+The rule to hold to when writing the migration tool:
+
+- **Re-key nothing.** Ids, `createdAt` and `updatedAt` transfer verbatim.
+  Regenerating a `moduleId` orphans every record in it; regenerating a record id
+  breaks every `relation` field pointing at it.
+- Only `orgId`/`userId` may be rewritten, since those are the tenancy keys — and
+  every record must be rewritten consistently in the same pass.
+- Verify after import by comparing counts per module *and* resolving every
+  relation field to an existing record id. A silent orphan is the failure mode
+  worth testing for, and it is invisible in a record count.
+
+`GET /api/data` → `PUT /api/data` on the new deployment is sufficient today for
+a single-user workspace. A multi-org export needs the same guarantees applied
+per org.
 
 ---
 
@@ -206,15 +295,23 @@ existing JSON export/import already does.
 
 ## 7. Suggested order
 
-1. **`events` TTL index** — one line, do it today, prevents slow storage creep.
-2. **Per-org scoping (Option B)** — the prerequisite for onboarding any customer
-   as an admin of their own business. Ship with cross-tenant isolation tests.
-3. **Sell dedicated (Option D) immediately** — it needs no code and is the honest
+1. **`events` TTL index** — ✅ shipped. 90 days, configurable via
+   `EVENT_RETENTION_DAYS`, and it replaces the older untl'd index in place on
+   existing deployments.
+2. **Sell dedicated (Option D) immediately** — needs no code and is the honest
    answer to any enterprise client asking about isolation right now.
-4. **Per-record sync** — before any customer passes a few thousand records, or
-   before any promise of multi-user editing.
-5. **Database-per-tenant (Option C)** — only if a client's compliance
+3. **Per-org scoping (Option B) *with* per-record sync** — these ship together,
+   not in sequence. Org scoping is what makes shared hosting safe; per-record
+   sync is what makes a shared *organisation* safe. Landing multi-user on top of
+   whole-document replacement would introduce silent data loss between colleagues
+   on the very day the feature becomes useful.
+4. **Database-per-tenant (Option C)** — only if a client's compliance
    requirements demand it and dedicated deployment isn't acceptable.
+
+The one sequencing point worth defending: it is tempting to ship org scoping
+first and treat sync as an optimisation. Don't. Scoping without per-record sync
+gives several colleagues one workspace where the last person to save wins over
+everyone else, silently.
 
 ## 8. What to answer a prospect today
 

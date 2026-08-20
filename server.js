@@ -107,7 +107,31 @@ class MongoStore {
     this.events = db.collection('events');
     await this.users.createIndex({ email: 1 }, { unique: true });
     await this.data.createIndex({ userId: 1 }, { unique: true });
-    await this.events.createIndex({ at: 1 });
+    await this.ensureEventTTL();
+  }
+
+  // Analytics only ever look 30 days back, but events accumulate forever and
+  // compete with customer data for the same storage quota. Expire them.
+  async ensureEventTTL() {
+    const expireAfterSeconds = Number(process.env.EVENT_RETENTION_DAYS || 90) * 86400;
+    try {
+      await this.events.createIndex({ at: 1 }, { expireAfterSeconds });
+    } catch (err) {
+      // Deployments created before this existed have a plain { at: 1 } index.
+      // Mongo refuses to redefine an index's options in place (code 85/86), so
+      // replace it. Never fatal: analytics degrade, the app keeps working.
+      if (err.code === 85 || err.code === 86) {
+        try {
+          await this.events.dropIndex('at_1');
+          await this.events.createIndex({ at: 1 }, { expireAfterSeconds });
+          console.log(`Replaced the events index with a ${expireAfterSeconds / 86400}-day TTL`);
+        } catch (retryErr) {
+          console.warn('Could not apply the events TTL index:', retryErr.message);
+        }
+      } else {
+        console.warn('Could not apply the events TTL index:', err.message);
+      }
+    }
   }
   async countUsers() { return this.users.countDocuments(); }
   async getUserByEmail(email) { return this.users.findOne({ email }, { projection: { _id: 0 } }); }

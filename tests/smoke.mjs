@@ -245,6 +245,18 @@ const warned = counts.WARN || 0;
 console.log(`\n${c.bold}Summary${c.off}`);
 console.log(`  ${counts.PASS || 0} passed · ${warned} warnings · ${failed} failed`);
 
+// Everything failing identically usually means the request never reached the
+// deployment — a corporate proxy, VPN or egress policy in the way. Saying
+// "deployment unhealthy" in that case sends people debugging the wrong system.
+if (failed >= results.length - 1 && !(counts.PASS > 1)) {
+  const statuses = new Set(results.filter((r) => r.status === 'FAIL').map((r) => (r.detail.match(/HTTP (\d+)/) || [])[1]).filter(Boolean));
+  const blocked = statuses.size === 1 && ['403', '407', '502', '407'].includes([...statuses][0]);
+  console.log(`\n${c.warn}Every check failed${blocked ? ` with the same status (HTTP ${[...statuses][0]})` : ''}.${c.off}`);
+  console.log('  That pattern usually means the requests never reached the server —');
+  console.log('  a proxy, VPN or network policy between you and it — rather than a');
+  console.log('  broken deployment. Confirm by opening the URL in a browser first.');
+}
+
 if (warned) {
   console.log(`\n${c.warn}Warnings worth acting on:${c.off}`);
   results.filter((r) => r.status === 'WARN').forEach((r) => console.log(`  ! ${r.name} — ${r.detail}`));
