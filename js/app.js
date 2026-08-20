@@ -257,58 +257,125 @@
     Cloud.schedulePush();
   }
 
+  const SETTINGS_AT_KEY = 'crmb:settingsAt';
+
   function saveSettings() {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS));
+    localStorage.setItem(SETTINGS_AT_KEY, String(Date.now()));
     persist();
   }
 
-  async function importState({ modules: mods, records, settings }) {
-    await DB.clear('records');
-    await DB.clear('modules');
-    for (const m of mods || []) await DB.put('modules', m);
-    for (const r of records || []) await DB.put('records', r);
+  /*
+   * Replace the whole local workspace.
+   *
+   * `tombstone` marks whatever is being displaced as deleted rather than just
+   * dropping it, so the other devices on the account learn about it. `stamp`
+   * re-dates the incoming rows to now — an explicit restore is a deliberate
+   * act and should win the next sync, even though the backup file's own
+   * timestamps are older than what is on the server.
+   */
+  async function importState({ modules: mods, records, settings }, { tombstone = false, stamp = false } = {}) {
+    const now = Date.now();
+    const incoming = new Set([...(mods || []).map((m) => m && m.id), ...(records || []).map((r) => r && r.id)]);
+
+    if (tombstone) {
+      for (const kind of ['records', 'modules']) {
+        for (const row of await DB.getAll(kind)) {
+          if (!incoming.has(row.id)) await DB.delete(kind, row.id, now);
+        }
+      }
+    } else {
+      await DB.clear('records');
+      await DB.clear('modules');
+    }
+
+    for (const m of mods || []) await DB.put('modules', stamp ? { ...m, updatedAt: now } : m);
+    for (const r of records || []) await DB.put('records', stamp ? { ...r, updatedAt: now } : r);
     if (settings && typeof settings === 'object') {
       SETTINGS = { ...SETTINGS, ...settings };
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS));
+      if (stamp) localStorage.setItem(SETTINGS_AT_KEY, String(now));
     }
     await loadModules();
     relationNameCache.clear();
   }
 
-  // Reconcile local vs cloud on startup (last-write-wins on the snapshot).
-  // Returns true when local data was replaced, so the caller knows to repaint.
-  async function reconcileWithCloud() {
-    let remote;
-    try { remote = await Cloud.pull(); } catch { return false; }
-    const localHas = modules.length > 0;
-    const lastSync = Number(localStorage.getItem('crmb:lastSync')) || 0;
-    const lastEdit = Number(localStorage.getItem('crmb:lastEdit')) || 0;
-    const dirty = !!localStorage.getItem('crmb:dirty');
+  // ------------------------------------------------------------ delta sync
+  // The two hooks Cloud drives. Everything here speaks in single records:
+  // what changed locally since our last accepted push, and how to fold in
+  // what changed elsewhere.
 
-    const adopt = async (msg) => {
-      await importState(remote);
-      localStorage.setItem('crmb:lastSync', String(Date.now()));
-      localStorage.removeItem('crmb:dirty');
-      if (msg) toast(msg);
-      return true;
+  const rowClock = (r) => r.updatedAt || r.deletedAt || r.createdAt || 0;
+
+  async function localChanges(since) {
+    const [mods, recs] = await Promise.all([DB.getAllRaw('modules'), DB.getAllRaw('records')]);
+    let highWater = since;
+
+    // `>=`, not `>`: several rows can share a millisecond, and a strict
+    // comparison would strand every one of them that isn't the last. Re-sending
+    // the boundary row costs nothing — the server's tie-break skips it.
+    const pick = (rows) => rows.filter((r) => r && rowClock(r) >= since).map((r) => {
+      const at = rowClock(r);
+      if (at > highWater) highWater = at;
+      return r.deletedAt
+        ? { id: r.id, updatedAt: at, deleted: true, deletedAt: r.deletedAt }
+        : { id: r.id, updatedAt: at, doc: r };
+    });
+
+    const modules_ = pick(mods);
+    const records_ = pick(recs);
+    const settingsAt = Number(localStorage.getItem(SETTINGS_AT_KEY)) || 0;
+    if (settingsAt > highWater) highWater = settingsAt;
+
+    return {
+      modules: modules_,
+      records: records_,
+      // Only settings this device has actually chosen. Defaults have a clock
+      // of 0 and must never be offered as an edit — a device signing in for
+      // the first time would otherwise push its blank defaults at a workspace
+      // that already has real ones.
+      settings: settingsAt > 0 && settingsAt >= since ? SETTINGS : undefined,
+      settingsUpdatedAt: settingsAt,
+      highWater,
     };
+  }
 
-    if (!remote || remote.modules === null) {
-      if (localHas) await Cloud.pushNow();
-      return false;
-    }
-    if (!localHas) {
-      return adopt(remote.modules.length ? 'Workspace restored from your account' : '');
-    }
-    if (remote.updatedAt > lastSync) {
-      if (!dirty || remote.updatedAt > lastEdit) {
-        return adopt('Synced latest data from your account');
+  async function mergeChanges(remote) {
+    let changed = 0;
+
+    for (const kind of ['modules', 'records']) {
+      for (const item of remote[kind] || []) {
+        if (!item || !item.id) continue;
+        const local = await DB.getRaw(kind, item.id);
+        // Last-write-wins, per row. A tie keeps what is already here: the two
+        // sides agree often enough (a row we just pushed) that rewriting on
+        // equality would churn the store for nothing.
+        if (local && rowClock(local) >= item.updatedAt) continue;
+        if (item.deleted) {
+          const at = item.deletedAt || item.updatedAt;
+          if (local) await DB.delete(kind, item.id, at);
+          // A tombstone for something never seen here still has to be stored:
+          // the row may arrive from a third device later, out of order.
+          else await DB.put(kind, { id: item.id, deletedAt: at, updatedAt: at });
+        } else {
+          await DB.put(kind, { ...item.doc, id: item.id, updatedAt: item.updatedAt });
+        }
+        changed += 1;
       }
-      await Cloud.pushNow(); // local edits are newer
-      return false;
     }
-    if (dirty) await Cloud.pushNow();
-    return false;
+
+    if (remote.settings && remote.settings.doc) {
+      const localAt = Number(localStorage.getItem(SETTINGS_AT_KEY)) || 0;
+      if ((remote.settings.updatedAt || 0) > localAt) {
+        SETTINGS = { ...SETTINGS, ...remote.settings.doc };
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS));
+        localStorage.setItem(SETTINGS_AT_KEY, String(remote.settings.updatedAt));
+        changed += 1;
+      }
+    }
+
+    if (changed) relationNameCache.clear();
+    return changed;
   }
 
   // ---------------------------------------------------------------- modal
@@ -576,6 +643,7 @@
       SETTINGS.businessName = $('#onboard-name').value.trim();
       SETTINGS.currency = $('#onboard-currency').value;
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS));
+      localStorage.setItem(SETTINGS_AT_KEY, String(Date.now()));
       const withSamples = $('#onboard-samples').checked;
       for (const t of picked) await createFromTemplate(t, withSamples);
       await loadModules();
@@ -600,6 +668,7 @@
       defaultView: t.defaultView || 'table',
       fields: t.fields.map((f) => ({ ...f, options: f.options ? [...f.options] : undefined })),
       createdAt: Date.now(),
+      updatedAt: Date.now(),
     };
     await DB.put('modules', mod);
     if (withSamples && t.samples) {
@@ -623,8 +692,9 @@
     }
     const demo = resolveDemoDates(DEMO_DATA);
     if (replace) {
-      await DB.clear('records');
-      await DB.clear('modules');
+      // Tombstoned, not cleared: the other devices on this account have to be
+      // told the old workspace is gone, or they will push it straight back.
+      await DB.softClearAll();
       relationNameCache.clear();
     }
     await loadModules();
@@ -647,6 +717,7 @@
     SETTINGS.businessName = demo.businessName;
     SETTINGS.currency = demo.currency;
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS));
+    localStorage.setItem(SETTINGS_AT_KEY, String(Date.now()));
 
     await loadModules();
     await persist();
@@ -1118,6 +1189,7 @@
       });
       if (created.length) {
         mod.fields = [...mod.fields, ...created];
+        mod.updatedAt = Date.now();
         await DB.put('modules', mod);
         await loadModules();
       }
@@ -1404,6 +1476,9 @@
         icon: iconName,
         color,
         fields,
+        // Per-record sync selects by this. A module without one would look
+        // unchanged forever and never leave the device.
+        updatedAt: Date.now(),
       };
       await DB.put('modules', saved);
       await loadModules();
@@ -1525,8 +1600,7 @@
     $('#import-file').addEventListener('change', importData);
     $('#reset-btn').addEventListener('click', async () => {
       if (!confirm('Delete ALL modules and records from this device? Export a backup first if you might need this data.')) return;
-      await DB.clear('records');
-      await DB.clear('modules');
+      await DB.softClearAll();
       localStorage.removeItem('crmb:snapshot');
       await loadModules();
       await persist();
@@ -1627,7 +1701,7 @@
       return;
     }
     if (!confirm(`Import ${payload.modules.length} modules and ${payload.records.length} records? This REPLACES everything currently on this device.`)) return;
-    await importState(payload);
+    await importState(payload, { tombstone: true, stamp: true });
     await persist();
     renderSidebar();
     toast('Backup imported');
@@ -1874,13 +1948,16 @@
   // user is already doing. Repaint only when the cloud actually replaced our
   // data, and never out from under an open modal.
   async function syncInBackground() {
-    await Cloud.init(fullState);
+    await Cloud.init({ getState: fullState, getChanges: localChanges, applyChanges: mergeChanges });
     renderSidebar();
     // The onboarding screen offers "already have an account?" only once we know
     // a server exists, so repaint it now that we do.
     if (!modules.length && !$('#modal-root').firstChild) route();
     if (!Cloud.isAuthed) return;
-    const changed = await reconcileWithCloud();
+    const { changed } = await Cloud.sync();
+    // Tombstones the whole account has long since seen. Best-effort and never
+    // in the way of the sync itself.
+    DB.pruneTombstones().catch(() => {});
     if (!changed) return;
     await loadModules();
     if ($('#modal-root').firstChild) return; // mid-edit: leave the screen alone

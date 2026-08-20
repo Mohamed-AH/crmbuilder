@@ -1,11 +1,17 @@
 /*
  * cloud.js — account + sync layer.
  *
- * When the app is served by server.js and the user signs in, their whole
- * workspace (modules, records, settings) syncs to the server (MongoDB).
- * Without a server or when signed out, everything stays local: IndexedDB
- * is the source of truth with a localStorage snapshot as a second copy.
- * Sync strategy is last-write-wins on the full snapshot, debounced.
+ * When the app is served by server.js and the user signs in, their workspace
+ * (modules, records, settings) syncs to the server (MongoDB). Without a server
+ * or when signed out, everything stays local: IndexedDB is the source of truth
+ * with a localStorage snapshot as a second copy.
+ *
+ * Sync is per record. Each trip sends only what changed here since the last
+ * successful push and receives only what changed there since our cursor, and
+ * conflicts resolve one record at a time by last-write-wins — so two devices
+ * editing different records both keep their edits. If the server does not
+ * understand /api/sync (an older deployment mid-rollout), this falls back to
+ * the whole-snapshot PUT it used to do.
  *
  * Nothing here is ever awaited before the UI paints — see init() in app.js.
  * Free-tier hosts (Render) spin down when idle and can take the better part
@@ -18,9 +24,20 @@ const Cloud = (() => {
   let pushTimer = null;
   let pushInFlight = false;
   let pushQueued = false;
-  let getState = null; // async () => ({ modules, records, settings })
+  let getState = null;    // async () => ({ modules, records, settings })
+  let getChanges = null;  // async (since) => ({ modules, records, settings, settingsUpdatedAt, highWater })
+  let applyChanges = null; // async ({ modules, records, settings }) => changedCount
+  let deltaSupported = true;
   let bootResolved = false;
   const statusListeners = [];
+
+  // The server's monotonic cursor: the highest change stamp we have seen.
+  const CURSOR_KEY = 'crmb:syncCursor';
+  // Our own clock at the last accepted push. Everything edited after this is
+  // still owed to the server.
+  const PUSHED_KEY = 'crmb:pushedThrough';
+
+  const num = (key) => Number(localStorage.getItem(key)) || 0;
 
   // Generous enough to survive a free-tier cold start, short enough that a
   // genuinely dead server doesn't leave the UI claiming "connecting" forever.
@@ -74,12 +91,16 @@ const Cloud = (() => {
     get ready() { return bootResolved; },
     onStatus(cb) { statusListeners.push(cb); },
 
-    // stateProvider: async () => ({ modules, records, settings })
+    // providers: { getState, getChanges, applyChanges } — or, for the simple
+    // case, just the getState function.
     // Deliberately not awaited by the caller: everything up to the first await
     // runs synchronously so the first paint already has last visit's identity,
     // and the network result is folded in whenever it arrives.
-    async init(stateProvider) {
-      getState = stateProvider;
+    async init(providers) {
+      const p = typeof providers === 'function' ? { getState: providers } : (providers || {});
+      getState = p.getState || null;
+      getChanges = p.getChanges || null;
+      applyChanges = p.applyChanges || null;
       me = offlineIdentity();
       setStatus(me.authenticated ? 'connecting' : 'local');
       try {
@@ -111,32 +132,78 @@ const Cloud = (() => {
       localStorage.removeItem('crmb:auth');
       localStorage.removeItem('crmb:user');
       localStorage.removeItem('crmb:lastSync');
+      // The next account to sign in on this device must not inherit this
+      // one's cursor, or it would never be sent the workspace it already has.
+      localStorage.removeItem(CURSOR_KEY);
+      localStorage.removeItem(PUSHED_KEY);
       setStatus('local');
+    },
+
+    // Where the server's change stream stands as far as this device knows.
+    get cursor() { return num(CURSOR_KEY); },
+    resetCursor() {
+      localStorage.removeItem(CURSOR_KEY);
+      localStorage.removeItem(PUSHED_KEY);
     },
 
     async pull() {
       return api('/api/data', {}, TIMEOUT.boot);
     },
 
-    async pushNow() {
-      if (!me.authenticated || !getState) return false;
+    /*
+     * One sync round trip: push what changed here, apply what changed there.
+     *
+     * Returns { ok, changed } — `changed` is how many local rows the response
+     * actually altered, which is what tells the caller whether to repaint.
+     */
+    async sync() {
+      if (!me.authenticated || !getChanges) return { ok: false, changed: 0 };
       clearTimeout(pushTimer);
-      // Overlapping PUTs of a whole snapshot can land out of order; serialize
-      // them and coalesce anything requested while one is in flight.
+      // Serialize. Two overlapping trips would both read the same pending set
+      // and the second would advance the watermark past changes the first was
+      // still sending.
       if (pushInFlight) {
         pushQueued = true;
-        return false;
+        return { ok: false, changed: 0 };
       }
       pushInFlight = true;
       setStatus('syncing');
       try {
-        const state = await getState();
-        await api('/api/data', { method: 'PUT', body: JSON.stringify(state) }, TIMEOUT.data);
+        if (!deltaSupported) return await Cloud.pushFull();
+
+        const since = num(PUSHED_KEY);
+        const cursor = num(CURSOR_KEY);
+        const local = await getChanges(since);
+        // Captured before the request, not after: an edit made while the
+        // request is in flight must stay pending, not be marked as sent.
+        const highWater = local.highWater || Date.now();
+
+        const out = await api('/api/sync', {
+          method: 'POST',
+          body: JSON.stringify({
+            since: cursor,
+            modules: local.modules || [],
+            records: local.records || [],
+            settings: local.settings,
+            settingsUpdatedAt: local.settingsUpdatedAt || 0,
+          }),
+        }, TIMEOUT.data);
+
+        const changed = applyChanges ? await applyChanges(out) : 0;
+        localStorage.setItem(CURSOR_KEY, String(out.cursor || cursor));
+        localStorage.setItem(PUSHED_KEY, String(highWater));
         localStorage.setItem('crmb:lastSync', String(Date.now()));
         localStorage.removeItem('crmb:dirty');
         setStatus('synced');
-        return true;
+        return { ok: true, changed };
       } catch (err) {
+        if (err.status === 404) {
+          // An older server that has never heard of /api/sync. Fall back for
+          // the rest of the session rather than failing every trip.
+          deltaSupported = false;
+          console.warn('Server does not support per-record sync; using whole-snapshot sync.');
+          return await Cloud.pushFull();
+        }
         // 401 means the session died server-side (expired, or the account was
         // disabled); drop to local so the UI stops promising a sync.
         if (err.status === 401 || err.status === 403) {
@@ -147,22 +214,51 @@ const Cloud = (() => {
         } else {
           setStatus(navigator.onLine ? 'error' : 'offline');
         }
-        return false;
+        return { ok: false, changed: 0 };
       } finally {
         pushInFlight = false;
         if (pushQueued) {
           pushQueued = false;
-          setTimeout(() => Cloud.pushNow(), 250);
+          setTimeout(() => Cloud.sync(), 250);
         }
       }
     },
 
-    // Debounced push — call after every local mutation.
+    // Whole-snapshot write. The fallback path, and what a manual "Sync now"
+    // falls back to; it clobbers by design, so nothing calls it routinely.
+    async pushFull() {
+      if (!me.authenticated || !getState) return { ok: false, changed: 0 };
+      try {
+        const state = await getState();
+        await api('/api/data', { method: 'PUT', body: JSON.stringify(state) }, TIMEOUT.data);
+        localStorage.setItem('crmb:lastSync', String(Date.now()));
+        localStorage.removeItem('crmb:dirty');
+        setStatus('synced');
+        return { ok: true, changed: 0 };
+      } catch (err) {
+        if (err.status === 401 || err.status === 403) {
+          me.authenticated = false;
+          me.user = null;
+          rememberSession();
+          setStatus('local');
+        } else {
+          setStatus(navigator.onLine ? 'error' : 'offline');
+        }
+        return { ok: false, changed: 0 };
+      }
+    },
+
+    // Kept for callers that only care whether the workspace reached the server.
+    async pushNow() {
+      return (await Cloud.sync()).ok;
+    },
+
+    // Debounced sync — call after every local mutation.
     schedulePush() {
       localStorage.setItem('crmb:dirty', '1');
       if (!me.authenticated) return;
       clearTimeout(pushTimer);
-      pushTimer = setTimeout(() => Cloud.pushNow(), 1500);
+      pushTimer = setTimeout(() => Cloud.sync(), 1500);
     },
 
     admin: {
@@ -174,4 +270,4 @@ const Cloud = (() => {
   };
 })();
 
-window.addEventListener('online', () => { if (localStorage.getItem('crmb:dirty')) Cloud.pushNow(); });
+window.addEventListener('online', () => { if (localStorage.getItem('crmb:dirty')) Cloud.sync(); });

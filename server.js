@@ -3,12 +3,19 @@
  *
  * Serves the static PWA and provides:
  *   - Google OAuth sign-in (JWT httpOnly cookie sessions)
- *   - Per-user data sync (modules/records/settings) in MongoDB
+ *   - Per-record data sync (modules/records/settings) in MongoDB
  *   - Admin APIs: account management + business analytics
  *
  * Storage: MongoDB when MONGODB_URI is set (Atlas free tier works);
  * otherwise a JSON file store (./data/store.json) so local development
  * needs zero setup. The client works fully offline either way.
+ *
+ * Sync model: every module and record is stored as its own row carrying an
+ * `updatedAt` (the client's edit clock, which decides last-write-wins) and a
+ * `serverAt` (this server's monotonic clock, which the delta cursor walks).
+ * Deletes are tombstones, never removals — a hard delete is invisible to a
+ * device that was offline when it happened, so the row would come straight
+ * back on that device's next push. See /api/sync.
  */
 const express = require('express');
 const cookieParser = require('cookie-parser');
@@ -39,6 +46,31 @@ function uid() {
   return crypto.randomUUID();
 }
 
+/*
+ * A monotonic server clock for sync cursors.
+ *
+ * The delta protocol asks "everything changed since cursor N". If two rows
+ * written in sequence could share a millisecond — they routinely do — a cursor
+ * landing between them would skip the second one forever. Ticking forward on a
+ * collision makes every stamp distinct and strictly increasing within a
+ * process, and Date.now() reclaims the lead after a restart.
+ *
+ * Deliberately separate from `updatedAt`: that one is the client's clock and
+ * decides who wins a conflict, and a device with a skewed clock must not be
+ * able to push cursors past changes other devices have not seen yet.
+ */
+let lastStamp = 0;
+function serverStamp() {
+  const now = Date.now();
+  lastStamp = now > lastStamp ? now : lastStamp + 1;
+  return lastStamp;
+}
+
+// The two synced item kinds. Both share one envelope shape:
+//   { userId, orgId, id, updatedAt, serverAt, deletedAt, deletedOn, doc }
+const SYNC_KINDS = ['modules', 'records'];
+const TOMBSTONE_DAYS = Number(process.env.TOMBSTONE_RETENTION_DAYS || 180);
+
 // --------------------------------------------------------------- storage
 // Both stores implement the same interface so the rest of the app
 // doesn't care which one is active.
@@ -50,13 +82,14 @@ class FileStore {
     try {
       this.s = JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch {
-      this.s = { users: [], orgs: [], data: {}, events: [] };
+      this.s = { users: [], orgs: [], data: {}, events: [], items: { modules: {}, records: {} } };
     }
+    this.s.items = this.s.items || { modules: {}, records: {} };
   }
   save() {
     fs.writeFileSync(this.file, JSON.stringify(this.s));
   }
-  async init() {}
+  async init() { this.pruneTombstones(); }
   kind() { return 'file'; }
   async countUsers() { return this.s.users.length; }
   async getUserByEmail(email) { return this.s.users.find((u) => u.email === email) || null; }
@@ -70,6 +103,7 @@ class FileStore {
   async deleteUser(id) {
     this.s.users = this.s.users.filter((u) => u.id !== id);
     delete this.s.data[id];
+    for (const kind of SYNC_KINDS) delete (this.s.items[kind] || {})[id];
     this.save();
   }
   // An orgId argument of null means "across every org" and is only ever
@@ -78,7 +112,50 @@ class FileStore {
     return this.s.users.filter((u) => !orgId || u.orgId === orgId);
   }
   async getData(userId) { return this.s.data[userId] || null; }
-  async putData(userId, doc) { this.s.data[userId] = doc; this.save(); }
+  async putData(userId, doc) { this.s.data[userId] = { ...(this.s.data[userId] || {}), ...doc }; this.save(); }
+  async stripSnapshot(userId) {
+    const doc = this.s.data[userId];
+    if (!doc) return;
+    delete doc.modules;
+    delete doc.records;
+    this.save();
+  }
+
+  // --- per-record items
+  bucket(kind, userId) {
+    this.s.items[kind] = this.s.items[kind] || {};
+    this.s.items[kind][userId] = this.s.items[kind][userId] || {};
+    return this.s.items[kind][userId];
+  }
+  async getItemsByIds(kind, userId, ids) {
+    const b = this.bucket(kind, userId);
+    return ids.map((id) => b[id]).filter(Boolean);
+  }
+  async listItems(kind, userId, { since = 0, includeDeleted = true } = {}) {
+    return Object.values(this.bucket(kind, userId))
+      .filter((e) => e.serverAt > since && (includeDeleted || !e.deletedAt))
+      .sort((a, b) => a.serverAt - b.serverAt);
+  }
+  async putItems(kind, envelopes) {
+    for (const e of envelopes) this.bucket(kind, e.userId)[e.id] = e;
+    this.save();
+  }
+  async countItems(kind, userId) {
+    return Object.values(this.bucket(kind, userId)).filter((e) => !e.deletedAt).length;
+  }
+  pruneTombstones() {
+    const cutoff = Date.now() - TOMBSTONE_DAYS * DAY_MS;
+    let removed = 0;
+    for (const kind of SYNC_KINDS) {
+      for (const [userId, bucket] of Object.entries(this.s.items[kind] || {})) {
+        for (const [id, e] of Object.entries(bucket)) {
+          if (e.deletedAt && e.deletedAt < cutoff) { delete this.s.items[kind][userId][id]; removed += 1; }
+        }
+      }
+    }
+    if (removed) this.save();
+    return removed;
+  }
   async addEvent(type, userId, orgId = null) {
     this.s.events.push({ type, userId, orgId, day: dayKey(), at: Date.now() });
     if (this.s.events.length > 50000) this.s.events = this.s.events.slice(-40000);
@@ -121,6 +198,7 @@ class MongoStore {
     this.data = db.collection('data');
     this.events = db.collection('events');
     this.orgs = db.collection('orgs');
+    this.cols = { modules: db.collection('modules'), records: db.collection('records') };
 
     // Email stays GLOBALLY unique, deliberately. Sign-in resolves an account
     // by email alone, so the same address in two orgs would make login
@@ -135,7 +213,47 @@ class MongoStore {
     await this.data.createIndex({ orgId: 1 });
     await this.events.createIndex({ orgId: 1, at: 1 });
 
+    for (const kind of SYNC_KINDS) {
+      const col = this.cols[kind];
+      // One row per item per workspace. The unique key is what makes a push
+      // idempotent: replaying it upserts the same row instead of duplicating.
+      await col.createIndex({ userId: 1, id: 1 }, { unique: true });
+      // The delta query is exactly this: one workspace, everything past a
+      // cursor, in cursor order.
+      await col.createIndex({ userId: 1, serverAt: 1 });
+      await col.createIndex({ orgId: 1 });
+      await this.ensureTombstoneTTL(kind);
+    }
+
     await this.ensureEventTTL();
+  }
+
+  /*
+   * Expire tombstones once every device has had a fair chance to see them.
+   *
+   * Same single-field rule as the events TTL — expireAfterSeconds on a
+   * compound key is accepted and then ignored. It keys on `deletedOn`, a real
+   * Date that only tombstones carry: MongoDB's TTL monitor skips documents
+   * where the indexed field is not a Date, so live rows (deletedOn: null) are
+   * never touched by it.
+   */
+  async ensureTombstoneTTL(kind) {
+    const expireAfterSeconds = TOMBSTONE_DAYS * 86400;
+    const col = this.cols[kind];
+    try {
+      await col.createIndex({ deletedOn: 1 }, { expireAfterSeconds });
+    } catch (err) {
+      if (err.code === 85 || err.code === 86) {
+        try {
+          await col.dropIndex('deletedOn_1');
+          await col.createIndex({ deletedOn: 1 }, { expireAfterSeconds });
+        } catch (retryErr) {
+          console.warn(`Could not apply the ${kind} tombstone TTL:`, retryErr.message);
+        }
+      } else {
+        console.warn(`Could not apply the ${kind} tombstone TTL:`, err.message);
+      }
+    }
   }
 
   // Analytics only ever look 30 days back, but events accumulate forever and
@@ -177,12 +295,43 @@ class MongoStore {
   async deleteUser(id) {
     await this.users.deleteOne({ id });
     await this.data.deleteOne({ userId: id });
+    for (const kind of SYNC_KINDS) await this.cols[kind].deleteMany({ userId: id });
   }
   async listUsers(orgId = null) {
     return this.users.find(orgId ? { orgId } : {}, { projection: { _id: 0 } }).toArray();
   }
   async getData(userId) { return this.data.findOne({ userId }, { projection: { _id: 0 } }); }
   async putData(userId, doc) { await this.data.updateOne({ userId }, { $set: doc }, { upsert: true }); }
+  async stripSnapshot(userId) {
+    await this.data.updateOne({ userId }, { $unset: { modules: '', records: '' } });
+  }
+
+  // --- per-record items
+  async getItemsByIds(kind, userId, ids) {
+    const out = [];
+    // $in with tens of thousands of ids builds a query document that can pass
+    // the 16 MB BSON limit; chunk it.
+    for (let i = 0; i < ids.length; i += 1000) {
+      const chunk = ids.slice(i, i + 1000);
+      const rows = await this.cols[kind].find({ userId, id: { $in: chunk } }, { projection: { _id: 0 } }).toArray();
+      out.push(...rows);
+    }
+    return out;
+  }
+  async listItems(kind, userId, { since = 0, includeDeleted = true } = {}) {
+    const query = { userId, serverAt: { $gt: since } };
+    if (!includeDeleted) query.deletedAt = null;
+    return this.cols[kind].find(query, { projection: { _id: 0 } }).sort({ serverAt: 1 }).toArray();
+  }
+  async putItems(kind, envelopes) {
+    if (!envelopes.length) return;
+    await this.cols[kind].bulkWrite(envelopes.map((e) => ({
+      updateOne: { filter: { userId: e.userId, id: e.id }, update: { $set: e }, upsert: true },
+    })), { ordered: false });
+  }
+  async countItems(kind, userId) {
+    return this.cols[kind].countDocuments({ userId, deletedAt: null });
+  }
   async addEvent(type, userId, orgId = null) {
     await this.events.insertOne({ type, userId, orgId, day: dayKey(), at: Date.now() });
   }
@@ -382,6 +531,245 @@ async function resolveTarget(req, res) {
   return target;
 }
 
+// ------------------------------------------------------------ sync engine
+/*
+ * Per-record sync.
+ *
+ * A client keeps a cursor — the highest `serverAt` it has seen. A round trip
+ * is one POST: everything the client changed since its last successful push,
+ * and in the response everything anyone changed since its cursor.
+ *
+ * Conflicts resolve per record by last-write-wins on `updatedAt`, so two
+ * devices editing *different* records both keep their work. Whole-snapshot
+ * sync could not do that: the later save simply overwrote the earlier one.
+ *
+ * Ties go to the row already stored (`existing.updatedAt >= incoming` skips).
+ * A replayed push therefore changes nothing, which is what makes the retry on
+ * a flaky connection safe.
+ */
+function envelope(kind, user, item, now) {
+  const deleted = !!item.deleted;
+  const updatedAt = Number(item.updatedAt) || now;
+  const deletedAt = deleted ? (Number(item.deletedAt) || updatedAt) : null;
+  return {
+    userId: user.id,
+    orgId: user.orgId || null,
+    id: String(item.id),
+    updatedAt,
+    serverAt: serverStamp(),
+    deletedAt,
+    // A Date, and only on tombstones — this is what the TTL index keys on.
+    deletedOn: deletedAt ? new Date(deletedAt) : null,
+    doc: deleted ? null : (item.doc && typeof item.doc === 'object' ? item.doc : {}),
+  };
+}
+
+function wireItem(e) {
+  return e.deletedAt
+    ? { id: e.id, updatedAt: e.updatedAt, deleted: true, deletedAt: e.deletedAt }
+    : { id: e.id, updatedAt: e.updatedAt, doc: e.doc };
+}
+
+async function applyPush(user, body) {
+  const now = Date.now();
+  const won = { modules: new Set(), records: new Set() };
+  let touched = 0;
+
+  for (const kind of SYNC_KINDS) {
+    const incoming = Array.isArray(body[kind]) ? body[kind] : [];
+    if (!incoming.length) continue;
+
+    // De-duplicate by id first (a client retrying mid-batch can send one twice)
+    // and keep the newest, so the existing-row lookup below stays one query.
+    const byId = new Map();
+    for (const item of incoming) {
+      if (!item || !item.id) continue;
+      const id = String(item.id);
+      const prev = byId.get(id);
+      if (!prev || (Number(item.updatedAt) || 0) >= (Number(prev.updatedAt) || 0)) byId.set(id, item);
+    }
+    if (!byId.size) continue;
+
+    const existing = new Map(
+      (await store.getItemsByIds(kind, user.id, [...byId.keys()])).map((e) => [e.id, e])
+    );
+    const writes = [];
+    for (const [id, item] of byId) {
+      const prior = existing.get(id);
+      const updatedAt = Number(item.updatedAt) || now;
+      if (prior && prior.updatedAt >= updatedAt) continue; // the server's copy wins
+      writes.push(envelope(kind, user, item, now));
+      won[kind].add(id);
+    }
+    if (writes.length) await store.putItems(kind, writes);
+    touched += writes.length;
+  }
+
+  // Settings stay a single small document. Last-write-wins is honest at that
+  // granularity — there is no partial edit worth merging in a currency choice.
+  let settingsWritten = false;
+  if (body.settings && typeof body.settings === 'object') {
+    const meta = (await store.getData(user.id)) || {};
+    // Exactly zero, not falsy-zero. A device that has never had settings sends
+    // 0, and `Number(x) || now` would restamp that as this instant — which is
+    // how a fresh device signing in used to overwrite the workspace's real
+    // settings with its own defaults.
+    const raw = Number(body.settingsUpdatedAt);
+    const incomingAt = Number.isFinite(raw) ? raw : now;
+    if (incomingAt > (meta.settingsUpdatedAt || 0)) {
+      await store.putData(user.id, {
+        userId: user.id,
+        orgId: user.orgId || null,
+        settings: body.settings,
+        settingsUpdatedAt: incomingAt,
+        settingsServerAt: serverStamp(),
+      });
+      settingsWritten = true;
+    }
+  }
+
+  return { won, touched, settingsWritten };
+}
+
+/*
+ * Everything past `cursor`, minus anything the caller just pushed and won:
+ * echoing those back would be correct but would double the traffic of every
+ * sync. Their `serverAt` still counts toward the returned cursor, which is
+ * what stops them coming back on the next pull.
+ */
+async function pullChanges(user, cursor, won = null) {
+  const out = { modules: [], records: [] };
+  let next = cursor;
+
+  for (const kind of SYNC_KINDS) {
+    for (const e of await store.listItems(kind, user.id, { since: cursor })) {
+      if (e.serverAt > next) next = e.serverAt;
+      if (won && won[kind].has(e.id)) continue;
+      out[kind].push(wireItem(e));
+    }
+  }
+
+  const meta = (await store.getData(user.id)) || {};
+  let settings = null;
+  if (meta.settings && (meta.settingsServerAt || 0) > cursor) {
+    settings = { doc: meta.settings, updatedAt: meta.settingsUpdatedAt || 0 };
+  }
+  if ((meta.settingsServerAt || 0) > next) next = meta.settingsServerAt;
+
+  return { ...out, settings, cursor: next };
+}
+
+// Keep the counts the admin dashboard reads in step with the item rows.
+async function refreshCounts(user) {
+  const [moduleCount, recordCount] = await Promise.all([
+    store.countItems('modules', user.id),
+    store.countItems('records', user.id),
+  ]);
+  await store.putData(user.id, {
+    userId: user.id,
+    orgId: user.orgId || null,
+    moduleCount,
+    recordCount,
+    perRecord: true,
+    updatedAt: Date.now(),
+  });
+  return { moduleCount, recordCount };
+}
+
+/*
+ * The legacy whole-snapshot write, kept so an older cached client still syncs.
+ * It means what it always meant: this is the entire workspace, so anything
+ * absent is deleted. Unchanged rows are left alone (a no-op push must not make
+ * every other device re-download the workspace); changed ones are forced past
+ * whatever is stored, because the caller has no per-record clock to arbitrate
+ * with.
+ */
+async function applyFullSnapshot(user, { modules, records, settings }) {
+  const now = Date.now();
+  const incoming = { modules, records };
+
+  for (const kind of SYNC_KINDS) {
+    const rows = incoming[kind];
+    const stored = await store.listItems(kind, user.id, { since: 0 });
+    const byId = new Map(stored.map((e) => [e.id, e]));
+    const seen = new Set();
+    const writes = [];
+
+    for (const doc of rows) {
+      if (!doc || !doc.id) continue;
+      const id = String(doc.id);
+      seen.add(id);
+      const prior = byId.get(id);
+      if (prior && !prior.deletedAt && JSON.stringify(prior.doc) === JSON.stringify(doc)) continue;
+      const updatedAt = Math.max(Number(doc.updatedAt) || now, prior ? prior.updatedAt + 1 : 0);
+      writes.push(envelope(kind, user, { id, updatedAt, doc }, now));
+    }
+    for (const e of stored) {
+      if (seen.has(e.id) || e.deletedAt) continue;
+      writes.push(envelope(kind, user, { id: e.id, updatedAt: Math.max(now, e.updatedAt + 1), deleted: true }, now));
+    }
+    if (writes.length) await store.putItems(kind, writes);
+  }
+
+  if (settings && typeof settings === 'object') {
+    await store.putData(user.id, {
+      userId: user.id,
+      orgId: user.orgId || null,
+      settings,
+      settingsUpdatedAt: now,
+      settingsServerAt: serverStamp(),
+    });
+  }
+}
+
+/*
+ * One-time split of whole-snapshot workspaces into per-record rows.
+ *
+ * Idempotent by the `perRecord` flag on the meta document, so it is safe on
+ * every boot. Ids are preserved exactly — a record's id is what the client
+ * already has in IndexedDB, and minting new ones would duplicate every row on
+ * the next sync instead of matching it.
+ */
+async function migrateToPerRecord() {
+  const users = await store.listUsers();
+  let migrated = 0;
+
+  for (const user of users) {
+    const meta = await store.getData(user.id);
+    if (!meta || meta.perRecord) continue;
+
+    const modules = Array.isArray(meta.modules) ? meta.modules : [];
+    const records = Array.isArray(meta.records) ? meta.records : [];
+    const now = Number(meta.updatedAt) || Date.now();
+    const owner = { id: user.id, orgId: meta.orgId || user.orgId || null };
+
+    for (const [kind, rows] of [['modules', modules], ['records', records]]) {
+      const writes = rows
+        .filter((doc) => doc && doc.id)
+        .map((doc) => envelope(kind, owner, { id: doc.id, updatedAt: Number(doc.updatedAt) || now, doc }, now));
+      if (writes.length) await store.putItems(kind, writes);
+    }
+
+    await store.putData(user.id, {
+      userId: user.id,
+      orgId: owner.orgId,
+      settings: meta.settings || {},
+      settingsUpdatedAt: now,
+      settingsServerAt: serverStamp(),
+      moduleCount: modules.length,
+      recordCount: records.length,
+      perRecord: true,
+      updatedAt: now,
+    });
+    // Only once the rows are safely written — the arrays are the sole copy
+    // until that point.
+    await store.stripSnapshot(user.id);
+    migrated += 1;
+  }
+
+  if (migrated) console.log(`Split ${migrated} workspace(s) into per-record rows`);
+}
+
 // ------------------------------------------------------------------- app
 const app = express();
 app.disable('x-powered-by');
@@ -389,7 +777,52 @@ app.set('trust proxy', 1); // Render terminates TLS at the proxy
 app.use(express.json({ limit: '8mb' }));
 app.use(cookieParser());
 
+/*
+ * Health.
+ *
+ * /healthz is the original liveness probe and stays byte-compatible — the
+ * smoke test and older render.yaml deployments call it.
+ *
+ * /health adds what an operator actually asks during an incident: which
+ * storage is live, which sync model is running, how long the process has been
+ * up. Tenant counts are NOT public: on the pooled deployment they would tell
+ * any visitor how many customers are on it. They appear for a signed-in
+ * platform admin, or when HEALTH_DETAIL=1 is set — which is the sensible
+ * setting on a single-tenant dedicated deployment, where the count is the
+ * operator's own.
+ */
+const BOOT_AT = Date.now();
+const HEALTH_DETAIL = process.env.HEALTH_DETAIL === '1';
+
 app.get('/healthz', (req, res) => res.json({ ok: true, storage: store.kind() }));
+
+app.get('/health', async (req, res) => {
+  const body = {
+    ok: true,
+    storage: store.kind(),
+    sync: 'per-record',
+    deployment: process.env.DEPLOYMENT_MODE || (IS_PROD ? 'pooled' : 'development'),
+    tenant: process.env.TENANT_NAME || null,
+    uptimeSec: Math.round((Date.now() - BOOT_AT) / 1000),
+    googleEnabled: !!GOOGLE_CLIENT_ID,
+    devLoginEnabled: DEV_LOGIN,
+    time: new Date().toISOString(),
+  };
+
+  const user = await currentUser(req).catch(() => null);
+  if (HEALTH_DETAIL || (user && user.role === 'platformAdmin')) {
+    try {
+      body.counts = { orgs: await store.countOrgs(), users: await store.countUsers() };
+    } catch (err) {
+      // A health check that fails because a count failed is worse than one
+      // that reports the outage it was asked about.
+      body.ok = false;
+      body.error = err.message;
+    }
+  }
+
+  res.status(body.ok ? 200 : 503).json(body);
+});
 
 // ---- OAuth (Google)
 app.get('/auth/google', (req, res) => {
@@ -479,10 +912,57 @@ app.get('/api/me', async (req, res) => {
   });
 });
 
-// ---- data sync
+// ---- per-record sync
+//
+// GET  /api/sync?since=N   changes only
+// POST /api/sync           push changes, get back everything else in one trip
+const MAX_SYNC_ITEMS = 20000;
+
+app.get('/api/sync', requireAuth, async (req, res) => {
+  const since = Number(req.query.since) || 0;
+  const out = await pullChanges(req.user, since);
+  res.json({ ...out, serverTime: Date.now() });
+});
+
+app.post('/api/sync', requireAuth, async (req, res) => {
+  const body = req.body || {};
+  const since = Number(body.since) || 0;
+  for (const kind of SYNC_KINDS) {
+    if (body[kind] !== undefined && !Array.isArray(body[kind])) {
+      return res.status(400).json({ error: `${kind} must be an array` });
+    }
+    if (Array.isArray(body[kind]) && body[kind].length > MAX_SYNC_ITEMS) {
+      return res.status(413).json({ error: `Too many ${kind} in one push (max ${MAX_SYNC_ITEMS})` });
+    }
+  }
+
+  const { won, touched, settingsWritten } = await applyPush(req.user, body);
+  const out = await pullChanges(req.user, since, won);
+  if (touched || settingsWritten) {
+    await refreshCounts(req.user);
+    store.addEvent('sync', req.user.id, req.user.orgId).catch(() => {});
+  }
+  res.json({ ...out, pushed: touched, serverTime: Date.now() });
+});
+
+// ---- whole-snapshot sync (legacy)
+// Still served so a client running cached older JS keeps working through a
+// deploy. Both paths read and write the same per-record rows.
 app.get('/api/data', requireAuth, async (req, res) => {
-  const doc = await store.getData(req.user.id);
-  res.json(doc ? { modules: doc.modules, records: doc.records, settings: doc.settings || {}, updatedAt: doc.updatedAt } : { modules: null, records: null, settings: null, updatedAt: 0 });
+  const meta = await store.getData(req.user.id);
+  const [modules, records] = await Promise.all([
+    store.listItems('modules', req.user.id, { since: 0, includeDeleted: false }),
+    store.listItems('records', req.user.id, { since: 0, includeDeleted: false }),
+  ]);
+  if (!meta && !modules.length && !records.length) {
+    return res.json({ modules: null, records: null, settings: null, updatedAt: 0 });
+  }
+  res.json({
+    modules: modules.map((e) => e.doc),
+    records: records.map((e) => e.doc),
+    settings: (meta && meta.settings) || {},
+    updatedAt: (meta && meta.updatedAt) || 0,
+  });
 });
 
 app.put('/api/data', requireAuth, async (req, res) => {
@@ -490,19 +970,11 @@ app.put('/api/data', requireAuth, async (req, res) => {
   if (!Array.isArray(modules) || !Array.isArray(records)) {
     return res.status(400).json({ error: 'modules and records arrays required' });
   }
-  const doc = {
-    userId: req.user.id,
-    orgId: req.user.orgId || null,
-    modules,
-    records,
-    settings: settings || {},
-    moduleCount: modules.length,
-    recordCount: records.length,
-    updatedAt: Date.now(),
-  };
-  await store.putData(req.user.id, doc);
+  await applyFullSnapshot(req.user, { modules, records, settings });
+  const counts = await refreshCounts(req.user);
   store.addEvent('sync', req.user.id, req.user.orgId).catch(() => {});
-  res.json({ ok: true, updatedAt: doc.updatedAt });
+  const meta = await store.getData(req.user.id);
+  res.json({ ok: true, updatedAt: meta.updatedAt, ...counts });
 });
 
 // ---- the caller's own organisation
@@ -620,8 +1092,10 @@ app.get('*', (req, res) => {
   try {
     await store.init();
     console.log(`Storage: ${store.kind()}${store.kind() === 'file' ? ' (set MONGODB_URI for MongoDB)' : ''}`);
-    // Idempotent: a no-op once every account has an org.
+    // Both idempotent: no-ops once every account has an org and every
+    // workspace has been split into rows.
     await migrateToOrgs();
+    await migrateToPerRecord();
   } catch (err) {
     console.error('Storage init failed:', err.message);
     process.exit(1);

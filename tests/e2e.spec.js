@@ -557,6 +557,99 @@ test.describe('accounts and sync', () => {
     }).toPass({ timeout: 20000 });
   });
 
+  /*
+   * Two devices, one account. This is the case whole-snapshot sync got wrong:
+   * whoever saved second uploaded their entire workspace and the other
+   * person's record simply disappeared. Driven through the real UI in two
+   * browser contexts, because the failure was only ever visible there.
+   */
+  test('two devices editing different records both keep their work', async ({ page, browser }) => {
+    const email = uniqueEmail('two-device');
+    await onboard(page, { name: 'Two Device Co' });
+    await signIn(page, email);
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+
+    const second = await browser.newContext();
+    const page2 = await second.newPage();
+    await page2.goto('/');
+    await signIn(page2, email);
+    await expect(page2.locator('#nav-modules .nav-link:has-text("Contacts")')).toBeVisible({ timeout: 20000 });
+
+    // Neither device knows about the other's edit until it syncs.
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Added on device one');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Added on device one")')).toBeVisible();
+
+    await page2.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page2.click('#add-record-btn');
+    await page2.fill('#f-name', 'Added on device two');
+    await page2.click('#record-save');
+    await expect(page2.locator('tr:has-text("Added on device two")')).toBeVisible();
+
+    await expect(async () => {
+      const data = await (await page.request.get('/api/data')).json();
+      const names = data.records.map((r) => r.data.name);
+      expect(names).toContain('Added on device one');
+      expect(names).toContain('Added on device two');
+    }).toPass({ timeout: 25000 });
+
+    // And each device sees the other's record once it reloads and syncs.
+    await page.reload();
+    await expect(page.locator('tr:has-text("Added on device two")')).toBeVisible({ timeout: 25000 });
+    await second.close();
+  });
+
+  test('a record deleted on one device stays deleted on the other', async ({ page, browser }) => {
+    const email = uniqueEmail('tombstone');
+    await onboard(page, { name: 'Tombstone Co' });
+    await signIn(page, email);
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Doomed Contact');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Doomed Contact")')).toBeVisible();
+    // Wait on the server, not on the sync chip: the chip can still read
+    // "synced" from the previous trip while this record is queued behind a
+    // debounce, and the second device would then start from a workspace that
+    // never contained the record this test is about.
+    await expect(async () => {
+      const data = await (await page.request.get('/api/data')).json();
+      expect(data.records.some((r) => r.data.name === 'Doomed Contact')).toBe(true);
+    }).toPass({ timeout: 25000 });
+
+    // A second device that has the record, then goes quiet.
+    const second = await browser.newContext();
+    const page2 = await second.newPage();
+    await page2.goto('/');
+    await signIn(page2, email);
+    await page2.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(page2.locator('tr:has-text("Doomed Contact")')).toBeVisible({ timeout: 25000 });
+
+    // Deleted on device one.
+    await page.click('tr:has-text("Doomed Contact") td:first-child');
+    page.once('dialog', (d) => d.accept());
+    await page.click('#record-delete');
+    await expect(page.locator('tr:has-text("Doomed Contact")')).toHaveCount(0);
+
+    await expect(async () => {
+      const data = await (await page.request.get('/api/data')).json();
+      expect(data.records.some((r) => r.data.name === 'Doomed Contact')).toBe(false);
+    }).toPass({ timeout: 25000 });
+
+    // Device two reloads and must drop it — not push its stale copy back.
+    await page2.reload();
+    await page2.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(page2.locator('tr:has-text("Doomed Contact")')).toHaveCount(0, { timeout: 25000 });
+
+    await expect(async () => {
+      const data = await (await page2.request.get('/api/data')).json();
+      expect(data.records.some((r) => r.data.name === 'Doomed Contact')).toBe(false);
+    }).toPass({ timeout: 25000 });
+    await second.close();
+  });
+
   test('signing out keeps the data on the device', async ({ page }) => {
     await onboard(page);
     await signIn(page, uniqueEmail('logout'));

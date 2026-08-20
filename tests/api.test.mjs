@@ -115,6 +115,19 @@ describe('health and public surface', () => {
     assert.ok(['file', 'mongodb'].includes(json.storage), `unexpected storage: ${json.storage}`);
   });
 
+  test('/health describes the deployment without exposing tenant counts', async () => {
+    const { status, json } = await req('/health');
+    assert.equal(status, 200);
+    assert.equal(json.ok, true);
+    assert.equal(json.sync, 'per-record');
+    assert.ok(['file', 'mongodb'].includes(json.storage));
+    assert.equal(typeof json.uptimeSec, 'number');
+    assert.ok(json.time);
+    // On a pooled deployment the number of tenants is a customer count, and
+    // an unauthenticated visitor has no business reading it.
+    assert.equal(json.counts, undefined);
+  });
+
   test('/api/me describes the deployment when signed out', async () => {
     const { status, json } = await req('/api/me');
     assert.equal(status, 200);
@@ -228,6 +241,234 @@ describe('workspace sync', () => {
 });
 
 /*
+ * Per-record sync.
+ *
+ * The point of this work is that two devices editing *different* records both
+ * keep their edits — whole-snapshot sync silently threw one of them away. The
+ * cases below are written as two devices on one account, because that is the
+ * shape of the bug being fixed, and they assert the losing behaviour is gone
+ * rather than that the happy path works.
+ */
+describe('per-record sync', () => {
+  const cookies = jar();
+
+  // A device: its own cursor and push watermark, exactly like the client.
+  function device() {
+    let cursor = 0;
+    return {
+      get cursor() { return cursor; },
+      async push({ modules = [], records = [], settings, settingsUpdatedAt } = {}) {
+        const { status, json } = await req('/api/sync', {
+          method: 'POST',
+          body: { since: cursor, modules, records, settings, settingsUpdatedAt },
+          cookies,
+        });
+        assert.equal(status, 200, JSON.stringify(json));
+        cursor = json.cursor;
+        return json;
+      },
+      async pull() {
+        const { status, json } = await req(`/api/sync?since=${cursor}`, { cookies });
+        assert.equal(status, 200);
+        cursor = json.cursor;
+        return json;
+      },
+    };
+  }
+
+  const rec = (id, title, updatedAt) => ({ id, updatedAt, doc: { id, moduleId: 'm1', data: { title }, updatedAt } });
+
+  before(async () => {
+    await req('/auth/dev', { method: 'POST', body: { email: 'delta@example.com' }, cookies });
+  });
+
+  test('a cursor of zero returns the whole workspace', async () => {
+    const a = device();
+    await a.push({
+      modules: [{ id: 'm1', updatedAt: 10, doc: { id: 'm1', name: 'Deals', fields: [], updatedAt: 10 } }],
+      records: [rec('r1', 'One', 11), rec('r2', 'Two', 12)],
+    });
+
+    const fresh = device();
+    const out = await fresh.pull();
+    assert.equal(out.modules.length, 1);
+    assert.equal(out.records.length, 2);
+    assert.ok(out.cursor > 0, 'a cursor must come back so the next pull can be a delta');
+  });
+
+  test('a pull at the current cursor returns nothing', async () => {
+    const a = device();
+    await a.pull();
+    const again = await a.pull();
+    assert.equal(again.modules.length, 0);
+    assert.equal(again.records.length, 0);
+  });
+
+  test('only what changed since the cursor comes back', async () => {
+    const a = device();
+    await a.pull();                       // catch up
+    const b = device();
+    await b.pull();
+    await b.push({ records: [rec('r3', 'Three', 20)] });
+
+    const delta = await a.pull();
+    assert.equal(delta.records.length, 1, 'the two untouched records must not be re-sent');
+    assert.equal(delta.records[0].id, 'r3');
+  });
+
+  test('two devices editing different records both keep their edits', async () => {
+    const a = device();
+    const b = device();
+    await a.pull();
+    await b.pull();
+
+    // Both edit while the other is unaware — the whole-snapshot failure case.
+    await a.push({ records: [rec('r1', 'Edited by A', 100)] });
+    await b.push({ records: [rec('r2', 'Edited by B', 101)] });
+
+    const server = await device().pull();
+    const byId = Object.fromEntries(server.records.map((r) => [r.id, r]));
+    assert.ok(byId.r1 && byId.r1.doc, "A's record survived B's push");
+    assert.ok(byId.r2 && byId.r2.doc, "B's record survived");
+    assert.equal(byId.r1.doc.data.title, 'Edited by A');
+    assert.equal(byId.r2.doc.data.title, 'Edited by B', "B's write must not have clobbered A's, nor A's B's");
+  });
+
+  test('the same record edited twice resolves to the later clock, not the later request', async () => {
+    const a = device();
+    await a.pull();
+    // The newer edit arrives first: a slow device pushing a stale copy
+    // afterwards must not win just because it landed last.
+    await a.push({ records: [rec('r1', 'Newer', 300)] });
+    await a.push({ records: [rec('r1', 'Older', 200)] });
+
+    const server = await device().pull();
+    assert.equal(server.records.find((r) => r.id === 'r1').doc.data.title, 'Newer');
+  });
+
+  test('replaying a push changes nothing', async () => {
+    const a = device();
+    await a.pull();
+    const payload = { records: [rec('r4', 'Idempotent', 400)] };
+    const first = await a.push(payload);
+    const second = await a.push(payload);
+    assert.equal(first.pushed, 1);
+    assert.equal(second.pushed, 0, 'a retry must not write a second time');
+
+    const all = await device().pull();
+    assert.equal(all.records.filter((r) => r.id === 'r4').length, 1);
+  });
+
+  test('a delete propagates as a tombstone, and stays deleted', async () => {
+    const a = device();
+    const b = device();
+    await a.pull();
+    await b.pull();
+
+    await a.push({ records: [{ id: 'r2', updatedAt: 500, deleted: true, deletedAt: 500 }] });
+
+    const delta = await b.pull();
+    const tomb = delta.records.find((r) => r.id === 'r2');
+    assert.ok(tomb, 'the other device must be told about the delete');
+    assert.equal(tomb.deleted, true);
+    assert.equal(tomb.doc, undefined, 'a tombstone carries no payload');
+
+    // The device that was offline during the delete pushes its stale copy.
+    // Without tombstones the record would come straight back.
+    await b.push({ records: [rec('r2', 'Resurrected', 499)] });
+    const after = await device().pull();
+    const again = after.records.find((r) => r.id === 'r2');
+    assert.equal(again.deleted, true, 'a stale push must not resurrect a deleted record');
+  });
+
+  test('a delete loses to an edit made after it', async () => {
+    const a = device();
+    await a.pull();
+    await a.push({ records: [rec('r5', 'Alive', 600)] });
+    await a.push({ records: [{ id: 'r5', updatedAt: 601, deleted: true }] });
+    await a.push({ records: [rec('r5', 'Edited later', 602)] });
+
+    const out = await device().pull();
+    const r5 = out.records.find((r) => r.id === 'r5');
+    assert.equal(r5.deleted, undefined);
+    assert.equal(r5.doc.data.title, 'Edited later');
+  });
+
+  test('a push does not echo back what it just sent', async () => {
+    const a = device();
+    await a.pull();
+    const out = await a.push({ records: [rec('r6', 'Mine', 700)] });
+    assert.equal(out.records.length, 0, 'the pusher already has these rows');
+
+    // ...but the cursor still moved past them, so they do not arrive later.
+    const next = await a.pull();
+    assert.equal(next.records.find((r) => r.id === 'r6'), undefined);
+  });
+
+  test('settings sync as one document, last write wins', async () => {
+    const a = device();
+    await a.pull();
+    await a.push({ settings: { currency: 'GBP' }, settingsUpdatedAt: 1000 });
+    await a.push({ settings: { currency: 'USD' }, settingsUpdatedAt: 900 });
+
+    const out = await device().pull();
+    assert.equal(out.settings.doc.currency, 'GBP', 'the older clock must not overwrite the newer');
+  });
+
+  test('a device with no settings of its own cannot overwrite the workspace settings', async () => {
+    // The shape of a real bug: a fresh device signs in, has never chosen
+    // anything, and pushes its defaults stamped 0. Treating that 0 as "now"
+    // handed the blank defaults the win and wiped the workspace's real ones.
+    const a = device();
+    await a.pull();
+    await a.push({ settings: { currency: 'SAR', businessName: 'Real Co' }, settingsUpdatedAt: 5000 });
+
+    const fresh = device();
+    await fresh.push({ settings: { currency: 'USD', businessName: '' }, settingsUpdatedAt: 0 });
+
+    const out = await device().pull();
+    assert.equal(out.settings.doc.businessName, 'Real Co');
+    assert.equal(out.settings.doc.currency, 'SAR');
+  });
+
+  test('the legacy snapshot endpoints read and write the same rows', async () => {
+    const snapshot = await req('/api/data', { cookies });
+    assert.equal(snapshot.status, 200);
+    assert.ok(snapshot.json.records.some((r) => r.id === 'r1'), 'GET /api/data must see per-record rows');
+    assert.ok(!snapshot.json.records.some((r) => r.id === 'r2'), 'deleted rows must not reappear in the snapshot');
+
+    // An older client writing a whole snapshot deletes what it omits.
+    const kept = snapshot.json.records.filter((r) => r.id !== 'r3');
+    await req('/api/data', { method: 'PUT', body: { modules: snapshot.json.modules, records: kept, settings: {} }, cookies });
+
+    const delta = await device().pull();
+    const r3 = delta.records.find((r) => r.id === 'r3');
+    assert.equal(r3.deleted, true, 'a snapshot write must tombstone what it left out');
+  });
+
+  test('a push is rejected when it is implausibly large or malformed', async () => {
+    const bad = await req('/api/sync', { method: 'POST', body: { records: 'nope' }, cookies });
+    assert.equal(bad.status, 400);
+    const huge = await req('/api/sync', {
+      method: 'POST',
+      body: { records: Array.from({ length: 20001 }, (_, i) => ({ id: `x${i}`, updatedAt: 1 })) },
+      cookies,
+    });
+    assert.equal(huge.status, 413);
+  });
+
+  test('sync is scoped to the account, not the deployment', async () => {
+    const stranger = jar();
+    await req('/auth/dev', { method: 'POST', body: { email: 'delta-stranger@example.com' }, cookies: stranger });
+    const { status, json } = await req('/api/sync?since=0', { cookies: stranger });
+    assert.equal(status, 200);
+    assert.equal(json.records.length, 0, 'a new account must not see another account rows');
+    assert.equal(json.modules.length, 0);
+    assert.equal((await req('/api/sync?since=0')).status, 401, 'signed out gets nothing at all');
+  });
+});
+
+/*
  * Cross-tenant isolation. These assert the attack, not the happy path: an org
  * owner from tenant B reaching for tenant A's resources. One missed orgId
  * filter is a data leak, so this suite is the gate on that work.
@@ -334,6 +575,16 @@ describe('admin surface', () => {
     const u = await req('/auth/dev', { method: 'POST', body: { email: 'member@example.com' }, cookies: user });
     userId = u.json.user.id;
     await req('/api/data', { method: 'PUT', body: { modules: [], records: [], settings: {} }, cookies: user });
+  });
+
+  test('/health reports tenant counts to a platform admin only', async () => {
+    const asAdmin = await req('/health', { cookies: admin });
+    assert.ok(asAdmin.json.counts, 'the operator of the deployment may see them');
+    assert.ok(asAdmin.json.counts.users >= 2);
+    assert.ok(asAdmin.json.counts.orgs >= 1);
+
+    const asOwner = await req('/health', { cookies: user });
+    assert.equal(asOwner.json.counts, undefined, 'an org owner may not read the deployment-wide counts');
   });
 
   test('a demoted member is refused every admin route', async () => {

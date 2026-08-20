@@ -3,6 +3,13 @@
  * Stores:
  *   modules  — module definitions (keyPath: id)
  *   records  — records belonging to modules (keyPath: id, index: moduleId)
+ *
+ * Deletes are soft. A row is kept with `deletedAt` set and filtered out of
+ * every read, because per-record sync has no other way to tell a device that
+ * something was deleted: a row that simply vanishes here is indistinguishable
+ * from one this device has never seen, so the next pull would hand it back.
+ * Anything that reads rows for sync uses getAllRaw(), which keeps the
+ * tombstones; anything the UI touches uses getAll(), which does not.
  */
 const DB = (() => {
   const NAME = 'crmbuilder';
@@ -72,17 +79,43 @@ const DB = (() => {
     return db.transaction(name, mode).objectStore(name);
   }
 
-  return {
+  const live = (rows) => rows.filter((r) => r && !r.deletedAt);
+
+  // A tombstone that every device has already pulled is dead weight. Local
+  // pruning is bounded by the same window the server uses, so a device that
+  // was off for less than that still learns about the delete.
+  const TOMBSTONE_MS = 180 * 86400000;
+
+  const api = {
     async getAll(name) {
+      return live(await reqToPromise((await store(name, 'readonly')).getAll()));
+    },
+    // Tombstones included — for sync, never for the UI.
+    async getAllRaw(name) {
       return reqToPromise((await store(name, 'readonly')).getAll());
     },
     async get(name, key) {
+      const row = await reqToPromise((await store(name, 'readonly')).get(key));
+      return row && row.deletedAt ? undefined : row;
+    },
+    async getRaw(name, key) {
       return reqToPromise((await store(name, 'readonly')).get(key));
     },
     async put(name, value) {
       return reqToPromise((await store(name, 'readwrite')).put(value));
     },
-    async delete(name, key) {
+    // Soft delete. Keeps the id and the sync clocks, drops the payload —
+    // there is no reason to carry a deleted record's contents around, and it
+    // is one less copy of data the user asked to be rid of.
+    async delete(name, key, at = Date.now()) {
+      const s = await store(name, 'readwrite');
+      const row = await reqToPromise(s.get(key));
+      if (!row) return undefined;
+      return reqToPromise(s.put({ id: row.id, moduleId: row.moduleId, deletedAt: at, updatedAt: at }));
+    },
+    // Hard removal, no tombstone. Only for adopting a full remote snapshot,
+    // where the server's row set is the answer and local state is discarded.
+    async purge(name, key) {
       return reqToPromise((await store(name, 'readwrite')).delete(key));
     },
     async clear(name) {
@@ -90,13 +123,38 @@ const DB = (() => {
     },
     async recordsByModule(moduleId) {
       const s = await store('records', 'readonly');
-      return reqToPromise(s.index('moduleId').getAll(moduleId));
+      return live(await reqToPromise(s.index('moduleId').getAll(moduleId)));
     },
-    async deleteRecordsByModule(moduleId) {
+    async deleteRecordsByModule(moduleId, at = Date.now()) {
       const s = await store('records', 'readwrite');
-      const keys = await reqToPromise(s.index('moduleId').getAllKeys(moduleId));
-      await Promise.all(keys.map((k) => reqToPromise(s.delete(k))));
-      return keys.length;
+      const rows = live(await reqToPromise(s.index('moduleId').getAll(moduleId)));
+      // Issued in one tick, deliberately: an IndexedDB transaction commits as
+      // soon as the microtask queue drains with nothing outstanding, so
+      // awaiting between writes can find the transaction already closed.
+      await Promise.all(rows.map((r) => reqToPromise(s.put({ id: r.id, moduleId: r.moduleId, deletedAt: at, updatedAt: at }))));
+      return rows.length;
+    },
+    // Tombstone everything: a workspace reset that other devices must see.
+    async softClearAll(at = Date.now()) {
+      let count = 0;
+      for (const name of ['records', 'modules']) {
+        const s = await store(name, 'readwrite');
+        const rows = live(await reqToPromise(s.getAll()));
+        await Promise.all(rows.map((r) => reqToPromise(s.put({ id: r.id, moduleId: r.moduleId, deletedAt: at, updatedAt: at }))));
+        count += rows.length;
+      }
+      return count;
+    },
+    async pruneTombstones(before = Date.now() - TOMBSTONE_MS) {
+      let removed = 0;
+      for (const name of ['records', 'modules']) {
+        const s = await store(name, 'readwrite');
+        const rows = (await reqToPromise(s.getAll())).filter((r) => r && r.deletedAt && r.deletedAt < before);
+        await Promise.all(rows.map((r) => reqToPromise(s.delete(r.id))));
+        removed += rows.length;
+      }
+      return removed;
     },
   };
+  return api;
 })();
