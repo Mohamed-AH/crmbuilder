@@ -961,6 +961,158 @@ describe('what a member may change', () => {
 });
 
 /*
+ * Managing a team, and getting out of one.
+ *
+ * Removing somebody from a team is NOT deleting their account, and it must
+ * never touch the workspace — the two live on different endpoints for exactly
+ * that reason. Most of what is asserted here is the difference.
+ */
+describe('team membership', () => {
+  const owner = jar();
+  const member = jar();
+  const outsider = jar();
+  let orgId = null;
+  let ownerId = null;
+  let memberId = null;
+
+  const invite = () => req('/api/org/invites', { method: 'POST', body: {}, cookies: owner });
+
+  before(async () => {
+    const o = await req('/auth/dev', { method: 'POST', body: { email: 'team-owner@crew.test' }, cookies: owner });
+    ownerId = o.json.user.id;
+    orgId = o.json.user.orgId;
+    const m = await req('/auth/dev', { method: 'POST', body: { email: 'team-member@solo.test' }, cookies: member });
+    memberId = m.json.user.id;
+    await req('/auth/dev', { method: 'POST', body: { email: 'team-outsider@elsewhere.test' }, cookies: outsider });
+    await req('/api/org/join', { method: 'POST', body: { code: (await invite()).json.invite.code }, cookies: member });
+
+    await req('/api/sync', {
+      method: 'POST',
+      body: {
+        since: 0,
+        modules: [{ id: 'crew-m1', updatedAt: 10, doc: { id: 'crew-m1', name: 'Deals', fields: [] } }],
+        records: [{ id: 'crew-r1', updatedAt: 11, doc: { id: 'crew-r1', moduleId: 'crew-m1', data: { title: 'Team work' } } }],
+      },
+      cookies: owner,
+    });
+  });
+
+  test('everyone can see who is on the team; only an owner can manage them', async () => {
+    const asOwner = await req('/api/org/members', { cookies: owner });
+    assert.equal(asOwner.status, 200);
+    assert.equal(asOwner.json.members.length, 2);
+    assert.equal(asOwner.json.canManage, true);
+    assert.ok(asOwner.json.members.find((m) => m.isYou));
+
+    const asMember = await req('/api/org/members', { cookies: member });
+    assert.equal(asMember.status, 200, 'a member may see their colleagues');
+    assert.equal(asMember.json.canManage, false);
+    assert.equal((await req(`/api/org/members/${ownerId}`, { method: 'PATCH', body: { role: 'member' }, cookies: member })).status, 403);
+    assert.equal((await req(`/api/org/members/${ownerId}`, { method: 'DELETE', cookies: member })).status, 403);
+  });
+
+  test('an owner promotes and demotes', async () => {
+    const up = await req(`/api/org/members/${memberId}`, { method: 'PATCH', body: { role: 'owner' }, cookies: owner });
+    assert.equal(up.status, 200);
+    assert.equal(up.json.member.role, 'owner');
+    // Now genuinely an owner: they can do owner things.
+    assert.equal((await req('/api/org/invites', { method: 'POST', body: {}, cookies: member })).status, 200);
+
+    const down = await req(`/api/org/members/${memberId}`, { method: 'PATCH', body: { role: 'member' }, cookies: owner });
+    assert.equal(down.json.member.role, 'member');
+    assert.equal((await req('/api/org/invites', { method: 'POST', body: {}, cookies: member })).status, 403);
+  });
+
+  test('an org owner cannot promote anyone to platform admin', async () => {
+    const attempt = await req(`/api/org/members/${memberId}`, { method: 'PATCH', body: { role: 'platformAdmin' }, cookies: owner });
+    assert.equal(attempt.status, 400, 'crossing organisations is not an org owner\u2019s to grant');
+    const check = await req('/api/org/members', { cookies: owner });
+    assert.equal(check.json.members.find((m) => m.id === memberId).role, 'member');
+  });
+
+  test("another team's member is not found, rather than forbidden", async () => {
+    const theirs = (await req('/api/me', { cookies: outsider })).json.user.id;
+    // 404, so the response does not confirm the account exists.
+    assert.equal((await req(`/api/org/members/${theirs}`, { method: 'PATCH', body: { role: 'owner' }, cookies: owner })).status, 404);
+    assert.equal((await req(`/api/org/members/${theirs}`, { method: 'DELETE', cookies: owner })).status, 404);
+  });
+
+  test('the last owner cannot demote or leave their way out of a populated team', async () => {
+    const selfDemote = await req(`/api/org/members/${ownerId}`, { method: 'PATCH', body: { role: 'member' }, cookies: owner });
+    assert.equal(selfDemote.status, 409);
+    assert.match(selfDemote.json.error, /only owner/i);
+
+    const leave = await req('/api/org/leave', { method: 'POST', body: {}, cookies: owner });
+    assert.equal(leave.status, 409);
+    assert.match(leave.json.error, /only owner/i);
+    assert.equal((await req('/api/me', { cookies: owner })).json.user.orgId, orgId, 'and they are still where they were');
+  });
+
+  test('an owner cannot remove themselves through the members list', async () => {
+    const self = await req(`/api/org/members/${ownerId}`, { method: 'DELETE', cookies: owner });
+    assert.equal(self.status, 400);
+    assert.match(self.json.error, /leave team/i, 'point at the door rather than refusing flatly');
+  });
+
+  /*
+   * The distinction stage A's split between deleteUser and deleteWorkspace was
+   * built for: removing a person is not deleting an account, and neither one
+   * may take a team's records with it.
+   */
+  test('removing a member keeps their account and the team workspace', async () => {
+    const before = await req('/api/data', { cookies: owner });
+    const removal = await req(`/api/org/members/${memberId}`, { method: 'DELETE', cookies: owner });
+    assert.equal(removal.status, 200);
+    assert.equal(removal.json.accountDeleted, false);
+
+    // The team is unchanged.
+    const after = await req('/api/data', { cookies: owner });
+    assert.deepEqual(after.json.records.map((r) => r.id), before.json.records.map((r) => r.id));
+
+    // They still have an account, still signed in, and now have their own
+    // empty workspace rather than a view of the team's.
+    const theirs = await req('/api/me', { cookies: member });
+    assert.equal(theirs.json.authenticated, true, 'removing from a team is not deleting an account');
+    assert.notEqual(theirs.json.user.orgId, orgId);
+    assert.equal(theirs.json.user.role, 'owner', 'they own the workspace they are left with');
+    const seen = await req('/api/sync?since=0', { cookies: member });
+    assert.equal(seen.json.records.length, 0, 'and can no longer read the team\u2019s records');
+  });
+
+  test('leaving a team works once someone else can own it', async () => {
+    const second = jar();
+    const s = await req('/auth/dev', { method: 'POST', body: { email: 'team-second@solo.test' }, cookies: second });
+    await req('/api/org/join', { method: 'POST', body: { code: (await invite()).json.invite.code }, cookies: second });
+    await req(`/api/org/members/${s.json.user.id}`, { method: 'PATCH', body: { role: 'owner' }, cookies: owner });
+
+    const leave = await req('/api/org/leave', { method: 'POST', body: {}, cookies: owner });
+    assert.equal(leave.status, 200);
+    assert.notEqual(leave.json.user.orgId, orgId);
+
+    // The team carries on under its remaining owner, records intact.
+    const remaining = await req('/api/data', { cookies: second });
+    assert.ok(remaining.json.records.some((r) => r.id === 'crew-r1'), 'the workspace stays with the team');
+    // And the leaver starts clean.
+    const fresh = await req('/api/sync?since=0', { cookies: owner });
+    assert.equal(fresh.json.records.length, 0);
+  });
+
+  test('there is no team to leave when you are the only one in it', async () => {
+    const solo = jar();
+    await req('/auth/dev', { method: 'POST', body: { email: 'team-solo@solo.test' }, cookies: solo });
+    const out = await req('/api/org/leave', { method: 'POST', body: {}, cookies: solo });
+    assert.equal(out.status, 409);
+    assert.match(out.json.error, /only person/i);
+  });
+
+  test('managing a team requires being signed in', async () => {
+    assert.equal((await req('/api/org/members')).status, 401);
+    assert.equal((await req('/api/org/leave', { method: 'POST', body: {} })).status, 401);
+    assert.equal((await req(`/api/org/members/${memberId}`, { method: 'DELETE' })).status, 401);
+  });
+});
+
+/*
  * Cross-tenant isolation. These assert the attack, not the happy path: an org
  * owner from tenant B reaching for tenant A's resources. One missed orgId
  * filter is a data leak, so this suite is the gate on that work.

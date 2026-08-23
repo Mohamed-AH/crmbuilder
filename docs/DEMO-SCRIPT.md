@@ -193,7 +193,13 @@ inviting people. Members work with records. The server enforces it, so a member
 whose client tries anyway has the change quietly undone with an explanation
 rather than a failed sync.
 
-Still to come: removing someone from a team, and leaving one. Say so.
+Owners manage the team from Settings — promote, demote, remove, revoke an
+unused invite — and anyone can leave. Removing someone is not deleting their
+account: they keep it and get a fresh empty workspace, and the team's records
+are untouched.
+
+The honest edge: everyone on a team sees every module. Per-module access is not
+built.
 
 **"Permissions / field-level security?"**
 Not today. Admins manage accounts, not per-field access.

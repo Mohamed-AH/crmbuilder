@@ -284,6 +284,20 @@ fields but cannot change them.
 
 Records show who added them once there is more than one person on the team.
 
+**Managing the team** (Settings → Team, owners only): make someone an owner or
+a member, remove them, and revoke an invite link that has not been used yet.
+
+**Removing someone is not deleting their account.** They keep their sign-in and
+get a fresh, empty workspace of their own; the team's records stay with the
+team. The next time their device reaches the internet it drops its copy of the
+team's data by itself — though a device that never comes online again keeps
+whatever it already had, which is true of anything that works offline.
+
+**Leaving a team** is on the same screen, and needs nobody's permission. You get
+a fresh, empty workspace; the team keeps its records. The one exception: if you
+are the only owner and other people are on the team, make someone else an owner
+first — otherwise they would be left with a workspace nobody can administer.
+
 Two people editing different records both keep their work. If two people edit
 *the same* record, the later edit wins, exactly as it does across your own
 devices.

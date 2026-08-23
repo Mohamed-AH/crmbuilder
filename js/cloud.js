@@ -274,6 +274,10 @@ const Cloud = (() => {
       revoke: (code) => api(`/api/org/invites/${encodeURIComponent(code)}`, { method: 'DELETE' }, TIMEOUT.admin),
       preview: (code) => api(`/api/org/invites/${encodeURIComponent(code)}/preview`, {}, TIMEOUT.admin),
       join: (code, bringWork) => api('/api/org/join', { method: 'POST', body: JSON.stringify({ code, bringWork }) }, TIMEOUT.admin),
+      members: () => api('/api/org/members', {}, TIMEOUT.admin),
+      setRole: (id, role) => api(`/api/org/members/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ role }) }, TIMEOUT.admin),
+      remove: (id) => api(`/api/org/members/${encodeURIComponent(id)}`, { method: 'DELETE' }, TIMEOUT.admin),
+      leave: () => api('/api/org/leave', { method: 'POST', body: '{}' }, TIMEOUT.admin),
     },
 
     admin: {

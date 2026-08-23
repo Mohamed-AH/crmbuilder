@@ -1419,14 +1419,10 @@ app.post('/api/org/join', requireAuth, async (req, res) => {
    * still has other people in it, walking away would strand them with a
    * workspace nobody can administer — so it is refused, with the fix named.
    */
-  if (req.user.orgId) {
-    const current = await store.listUsers(req.user.orgId);
-    const owners = current.filter((u) => u.role === 'owner' || u.role === 'platformAdmin');
-    if (current.length > 1 && owners.length === 1 && owners[0].id === req.user.id) {
-      return res.status(409).json({
-        error: 'You are the only owner of your current team. Make someone else an owner before joining another.',
-      });
-    }
+  if (await wouldStrandTeam(req.user)) {
+    return res.status(409).json({
+      error: 'You are the only owner of your current team. Make someone else an owner before joining another.',
+    });
   }
 
   const fromWs = workspaceIdFor(req.user);
@@ -1447,6 +1443,114 @@ app.post('/api/org/join', requireAuth, async (req, res) => {
     user: publicUser(updated),
     broughtRows,
   });
+});
+
+/*
+ * Team membership: who is on it, what they may do, and how to get out.
+ *
+ * Removing someone from a team is NOT deleting their account — that lives on
+ * the admin surface and is a different act with different consequences. Here
+ * they keep their account and get a fresh workspace of their own; the team's
+ * workspace is not touched, which is the whole point of stage A's split
+ * between deleteUser and deleteWorkspace.
+ */
+function isOrgOwner(user) {
+  return user.role === 'owner' || user.role === 'platformAdmin';
+}
+
+// The guard that stops a team being abandoned. Leaving, demoting yourself and
+// being the last owner are the same problem wearing three hats.
+async function wouldStrandTeam(user) {
+  if (!user.orgId) return false;
+  const members = await store.listUsers(user.orgId);
+  if (members.length <= 1) return false;
+  const owners = members.filter(isOrgOwner);
+  return owners.length === 1 && owners[0].id === user.id;
+}
+
+// Give someone an organisation of their own: what leaving and being removed
+// both amount to. They keep their account and start on an empty workspace.
+async function moveToFreshOrg(user) {
+  const org = await createOrgFor(user);
+  return store.updateUser(user.id, { orgId: org.id, role: 'owner' });
+}
+
+// Resolve a teammate for an owner's action. Another org's member is "not
+// found", never "forbidden" — the same rule resolveTarget follows.
+async function resolveMember(req, res) {
+  const target = await store.getUserById(req.params.id);
+  if (!target || !req.user.orgId || target.orgId !== req.user.orgId) {
+    res.status(404).json({ error: 'Not a member of your team' });
+    return null;
+  }
+  return target;
+}
+
+function requireTeamOwner(req, res, next) {
+  if (!isOrgOwner(req.user)) return res.status(403).json({ error: 'Only an owner can manage the team' });
+  if (!req.user.orgId) return res.status(400).json({ error: 'You are not in an organisation' });
+  next();
+}
+
+app.get('/api/org/members', requireAuth, async (req, res) => {
+  if (!req.user.orgId) return res.json({ members: [] });
+  const members = await store.listUsers(req.user.orgId);
+  members.sort((a, b) => a.createdAt - b.createdAt);
+  res.json({
+    members: members.map((u) => ({
+      id: u.id, name: u.name, email: u.email, role: u.role,
+      disabled: !!u.disabled, lastActiveAt: u.lastActiveAt || 0,
+      isYou: u.id === req.user.id,
+    })),
+    canManage: isOrgOwner(req.user),
+  });
+});
+
+app.patch('/api/org/members/:id', requireAuth, requireTeamOwner, async (req, res) => {
+  const target = await resolveMember(req, res);
+  if (!target) return undefined;
+  const role = req.body && req.body.role;
+  // owner and member only. Platform admin crosses organisations and is not an
+  // org owner's to hand out — the same rule the admin surface enforces.
+  if (role !== 'owner' && role !== 'member') return res.status(400).json({ error: 'Role must be owner or member' });
+
+  if (target.id === req.user.id && role === 'member' && await wouldStrandTeam(req.user)) {
+    return res.status(409).json({ error: 'You are the only owner. Make someone else an owner first.' });
+  }
+  const updated = await store.updateUser(target.id, { role });
+  res.json({ member: { id: updated.id, name: updated.name, email: updated.email, role: updated.role } });
+});
+
+app.delete('/api/org/members/:id', requireAuth, requireTeamOwner, async (req, res) => {
+  const target = await resolveMember(req, res);
+  if (!target) return undefined;
+  if (target.id === req.user.id) {
+    return res.status(400).json({ error: 'To leave the team yourself, use Leave team' });
+  }
+  await moveToFreshOrg(target);
+  await store.addEvent('leave', target.id, req.user.orgId).catch(() => {});
+  // Deliberately says what did NOT happen: their account still exists and the
+  // team's records are untouched.
+  res.json({ ok: true, removed: target.id, accountDeleted: false });
+});
+
+app.post('/api/org/leave', requireAuth, async (req, res) => {
+  if (!req.user.orgId) return res.status(400).json({ error: 'You are not in an organisation' });
+  const members = await store.listUsers(req.user.orgId);
+  if (members.length <= 1) {
+    // Nobody to leave. Handing them a second empty org would just orphan the
+    // first one.
+    return res.status(409).json({ error: 'You are the only person here — there is no team to leave.' });
+  }
+  if (await wouldStrandTeam(req.user)) {
+    return res.status(409).json({
+      error: 'You are the only owner of this team. Make someone else an owner before you leave.',
+    });
+  }
+  const previous = req.user.orgId;
+  const updated = await moveToFreshOrg(req.user);
+  await store.addEvent('leave', req.user.id, previous).catch(() => {});
+  res.json({ ok: true, user: publicUser(updated) });
 });
 
 /*

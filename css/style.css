@@ -659,12 +659,15 @@ body.tour-open { overflow: hidden; }
 .team-list li {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   padding: 8px 0;
   border-bottom: 1px solid var(--border);
   font-size: 14px;
 }
+/* The name takes the slack so the role pill and the actions stay put down the
+   column rather than drifting with the length of each person's name. */
+.team-who { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; min-width: 62px; justify-content: flex-end; }
 .team-list li:last-child { border-bottom: 0; }
 
 /* A member opening the module builder sees the schema, not an invitation to

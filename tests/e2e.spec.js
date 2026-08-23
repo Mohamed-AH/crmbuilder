@@ -1141,6 +1141,101 @@ test.describe('team workspaces', () => {
     await second.close();
   });
 
+  /*
+   * Being removed clears the team's records from the removed person's device.
+   *
+   * Their orgId changes, so the next time their client reaches /api/me the
+   * workspace reset fires and the replica goes. Worth asserting because the
+   * honest limit is narrower than it first looks — the only real exposure is a
+   * device that never comes online again, not "we cannot erase it".
+   */
+  test('a removed member loses the team from their device on next contact', async ({ page, browser }) => {
+    await onboard(page, { name: 'Removal Co' });
+    await signIn(page, uniqueEmail('removal-owner'));
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Team Only Contact');
+    await page.click('#record-save');
+    await expect(async () => {
+      const d = await (await page.request.get('/api/data')).json();
+      expect(d.records.some((r) => r.data.name === 'Team Only Contact')).toBe(true);
+    }).toPass({ timeout: 25000 });
+    const url = await inviteLink(page);
+
+    const second = await browser.newContext();
+    const mate = await second.newPage();
+    await mate.goto(new URL(url).pathname + new URL(url).search);
+    await signIn(mate, uniqueEmail('removal-mate'), { claim: 'none' });
+    await expect(mate.locator('[data-join]').first()).toBeVisible({ timeout: 25000 });
+    await mate.click('[data-join="fresh"]');
+    await mate.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(mate.locator('tr:has-text("Team Only Contact")')).toBeVisible({ timeout: 25000 });
+
+    // The owner removes them from the Team screen. Reloaded, not just
+    // navigated: the page is already on #/settings, so goto would be a
+    // same-document hash change and would show the team as it was before the
+    // colleague joined.
+    await page.goto('/#/settings');
+    await page.reload();
+    await expect(page.locator('[data-act="remove"]')).toBeVisible({ timeout: 25000 });
+    page.once('dialog', (d) => d.accept());
+    await page.click('[data-act="remove"]');
+    await expect(page.locator('.toast').last()).toContainText('removed from the team', { timeout: 20000 });
+
+    // Their next visit clears the replica without them doing anything. The
+    // page is still on the old module's route, which no longer exists for
+    // them, so check from the dashboard rather than from a dead link.
+    await mate.reload();
+    await expect(mate.locator('tr:has-text("Team Only Contact")')).toHaveCount(0, { timeout: 25000 });
+    await expect(mate.locator('#nav-modules .nav-link')).toHaveCount(0, { timeout: 25000 });
+    await mate.goto('/#/');
+    await expect(mate.locator('.template-card').first()).toBeVisible({ timeout: 25000 });
+
+    // Their account still exists — removal is not deletion.
+    const me = await (await mate.request.get('/api/me')).json();
+    expect(me.authenticated, 'being removed from a team must not delete the account').toBe(true);
+
+    // And the team is unchanged.
+    await page.goto('/#/');
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(page.locator('tr:has-text("Team Only Contact")')).toBeVisible();
+    await second.close();
+  });
+
+  test('leaving a team hands back a clean workspace', async ({ page, browser }) => {
+    await onboard(page, { name: 'Exit Co' });
+    await signIn(page, uniqueEmail('exit-owner'));
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Stays With The Team');
+    await page.click('#record-save');
+    await expect(async () => {
+      const d = await (await page.request.get('/api/data')).json();
+      expect(d.records.some((r) => r.data.name === 'Stays With The Team')).toBe(true);
+    }).toPass({ timeout: 25000 });
+    const url = await inviteLink(page);
+
+    const second = await browser.newContext();
+    const mate = await second.newPage();
+    await mate.goto(new URL(url).pathname + new URL(url).search);
+    await signIn(mate, uniqueEmail('exit-mate'), { claim: 'none' });
+    await expect(mate.locator('[data-join]').first()).toBeVisible({ timeout: 25000 });
+    await mate.click('[data-join="fresh"]');
+    await expect(mate.locator('#nav-modules .nav-link:has-text("Contacts")')).toBeVisible({ timeout: 25000 });
+
+    // A member leaving needs no permission from anyone.
+    await mate.goto('/#/settings');
+    mate.once('dialog', (d) => d.accept());
+    await mate.click('#leave-team-btn');
+    await expect(mate.locator('.toast').last()).toContainText('left the team', { timeout: 25000 });
+    await expect(mate.locator('tr:has-text("Stays With The Team")')).toHaveCount(0);
+
+    // The team keeps its records, and the owner is still an owner.
+    const team = await (await page.request.get('/api/data')).json();
+    expect(team.records.map((r) => r.data.name)).toContain('Stays With The Team');
+    await second.close();
+  });
+
   test('the invite link is not left in the address bar', async ({ page }) => {
     await onboard(page, { name: 'Hygiene Co' });
     await signIn(page, uniqueEmail('hygiene'));

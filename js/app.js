@@ -211,6 +211,8 @@
     return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
+  const fmtWhen = (ts) => (ts ? new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—');
+
   const relationNameCache = new Map(); // recordId -> display name
 
   // Only ever emit hrefs we control the scheme of — record values arrive from
@@ -1703,9 +1705,25 @@
     // and /api/me's copy goes stale the moment anyone joins or leaves.
     let org = null;
     if (Cloud.isAuthed) {
-      try { org = (await Cloud.org.get()); } catch { org = null; }
-      if (org && !org.org) org = null;
-      if (org) org = { ...org.org, memberCount: org.memberCount, members: org.members, canInvite: org.canInvite };
+      try {
+        const res = await Cloud.org.get();
+        if (res && res.org) {
+          const team = await Cloud.org.members().catch(() => ({ members: [], canManage: false }));
+          // Only an owner may list invites, and asking as a member is a 403 —
+          // expected, not an error worth surfacing.
+          const pending = res.canInvite
+            ? await Cloud.org.invites().catch(() => ({ invites: [] }))
+            : { invites: [] };
+          org = {
+            ...res.org,
+            memberCount: res.memberCount,
+            canInvite: res.canInvite,
+            canManage: team.canManage,
+            members: team.members,
+            invites: (pending.invites || []).filter((i) => i.state === 'valid'),
+          };
+        }
+      } catch { org = null; }
     }
     const authed = Cloud.isAuthed;
     main.innerHTML = `
@@ -1760,16 +1778,36 @@
             <ul class="team-list">
               ${org.members.map((m) => `
                 <li>
-                  <span>${esc(m.name || m.email)}${m.id === Cloud.user.id ? ' <span class="muted">(you)</span>' : ''}</span>
+                  <span class="team-who">${esc(m.name || m.email)}${m.isYou ? ' <span class="muted">(you)</span>' : ''}</span>
                   <span class="pill ${m.role === 'owner' || m.role === 'platformAdmin' ? 'pill-accent' : ''}">${esc(ROLE_LABELS[m.role] || m.role)}</span>
+                  ${org.canManage && !m.isYou ? `
+                    <span class="team-actions">
+                      <button class="icon-btn" data-member="${esc(m.id)}" data-act="role" data-role="${m.role === 'owner' ? 'member' : 'owner'}"
+                        title="${m.role === 'owner' ? 'Make a member' : 'Make an owner'}">${icon(m.role === 'owner' ? 'user' : 'shield-check', 15)}</button>
+                      <button class="icon-btn" data-member="${esc(m.id)}" data-act="remove" title="Remove from this team">${icon('trash-2', 15)}</button>
+                    </span>` : '<span class="team-actions"></span>'}
                 </li>`).join('')}
             </ul>` : ''}
           ${org.canInvite ? `
             <div class="btn-row">
               <button class="btn btn-primary" id="invite-btn">${icon('user', 15)} Invite a colleague</button>
             </div>
-            <p class="settings-hint">An invite is a private link that works once and expires after a week. Send it however you normally reach them.</p>`
+            <p class="settings-hint">An invite is a private link that works once and expires after a week. Send it however you normally reach them.</p>
+            ${org.invites && org.invites.length ? `
+              <p class="settings-hint"><strong>Unused invites</strong></p>
+              <ul class="team-list">
+                ${org.invites.map((i) => `
+                  <li>
+                    <span class="team-who muted">Expires ${esc(fmtWhen(i.expiresAt))}</span>
+                    <span class="team-actions"><button class="btn btn-ghost" data-revoke="${esc(i.code)}">Revoke</button></span>
+                  </li>`).join('')}
+              </ul>` : ''}`
     : '<p class="settings-hint">Only an owner can invite people to this team.</p>'}
+          ${org.memberCount > 1 ? `
+            <div class="btn-row">
+              <button class="btn btn-danger-ghost" id="leave-team-btn">${icon('log-out', 15)} Leave this team</button>
+            </div>
+            <p class="settings-hint">Leaving gives you a fresh, empty workspace of your own. The team's records stay with the team.</p>` : ''}
         </div>` : ''}
         <div class="card">
           <div class="card-head"><h2>Backup & restore</h2></div>
@@ -1808,6 +1846,7 @@
     });
     const inviteBtn = $('#invite-btn');
     if (inviteBtn) inviteBtn.addEventListener('click', openInvite);
+    bindTeamActions();
     $('#export-btn').addEventListener('click', exportData);
     $('#import-btn').addEventListener('click', () => $('#import-file').click());
     $('#import-file').addEventListener('change', importData);
@@ -1863,6 +1902,70 @@
     if (syncBtn) {
       syncBtn.addEventListener('click', async () => {
         toast((await Cloud.pushNow()) ? 'Synced' : 'Sync failed — will retry when online');
+      });
+    }
+  }
+
+  /*
+   * Promote, demote, remove, revoke, leave.
+   *
+   * Removing someone is not deleting their account: they keep it and get a
+   * fresh empty workspace, and the team's records are untouched. The
+   * confirmations say so, because "remove" and "delete" are one word apart and
+   * a decade of data apart.
+   */
+  function bindTeamActions() {
+    $$('[data-member]').forEach((btn) => btn.addEventListener('click', async () => {
+      const id = btn.dataset.member;
+      const row = btn.closest('li');
+      const who = row ? $('.team-who', row).textContent.replace(/\(you\)$/, '').trim() : 'this person';
+      try {
+        if (btn.dataset.act === 'role') {
+          const role = btn.dataset.role;
+          if (!confirm(role === 'owner'
+            ? `Make ${who} an owner? Owners can change modules, invite people and manage the team.`
+            : `Make ${who} a member? They will keep full access to records but can no longer change modules or manage the team.`)) return;
+          await Cloud.org.setRole(id, role);
+          toast(role === 'owner' ? `${who} is now an owner` : `${who} is now a member`);
+        } else {
+          if (!confirm(`Remove ${who} from this team?\n\nThey keep their account and get a fresh, empty workspace. The team's records are not affected.`)) return;
+          await Cloud.org.remove(id);
+          toast(`${who} was removed from the team`);
+        }
+        await renderSettings();
+      } catch (err) {
+        toast(err.message);
+      }
+    }));
+
+    $$('[data-revoke]').forEach((btn) => btn.addEventListener('click', async () => {
+      if (!confirm('Revoke this invite link? Anyone holding it will no longer be able to join.')) return;
+      try {
+        await Cloud.org.revoke(btn.dataset.revoke);
+        toast('Invite revoked');
+        await renderSettings();
+      } catch (err) {
+        toast(err.message);
+      }
+    }));
+
+    const leaveBtn = $('#leave-team-btn');
+    if (leaveBtn) {
+      leaveBtn.addEventListener('click', async () => {
+        if (!confirm("Leave this team?\n\nYou will get a fresh, empty workspace of your own. The team's records stay with the team and you will no longer be able to see them.")) return;
+        try {
+          // Deliver anything still pending while this is still our workspace —
+          // after the move the server would file it under the new one.
+          if (Scope.get('dirty')) await Cloud.sync().catch(() => {});
+          await Cloud.org.leave();
+          await Cloud.init({ getState: fullState, getChanges: localChanges, applyChanges: mergeChanges });
+          await reconcileWorkspace();
+          renderSidebar();
+          route();
+          toast('You have left the team');
+        } catch (err) {
+          toast(err.message);
+        }
       });
     }
   }
@@ -2062,7 +2165,6 @@
       return;
     }
     const t = stats.totals;
-    const fmtWhen = (ts) => (ts ? new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—');
 
     main.innerHTML = `
       <div class="page page-full">

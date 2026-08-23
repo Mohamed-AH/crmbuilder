@@ -38,7 +38,7 @@ docs/                 user guide, onboarding playbook, demo script, architecture
 
 ## 2. Current status
 
-**All green:** 94 Node tests + 48 Playwright tests.
+**All green:** 104 Node tests + 50 Playwright tests.
 
 ```sh
 npm install
@@ -59,8 +59,9 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
 - **Per-record delta sync** with tombstoned deletes — see §10
 - **Storage scopes**: one local store per identity, so a shared device cannot
   cross-contaminate and demo data cannot sync — see §11
-- **Shared team workspaces**: org-owned workspaces (stage A), invite links
-  (stage B), owner-only schema (stage C) — see §5, §13, §14
+- **Shared team workspaces**, complete: org-owned workspaces (stage A), invite
+  links (stage B), owner-only schema (stage C), member management and leaving
+  (stage D) — see §5, §13, §14, §15
 - Admin dashboard with analytics; **organisations with per-tenant scoping**
 - **Pooled and dedicated deployment blueprints** (`render.yaml`,
   `render.dedicated.yaml`) and a `/health` endpoint
@@ -68,9 +69,10 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
 - Docs: USER-GUIDE, ONBOARDING, DEMO-SCRIPT, ARCHITECTURE, product-tour.html
 
 ### Not built yet
-- **Member management and leaving a team** (stage D) — removing someone,
-  changing a role from the Team screen, `POST /api/org/leave`.
 - Email sending, third-party integrations.
+- **Per-module permissions** — everyone on a team sees every module. Considered
+  and set aside: it needs per-module filtering in sync, or a member receives
+  rows they cannot see.
 
 ---
 
@@ -93,7 +95,7 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v8`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v9`).
 
 **Tenancy scoping comes from the session, never a request.** That covers both
 `req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
@@ -213,7 +215,8 @@ session only** — never a parameter, query or body, the same rule as
 equal today, and a key named for what it keys is what stops the next reader
 assuming they always will be.
 
-Still unbuilt: member management and leaving (stage D).
+All four stages are shipped: org-owned workspaces, invites, permissions, and
+member management.
 
 ---
 
@@ -492,3 +495,45 @@ Their work legitimately vanishes, and the named toast is the difference between
 a rule and a bug report. Guarded by *"a demoted member has their module edit
 reverted, and is told why"*, which fails both when the revert is silent and when
 the client ignores the refusal.
+
+---
+
+## 15. Team membership (stage D)
+
+```
+GET    /api/org/members        anyone on the team; canManage says who may act
+PATCH  /api/org/members/:id    owner only — owner | member, never platformAdmin
+DELETE /api/org/members/:id    owner only — removes from the TEAM
+POST   /api/org/leave          self-service exit
+```
+
+**Removing is not deleting.** `DELETE /api/org/members/:id` moves the person to
+a fresh org of their own: account intact, team workspace untouched. Account
+deletion is a different act on a different endpoint (`/api/admin/users/:id`) and
+`deleteAccount()` is still the only thing that can take a workspace with it.
+The two are one word apart and a decade of data apart, so the confirmations say
+which is happening and the test *"removing a member keeps their account and the
+team workspace"* fails if the two are ever wired together.
+
+**`wouldStrandTeam()` is the one rule**, used by leave, self-demotion and join.
+Leaving, demoting yourself, and joining another team are the same problem
+wearing three hats: the last owner of a populated team walking away leaves
+people with a workspace nobody can administer. Removing that guard fails five
+tests.
+
+**A removed member's device clears itself** on its next contact with the
+server: their `orgId` changed, so `reconcileWorkspace()` (§13) fires and drops
+the replica. The honest limit is therefore narrower than "we cannot erase it" —
+it is **a device that never comes online again**. Say that, not the vaguer
+version, and not an implied remote wipe.
+
+**Traps:**
+
+- **`page.goto('/#/settings')` when already there is a same-document hash
+  change** and does not re-render. The Team screen showed the team as it was
+  before the colleague joined until the test reloaded instead.
+- **A removed member's page is still on the old module's route**, which no
+  longer exists for them — that renders "Module not found", not onboarding.
+  Assert emptiness from the dashboard.
+- **`fmtWhen` was scoped inside `renderAdmin`** and had to be hoisted before
+  Settings could use it.

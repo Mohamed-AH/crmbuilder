@@ -395,8 +395,10 @@ per org.
    split of existing snapshots, and the legacy endpoints kept working on the
    same rows. Sixteen sync tests plus two two-device browser journeys, each
    checked against the broken state. See §2.2.
-5. **Shared team workspaces** — now unblocked, still unbuilt. Concretely, what
-   remains:
+5. **Shared team workspaces** — ✅ shipped, in four stages: org-owned
+   workspaces, invite links, owner-vs-member permissions, and member
+   management. What each one had to solve, kept because the reasoning is the
+   record:
    - **Re-key rows from `userId` to `orgId`.** `modules` and `records` are
      keyed `{userId, id}` today; `orgId` rides along for stats and scoping but
      is not the ownership key, so two colleagues in one org have two separate
@@ -416,8 +418,13 @@ per org.
      rate limiting so one tenant's 50k-row import cannot degrade others,
      one-shot org deletion and export, and an audit trail for admin actions.
 
-   None of it risks data loss any more, which was the point of doing (4) first.
-   What is left is product, not safety.
+   None of it risked data loss, which was the point of doing (4) first. The
+   re-key turned out to be a rename rather than a merge because org↔user was
+   still 1:1 — it would not have been that cheap after invites existed.
+
+   Still unbuilt, deliberately: **per-module permissions**. Everyone on a team
+   sees every module. Doing it properly needs per-module filtering inside sync,
+   or a member receives rows the UI then has to pretend are not there.
 6. **Database-per-tenant (Option C)** — only if a client's compliance
    requirements demand it and dedicated deployment isn't acceptable.
 
@@ -430,9 +437,11 @@ migration to write and no data-loss window to explain.
 
 ## 8. What to answer a prospect today
 
-- *"Can our team all use it?"* — Not yet in one shared workspace; each person
-  gets their own, and an organisation groups them for administration. The sync
-  groundwork for sharing is done; invites and permissions are not.
+- *"Can our team all use it?"* — Yes. An organisation shares one workspace; an
+  owner invites people with a single-use link. Owners control the schema and
+  the team, members work with records, and per-record sync means two people
+  editing different records both keep their work. Everyone on a team sees every
+  module — per-module access is not built.
 - *"We share a computer — is that safe?"* — Yes. Each account has its own local
   store on a device, so one person's work is never visible to, or synced into,
   another's account — including edits that had not reached the server yet.
