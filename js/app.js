@@ -2,7 +2,7 @@
  * app.js — routing, views, and interactions for CRM Builder.
  * Depends on DB (db.js), TEMPLATES (templates.js), icon() (icons.js), Cloud (cloud.js).
  */
-/* global DB, TEMPLATES, icon, LUCIDE, Cloud */
+/* global DB, TEMPLATES, icon, LUCIDE, Cloud, Scope */
 (() => {
   'use strict';
 
@@ -11,9 +11,19 @@
   const viewState = new Map(); // moduleId -> { q: '', view: 'table'|'kanban' }
   let deferredInstall = null;
 
-  const SETTINGS_KEY = 'crmb:settings';
-  let SETTINGS = { currency: 'USD', businessName: '' };
-  try { SETTINGS = { ...SETTINGS, ...(JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}) }; } catch { /* fresh */ }
+  // Settings and the local snapshot belong to a workspace, not to the browser,
+  // so they are addressed through Scope. Reading them at module scope is safe:
+  // Scope resolves synchronously from the last known identity, which is what
+  // keeps the first paint immediate.
+  const DEFAULT_SETTINGS = { currency: 'USD', businessName: '' };
+  let SETTINGS = { ...DEFAULT_SETTINGS };
+  function loadSettingsFromScope() {
+    SETTINGS = { ...DEFAULT_SETTINGS };
+    try { SETTINGS = { ...SETTINGS, ...(JSON.parse(Scope.get('settings')) || {}) }; } catch { /* fresh */ }
+    return SETTINGS;
+  }
+  if (Scope.needsLegacyMigration()) Scope.migrateLegacyKeys();
+  loadSettingsFromScope();
 
   const CURRENCIES = ['USD', 'EUR', 'GBP', 'SAR', 'AED', 'EGP', 'INR', 'PKR', 'JPY', 'CNY', 'CAD', 'AUD', 'CHF', 'SEK', 'NOK', 'DKK', 'BRL', 'MXN', 'ZAR', 'NGN', 'KES', 'TRY', 'MYR', 'SGD', 'PHP', 'IDR', 'THB', 'VND', 'KRW', 'BDT'];
 
@@ -249,19 +259,27 @@
   }
 
   async function persist() {
-    localStorage.setItem('crmb:lastEdit', String(Date.now()));
+    Scope.set('lastEdit', String(Date.now()));
     try {
       const state = await fullState();
-      localStorage.setItem('crmb:snapshot', JSON.stringify({ ...state, at: Date.now() }));
+      // The snapshot exists to survive IndexedDB eviction. Sample data is not
+      // worth spending the localStorage quota on — it can always be seeded
+      // again — and leaving it out keeps the mirror close to what the user
+      // would actually miss.
+      Scope.set('snapshot', JSON.stringify({
+        modules: state.modules.filter((m) => !m._demo),
+        records: state.records.filter((r) => !r._demo),
+        settings: state.settings,
+        at: Date.now(),
+      }));
     } catch { /* quota — IndexedDB is still the primary local store */ }
     Cloud.schedulePush();
   }
 
-  const SETTINGS_AT_KEY = 'crmb:settingsAt';
 
   function saveSettings() {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS));
-    localStorage.setItem(SETTINGS_AT_KEY, String(Date.now()));
+    Scope.set('settings', JSON.stringify(SETTINGS));
+    Scope.set('settingsAt', String(Date.now()));
     persist();
   }
 
@@ -293,8 +311,8 @@
     for (const r of records || []) await DB.put('records', stamp ? { ...r, updatedAt: now } : r);
     if (settings && typeof settings === 'object') {
       SETTINGS = { ...SETTINGS, ...settings };
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS));
-      if (stamp) localStorage.setItem(SETTINGS_AT_KEY, String(now));
+      Scope.set('settings', JSON.stringify(SETTINGS));
+      if (stamp) Scope.set('settingsAt', String(now));
     }
     await loadModules();
     relationNameCache.clear();
@@ -324,7 +342,7 @@
 
     const modules_ = pick(mods);
     const records_ = pick(recs);
-    const settingsAt = Number(localStorage.getItem(SETTINGS_AT_KEY)) || 0;
+    const settingsAt = Number(Scope.get('settingsAt')) || 0;
     if (settingsAt > highWater) highWater = settingsAt;
 
     return {
@@ -365,11 +383,11 @@
     }
 
     if (remote.settings && remote.settings.doc) {
-      const localAt = Number(localStorage.getItem(SETTINGS_AT_KEY)) || 0;
+      const localAt = Number(Scope.get('settingsAt')) || 0;
       if ((remote.settings.updatedAt || 0) > localAt) {
         SETTINGS = { ...SETTINGS, ...remote.settings.doc };
-        localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS));
-        localStorage.setItem(SETTINGS_AT_KEY, String(remote.settings.updatedAt));
+        Scope.set('settings', JSON.stringify(SETTINGS));
+        Scope.set('settingsAt', String(remote.settings.updatedAt));
         changed += 1;
       }
     }
@@ -484,7 +502,7 @@
       <div class="modal-body">
         <p class="settings-hint">Sign in to save your CRM to your account and access it from any device. Your data also always stays available on this device.</p>
         ${googleEnabled ? `
-          <a class="btn btn-google btn-block" href="/auth/google">
+          <a class="btn btn-google btn-block" href="/auth/google" id="google-signin">
             <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.6-.4-3.9z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.9 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.6 39.6 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C41 35.4 44 30.2 44 24c0-1.3-.1-2.6-.4-3.9z"/></svg>
             Continue with Google
           </a>` : ''}
@@ -501,12 +519,18 @@
       </div>
       <div class="modal-foot"><span class="settings-hint" style="margin:0">We only use your email to identify your workspace.</span></div>`);
     $$('[data-close]', modal).forEach((b) => b.addEventListener('click', closeModal));
+    // The round trip to Google comes back as a fresh page load, and the last
+    // known identity on this device may be somebody else's. Tell boot not to
+    // trust it, so nobody's workspace flashes up for the wrong person.
+    const google = $('#google-signin', modal);
+    if (google) google.addEventListener('click', () => Scope.markSignInPending());
     const form = $('#dev-login-form', modal);
     if (form) {
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         try {
           await Cloud.devLogin($('#dev-email', modal).value.trim());
+          Scope.markSignInPending();
           location.reload(); // boot re-runs and reconciles local vs cloud data
         } catch (err) {
           toast(err.message);
@@ -642,8 +666,8 @@
       }
       SETTINGS.businessName = $('#onboard-name').value.trim();
       SETTINGS.currency = $('#onboard-currency').value;
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS));
-      localStorage.setItem(SETTINGS_AT_KEY, String(Date.now()));
+      Scope.set('settings', JSON.stringify(SETTINGS));
+      Scope.set('settingsAt', String(Date.now()));
       const withSamples = $('#onboard-samples').checked;
       for (const t of picked) await createFromTemplate(t, withSamples);
       await loadModules();
@@ -654,7 +678,7 @@
     });
     $('#onboard-custom').addEventListener('click', () => openBuilder(null));
     $('#onboard-demo').addEventListener('click', () => loadDemoData({ replace: false }));
-    $('#onboard-tour').addEventListener('click', startTour);
+    $('#onboard-tour').addEventListener('click', startTourWithConsent);
     const signin = $('#onboard-signin');
     if (signin) signin.addEventListener('click', openSignIn);
   }
@@ -674,7 +698,10 @@
     if (withSamples && t.samples) {
       for (const data of t.samples) {
         const now = Date.now();
-        await DB.put('records', { id: uid(), moduleId: mod.id, data: { ...data }, createdAt: now, updatedAt: now });
+        // The module is the user's choice and is real. These rows are ours, so
+        // they carry the flag and "Remove sample data" can take them back out
+        // without touching anything the user typed into the same module.
+        await DB.put('records', { id: uid(), moduleId: mod.id, data: { ...data }, createdAt: now, updatedAt: now, _demo: true });
       }
     }
     return mod;
@@ -683,7 +710,7 @@
   // ---------------------------------------------------------------- demo data
   // Builds every template module and fills it with the fictional business in
   // demo-data.js, so a demo or evaluation starts on a CRM that looks used.
-  async function loadDemoData({ replace }) {
+  async function loadDemoData({ replace, silent = false }) {
     if (typeof DEMO_DATA === 'undefined') {
       // demo-data.js did not load — usually a stale service-worker cache or an
       // incomplete deploy. Say so; a silent no-op leaves callers guessing.
@@ -704,25 +731,33 @@
       if (!rows || !rows.length) continue;
       // Reuse a module of the same name if the user already has one.
       let mod = modules.find((m) => m.name.toLowerCase() === template.name.toLowerCase());
-      if (!mod) mod = await createFromTemplate(template, false);
+      if (!mod) {
+        mod = await createFromTemplate(template, false);
+        // Created solely to hold the demo business, so it is demo too — unlike
+        // a module the user picked at onboarding, which stays theirs.
+        mod._demo = true;
+        mod.updatedAt = Date.now();
+        await DB.put('modules', mod);
+      }
       const now = Date.now();
       let i = 0;
       for (const data of rows) {
         i += 1;
         // Stagger updatedAt so "recent activity" has a believable order.
-        await DB.put('records', { id: uid(), moduleId: mod.id, data: { ...data }, createdAt: now - i * 60000, updatedAt: now - i * 60000 });
+        await DB.put('records', { id: uid(), moduleId: mod.id, data: { ...data }, createdAt: now - i * 60000, updatedAt: now - i * 60000, _demo: true });
       }
     }
 
     SETTINGS.businessName = demo.businessName;
     SETTINGS.currency = demo.currency;
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS));
-    localStorage.setItem(SETTINGS_AT_KEY, String(Date.now()));
+    Scope.set('demoSettings', JSON.stringify({ businessName: demo.businessName, currency: demo.currency }));
+    Scope.set('settings', JSON.stringify(SETTINGS));
+    Scope.set('settingsAt', String(Date.now()));
 
     await loadModules();
     await persist();
     renderSidebar();
-    toast('Demo data loaded');
+    if (!silent) toast('Demo data loaded');
     location.hash = '#/';
     route();
     return true;
@@ -800,6 +835,48 @@
     ];
   }
 
+  /*
+   * Ask before seeding, always.
+   *
+   * The tour points at a populated pipeline, so an empty workspace needs the
+   * sample business first. Nobody gets it without saying yes, and the promise
+   * made here — one click to remove it — is kept by Settings.
+   */
+  async function startTourWithConsent() {
+    if (!modules.length) {
+      if (typeof DEMO_DATA === 'undefined') {
+        toast('Sample data could not be loaded — try reloading the page');
+        return;
+      }
+      const ok = await confirmSampleData({
+        title: 'The tour needs something to show',
+        body: 'It walks through a small fictional business — a pipeline, contacts, a few deals. Nothing is sent anywhere until you sign in, and you can remove it in one click from Settings.',
+        confirm: 'Load the sample business',
+      });
+      if (!ok) return;
+      if (!(await loadDemoData({ replace: false, silent: true }))) return;
+    }
+    startTour();
+  }
+
+  // A yes/no the caller can await. Deliberately not window.confirm: this one
+  // has to explain what is about to be written and how to undo it.
+  function confirmSampleData({ title, body, confirm }) {
+    return new Promise((resolve) => {
+      const modal = openModal(`
+        <div class="modal-head"><h2>${esc(title)}</h2></div>
+        <div class="modal-body"><p class="settings-hint">${esc(body)}</p></div>
+        <div class="modal-foot claim-actions">
+          <button class="btn btn-ghost" data-consent="no">Not now</button>
+          <button class="btn btn-primary" data-consent="yes">${esc(confirm)}</button>
+        </div>`);
+      $$('[data-consent]', modal).forEach((b) => b.addEventListener('click', () => {
+        closeModal();
+        resolve(b.dataset.consent === 'yes');
+      }));
+    });
+  }
+
   function startTour() {
     Tour.configure({
       steps: tourSteps(),
@@ -817,17 +894,13 @@
       // The tour points at a populated pipeline, so one has to exist. If it
       // cannot be created the tour does not start — a walkthrough narrated
       // over an empty app is worse than no walkthrough.
+      // Seeding is the CALLER's job now. A walkthrough that quietly fills your
+      // workspace with a fictional business is exactly the surprise this flow
+      // exists to remove, so by the time the tour starts the data is either
+      // already there or the visitor has said yes to it.
       ensureReady: async () => {
         if (modules.length) return { ok: true };
-        if (typeof DEMO_DATA === 'undefined') {
-          return { ok: false, reason: 'The sample data could not be loaded. Reload the page and try again.' };
-        }
-        await loadDemoData({ replace: false });
-        await loadModules();
-        if (!modules.length) {
-          return { ok: false, reason: 'The sample workspace could not be created on this device.' };
-        }
-        return { ok: true };
+        return { ok: false, reason: 'The tour needs a workspace to walk through.' };
       },
       onEnd: ({ skipped }) => {
         // Undo the sort the tour applied so the visitor starts from a clean view.
@@ -1512,13 +1585,19 @@
     // Only used for a count. Settings is where someone lands to export or
     // reset when storage is misbehaving, so it must render regardless.
     let allRecords = [];
+    let allModules = [];
     let storageOk = true;
     try {
       allRecords = await DB.getAll('records');
+      allModules = await DB.getAll('modules');
     } catch (err) {
       storageOk = false;
       console.error('Could not read records for Settings:', err);
     }
+    // Offered for as long as any seeded row survives, in any scope — including
+    // an account the samples were deliberately brought into. "Easy to discard"
+    // has to keep being true after sign-in, not only before it.
+    const demoCount = allRecords.filter((r) => r._demo).length + allModules.filter((m) => m._demo).length;
     const authed = Cloud.isAuthed;
     main.innerHTML = `
       <div class="page">
@@ -1577,6 +1656,7 @@
             <button class="btn" id="add-template-btn">${icon('plus', 15)} Add module from template</button>
             <button class="btn" id="load-demo-btn">${icon('database', 15)} Load demo data</button>
             <button class="btn" id="replay-tour-btn">${icon('map-pin', 15)} Replay the tour</button>
+            ${demoCount ? `<button class="btn" id="remove-demo-btn">${icon('trash-2', 15)} Remove sample data (${demoCount})</button>` : ''}
           </div>
           <p class="settings-hint" style="margin:12px 0 0">Demo data fills every module with a sample business so you can explore or present without entering records first. It is added alongside anything you already have.</p>
         </div>
@@ -1601,7 +1681,7 @@
     $('#reset-btn').addEventListener('click', async () => {
       if (!confirm('Delete ALL modules and records from this device? Export a backup first if you might need this data.')) return;
       await DB.softClearAll();
-      localStorage.removeItem('crmb:snapshot');
+      Scope.remove('snapshot');
       await loadModules();
       await persist();
       renderSidebar();
@@ -1612,7 +1692,19 @@
     const installBtn = $('#settings-install');
     if (installBtn) installBtn.addEventListener('click', promptInstall);
     $('#add-template-btn').addEventListener('click', openTemplatePicker);
-    $('#replay-tour-btn').addEventListener('click', startTour);
+    $('#replay-tour-btn').addEventListener('click', startTourWithConsent);
+    const removeDemo = $('#remove-demo-btn');
+    if (removeDemo) {
+      removeDemo.addEventListener('click', async () => {
+        if (!confirm('Remove the sample data?\n\nAnything you added yourself is kept, including records you created inside a sample module.')) return;
+        const { removed, promoted } = await discardDemoData();
+        renderSidebar();
+        toast(promoted
+          ? `Sample data removed — kept ${promoted} module${promoted === 1 ? '' : 's'} you had added to`
+          : `Sample data removed (${removed} record${removed === 1 ? '' : 's'})`);
+        route();
+      });
+    }
     $('#load-demo-btn').addEventListener('click', async () => {
       const replace = modules.length > 0
         && confirm('Replace your current modules and records with the demo business?\n\nOK = replace everything (your current data is deleted)\nCancel = add demo data alongside what you have');
@@ -1625,7 +1717,11 @@
       signoutBtn.addEventListener('click', async () => {
         await Cloud.pushNow();
         await Cloud.logout();
-        toast('Signed out — your data remains on this device');
+        // Back to the anonymous workspace. The account's own store is left
+        // exactly as it is and returns on the next sign-in — signing out hides
+        // a workspace, it never destroys one.
+        await switchScopeTo(Scope.ANON);
+        toast('Signed out — sign back in to see your workspace');
         renderSidebar();
         renderSettings();
       });
@@ -1947,14 +2043,307 @@
   // Sync happens after the first paint, so it must not disturb whatever the
   // user is already doing. Repaint only when the cloud actually replaced our
   // data, and never out from under an open modal.
+  // ------------------------------------------------------- demo data + scopes
+  /*
+   * What is sitting in a scope, split by provenance.
+   *
+   * `_demo` is set on rows we seeded and never on rows the user typed, so this
+   * is an exact split rather than a guess — which is the whole reason the flag
+   * exists alongside the scope boundary.
+   */
+  async function inventory() {
+    const [mods, recs] = await Promise.all([DB.getAll('modules'), DB.getAll('records')]);
+    return {
+      modules: mods,
+      records: recs,
+      demoModules: mods.filter((m) => m._demo),
+      demoRecords: recs.filter((r) => r._demo),
+      realModules: mods.filter((m) => !m._demo),
+      realRecords: recs.filter((r) => !r._demo),
+      get hasDemo() { return this.demoModules.length > 0 || this.demoRecords.length > 0; },
+      get hasReal() { return this.realModules.length > 0 || this.realRecords.length > 0; },
+      get isEmpty() { return this.modules.length === 0 && this.records.length === 0; },
+    };
+  }
+
+  /*
+   * Remove sample data, carefully.
+   *
+   * The asymmetry that matters: we only ever delete rows we created. A demo
+   * module the user has since typed their own records into is PROMOTED to a
+   * real module rather than deleted, because taking it would take their work
+   * with it. Everything goes through DB.delete, so the removal tombstones and
+   * reaches their other devices instead of coming back on the next sync.
+   */
+  async function discardDemoData() {
+    const inv = await inventory();
+    if (!inv.hasDemo) return { removed: 0, promoted: 0 };
+
+    const now = Date.now();
+    const byModule = new Map();
+    inv.records.forEach((r) => {
+      if (!byModule.has(r.moduleId)) byModule.set(r.moduleId, []);
+      byModule.get(r.moduleId).push(r);
+    });
+
+    const removedIds = new Set();
+    let promoted = 0;
+
+    for (const mod of inv.demoModules) {
+      const rows = byModule.get(mod.id) || [];
+      if (rows.some((r) => !r._demo)) {
+        // The user made this module theirs. Keep it, drop only our rows.
+        const { _demo, ...kept } = mod;
+        await DB.put('modules', { ...kept, updatedAt: now });
+        promoted += 1;
+        for (const r of rows.filter((x) => x._demo)) {
+          await DB.delete('records', r.id, now);
+          removedIds.add(r.id);
+        }
+      } else {
+        for (const r of rows) {
+          await DB.delete('records', r.id, now);
+          removedIds.add(r.id);
+        }
+        await DB.delete('modules', mod.id, now);
+      }
+    }
+
+    // Demo rows living in a module the user chose at onboarding.
+    const demoModuleIds = new Set(inv.demoModules.map((m) => m.id));
+    for (const r of inv.demoRecords) {
+      if (demoModuleIds.has(r.moduleId) || removedIds.has(r.id)) continue;
+      await DB.delete('records', r.id, now);
+      removedIds.add(r.id);
+    }
+
+    // A relation still pointing at something we just deleted renders as
+    // "(linked record)" — harmless, but it reads as breakage on a record the
+    // user still owns. Clear those references.
+    if (removedIds.size) {
+      const survivors = await DB.getAll('records');
+      const relKeysByModule = new Map();
+      for (const m of await DB.getAll('modules')) {
+        relKeysByModule.set(m.id, (m.fields || []).filter((f) => f.type === 'relation').map((f) => f.key));
+      }
+      for (const r of survivors) {
+        const keys = relKeysByModule.get(r.moduleId) || [];
+        const stale = keys.filter((k) => r.data[k] && removedIds.has(r.data[k]));
+        if (!stale.length) continue;
+        const data = { ...r.data };
+        stale.forEach((k) => { data[k] = ''; });
+        await DB.put('records', { ...r, data, updatedAt: now });
+      }
+    }
+
+    // Only revert settings the demo set and the user never touched.
+    try {
+      const seeded = JSON.parse(Scope.get('demoSettings'));
+      if (seeded) {
+        if (SETTINGS.businessName === seeded.businessName) SETTINGS.businessName = '';
+        if (SETTINGS.currency === seeded.currency) SETTINGS.currency = DEFAULT_SETTINGS.currency;
+        saveSettings();
+      }
+    } catch { /* nothing seeded */ }
+    Scope.remove('demoSettings');
+
+    relationNameCache.clear();
+    await loadModules();
+    await persist();
+    return { removed: removedIds.size, promoted };
+  }
+
+  /*
+   * Move the anonymous workspace into the account that just signed in.
+   *
+   * Rows are re-dated to now on purpose: bringing work into an account is a
+   * deliberate act and should win the first sync, the same reasoning as an
+   * explicit backup restore. Reads happen before the scope switch and writes
+   * after, because DB follows whichever scope is current.
+   */
+  async function claimAnonWorkspace(targetScope, { keepDemo }) {
+    const [mods, recs] = await Promise.all([DB.getAllRaw('modules'), DB.getAllRaw('records')]);
+    const settings = { ...SETTINGS };
+    const settingsAt = Number(Scope.get('settingsAt')) || 0;
+    const wanted = (row) => !row.deletedAt && (keepDemo || !row._demo);
+    const takeMods = mods.filter(wanted);
+    const takeRecs = recs.filter(wanted);
+    // A record whose module is being left behind has nowhere to live.
+    const takenModuleIds = new Set(takeMods.map((m) => m.id));
+
+    await switchScopeTo(targetScope);
+
+    const now = Date.now();
+    for (const m of takeMods) await DB.put('modules', { ...m, updatedAt: now });
+    for (const r of takeRecs) {
+      if (!takenModuleIds.has(r.moduleId)) continue;
+      await DB.put('records', { ...r, updatedAt: now });
+    }
+    if (settingsAt > 0) {
+      SETTINGS = { ...SETTINGS, ...settings };
+      saveSettings();
+    }
+    relationNameCache.clear();
+    await loadModules();
+    return takeMods.length + takeRecs.length;
+  }
+
+  // Point every layer at a different scope and reload what they cached.
+  async function switchScopeTo(scope) {
+    DB.useScope(scope);
+    Scope.switchTo(scope);
+    loadSettingsFromScope();
+    relationNameCache.clear();
+    await loadModules();
+  }
+
+  /*
+   * The one question that has to be asked at sign-in.
+   *
+   * Only ever about the ANONYMOUS scope — an account's own workspace is never
+   * offered to a different account, which is what keeps a shared PC safe. The
+   * options are computed from what is actually there, so nobody is asked about
+   * sample data they never loaded, and real work is never discarded silently.
+   */
+  function askAboutAnonWorkspace(inv) {
+    return new Promise((resolve) => {
+      const choices = [];
+      if (inv.hasReal && inv.hasDemo) {
+        choices.push(['work', 'Bring my work, leave the samples', 'primary']);
+        choices.push(['all', 'Bring everything, samples included', '']);
+        choices.push(['none', 'Leave it all on this device', 'ghost']);
+      } else if (inv.hasReal) {
+        choices.push(['work', 'Bring my work into this account', 'primary']);
+        choices.push(['none', 'Leave it on this device', 'ghost']);
+      } else {
+        choices.push(['none', 'Start fresh', 'primary']);
+        choices.push(['all', 'Keep the sample data', '']);
+      }
+
+      const counts = [];
+      if (inv.hasReal) counts.push(`${inv.realRecords.length} record${inv.realRecords.length === 1 ? '' : 's'} you added`);
+      if (inv.hasDemo) counts.push(`${inv.demoRecords.length} sample record${inv.demoRecords.length === 1 ? '' : 's'}`);
+
+      const modal = openModal(`
+        <div class="modal-head"><h2>${inv.hasReal ? 'Bring this workspace with you?' : 'Start fresh or keep the samples?'}</h2></div>
+        <div class="modal-body">
+          <p class="settings-hint">This device has ${esc(counts.join(' and '))} from before you signed in.${
+            inv.hasDemo && !inv.hasReal
+              ? ' Sample data is there to explore with — most people start their real account fresh.'
+              : ' Nothing is deleted either way: anything you leave stays on this device.'
+          }</p>
+        </div>
+        <div class="modal-foot claim-actions">
+          ${choices.map(([value, label, kind]) => `
+            <button class="btn ${kind === 'primary' ? 'btn-primary' : kind === 'ghost' ? 'btn-ghost' : ''}" data-claim="${value}">${esc(label)}</button>`).join('')}
+        </div>`);
+
+      $$('[data-claim]', modal).forEach((btn) => btn.addEventListener('click', () => {
+        closeModal();
+        resolve(btn.dataset.claim);
+      }));
+    });
+  }
+
+  /*
+   * One-time move of a pre-scope install into its scope.
+   *
+   * Before scopes there was one database for everyone. For an install that was
+   * already signed in, those rows are that account's — leaving them in the
+   * anonymous database would offer someone's own workspace to the next person
+   * as claimable anonymous data. Copy them across before anything reads.
+   *
+   * Runs inside init()'s try/catch and behind its watchdog, so a slow or wedged
+   * copy still ends in a painted app rather than a bare shell.
+   */
+  async function adoptLegacyWorkspace() {
+    if (!Scope.needsLegacyMigration()) return;
+    const scope = Scope.current;
+    try {
+      if (scope !== Scope.ANON) await DB.adoptLegacy(scope);
+      // Only now: the marker is what stops this running again, so it must not
+      // be written over a copy that did not finish.
+      Scope.markMigrated(scope);
+    } catch (err) {
+      // Leave the marker unwritten and try again next boot. The legacy database
+      // is untouched either way, so nothing is lost by deferring.
+      console.warn('Could not move this workspace into its own store yet:', err);
+    }
+  }
+
+  /*
+   * Reconcile the scope we booted into with the identity the server reports.
+   *
+   * Boot has to guess — it paints from the last known identity before /api/me
+   * can answer. Once the real answer arrives, this is where a wrong guess is
+   * corrected, and it is the only place an anonymous workspace is ever offered
+   * to an account.
+   */
+  async function reconcileScope() {
+    Scope.clearSignInPending();
+    const target = Scope.forUser(Cloud.user && Cloud.user.id);
+    if (target === Scope.current) return false;
+
+    // Leaving an account for another (or for nobody): switch and show what
+    // belongs to whoever is here now. Never merge — one account's workspace is
+    // not another's to claim, whatever is still pending in it.
+    if (!Scope.isAnon) {
+      await switchScopeTo(target);
+      return true;
+    }
+
+    // Leaving the anonymous scope for an account. This is the only claimable
+    // case, and it is offered exactly once per anonymous workspace.
+    const inv = await inventory();
+    const claim = Scope.claimedBy();
+    if (inv.isEmpty || (claim && claim.userId !== Cloud.user.id)) {
+      await switchScopeTo(target);
+      return true;
+    }
+    if (claim && claim.userId === Cloud.user.id) {
+      await switchScopeTo(target);
+      return true;
+    }
+
+    const choice = await askAboutAnonWorkspace(inv);
+    Scope.markClaimed(Cloud.user.id);
+    if (choice === 'none') {
+      await switchScopeTo(target);
+      toast('Signed in — this device\u2019s earlier work was left where it is');
+      return true;
+    }
+    const moved = await claimAnonWorkspace(target, { keepDemo: choice === 'all' });
+    // Cleared only once a sync confirms the rows landed — until then the
+    // anonymous copy is the only other copy. Same reasoning as the
+    // export/verify/delete order in the pooled-to-dedicated runbook.
+    if (moved) Scope.set('claimCleanup', '1', Scope.ANON);
+    if (moved) toast('Your workspace is now saved to your account');
+    return true;
+  }
+
   async function syncInBackground() {
     await Cloud.init({ getState: fullState, getChanges: localChanges, applyChanges: mergeChanges });
+    let scopeChanged = false;
+    try {
+      scopeChanged = await reconcileScope();
+    } catch (err) {
+      console.error('Could not settle which workspace to show:', err);
+    }
+    if (scopeChanged) route();
     renderSidebar();
     // The onboarding screen offers "already have an account?" only once we know
     // a server exists, so repaint it now that we do.
     if (!modules.length && !$('#modal-root').firstChild) route();
     if (!Cloud.isAuthed) return;
-    const { changed } = await Cloud.sync();
+    const { ok, changed } = await Cloud.sync();
+    // Now that the claimed rows are on the server, the anonymous copy can go.
+    // Leaving it would hand the next visitor to this browser the last one's
+    // workspace, which is exactly what scopes exist to prevent.
+    if (ok && Scope.get('claimCleanup', Scope.ANON) === '1') {
+      await DB.wipeScope(Scope.ANON);
+      Scope.clearKeys(Scope.ANON);
+      Scope.remove('claimCleanup', Scope.ANON);
+    }
     // Tombstones the whole account has long since seen. Best-effort and never
     // in the way of the sync itself.
     DB.pruneTombstones().catch(() => {});
@@ -1990,12 +2379,13 @@
     const watchdog = setTimeout(() => { if (!painted) paint(); }, 2500);
 
     try {
+      await adoptLegacyWorkspace();
       await loadModules();
 
       // If IndexedDB was evicted but the localStorage snapshot survived, restore it.
       if (!modules.length) {
         try {
-          const snap = JSON.parse(localStorage.getItem('crmb:snapshot'));
+          const snap = JSON.parse(Scope.get('snapshot'));
           if (snap && Array.isArray(snap.modules) && snap.modules.length) {
             await importState(snap);
             toast('Restored from local backup');

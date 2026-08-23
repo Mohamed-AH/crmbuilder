@@ -10,11 +10,18 @@
  * from one this device has never seen, so the next pull would hand it back.
  * Anything that reads rows for sync uses getAllRaw(), which keeps the
  * tombstones; anything the UI touches uses getAll(), which does not.
+ *
+ * Which database is opened comes from Scope (scope.js): the anonymous scope
+ * keeps the original `crmbuilder` name, and each account gets its own
+ * `crmbuilder-u-<id>`. Isolation by construction rather than by a filter every
+ * read has to remember — one visitor's rows are not merely skipped when
+ * another signs in, they are in a database nothing has open.
  */
+/* global Scope */
 const DB = (() => {
-  const NAME = 'crmbuilder';
   const VERSION = 1;
   let dbPromise = null;
+  let openName = null;   // the database dbPromise is for
 
   // Opening must always settle. A hung open() stalls every await behind it,
   // and the app is built to boot from local data — so a database that never
@@ -22,8 +29,32 @@ const DB = (() => {
   const OPEN_TIMEOUT = 8000;
 
   function open() {
-    if (dbPromise) return dbPromise;
-    dbPromise = new Promise((resolve, reject) => {
+    const wanted = Scope.dbName();
+    // A scope switch between calls must not be served the previous database.
+    if (dbPromise && openName === wanted) return dbPromise;
+    if (dbPromise && openName !== wanted) closeCurrent();
+    openName = wanted;
+    dbPromise = openNamed(wanted);
+    // A failed open must not be cached, or one bad moment disables storage
+    // for the whole session.
+    dbPromise.catch(() => { dbPromise = null; openName = null; });
+    return dbPromise;
+  }
+
+  // Release the handle we hold so the previous scope's database is not kept
+  // open for the rest of the session. Deliberately fire-and-forget: a pending
+  // open that has not settled yet is closed when it does.
+  function closeCurrent() {
+    const pending = dbPromise;
+    dbPromise = null;
+    openName = null;
+    if (pending) pending.then((db) => db.close()).catch(() => { /* never opened */ });
+  }
+
+  // Open a database by name without touching the cached handle. Used by the
+  // one-time legacy adoption, which has to hold two databases briefly.
+  function openNamed(name) {
+    return new Promise((resolve, reject) => {
       let settled = false;
       const finish = (fn, value) => {
         if (settled) return;
@@ -35,36 +66,27 @@ const DB = (() => {
         () => finish(reject, new Error(`IndexedDB did not open within ${OPEN_TIMEOUT}ms`)),
         OPEN_TIMEOUT
       );
-
       let req;
       try {
-        // Private-browsing modes and hardened privacy settings can refuse
-        // outright, sometimes by throwing rather than firing onerror.
-        req = indexedDB.open(NAME, VERSION);
+        req = indexedDB.open(name, VERSION);
       } catch (err) {
         finish(reject, err);
         return;
       }
-
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains('modules')) {
           db.createObjectStore('modules', { keyPath: 'id' });
         }
         if (!db.objectStoreNames.contains('records')) {
-          const store = db.createObjectStore('records', { keyPath: 'id' });
-          store.createIndex('moduleId', 'moduleId', { unique: false });
+          const s = db.createObjectStore('records', { keyPath: 'id' });
+          s.createIndex('moduleId', 'moduleId', { unique: false });
         }
       };
       req.onsuccess = () => finish(resolve, req.result);
       req.onerror = () => finish(reject, req.error);
-      // Another tab holding an older version open blocks this one indefinitely.
       req.onblocked = () => finish(reject, new Error('IndexedDB is blocked by another tab'));
     });
-    // A failed open must not be cached, or one bad moment disables storage
-    // for the whole session.
-    dbPromise.catch(() => { dbPromise = null; });
-    return dbPromise;
   }
 
   function reqToPromise(req) {
@@ -87,6 +109,99 @@ const DB = (() => {
   const TOMBSTONE_MS = 180 * 86400000;
 
   const api = {
+    // Point at another scope's database. The next call opens it; anything
+    // already in flight against the old one is closed behind us.
+    useScope(scope) {
+      if (openName === Scope.dbName(scope)) return false;
+      closeCurrent();
+      return true;
+    },
+    close: closeCurrent,
+    get openName() { return openName; },
+
+    /*
+     * Delete a scope's database outright.
+     *
+     * Only ever used on the anonymous scope after its contents have been
+     * claimed and the claim has synced. Anonymous rows have no sync obligation
+     * — they never reached a server — so tombstones would be pointless, and
+     * leaving them would show the next visitor the last one's workspace.
+     *
+     * Best-effort: another tab holding the database open blocks the delete, in
+     * which case the caller's pending flag survives and it is retried.
+     */
+    wipeScope(scope) {
+      const name = Scope.dbName(scope);
+      if (openName === name) closeCurrent();
+      return new Promise((resolve) => {
+        let req;
+        try {
+          req = indexedDB.deleteDatabase(name);
+        } catch {
+          resolve(false);
+          return;
+        }
+        req.onsuccess = () => resolve(true);
+        req.onerror = () => resolve(false);
+        req.onblocked = () => resolve(false);
+        setTimeout(() => resolve(false), OPEN_TIMEOUT);
+      });
+    },
+
+    /*
+     * Adopt the pre-scope database into a scope, once.
+     *
+     * A signed-in install's rows are in the legacy `crmbuilder` database, which
+     * is now the ANONYMOUS one — leaving them there would offer that user's own
+     * workspace to the next person as claimable anonymous data. Copy them into
+     * the account's database instead.
+     *
+     * The legacy database is not emptied here. It is the only other copy until
+     * a sync lands, and the same "verify before delete" reasoning applies as in
+     * the pooled-to-dedicated runbook. Callers clear it once they are satisfied.
+     */
+    async adoptLegacy(scope) {
+      const from = Scope.dbName(Scope.ANON);
+      const to = Scope.dbName(scope);
+      if (scope === Scope.ANON || from === to) return { adopted: 0 };
+
+      // Two databases open at once invites a blocked upgrade on either, so
+      // read the legacy one out completely and close it before writing.
+      closeCurrent();
+      const rows = {};
+      const legacy = await openNamed(from);
+      try {
+        for (const name of ['modules', 'records']) {
+          rows[name] = await reqToPromise(legacy.transaction(name, 'readonly').objectStore(name).getAll());
+        }
+      } finally {
+        legacy.close();
+      }
+      if (!rows.modules.length && !rows.records.length) return { adopted: 0 };
+
+      const target = await openNamed(to);
+      let written = 0;
+      try {
+        for (const name of ['modules', 'records']) {
+          if (!rows[name].length) continue;
+          const s = target.transaction(name, 'readwrite').objectStore(name);
+          await Promise.all(rows[name].map((r) => reqToPromise(s.put(r))));
+          written += rows[name].length;
+        }
+        // Count before reporting success. The caller writes a marker that stops
+        // this ever running again, so it must not be written over a half-copy.
+        for (const name of ['modules', 'records']) {
+          const got = await reqToPromise(target.transaction(name, 'readonly').objectStore(name).getAll());
+          if (got.length < rows[name].length) {
+            throw new Error(`adoptLegacy: ${name} copied ${got.length} of ${rows[name].length}`);
+          }
+        }
+      } finally {
+        target.close();
+      }
+      return { adopted: written };
+    },
+
     async getAll(name) {
       return live(await reqToPromise((await store(name, 'readonly')).getAll()));
     },

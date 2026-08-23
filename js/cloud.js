@@ -18,6 +18,7 @@
  * of a minute to answer the first request, so every call is bounded by a
  * timeout and a stalled server degrades to "offline", never to a hang.
  */
+/* global Scope */
 const Cloud = (() => {
   let me = { authenticated: false, user: null, googleEnabled: false, devLoginEnabled: false, serverAvailable: false };
   let status = 'local'; // local | connecting | syncing | synced | error | offline
@@ -31,13 +32,13 @@ const Cloud = (() => {
   let bootResolved = false;
   const statusListeners = [];
 
-  // The server's monotonic cursor: the highest change stamp we have seen.
-  const CURSOR_KEY = 'crmb:syncCursor';
-  // Our own clock at the last accepted push. Everything edited after this is
-  // still owed to the server.
-  const PUSHED_KEY = 'crmb:pushedThrough';
+  // Sync state is per scope, not per device. Two accounts sharing a browser
+  // profile each keep their own cursor and watermark, so one signing in cannot
+  // inherit — or push — the other's pending work.
+  const CURSOR = 'syncCursor';   // highest server change stamp we have seen
+  const PUSHED = 'pushedThrough'; // our own clock at the last accepted push
 
-  const num = (key) => Number(localStorage.getItem(key)) || 0;
+  const num = (name) => Number(Scope.get(name)) || 0;
 
   // Generous enough to survive a free-tier cold start, short enough that a
   // genuinely dead server doesn't leave the UI claiming "connecting" forever.
@@ -131,19 +132,19 @@ const Cloud = (() => {
       me.user = null;
       localStorage.removeItem('crmb:auth');
       localStorage.removeItem('crmb:user');
-      localStorage.removeItem('crmb:lastSync');
-      // The next account to sign in on this device must not inherit this
-      // one's cursor, or it would never be sent the workspace it already has.
-      localStorage.removeItem(CURSOR_KEY);
-      localStorage.removeItem(PUSHED_KEY);
+      // The workspace itself is NOT touched. Signing out returns the screen to
+      // the anonymous scope; the account's database and its cursor stay exactly
+      // as they were and come back on the next sign-in. That is what makes a
+      // shared PC safe without ever destroying anyone's pending work.
+      Scope.clearSignInPending();
       setStatus('local');
     },
 
-    // Where the server's change stream stands as far as this device knows.
-    get cursor() { return num(CURSOR_KEY); },
+    // Where the server's change stream stands as far as this scope knows.
+    get cursor() { return num(CURSOR); },
     resetCursor() {
-      localStorage.removeItem(CURSOR_KEY);
-      localStorage.removeItem(PUSHED_KEY);
+      Scope.remove(CURSOR);
+      Scope.remove(PUSHED);
     },
 
     async pull() {
@@ -158,6 +159,10 @@ const Cloud = (() => {
      */
     async sync() {
       if (!me.authenticated || !getChanges) return { ok: false, changed: 0 };
+      // The anonymous scope has no account behind it. This is the single check
+      // that makes demo data — and one visitor's work on a shared PC — unable
+      // to reach anyone's server-side workspace.
+      if (Scope.isAnon) return { ok: false, changed: 0 };
       clearTimeout(pushTimer);
       // Serialize. Two overlapping trips would both read the same pending set
       // and the second would advance the watermark past changes the first was
@@ -171,8 +176,8 @@ const Cloud = (() => {
       try {
         if (!deltaSupported) return await Cloud.pushFull();
 
-        const since = num(PUSHED_KEY);
-        const cursor = num(CURSOR_KEY);
+        const since = num(PUSHED);
+        const cursor = num(CURSOR);
         const local = await getChanges(since);
         // Captured before the request, not after: an edit made while the
         // request is in flight must stay pending, not be marked as sent.
@@ -190,10 +195,10 @@ const Cloud = (() => {
         }, TIMEOUT.data);
 
         const changed = applyChanges ? await applyChanges(out) : 0;
-        localStorage.setItem(CURSOR_KEY, String(out.cursor || cursor));
-        localStorage.setItem(PUSHED_KEY, String(highWater));
-        localStorage.setItem('crmb:lastSync', String(Date.now()));
-        localStorage.removeItem('crmb:dirty');
+        Scope.set(CURSOR, String(out.cursor || cursor));
+        Scope.set(PUSHED, String(highWater));
+        Scope.set('lastSync', String(Date.now()));
+        Scope.remove('dirty');
         setStatus('synced');
         return { ok: true, changed };
       } catch (err) {
@@ -228,11 +233,12 @@ const Cloud = (() => {
     // falls back to; it clobbers by design, so nothing calls it routinely.
     async pushFull() {
       if (!me.authenticated || !getState) return { ok: false, changed: 0 };
+      if (Scope.isAnon) return { ok: false, changed: 0 };
       try {
         const state = await getState();
         await api('/api/data', { method: 'PUT', body: JSON.stringify(state) }, TIMEOUT.data);
-        localStorage.setItem('crmb:lastSync', String(Date.now()));
-        localStorage.removeItem('crmb:dirty');
+        Scope.set('lastSync', String(Date.now()));
+        Scope.remove('dirty');
         setStatus('synced');
         return { ok: true, changed: 0 };
       } catch (err) {
@@ -255,7 +261,7 @@ const Cloud = (() => {
 
     // Debounced sync — call after every local mutation.
     schedulePush() {
-      localStorage.setItem('crmb:dirty', '1');
+      Scope.set('dirty', '1');
       if (!me.authenticated) return;
       clearTimeout(pushTimer);
       pushTimer = setTimeout(() => Cloud.sync(), 1500);
@@ -270,4 +276,4 @@ const Cloud = (() => {
   };
 })();
 
-window.addEventListener('online', () => { if (localStorage.getItem('crmb:dirty')) Cloud.sync(); });
+window.addEventListener('online', () => { if (Scope.get('dirty')) Cloud.sync(); });

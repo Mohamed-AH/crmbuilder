@@ -642,3 +642,14 @@ body.tour-open { overflow: hidden; }
      drawer; pin the card to the bottom instead. */
   .tour-pop { left: 12px !important; right: 12px; top: auto !important; bottom: 14px; width: auto; }
 }
+
+/* Sign-in claim and consent prompts: several full-width choices stacked, with
+   the recommended one first. Flex rather than grid for the same reason the
+   builder rows are — auto-placement sizes later items to the first row. */
+.claim-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.claim-actions .btn { width: 100%; justify-content: center; }

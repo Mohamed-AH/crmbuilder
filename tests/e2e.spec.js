@@ -25,13 +25,54 @@ async function onboard(page, { name = 'Test Co', currency = 'USD', templates = n
   await expect(page.locator('#nav-modules .nav-link').first()).toBeVisible();
 }
 
-async function signIn(page, email) {
+/*
+ * Sign in, and answer the claim prompt if one appears.
+ *
+ * Work done before signing in lives in the anonymous scope, and the app asks
+ * once whether to bring it into the account. `claim` picks the answer:
+ *   'work' (default) bring my work, leave any samples
+ *   'all'            bring everything
+ *   'none'           leave it on this device / start fresh
+ * The prompt only appears when there is something to decide, so a sign-in on a
+ * device with nothing on it simply proceeds.
+ */
+async function signIn(page, email, { claim = 'work' } = {}) {
   const trigger = page.locator('#signin-btn, #onboard-signin').first();
   await trigger.waitFor({ state: 'visible' });
   await trigger.click();
   await page.fill('#dev-email', email);
   await page.click('#dev-login-form button[type=submit]');
   await expect(page.locator('.user-chip')).toBeVisible({ timeout: 15000 });
+  await answerClaimPrompt(page, claim);
+}
+
+async function answerClaimPrompt(page, claim = 'work') {
+  const prompt = page.locator('[data-claim]').first();
+  try {
+    await prompt.waitFor({ state: 'visible', timeout: 4000 });
+  } catch {
+    return false; // nothing to decide
+  }
+  // Fall back to the primary option when the asked-for one isn't offered —
+  // which choices appear depends on whether the device holds real work,
+  // samples, or both.
+  const wanted = page.locator(`[data-claim="${claim}"]`);
+  const button = (await wanted.count()) ? wanted : page.locator('[data-claim]').first();
+  await button.click();
+  await expect(page.locator('[data-claim]')).toHaveCount(0);
+  return true;
+}
+
+/*
+ * Start the tour from the onboarding screen.
+ *
+ * The tour needs a populated workspace, so on an empty device it now asks
+ * before seeding one — nobody gets a fictional business without saying yes.
+ */
+async function startTour(page) {
+  await page.click('#onboard-tour');
+  const consent = page.locator('[data-consent="yes"]');
+  if (await consent.isVisible().catch(() => false)) await consent.click();
 }
 
 function uniqueEmail(prefix) {
@@ -421,7 +462,7 @@ test.describe('demo data', () => {
 test.describe('guided tour', () => {
   test('runs all six steps, loading demo data on the way', async ({ page }) => {
     await page.goto('/');
-    await page.click('#onboard-tour');
+    await startTour(page);
     await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
 
     for (let step = 1; step <= 6; step += 1) {
@@ -452,7 +493,7 @@ test.describe('guided tour', () => {
 
   test('sets up each screen it describes, and never stalls', async ({ page }) => {
     await page.goto('/');
-    await page.click('#onboard-tour');
+    await startTour(page);
     await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
 
     const settle = async () => {
@@ -487,13 +528,14 @@ test.describe('guided tour', () => {
     await page.route('**/js/demo-data.js', (route) => route.abort());
     await page.goto('/');
     await page.click('#onboard-tour');
-    await expect(page.locator('.toast').last()).toContainText('sample data could not be loaded');
+    await expect(page.locator('.toast').last()).toContainText('Sample data could not be loaded');
+    await expect(page.locator('[data-consent]')).toHaveCount(0, { timeout: 5000 });
     await expect(page.locator('.tour-pop')).toHaveCount(0);
   });
 
   test('can be skipped, and does not trap the page', async ({ page }) => {
     await page.goto('/');
-    await page.click('#onboard-tour');
+    await startTour(page);
     await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
     await page.click('[data-tour-skip]');
     await expect(page.locator('.tour-pop')).toHaveCount(0);
@@ -505,7 +547,7 @@ test.describe('guided tour', () => {
 
   test('Escape closes it', async ({ page }) => {
     await page.goto('/');
-    await page.click('#onboard-tour');
+    await startTour(page);
     await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
     await page.keyboard.press('Escape');
     await expect(page.locator('.tour-pop')).toHaveCount(0);
@@ -650,14 +692,187 @@ test.describe('accounts and sync', () => {
     await second.close();
   });
 
-  test('signing out keeps the data on the device', async ({ page }) => {
-    await onboard(page);
-    await signIn(page, uniqueEmail('logout'));
+  /*
+   * Signing out hides a workspace; it never destroys one.
+   *
+   * This used to assert the opposite — that the data stayed on screen after
+   * sign-out. That is convenient on a personal laptop and a leak on a shared
+   * one: the next person to sit down saw the last person's CRM. The workspace
+   * is still on the device, in that account's own store, and comes straight
+   * back on the next sign-in.
+   */
+  test('signing out hides the workspace, and signing back in restores it', async ({ page }) => {
+    const email = uniqueEmail('logout');
+    await onboard(page, { name: 'Logout Co' });
+    await signIn(page, email);
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Kept Across Sign Out');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Kept Across Sign Out")')).toBeVisible();
+
     await page.goto('/#/settings');
     await page.click('#signout-btn');
     await expect(page.locator('#signin-btn')).toBeVisible();
+
+    // Back to a blank slate — not the previous session's records.
     await page.goto('/#/');
-    await expect(page.locator('#nav-modules .nav-link').first()).toBeVisible();
+    await expect(page.locator('.template-card').first()).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('tr:has-text("Kept Across Sign Out")')).toHaveCount(0);
+
+    // Nothing was deleted: the same account gets it all back.
+    await signIn(page, email);
+    await expect(page.locator('#workspace-name')).toHaveText('Logout Co', { timeout: 25000 });
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(page.locator('tr:has-text("Kept Across Sign Out")')).toBeVisible({ timeout: 25000 });
+  });
+
+  /*
+   * The shared PC.
+   *
+   * A signs in, edits, and cannot sync (offline). They leave without signing
+   * out. B sits down and signs in on the same browser profile.
+   *
+   * Before storage scopes this pushed A's pending rows straight into B's
+   * account: one IndexedDB database served every visitor, and the sync engine
+   * uploaded whatever it found under whichever session was current.
+   */
+  test('one person\u2019s unsynced work never lands in the next person\u2019s account', async ({ page, context }) => {
+    const a = uniqueEmail('shared-a');
+    const b = uniqueEmail('shared-b');
+
+    await onboard(page, { name: 'Person A Co' });
+    await signIn(page, a);
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+
+    // A edits with no way to reach the server, then walks away.
+    await context.setOffline(true);
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'A Unsynced Contact');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("A Unsynced Contact")')).toBeVisible();
+    await context.setOffline(false);
+
+    // B signs in on the same machine, without A ever signing out.
+    await page.goto('/#/settings');
+    await page.click('#signout-btn');
+    await expect(page.locator('#signin-btn')).toBeVisible();
+    await signIn(page, b);
+
+    // The assertion that matters most first: whatever is on screen, A's rows
+    // must never become part of B's account on the server.
+    await page.waitForTimeout(3000); // give any stray sync every chance to misbehave
+    const bData = await (await page.request.get('/api/data')).json();
+    const bNames = (bData.records || []).map((r) => r.data.name);
+    expect(bNames, "B's account must not contain A's records").not.toContain('A Unsynced Contact');
+
+    // And B must not be looking at A's workspace either.
+    await expect(page.locator('#workspace-name')).not.toHaveText('Person A Co');
+    const contactsLink = page.locator('#nav-modules .nav-link:has-text("Contacts")');
+    if (await contactsLink.count()) {
+      await contactsLink.click();
+      await expect(page.locator('tr:has-text("A Unsynced Contact")')).toHaveCount(0);
+    }
+
+    // A comes back to the same machine. Their pending edit is still theirs and
+    // syncs with no special recovery step.
+    await page.goto('/#/settings');
+    await page.click('#signout-btn');
+    await expect(page.locator('#signin-btn')).toBeVisible();
+    await signIn(page, a);
+    await expect(page.locator('#workspace-name')).toHaveText('Person A Co', { timeout: 25000 });
+    await expect(async () => {
+      const data = await (await page.request.get('/api/data')).json();
+      expect(data.records.some((r) => r.data.name === 'A Unsynced Contact')).toBe(true);
+    }).toPass({ timeout: 25000 });
+  });
+});
+
+/*
+ * Sample data must never arrive in a real account unasked, and must always be
+ * removable without taking the user's own work with it.
+ */
+test.describe('sample data', () => {
+  test('the tour asks before seeding anything', async ({ page }) => {
+    await page.goto('/');
+    await page.click('#onboard-tour');
+    // Nothing is written until the question is answered.
+    await expect(page.locator('[data-consent="yes"]')).toBeVisible();
+    await expect(page.locator('#nav-modules .nav-link')).toHaveCount(0);
+
+    await page.click('[data-consent="no"]');
+    await expect(page.locator('.tour-pop')).toHaveCount(0);
+    await expect(page.locator('.template-card').first()).toBeVisible();
+    await expect(page.locator('#nav-modules .nav-link')).toHaveCount(0);
+  });
+
+  test('signing in after the tour starts fresh by default', async ({ page }) => {
+    await page.goto('/');
+    await startTour(page);
+    await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
+    await page.click('[data-tour-skip]');
+    await expect(page.locator('#nav-modules .nav-link')).toHaveCount(6);
+
+    // The demo-only prompt offers "Start fresh" first.
+    await signIn(page, uniqueEmail('demo-fresh'), { claim: 'none' });
+
+    // The strongest claim first: the fictional business never reaches the
+    // account's server-side workspace at all.
+    const data = await (await page.request.get('/api/data')).json();
+    expect(data.records === null || data.records.length === 0,
+      'a fresh account must not receive the demo business').toBe(true);
+    await expect(page.locator('.template-card').first()).toBeVisible({ timeout: 25000 });
+    await expect(page.locator('#nav-modules .nav-link')).toHaveCount(0);
+  });
+
+  test('the demo can be kept on purpose, and removed later', async ({ page }) => {
+    await page.goto('/');
+    await startTour(page);
+    await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
+    await page.click('[data-tour-skip]');
+
+    await signIn(page, uniqueEmail('demo-keep'), { claim: 'all' });
+    await expect(page.locator('#nav-modules .nav-link').first()).toBeVisible({ timeout: 25000 });
+    await expect(async () => {
+      const data = await (await page.request.get('/api/data')).json();
+      expect((data.records || []).length).toBeGreaterThan(50);
+    }).toPass({ timeout: 25000 });
+
+    // One click, from any device, for as long as any sample row survives.
+    await page.goto('/#/settings');
+    page.once('dialog', (d) => d.accept());
+    await page.click('#remove-demo-btn');
+    await expect(page.locator('#nav-modules .nav-link')).toHaveCount(0, { timeout: 20000 });
+    await expect(async () => {
+      const data = await (await page.request.get('/api/data')).json();
+      expect((data.records || []).length).toBe(0);
+    }).toPass({ timeout: 25000 });
+  });
+
+  test('removing samples keeps work the user added to a sample module', async ({ page }) => {
+    await page.goto('/');
+    await startTour(page);
+    await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
+    await page.click('[data-tour-skip]');
+
+    // The user makes one of the demo modules their own.
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'My Own Contact');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("My Own Contact")')).toBeVisible();
+
+    await page.goto('/#/settings');
+    page.once('dialog', (d) => d.accept());
+    await page.click('#remove-demo-btn');
+
+    // The module survives because their record lives in it; every seeded row
+    // in it is gone. Deleting the module would have taken their work along.
+    await expect(page.locator('#nav-modules .nav-link:has-text("Contacts")')).toBeVisible({ timeout: 20000 });
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(page.locator('tr:has-text("My Own Contact")')).toBeVisible();
+    await expect(page.locator('.count-badge')).toHaveText('1');
   });
 });
 
