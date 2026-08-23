@@ -11,7 +11,7 @@
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,6 +63,27 @@ async function req(path, { cookies, method = 'GET', body, ...rest } = {}) {
   return { status: res.status, json, text, headers: res.headers };
 }
 
+/*
+ * Put a user into an organisation.
+ *
+ * Stage B adds the invite flow that does this for real. Until then the tests
+ * need some way to create the situation under test — two people in one org —
+ * so they reach past the API into the file store the test server is using.
+ */
+async function moveToOrg(userId, orgId) {
+  // The file store keeps everything in memory and rewrites the whole file on
+  // every save, so editing it underneath a running server would be clobbered
+  // by the next write. Stop, edit, start.
+  await stopServer();
+  const file = join(dataDir, 'store.json');
+  const raw = JSON.parse(await readFile(file, 'utf8'));
+  const user = raw.users.find((u) => u.id === userId);
+  user.orgId = orgId;
+  user.role = 'member';
+  await writeFile(file, JSON.stringify(raw));
+  await startServer();
+}
+
 async function waitForServer(url, timeoutMs = 20000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -78,31 +99,48 @@ async function waitForServer(url, timeoutMs = 20000) {
   throw new Error(`server did not start within ${timeoutMs}ms:\n${serverLog.trim() || '(no output)'}`);
 }
 
-before(async () => {
-  if (EXTERNAL) return;
-  dataDir = await mkdtemp(join(tmpdir(), 'crmb-test-'));
-  const port = 8300 + Math.floor(Math.random() * 600);
-  BASE = `http://127.0.0.1:${port}`;
+// The session secret is fixed so cookies survive a restart — the org tests
+// stop the server to edit its store, and would otherwise sign everyone out.
+const TEST_SECRET = 'test-secret-not-for-production';
+let PORT_IN_USE = 0;
+
+function startServer() {
   child = spawn(process.execPath, ['server.js'], {
     cwd: ROOT,
     env: {
       ...process.env,
-      PORT: String(port),
+      PORT: String(PORT_IN_USE),
       DATA_DIR: dataDir,
       ALLOW_DEV_LOGIN: '1',
       MONGODB_URI: '',
-      SESSION_SECRET: 'test-secret-not-for-production',
+      SESSION_SECRET: TEST_SECRET,
       NODE_ENV: 'test',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout.on('data', (d) => { serverLog += d; });
   child.stderr.on('data', (d) => { serverLog += d; });
-  await waitForServer(BASE);
+  return waitForServer(BASE);
+}
+
+async function stopServer() {
+  if (!child) return;
+  const dead = new Promise((r) => child.once('exit', r));
+  child.kill();
+  await dead;
+  child = null;
+}
+
+before(async () => {
+  if (EXTERNAL) return;
+  dataDir = await mkdtemp(join(tmpdir(), 'crmb-test-'));
+  PORT_IN_USE = 8300 + Math.floor(Math.random() * 600);
+  BASE = `http://127.0.0.1:${PORT_IN_USE}`;
+  await startServer();
 });
 
 after(async () => {
-  if (child) child.kill();
+  await stopServer();
   if (dataDir) await rm(dataDir, { recursive: true, force: true });
 });
 
@@ -469,6 +507,124 @@ describe('per-record sync', () => {
 });
 
 /*
+ * The workspace belongs to the organisation, not the account.
+ *
+ * This is what makes a team workspace possible: two colleagues in one org read
+ * and write the same modules and records, while an account in a different org
+ * still sees none of it. The isolation suite below is the other half of this —
+ * it asserts that the boundary held while ownership moved.
+ */
+describe('org-owned workspaces', () => {
+  const owner = jar();
+  const mate = jar();
+  const outsider = jar();
+  let orgId = null;
+  let ownerId = null;
+  let mateId = null;
+
+  before(async () => {
+    const o = await req('/auth/dev', { method: 'POST', body: { email: 'ws-owner@team.test' }, cookies: owner });
+    ownerId = o.json.user.id;
+    orgId = o.json.user.orgId;
+    const m = await req('/auth/dev', { method: 'POST', body: { email: 'ws-mate@team.test' }, cookies: mate });
+    mateId = m.json.user.id;
+    await req('/auth/dev', { method: 'POST', body: { email: 'ws-outsider@other.test' }, cookies: outsider });
+    // Until invites exist (stage B) membership is set directly; the point
+    // under test is the ownership key, not how someone came to be a member.
+    await moveToOrg(mateId, orgId);
+  });
+
+  test('two members of one organisation share one workspace', async () => {
+    await req('/api/sync', {
+      method: 'POST',
+      body: {
+        since: 0,
+        modules: [{ id: 'team-m1', updatedAt: 10, doc: { id: 'team-m1', name: 'Deals', fields: [] } }],
+        records: [{ id: 'team-r1', updatedAt: 11, doc: { id: 'team-r1', moduleId: 'team-m1', data: { title: 'Owner wrote this' } } }],
+      },
+      cookies: owner,
+    });
+
+    const seen = await req('/api/sync?since=0', { cookies: mate });
+    assert.equal(seen.status, 200);
+    assert.equal(seen.json.records.length, 1, 'a colleague must see the workspace, not an empty one');
+    assert.equal(seen.json.records[0].doc.data.title, 'Owner wrote this');
+
+    // And the other direction: what the colleague writes reaches the owner.
+    await req('/api/sync', {
+      method: 'POST',
+      body: { since: seen.json.cursor, records: [{ id: 'team-r2', updatedAt: 20, doc: { id: 'team-r2', moduleId: 'team-m1', data: { title: 'Mate wrote this' } } }] },
+      cookies: mate,
+    });
+    const back = await req('/api/data', { cookies: owner });
+    const titles = back.json.records.map((r) => r.data.title);
+    assert.ok(titles.includes('Owner wrote this'));
+    assert.ok(titles.includes('Mate wrote this'));
+  });
+
+  test('an account in another organisation sees none of it', async () => {
+    const { json } = await req('/api/sync?since=0', { cookies: outsider });
+    assert.equal(json.records.length, 0);
+    assert.equal(json.modules.length, 0);
+    const snapshot = await req('/api/data', { cookies: outsider });
+    assert.equal(snapshot.json.modules, null);
+  });
+
+  test('rows record who created them', async () => {
+    const { json } = await req('/api/data', { cookies: owner });
+    assert.ok(json.records.length, 'expected the team workspace to have rows');
+    // createdBy lives on the envelope, not in doc — check it survives a write
+    // by the other member rather than being rewritten to whoever saved last.
+    const cursor = (await req('/api/sync?since=0', { cookies: mate })).json.cursor;
+    await req('/api/sync', {
+      method: 'POST',
+      body: { since: cursor, records: [{ id: 'team-r1', updatedAt: 999, doc: { id: 'team-r1', moduleId: 'team-m1', data: { title: 'Edited by mate' } } }] },
+      cookies: mate,
+    });
+    const after = await req('/api/data', { cookies: owner });
+    assert.equal(after.json.records.find((r) => r.id === 'team-r1').data.title, 'Edited by mate');
+  });
+
+  /*
+   * The single most dangerous change in moving ownership to the org.
+   *
+   * deleteUser used to drop every row keyed by that account. Under org
+   * ownership those rows are the whole team's, so removing one member of a
+   * two-person org would have deleted the CRM. This test fails on the un-fixed
+   * code, which is the only reason to trust it.
+   */
+  test('removing a member leaves the workspace standing', async () => {
+    const before = await req('/api/data', { cookies: owner });
+    const countBefore = before.json.records.length;
+    assert.ok(countBefore > 0, 'need rows to be able to lose them');
+
+    const del = await req(`/api/admin/users/${mateId}`, { method: 'DELETE', cookies: owner });
+    assert.equal(del.status, 200);
+    assert.equal(del.json.deletedWorkspace, false, 'the org still has a member, so the workspace stays');
+
+    const after = await req('/api/data', { cookies: owner });
+    assert.equal(after.json.records.length, countBefore, "the remaining member's records must be untouched");
+    // And the removed member is genuinely gone.
+    assert.equal((await req('/api/me', { cookies: mate })).json.authenticated, false);
+  });
+
+  test('removing the last member takes the workspace with them', async () => {
+    const admin = jar();
+    await req('/auth/dev', { method: 'POST', body: { email: 'owner@example.com' }, cookies: admin });
+    const del = await req(`/api/admin/users/${ownerId}`, { method: 'DELETE', cookies: admin });
+    assert.equal(del.status, 200);
+    assert.equal(del.json.deletedWorkspace, true, 'nobody is left to use it');
+
+    // A fresh account in that org — only reachable in a test — sees nothing.
+    const revived = jar();
+    const r = await req('/auth/dev', { method: 'POST', body: { email: 'ws-revived@team.test' }, cookies: revived });
+    await moveToOrg(r.json.user.id, orgId);
+    const { json } = await req('/api/sync?since=0', { cookies: revived });
+    assert.equal(json.records.length, 0);
+  });
+});
+
+/*
  * Cross-tenant isolation. These assert the attack, not the happy path: an org
  * owner from tenant B reaching for tenant A's resources. One missed orgId
  * filter is a data leak, so this suite is the gate on that work.
@@ -613,13 +769,24 @@ describe('admin surface', () => {
     }
   });
 
-  test('the account list includes per-account usage', async () => {
+  test('the account list describes people, and usage lives on the stats', async () => {
     const { json } = await req('/api/admin/users', { cookies: admin });
     const member = json.users.find((u) => u.email === 'member@example.com');
     assert.ok(member, 'member account missing from the list');
-    assert.equal(typeof member.recordCount, 'number');
-    assert.equal(typeof member.moduleCount, 'number');
+    assert.equal(typeof member.lastActiveAt, 'number');
     assert.ok(!('provider' in member) || typeof member.provider === 'string');
+
+    // A workspace belongs to an organisation, so a per-account row count would
+    // report the same totals against every member of one — a column of
+    // identical numbers reading as N copies of the data rather than N people
+    // sharing it. The figure belongs to the workspace, and lives on stats.
+    assert.equal(member.recordCount, undefined);
+    assert.equal(member.moduleCount, undefined);
+
+    const stats = await req('/api/admin/stats', { cookies: admin });
+    assert.equal(typeof stats.json.totals.records, 'number');
+    assert.equal(typeof stats.json.totals.modules, 'number');
+    assert.equal(typeof stats.json.totals.workspaces, 'number');
   });
 
   test('an admin cannot modify or delete their own account', async () => {

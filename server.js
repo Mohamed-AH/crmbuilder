@@ -67,7 +67,7 @@ function serverStamp() {
 }
 
 // The two synced item kinds. Both share one envelope shape:
-//   { userId, orgId, id, updatedAt, serverAt, deletedAt, deletedOn, doc }
+//   { wsId, orgId, id, createdBy, updatedAt, serverAt, deletedAt, deletedOn, doc }
 const SYNC_KINDS = ['modules', 'records'];
 const TOMBSTONE_DAYS = Number(process.env.TOMBSTONE_RETENTION_DAYS || 180);
 
@@ -102,8 +102,12 @@ class FileStore {
   }
   async deleteUser(id) {
     this.s.users = this.s.users.filter((u) => u.id !== id);
-    delete this.s.data[id];
-    for (const kind of SYNC_KINDS) delete (this.s.items[kind] || {})[id];
+    this.save();
+  }
+  // Separate from deleteUser on purpose — see deleteAccount() below.
+  async deleteWorkspace(wsId) {
+    delete this.s.data[wsId];
+    for (const kind of SYNC_KINDS) delete (this.s.items[kind] || {})[wsId];
     this.save();
   }
   // An orgId argument of null means "across every org" and is only ever
@@ -111,45 +115,86 @@ class FileStore {
   async listUsers(orgId = null) {
     return this.s.users.filter((u) => !orgId || u.orgId === orgId);
   }
-  async getData(userId) { return this.s.data[userId] || null; }
-  async putData(userId, doc) { this.s.data[userId] = { ...(this.s.data[userId] || {}), ...doc }; this.save(); }
-  async stripSnapshot(userId) {
-    const doc = this.s.data[userId];
+  async getData(wsId) { return this.s.data[wsId] || null; }
+  async putData(wsId, doc) { this.s.data[wsId] = { ...(this.s.data[wsId] || {}), ...doc }; this.save(); }
+  async stripSnapshot(wsId) {
+    const doc = this.s.data[wsId];
     if (!doc) return;
     delete doc.modules;
     delete doc.records;
     this.save();
   }
+  async listWorkspaceIds() { return Object.keys(this.s.data); }
+
+  // Move a workspace from one ownership key to another. Used once, to hand
+  // account-keyed rows over to the organisation that owns them.
+  async rekeyWorkspace(fromId, toId) {
+    if (fromId === toId) return 0;
+    let moved = 0;
+    for (const kind of SYNC_KINDS) {
+      const from = (this.s.items[kind] || {})[fromId];
+      if (!from) continue;
+      const to = this.bucket(kind, toId);
+      for (const [id, e] of Object.entries(from)) {
+        to[id] = { ...e, wsId: toId };
+        delete to[id].userId;
+        moved += 1;
+      }
+      delete this.s.items[kind][fromId];
+    }
+    const meta = this.s.data[fromId];
+    if (meta) {
+      const { userId, ...rest } = meta;
+      this.s.data[toId] = { ...(this.s.data[toId] || {}), ...rest, wsId: toId };
+      delete this.s.data[fromId];
+    }
+    this.save();
+    return moved;
+  }
+
+  // Rows still carrying the old account key, by that key.
+  async legacyWorkspaceKeys() {
+    const keys = new Set();
+    for (const kind of SYNC_KINDS) {
+      for (const [key, bucket] of Object.entries(this.s.items[kind] || {})) {
+        if (Object.values(bucket).some((e) => !e.wsId)) keys.add(key);
+      }
+    }
+    for (const [key, doc] of Object.entries(this.s.data)) {
+      if (!doc.wsId) keys.add(key);
+    }
+    return [...keys];
+  }
 
   // --- per-record items
-  bucket(kind, userId) {
+  bucket(kind, wsId) {
     this.s.items[kind] = this.s.items[kind] || {};
-    this.s.items[kind][userId] = this.s.items[kind][userId] || {};
-    return this.s.items[kind][userId];
+    this.s.items[kind][wsId] = this.s.items[kind][wsId] || {};
+    return this.s.items[kind][wsId];
   }
-  async getItemsByIds(kind, userId, ids) {
-    const b = this.bucket(kind, userId);
+  async getItemsByIds(kind, wsId, ids) {
+    const b = this.bucket(kind, wsId);
     return ids.map((id) => b[id]).filter(Boolean);
   }
-  async listItems(kind, userId, { since = 0, includeDeleted = true } = {}) {
-    return Object.values(this.bucket(kind, userId))
+  async listItems(kind, wsId, { since = 0, includeDeleted = true } = {}) {
+    return Object.values(this.bucket(kind, wsId))
       .filter((e) => e.serverAt > since && (includeDeleted || !e.deletedAt))
       .sort((a, b) => a.serverAt - b.serverAt);
   }
   async putItems(kind, envelopes) {
-    for (const e of envelopes) this.bucket(kind, e.userId)[e.id] = e;
+    for (const e of envelopes) this.bucket(kind, e.wsId)[e.id] = e;
     this.save();
   }
-  async countItems(kind, userId) {
-    return Object.values(this.bucket(kind, userId)).filter((e) => !e.deletedAt).length;
+  async countItems(kind, wsId) {
+    return Object.values(this.bucket(kind, wsId)).filter((e) => !e.deletedAt).length;
   }
   pruneTombstones() {
     const cutoff = Date.now() - TOMBSTONE_DAYS * DAY_MS;
     let removed = 0;
     for (const kind of SYNC_KINDS) {
-      for (const [userId, bucket] of Object.entries(this.s.items[kind] || {})) {
+      for (const [wsId, bucket] of Object.entries(this.s.items[kind] || {})) {
         for (const [id, e] of Object.entries(bucket)) {
-          if (e.deletedAt && e.deletedAt < cutoff) { delete this.s.items[kind][userId][id]; removed += 1; }
+          if (e.deletedAt && e.deletedAt < cutoff) { delete this.s.items[kind][wsId][id]; removed += 1; }
         }
       }
     }
@@ -204,7 +249,9 @@ class MongoStore {
     // by email alone, so the same address in two orgs would make login
     // ambiguous — { orgId, email } unique would be the wrong constraint here.
     await this.users.createIndex({ email: 1 }, { unique: true });
-    await this.data.createIndex({ userId: 1 }, { unique: true });
+    // One workspace document per workspace — keyed by wsId, not by the account
+    // that happens to be reading it.
+    await this.data.createIndex({ wsId: 1 }, { unique: true });
     await this.orgs.createIndex({ id: 1 }, { unique: true });
 
     // orgId leads every scoped index: a query filtered on orgId alone cannot
@@ -217,10 +264,10 @@ class MongoStore {
       const col = this.cols[kind];
       // One row per item per workspace. The unique key is what makes a push
       // idempotent: replaying it upserts the same row instead of duplicating.
-      await col.createIndex({ userId: 1, id: 1 }, { unique: true });
+      await col.createIndex({ wsId: 1, id: 1 }, { unique: true });
       // The delta query is exactly this: one workspace, everything past a
       // cursor, in cursor order.
-      await col.createIndex({ userId: 1, serverAt: 1 });
+      await col.createIndex({ wsId: 1, serverAt: 1 });
       await col.createIndex({ orgId: 1 });
       await this.ensureTombstoneTTL(kind);
     }
@@ -294,43 +341,79 @@ class MongoStore {
   }
   async deleteUser(id) {
     await this.users.deleteOne({ id });
-    await this.data.deleteOne({ userId: id });
-    for (const kind of SYNC_KINDS) await this.cols[kind].deleteMany({ userId: id });
+  }
+  // Separate from deleteUser on purpose — see deleteAccount() below.
+  async deleteWorkspace(wsId) {
+    await this.data.deleteOne({ wsId });
+    for (const kind of SYNC_KINDS) await this.cols[kind].deleteMany({ wsId });
   }
   async listUsers(orgId = null) {
     return this.users.find(orgId ? { orgId } : {}, { projection: { _id: 0 } }).toArray();
   }
-  async getData(userId) { return this.data.findOne({ userId }, { projection: { _id: 0 } }); }
-  async putData(userId, doc) { await this.data.updateOne({ userId }, { $set: doc }, { upsert: true }); }
-  async stripSnapshot(userId) {
-    await this.data.updateOne({ userId }, { $unset: { modules: '', records: '' } });
+  async getData(wsId) { return this.data.findOne({ wsId }, { projection: { _id: 0 } }); }
+  async putData(wsId, doc) { await this.data.updateOne({ wsId }, { $set: doc }, { upsert: true }); }
+  async stripSnapshot(wsId) {
+    await this.data.updateOne({ wsId }, { $unset: { modules: '', records: '' } });
+  }
+  async listWorkspaceIds() {
+    return (await this.data.find({}, { projection: { _id: 0, wsId: 1 } }).toArray()).map((d) => d.wsId);
+  }
+  async rekeyWorkspace(fromId, toId) {
+    if (fromId === toId) return 0;
+    let moved = 0;
+    for (const kind of SYNC_KINDS) {
+      const res = await this.cols[kind].updateMany(
+        { userId: fromId },
+        { $set: { wsId: toId }, $unset: { userId: '' } }
+      );
+      moved += res.modifiedCount || 0;
+    }
+    await this.data.updateOne(
+      { userId: fromId },
+      { $set: { wsId: toId }, $unset: { userId: '' } }
+    );
+    return moved;
+  }
+  async legacyWorkspaceKeys() {
+    const keys = new Set();
+    for (const kind of SYNC_KINDS) {
+      const rows = await this.cols[kind]
+        .find({ wsId: { $exists: false } }, { projection: { _id: 0, userId: 1 } })
+        .toArray();
+      rows.forEach((r) => r.userId && keys.add(r.userId));
+    }
+    const metas = await this.data
+      .find({ wsId: { $exists: false } }, { projection: { _id: 0, userId: 1 } })
+      .toArray();
+    metas.forEach((d) => d.userId && keys.add(d.userId));
+    return [...keys];
   }
 
   // --- per-record items
-  async getItemsByIds(kind, userId, ids) {
+  async getItemsByIds(kind, wsId, ids) {
     const out = [];
     // $in with tens of thousands of ids builds a query document that can pass
     // the 16 MB BSON limit; chunk it.
     for (let i = 0; i < ids.length; i += 1000) {
       const chunk = ids.slice(i, i + 1000);
-      const rows = await this.cols[kind].find({ userId, id: { $in: chunk } }, { projection: { _id: 0 } }).toArray();
+      const rows = await this.cols[kind].find({ wsId, id: { $in: chunk } }, { projection: { _id: 0 } }).toArray();
       out.push(...rows);
     }
     return out;
   }
-  async listItems(kind, userId, { since = 0, includeDeleted = true } = {}) {
-    const query = { userId, serverAt: { $gt: since } };
+  async listItems(kind, wsId, { since = 0, includeDeleted = true } = {}) {
+    const query = { wsId, serverAt: { $gt: since } };
     if (!includeDeleted) query.deletedAt = null;
     return this.cols[kind].find(query, { projection: { _id: 0 } }).sort({ serverAt: 1 }).toArray();
   }
   async putItems(kind, envelopes) {
     if (!envelopes.length) return;
     await this.cols[kind].bulkWrite(envelopes.map((e) => ({
-      updateOne: { filter: { userId: e.userId, id: e.id }, update: { $set: e }, upsert: true },
+      updateOne: { filter: { wsId: e.wsId, id: e.id }, update: { $set: e }, upsert: true },
     })), { ordered: false });
   }
-  async countItems(kind, userId) {
-    return this.cols[kind].countDocuments({ userId, deletedAt: null });
+  async countItems(kind, wsId) {
+    return this.cols[kind].countDocuments({ wsId, deletedAt: null });
   }
   async addEvent(type, userId, orgId = null) {
     await this.events.insertOne({ type, userId, orgId, day: dayKey(), at: Date.now() });
@@ -510,9 +593,47 @@ function requireOrgAdmin(req, res, next) {
   next();
 }
 
+/*
+ * Which workspace this caller reads and writes.
+ *
+ * The organisation owns the workspace, not the account — that is what lets
+ * colleagues share one. Resolved from the SESSION only, never from a
+ * parameter, query or body: the same rule req.scopeOrgId follows, and for the
+ * same reason.
+ *
+ * An account with no org (only possible mid-migration) falls back to its own
+ * id, so it reads its own rows rather than somebody else's.
+ */
+function workspaceIdFor(user) {
+  return user.orgId || user.id;
+}
+
 function requirePlatformAdmin(req, res, next) {
   if (req.user.role !== 'platformAdmin') return res.status(403).json({ error: 'Platform admin only' });
   next();
+}
+
+/*
+ * Delete an account, and its workspace only if nobody is left to use it.
+ *
+ * This is the one place in the org-owned model that can destroy a whole team's
+ * data. `store.deleteUser` deliberately no longer touches the workspace, so
+ * removing one member of a five-person org takes the member and leaves the CRM
+ * standing. The workspace goes only when its last member does, which is what
+ * deleting a solo account has always meant.
+ *
+ * Kept as a named function rather than two calls at the call site: the two
+ * calls in the wrong order, or one of them forgotten, is exactly the bug.
+ */
+async function deleteAccount(user) {
+  const wsId = workspaceIdFor(user);
+  await store.deleteUser(user.id);
+  const remaining = user.orgId ? await store.listUsers(user.orgId) : [];
+  if (!remaining.length) {
+    await store.deleteWorkspace(wsId);
+    return { deletedWorkspace: true };
+  }
+  return { deletedWorkspace: false, remaining: remaining.length };
 }
 
 // Resolve a target account for an admin action, refusing anything outside the
@@ -547,14 +668,18 @@ async function resolveTarget(req, res) {
  * A replayed push therefore changes nothing, which is what makes the retry on
  * a flaky connection safe.
  */
-function envelope(kind, user, item, now) {
+function envelope(kind, user, item, now, prior = null) {
   const deleted = !!item.deleted;
   const updatedAt = Number(item.updatedAt) || now;
   const deletedAt = deleted ? (Number(item.deletedAt) || updatedAt) : null;
   return {
-    userId: user.id,
+    wsId: workspaceIdFor(user),
     orgId: user.orgId || null,
     id: String(item.id),
+    // Who first put this row here. Set once and carried forward, so editing
+    // someone else's record does not rewrite its authorship.
+    createdBy: (prior && prior.createdBy) || user.id,
+    updatedBy: user.id,
     updatedAt,
     serverAt: serverStamp(),
     deletedAt,
@@ -571,6 +696,7 @@ function wireItem(e) {
 }
 
 async function applyPush(user, body) {
+  const wsId = workspaceIdFor(user);
   const now = Date.now();
   const won = { modules: new Set(), records: new Set() };
   let touched = 0;
@@ -591,14 +717,14 @@ async function applyPush(user, body) {
     if (!byId.size) continue;
 
     const existing = new Map(
-      (await store.getItemsByIds(kind, user.id, [...byId.keys()])).map((e) => [e.id, e])
+      (await store.getItemsByIds(kind, wsId, [...byId.keys()])).map((e) => [e.id, e])
     );
     const writes = [];
     for (const [id, item] of byId) {
       const prior = existing.get(id);
       const updatedAt = Number(item.updatedAt) || now;
       if (prior && prior.updatedAt >= updatedAt) continue; // the server's copy wins
-      writes.push(envelope(kind, user, item, now));
+      writes.push(envelope(kind, user, item, now, prior));
       won[kind].add(id);
     }
     if (writes.length) await store.putItems(kind, writes);
@@ -609,7 +735,7 @@ async function applyPush(user, body) {
   // granularity — there is no partial edit worth merging in a currency choice.
   let settingsWritten = false;
   if (body.settings && typeof body.settings === 'object') {
-    const meta = (await store.getData(user.id)) || {};
+    const meta = (await store.getData(wsId)) || {};
     // Exactly zero, not falsy-zero. A device that has never had settings sends
     // 0, and `Number(x) || now` would restamp that as this instant — which is
     // how a fresh device signing in used to overwrite the workspace's real
@@ -617,8 +743,8 @@ async function applyPush(user, body) {
     const raw = Number(body.settingsUpdatedAt);
     const incomingAt = Number.isFinite(raw) ? raw : now;
     if (incomingAt > (meta.settingsUpdatedAt || 0)) {
-      await store.putData(user.id, {
-        userId: user.id,
+      await store.putData(wsId, {
+        wsId,
         orgId: user.orgId || null,
         settings: body.settings,
         settingsUpdatedAt: incomingAt,
@@ -638,18 +764,19 @@ async function applyPush(user, body) {
  * what stops them coming back on the next pull.
  */
 async function pullChanges(user, cursor, won = null) {
+  const wsId = workspaceIdFor(user);
   const out = { modules: [], records: [] };
   let next = cursor;
 
   for (const kind of SYNC_KINDS) {
-    for (const e of await store.listItems(kind, user.id, { since: cursor })) {
+    for (const e of await store.listItems(kind, wsId, { since: cursor })) {
       if (e.serverAt > next) next = e.serverAt;
       if (won && won[kind].has(e.id)) continue;
       out[kind].push(wireItem(e));
     }
   }
 
-  const meta = (await store.getData(user.id)) || {};
+  const meta = (await store.getData(wsId)) || {};
   let settings = null;
   if (meta.settings && (meta.settingsServerAt || 0) > cursor) {
     settings = { doc: meta.settings, updatedAt: meta.settingsUpdatedAt || 0 };
@@ -661,16 +788,18 @@ async function pullChanges(user, cursor, won = null) {
 
 // Keep the counts the admin dashboard reads in step with the item rows.
 async function refreshCounts(user) {
+  const wsId = workspaceIdFor(user);
   const [moduleCount, recordCount] = await Promise.all([
-    store.countItems('modules', user.id),
-    store.countItems('records', user.id),
+    store.countItems('modules', wsId),
+    store.countItems('records', wsId),
   ]);
-  await store.putData(user.id, {
-    userId: user.id,
+  await store.putData(wsId, {
+    wsId,
     orgId: user.orgId || null,
     moduleCount,
     recordCount,
     perRecord: true,
+    orgOwned: true,
     updatedAt: Date.now(),
   });
   return { moduleCount, recordCount };
@@ -685,12 +814,13 @@ async function refreshCounts(user) {
  * with.
  */
 async function applyFullSnapshot(user, { modules, records, settings }) {
+  const wsId = workspaceIdFor(user);
   const now = Date.now();
   const incoming = { modules, records };
 
   for (const kind of SYNC_KINDS) {
     const rows = incoming[kind];
-    const stored = await store.listItems(kind, user.id, { since: 0 });
+    const stored = await store.listItems(kind, wsId, { since: 0 });
     const byId = new Map(stored.map((e) => [e.id, e]));
     const seen = new Set();
     const writes = [];
@@ -702,18 +832,18 @@ async function applyFullSnapshot(user, { modules, records, settings }) {
       const prior = byId.get(id);
       if (prior && !prior.deletedAt && JSON.stringify(prior.doc) === JSON.stringify(doc)) continue;
       const updatedAt = Math.max(Number(doc.updatedAt) || now, prior ? prior.updatedAt + 1 : 0);
-      writes.push(envelope(kind, user, { id, updatedAt, doc }, now));
+      writes.push(envelope(kind, user, { id, updatedAt, doc }, now, prior));
     }
     for (const e of stored) {
       if (seen.has(e.id) || e.deletedAt) continue;
-      writes.push(envelope(kind, user, { id: e.id, updatedAt: Math.max(now, e.updatedAt + 1), deleted: true }, now));
+      writes.push(envelope(kind, user, { id: e.id, updatedAt: Math.max(now, e.updatedAt + 1), deleted: true }, now, e));
     }
     if (writes.length) await store.putItems(kind, writes);
   }
 
   if (settings && typeof settings === 'object') {
-    await store.putData(user.id, {
-      userId: user.id,
+    await store.putData(wsId, {
+      wsId,
       orgId: user.orgId || null,
       settings,
       settingsUpdatedAt: now,
@@ -735,6 +865,8 @@ async function migrateToPerRecord() {
   let migrated = 0;
 
   for (const user of users) {
+    // The legacy snapshot is keyed by the account, which is where it was
+    // written; the rows that come out of it are keyed by the workspace.
     const meta = await store.getData(user.id);
     if (!meta || meta.perRecord) continue;
 
@@ -742,6 +874,7 @@ async function migrateToPerRecord() {
     const records = Array.isArray(meta.records) ? meta.records : [];
     const now = Number(meta.updatedAt) || Date.now();
     const owner = { id: user.id, orgId: meta.orgId || user.orgId || null };
+    const wsId = workspaceIdFor(owner);
 
     for (const [kind, rows] of [['modules', modules], ['records', records]]) {
       const writes = rows
@@ -750,8 +883,8 @@ async function migrateToPerRecord() {
       if (writes.length) await store.putItems(kind, writes);
     }
 
-    await store.putData(user.id, {
-      userId: user.id,
+    await store.putData(wsId, {
+      wsId,
       orgId: owner.orgId,
       settings: meta.settings || {},
       settingsUpdatedAt: now,
@@ -759,15 +892,80 @@ async function migrateToPerRecord() {
       moduleCount: modules.length,
       recordCount: records.length,
       perRecord: true,
+      orgOwned: true,
       updatedAt: now,
     });
     // Only once the rows are safely written — the arrays are the sole copy
     // until that point.
     await store.stripSnapshot(user.id);
+    if (wsId !== user.id) await store.deleteWorkspace(user.id);
     migrated += 1;
   }
 
   if (migrated) console.log(`Split ${migrated} workspace(s) into per-record rows`);
+}
+
+/*
+ * Hand account-keyed workspaces over to the organisation that owns them.
+ *
+ * This is what makes a workspace shareable: `modules` and `records` were keyed
+ * by userId, so two colleagues in one org had two separate workspaces however
+ * much the org grouped them. Idempotent, and a no-op on a deployment that has
+ * nothing left keyed the old way.
+ *
+ * Safe to do as a straight rename because org↔user is 1:1 today — a user's
+ * orgId is set once at signup and nothing can change it. If that ever stops
+ * being true before this has run, two workspaces would silently merge into one,
+ * so it refuses rather than guesses.
+ */
+async function migrateToOrgWorkspaces() {
+  const legacyKeys = await store.legacyWorkspaceKeys();
+  if (!legacyKeys.length) return;
+
+  const users = await store.listUsers();
+  const byId = new Map(users.map((u) => [u.id, u]));
+
+  const orgCounts = new Map();
+  users.forEach((u) => u.orgId && orgCounts.set(u.orgId, (orgCounts.get(u.orgId) || 0) + 1));
+  const shared = [...orgCounts].filter(([, n]) => n > 1).map(([orgId]) => orgId);
+  if (shared.length) {
+    console.error(
+      `Refusing to move workspaces to organisations: ${shared.length} organisation(s) already have more than one member, `
+      + 'so this would merge separate workspaces together. Resolve by hand before upgrading.'
+    );
+    return;
+  }
+
+  let moved = 0;
+  let rows = 0;
+  for (const key of legacyKeys) {
+    const user = byId.get(key);
+    if (!user) {
+      // Rows for an account that no longer exists. Leaving them keyed the old
+      // way is harmless — nothing reads them — and deleting data during a
+      // migration is not a decision to make automatically.
+      console.warn(`Skipping workspace ${key}: no such account.`);
+      continue;
+    }
+    if (!user.orgId) {
+      console.warn(`Skipping workspace ${key}: account has no organisation.`);
+      continue;
+    }
+    const before = await Promise.all(SYNC_KINDS.map((k) => store.countItems(k, key)));
+    rows += await store.rekeyWorkspace(key, user.orgId);
+    // Count the rows back out the other side before calling it done, the same
+    // verify-before-trust order used everywhere else data moves in this app.
+    const after = await Promise.all(SYNC_KINDS.map((k) => store.countItems(k, user.orgId)));
+    for (let i = 0; i < SYNC_KINDS.length; i += 1) {
+      if (after[i] < before[i]) {
+        throw new Error(`Workspace ${key}: ${SYNC_KINDS[i]} moved ${after[i]} of ${before[i]} rows`);
+      }
+    }
+    await store.putData(user.orgId, { orgOwned: true });
+    moved += 1;
+  }
+
+  if (moved) console.log(`Moved ${moved} workspace(s) (${rows} rows) to their organisation`);
 }
 
 // ------------------------------------------------------------------- app
@@ -949,10 +1147,11 @@ app.post('/api/sync', requireAuth, async (req, res) => {
 // Still served so a client running cached older JS keeps working through a
 // deploy. Both paths read and write the same per-record rows.
 app.get('/api/data', requireAuth, async (req, res) => {
-  const meta = await store.getData(req.user.id);
+  const wsId = workspaceIdFor(req.user);
+  const meta = await store.getData(wsId);
   const [modules, records] = await Promise.all([
-    store.listItems('modules', req.user.id, { since: 0, includeDeleted: false }),
-    store.listItems('records', req.user.id, { since: 0, includeDeleted: false }),
+    store.listItems('modules', wsId, { since: 0, includeDeleted: false }),
+    store.listItems('records', wsId, { since: 0, includeDeleted: false }),
   ]);
   if (!meta && !modules.length && !records.length) {
     return res.json({ modules: null, records: null, settings: null, updatedAt: 0 });
@@ -973,7 +1172,7 @@ app.put('/api/data', requireAuth, async (req, res) => {
   await applyFullSnapshot(req.user, { modules, records, settings });
   const counts = await refreshCounts(req.user);
   store.addEvent('sync', req.user.id, req.user.orgId).catch(() => {});
-  const meta = await store.getData(req.user.id);
+  const meta = await store.getData(workspaceIdFor(req.user));
   res.json({ ok: true, updatedAt: meta.updatedAt, ...counts });
 });
 
@@ -1031,20 +1230,20 @@ app.get('/api/admin/stats', requireAuth, requireOrgAdmin, async (req, res) => {
 });
 
 app.get('/api/admin/users', requireAuth, requireOrgAdmin, async (req, res) => {
+  // Deliberately no per-user module/record counts. The workspace belongs to
+  // the organisation, so every member of one would report the same totals —
+  // a column of identical numbers reads as five copies of the data rather
+  // than five people sharing one. The figure lives on /api/admin/stats, once
+  // per workspace, where it means something.
   const users = await store.listUsers(req.scopeOrgId);
-  const withCounts = await Promise.all(users.map(async (u) => {
-    const d = await store.getData(u.id);
-    return {
-      ...publicUser(u),
-      disabled: !!u.disabled,
-      provider: u.provider,
-      lastActiveAt: u.lastActiveAt || 0,
-      moduleCount: d ? d.moduleCount || 0 : 0,
-      recordCount: d ? d.recordCount || 0 : 0,
-    };
+  const rows = users.map((u) => ({
+    ...publicUser(u),
+    disabled: !!u.disabled,
+    provider: u.provider,
+    lastActiveAt: u.lastActiveAt || 0,
   }));
-  withCounts.sort((a, b) => b.createdAt - a.createdAt);
-  res.json({ users: withCounts, scope: req.isPlatformAdmin ? 'platform' : 'org' });
+  rows.sort((a, b) => b.createdAt - a.createdAt);
+  res.json({ users: rows, scope: req.isPlatformAdmin ? 'platform' : 'org' });
 });
 
 app.patch('/api/admin/users/:id', requireAuth, requireOrgAdmin, async (req, res) => {
@@ -1067,8 +1266,8 @@ app.delete('/api/admin/users/:id', requireAuth, requireOrgAdmin, async (req, res
   if (id === req.user.id) return res.status(400).json({ error: 'You cannot delete your own account' });
   const target = await resolveTarget(req, res);
   if (!target) return undefined;
-  await store.deleteUser(id);
-  res.json({ ok: true });
+  const { deletedWorkspace } = await deleteAccount(target);
+  res.json({ ok: true, deletedWorkspace });
 });
 
 // ---- static PWA
@@ -1096,6 +1295,7 @@ app.get('*', (req, res) => {
     // workspace has been split into rows.
     await migrateToOrgs();
     await migrateToPerRecord();
+    await migrateToOrgWorkspaces();
   } catch (err) {
     console.error('Storage init failed:', err.message);
     process.exit(1);

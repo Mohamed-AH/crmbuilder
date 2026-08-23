@@ -38,7 +38,7 @@ docs/                 user guide, onboarding playbook, demo script, architecture
 
 ## 2. Current status
 
-**All green:** 64 Node tests + 42 Playwright tests.
+**All green:** 74 Node tests + 42 Playwright tests.
 
 ```sh
 npm install
@@ -96,7 +96,9 @@ to render *and still navigate*.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
 bumping `CACHE_VERSION` (currently `crmbuilder-v6`).
 
-**Tenancy scoping comes from the session, never a request.** See §5.
+**Tenancy scoping comes from the session, never a request.** That covers both
+`req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
+workspace a caller reads and writes). See §5.
 
 **Sync clocks are two different things and must not be conflated.** `updatedAt`
 is the client's edit time and decides last-write-wins per record; `serverAt` is
@@ -171,10 +173,12 @@ call. A compound command mentioning `server.js` matches itself.
 ```
 orgs    { id, name, createdAt, createdBy }
 users   { id, email, name, orgId, role, disabled, createdAt, lastActiveAt }
-modules { userId, orgId, id, updatedAt, serverAt, deletedAt, deletedOn, doc }
-records { userId, orgId, id, updatedAt, serverAt, deletedAt, deletedOn, doc }
-data    { userId, orgId, settings, settingsUpdatedAt, settingsServerAt,
-          moduleCount, recordCount, perRecord, updatedAt }   ← meta only now
+modules { wsId, orgId, id, createdBy, updatedBy, updatedAt, serverAt,
+          deletedAt, deletedOn, doc }
+records { wsId, orgId, id, createdBy, updatedBy, updatedAt, serverAt,
+          deletedAt, deletedOn, doc }
+data    { wsId, orgId, settings, settingsUpdatedAt, settingsServerAt,
+          moduleCount, recordCount, perRecord, orgOwned, updatedAt }  ← meta
 events  { type, userId, orgId, day, at }
 ```
 
@@ -193,10 +197,26 @@ Roles: `platformAdmin` (operates the deployment, crosses orgs) · `owner`
 - **Eight isolation tests in `tests/api.test.mjs` assert the attack**, not the
   happy path. Keep them passing; they are the gate on this area.
 
-**Why workspaces are still per-account:** this used to be a safety constraint —
-whole-document sync would have discarded colleagues' edits. Per-record sync
-removed that reason (§10). What remains is unbuilt product: invites, org-owned
-workspaces, and per-module permissions. See `docs/ARCHITECTURE.md` §2.2, §7.
+**The one that can destroy a team's data:** `store.deleteUser` deliberately no
+longer touches the workspace. `deleteAccount()` deletes it only when the org has
+no members left. Kept as one named function because the two calls in the wrong
+order — or one of them forgotten — *is* the bug. Guarded by *"removing a member
+leaves the workspace standing"*, which fails on the un-fixed code.
+
+**Admin rows carry no per-user record counts.** Every member of an org would
+report the same totals, reading as N copies of the data rather than N people
+sharing it. The figure lives on `/api/admin/stats`, once per workspace.
+
+**The workspace belongs to the org, not the account** (stage A, shipped).
+`wsId` is the ownership key and `workspaceIdFor(user)` resolves it **from the
+session only** — never a parameter, query or body, the same rule as
+`req.scopeOrgId`. `wsId` is a separate field from `orgId` on purpose: they are
+equal today, and a key named for what it keys is what stops the next reader
+assuming they always will be.
+
+Still unbuilt: invites/join (stage B), owner-vs-member enforcement (stage C),
+member management and leaving (stage D). Until stage B nothing can put two
+people in one org, which is why the tests reach into the store to do it.
 
 ---
 
@@ -284,6 +304,11 @@ changed there since the cursor. `GET /api/sync?since=N` pulls only.
   tombstoning issues every `put` in one tick via `Promise.all`; awaiting between
   writes finds the transaction already closed.
 
+**Ownership.** Rows are keyed by `wsId` (the org), so the same machinery that
+made two *devices* safe is what makes two *people* safe — that was the point of
+doing per-record sync first. `createdBy` is set once and carried forward, so
+editing someone else's record does not rewrite its authorship.
+
 **Backwards compatibility.** `GET`/`PUT /api/data` still work, reading and
 writing the same rows, so a client on cached older JS keeps syncing through a
 deploy; the client falls back to them on a 404. `migrateToPerRecord()` splits
@@ -353,3 +378,31 @@ which is how it is checked.
 Nothing is seeded without a prompt: `Tour.ensureReady()` no longer seeds, and
 `startTourWithConsent()` asks. Sign-in asks once about anything already on the
 device, with the options computed from what is actually there.
+
+---
+
+## 12. Migrations (`tests/migration.test.mjs`)
+
+Three run on boot, in this order, each idempotent: `migrateToOrgs()` →
+`migrateToPerRecord()` → `migrateToOrgWorkspaces()`.
+
+They are tested by hand-building a store in the shape a real deployment would
+be in, booting a server against it, and asking the API what came out — not by
+calling the functions, because what is under test is what a live upgrade does.
+
+**Traps:**
+
+- **`/api/data` reads ids out of the stored document, not out of the envelope.**
+  A migration that minted fresh envelope ids still looks correct there, and the
+  first version of this test passed on exactly that bug. Assert sync ids via
+  `/api/sync`, which is the id the delta protocol actually matches on.
+- **The account→org rename is only lossless because org↔user is 1:1.** Nothing
+  can change a user's `orgId` today. If two accounts ever shared one before this
+  ran, their separate workspaces would silently merge, so it refuses and says so
+  rather than guessing. Removing that guard makes *"refuses when two accounts
+  already share an organisation"* fail.
+- **Orphaned rows are left alone, never deleted.** Deleting data during a
+  migration is not a decision to make automatically.
+- **FileStore keeps the store in memory and rewrites the whole file on save**,
+  so editing `store.json` under a running server is clobbered by the next write.
+  Stop, edit, start — that is what `moveToOrg()` in `tests/api.test.mjs` does.

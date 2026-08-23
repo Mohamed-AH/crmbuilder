@@ -1912,22 +1912,20 @@
           </div>
           <div class="table-scroll">
           <table class="records-table" id="admin-users-table">
-            <thead><tr><th>User</th><th>Role</th><th>Status</th><th class="th-num">Modules</th><th class="th-num">Records</th><th>Joined</th><th>Last active</th><th>Actions</th></tr></thead>
+            <thead><tr><th>User</th><th>Role</th><th>Status</th><th>Joined</th><th>Last active</th><th>Actions</th></tr></thead>
             <tbody>
               ${usersRes.users.map((u) => `
                 <tr data-email="${esc(u.email)}" data-name="${esc(u.name || '')}" class="admin-row">
                   <td data-label="User"><strong>${esc(u.name || '—')}</strong><br><span class="muted">${esc(u.email)}</span></td>
                   <td data-label="Role"><span class="pill ${u.role === 'platformAdmin' || u.role === 'owner' ? 'pill-accent' : ''}">${esc(ROLE_LABELS[u.role] || u.role)}</span></td>
                   <td data-label="Status">${u.disabled ? '<span class="pill pill-danger">disabled</span>' : '<span class="pill pill-ok">active</span>'}</td>
-                  <td data-label="Modules" class="td-num">${u.moduleCount}</td>
-                  <td data-label="Records" class="td-num">${u.recordCount}</td>
                   <td data-label="Joined">${fmtWhen(u.createdAt)}</td>
                   <td data-label="Last active">${fmtWhen(u.lastActiveAt)}</td>
                   <td data-label="Actions" class="admin-actions">
                     ${u.id === Cloud.user.id ? '<span class="muted">you</span>' : `
                       <button class="icon-btn" data-act="role" data-id="${u.id}" data-role="${u.role === 'owner' ? 'member' : 'owner'}" title="${u.role === 'owner' ? 'Demote to member' : 'Make an owner'}">${icon(u.role === 'owner' ? 'user' : 'shield-check', 15)}</button>
                       <button class="icon-btn" data-act="disable" data-id="${u.id}" data-disabled="${u.disabled ? '0' : '1'}" title="${u.disabled ? 'Re-enable account' : 'Disable account'}">${icon('ban', 15)}</button>
-                      <button class="icon-btn" data-act="delete" data-id="${u.id}" title="Delete account and data">${icon('trash-2', 15)}</button>`}
+                      <button class="icon-btn" data-act="delete" data-id="${u.id}" title="Remove this account">${icon('trash-2', 15)}</button>`}
                   </td>
                 </tr>`).join('')}
             </tbody>
@@ -1956,9 +1954,16 @@
             await Cloud.admin.update(id, { disabled: disable });
             toast(disable ? 'Account disabled' : 'Account re-enabled');
           } else if (act === 'delete') {
-            if (!confirm('Delete this account AND all of its synced data? This cannot be undone.')) return;
-            await Cloud.admin.remove(id);
-            toast('Account deleted');
+            // The workspace belongs to the organisation, so removing one of
+            // several members takes the person and leaves the CRM. Say which
+            // is about to happen rather than warning about both.
+            const last = usersRes.users.filter((u) => !u.disabled).length <= 1;
+            const warning = last
+              ? 'Delete this account AND the workspace? They are the last member, so the CRM goes with them. This cannot be undone.'
+              : 'Remove this account? They lose access immediately. The workspace and its records stay with the rest of the team.';
+            if (!confirm(warning)) return;
+            const out = await Cloud.admin.remove(id);
+            toast(out && out.deletedWorkspace ? 'Account and workspace deleted' : 'Account removed — the workspace is untouched');
           }
           renderAdmin();
         } catch (err) {
