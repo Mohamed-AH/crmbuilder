@@ -258,6 +258,27 @@ otherwise.** The first time you sign in, CRM Builder asks once what to do with
 it — bring it into your account, or leave it where it is. Nothing you typed is
 ever discarded without being asked.
 
+### Working as a team
+
+An **organisation** is your team, and everyone on it shares one workspace: the
+same modules, the same records, kept in step by the same per-record sync that
+keeps your own laptop and phone together.
+
+**To invite someone** (owners only): Settings → **Invite a colleague**. You get
+a private link — copy it and send it however you normally reach them. The link
+works **once** and stops working after a week, so it is safe to send in a
+message but not to post somewhere public. If you send one by mistake, create
+another and the old one can be revoked.
+
+**When they open the link**, they sign in and are asked one question: start on
+the team's workspace, or bring their own records with them. Anything they bring
+becomes visible to everyone on the team, and the prompt says so. Nothing they
+decline to bring is deleted — it stays in their own workspace.
+
+Two people editing different records both keep their work. If two people edit
+*the same* record, the later edit wins, exactly as it does across your own
+devices.
+
 ### Sample data
 
 The guided tour needs something to walk through, so it offers to load a small
@@ -350,6 +371,16 @@ Nothing was deleted. Signing out returns the screen to a blank workspace so the
 next person at this computer doesn't see your data; sign back in with the same
 email and everything is there. If you had unsaved changes when you signed out,
 those are waiting too and upload once you're back online.
+
+**I joined a team and my own records vanished.**
+They were not deleted. Joining a team switches you to the team's workspace; if
+you chose to start fresh, your own records stayed in your own workspace. They
+are not reachable from the team view — ask an owner to help, or use a JSON
+backup taken before you joined.
+
+**I was invited but the link says it is not valid.**
+Invite links work once and expire after a week, so a link that someone else has
+already used, or an old one, will be refused. Ask for a fresh one.
 
 **Someone else uses this computer and I can see their CRM.**
 You shouldn't be able to — each account's data is stored separately on the

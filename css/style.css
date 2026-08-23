@@ -653,3 +653,16 @@ body.tour-open { overflow: hidden; }
   gap: 8px;
 }
 .claim-actions .btn { width: 100%; justify-content: center; }
+
+/* Team member list in Settings. */
+.team-list { list-style: none; margin: 0 0 14px; padding: 0; }
+.team-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.team-list li:last-child { border-bottom: 0; }

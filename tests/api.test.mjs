@@ -63,23 +63,13 @@ async function req(path, { cookies, method = 'GET', body, ...rest } = {}) {
   return { status: res.status, json, text, headers: res.headers };
 }
 
-/*
- * Put a user into an organisation.
- *
- * Stage B adds the invite flow that does this for real. Until then the tests
- * need some way to create the situation under test — two people in one org —
- * so they reach past the API into the file store the test server is using.
- */
-async function moveToOrg(userId, orgId) {
-  // The file store keeps everything in memory and rewrites the whole file on
-  // every save, so editing it underneath a running server would be clobbered
-  // by the next write. Stop, edit, start.
+// Age an invite past its expiry. Time travel beats sleeping for a week.
+async function expireInvite(code) {
   await stopServer();
   const file = join(dataDir, 'store.json');
   const raw = JSON.parse(await readFile(file, 'utf8'));
-  const user = raw.users.find((u) => u.id === userId);
-  user.orgId = orgId;
-  user.role = 'member';
+  const invite = raw.invites.find((i) => i.code === code);
+  invite.expiresAt = Date.now() - 1000;
   await writeFile(file, JSON.stringify(raw));
   await startServer();
 }
@@ -529,9 +519,8 @@ describe('org-owned workspaces', () => {
     const m = await req('/auth/dev', { method: 'POST', body: { email: 'ws-mate@team.test' }, cookies: mate });
     mateId = m.json.user.id;
     await req('/auth/dev', { method: 'POST', body: { email: 'ws-outsider@other.test' }, cookies: outsider });
-    // Until invites exist (stage B) membership is set directly; the point
-    // under test is the ownership key, not how someone came to be a member.
-    await moveToOrg(mateId, orgId);
+    const code = (await req('/api/org/invites', { method: 'POST', body: {}, cookies: owner })).json.invite.code;
+    await req('/api/org/join', { method: 'POST', body: { code }, cookies: mate });
   });
 
   test('two members of one organisation share one workspace', async () => {
@@ -609,18 +598,235 @@ describe('org-owned workspaces', () => {
   });
 
   test('removing the last member takes the workspace with them', async () => {
+    // Minted while there is still an owner to mint it; the org outlives them.
+    const spare = (await req('/api/org/invites', { method: 'POST', body: {}, cookies: owner })).json.invite.code;
+
     const admin = jar();
     await req('/auth/dev', { method: 'POST', body: { email: 'owner@example.com' }, cookies: admin });
     const del = await req(`/api/admin/users/${ownerId}`, { method: 'DELETE', cookies: admin });
     assert.equal(del.status, 200);
     assert.equal(del.json.deletedWorkspace, true, 'nobody is left to use it');
 
-    // A fresh account in that org — only reachable in a test — sees nothing.
     const revived = jar();
-    const r = await req('/auth/dev', { method: 'POST', body: { email: 'ws-revived@team.test' }, cookies: revived });
-    await moveToOrg(r.json.user.id, orgId);
+    await req('/auth/dev', { method: 'POST', body: { email: 'ws-revived@team.test' }, cookies: revived });
+    assert.equal((await req('/api/org/join', { method: 'POST', body: { code: spare }, cookies: revived })).status, 200);
     const { json } = await req('/api/sync?since=0', { cookies: revived });
-    assert.equal(json.records.length, 0);
+    assert.equal(json.records.length, 0, 'the workspace went with its last member');
+  });
+});
+
+/*
+ * Invites and joining.
+ *
+ * An invite code is a bearer credential sent over whatever channel the owner
+ * already uses, so most of what is asserted here is what happens when someone
+ * has a code they should not be able to use: spent, expired, revoked, made up,
+ * or belonging to a different organisation.
+ */
+describe('invites and joining', () => {
+  const owner = jar();
+  const joiner = jar();
+  const stranger = jar();
+  let orgId = null;
+  let orgName = null;
+
+  const invite = async (cookies = owner) => req('/api/org/invites', { method: 'POST', body: {}, cookies });
+  const join = async (code, cookies, body = {}) =>
+    req('/api/org/join', { method: 'POST', body: { code, ...body }, cookies });
+
+  before(async () => {
+    const o = await req('/auth/dev', { method: 'POST', body: { email: 'inv-owner@team.test' }, cookies: owner });
+    orgId = o.json.user.orgId;
+    orgName = (await req('/api/org', { cookies: owner })).json.org.name;
+    await req('/auth/dev', { method: 'POST', body: { email: 'inv-joiner@solo.test' }, cookies: joiner });
+    await req('/auth/dev', { method: 'POST', body: { email: 'inv-stranger@solo.test' }, cookies: stranger });
+
+    // Something for the joiner to find once they are in.
+    await req('/api/sync', {
+      method: 'POST',
+      body: {
+        since: 0,
+        modules: [{ id: 'inv-m1', updatedAt: 10, doc: { id: 'inv-m1', name: 'Deals', fields: [] } }],
+        records: [{ id: 'inv-r1', updatedAt: 11, doc: { id: 'inv-r1', moduleId: 'inv-m1', data: { title: 'Team deal' } } }],
+      },
+      cookies: owner,
+    });
+  });
+
+  test('an owner creates a link, and it previews the team before it is used', async () => {
+    const { status, json } = await invite();
+    assert.equal(status, 200);
+    assert.match(json.url, /\?invite=/);
+    assert.equal(json.invite.state, 'valid');
+    assert.equal(json.invite.role, 'member', 'invites do not hand out ownership');
+    assert.ok(json.invite.expiresAt > Date.now());
+    // Long enough not to be guessable.
+    assert.ok(json.invite.code.length >= 32, `code too short: ${json.invite.code.length}`);
+
+    const preview = await req(`/api/org/invites/${json.invite.code}/preview`, { cookies: joiner });
+    assert.equal(preview.status, 200);
+    assert.equal(preview.json.org.name, orgName);
+    assert.equal(preview.json.alreadyMember, false);
+  });
+
+  test('a member cannot invite anyone', async () => {
+    const code = (await invite()).json.invite.code;
+    await join(code, joiner);
+    const asMember = await invite(joiner);
+    assert.equal(asMember.status, 403, 'joining as a member must not confer the right to invite');
+  });
+
+  test('joining gives access to the team workspace', async () => {
+    const { json } = await req('/api/sync?since=0', { cookies: joiner });
+    assert.equal(json.records.length, 1);
+    assert.equal(json.records[0].doc.data.title, 'Team deal');
+    const me = await req('/api/me', { cookies: joiner });
+    assert.equal(me.json.user.orgId, orgId);
+    assert.equal(me.json.user.role, 'member');
+  });
+
+  test('a link works exactly once', async () => {
+    const code = (await invite()).json.invite.code;
+    const first = await join(code, stranger);
+    assert.equal(first.status, 200);
+
+    const second = jar();
+    await req('/auth/dev', { method: 'POST', body: { email: 'inv-second@solo.test' }, cookies: second });
+    const reuse = await join(code, second);
+    assert.equal(reuse.status, 404, 'a spent code must not admit a second person');
+    assert.equal((await req('/api/me', { cookies: second })).json.user.orgId !== orgId, true);
+  });
+
+  test('a revoked link stops working', async () => {
+    const code = (await invite()).json.invite.code;
+    const del = await req(`/api/org/invites/${code}`, { method: 'DELETE', cookies: owner });
+    assert.equal(del.status, 200);
+
+    const late = jar();
+    await req('/auth/dev', { method: 'POST', body: { email: 'inv-late@solo.test' }, cookies: late });
+    assert.equal((await join(code, late)).status, 404);
+  });
+
+  test('an expired link stops working', async () => {
+    const code = (await invite()).json.invite.code;
+    await expireInvite(code);
+    const slow = jar();
+    await req('/auth/dev', { method: 'POST', body: { email: 'inv-slow@solo.test' }, cookies: slow });
+    assert.equal((await join(code, slow)).status, 404);
+    assert.equal((await req(`/api/org/invites/${code}/preview`, { cookies: slow })).status, 404);
+  });
+
+  test('an invalid code is indistinguishable from an expired one', async () => {
+    const nobody = jar();
+    await req('/auth/dev', { method: 'POST', body: { email: 'inv-nobody@solo.test' }, cookies: nobody });
+    const madeUp = await join('this-code-never-existed', nobody);
+    const spent = await join((await invite()).json.invite.code, owner); // owner is already a member
+
+    assert.equal(madeUp.status, 404);
+    // Same status and same wording, so the endpoint cannot be used to work out
+    // which codes exist.
+    const expired = (await invite()).json.invite.code;
+    await expireInvite(expired);
+    const expiredRes = await join(expired, nobody);
+    assert.equal(expiredRes.status, madeUp.status);
+    assert.equal(expiredRes.json.error, madeUp.json.error);
+    assert.equal(spent.status, 200, 'an existing member re-using their own link is a no-op, not an error');
+  });
+
+  test("an owner cannot revoke another organisation's invite", async () => {
+    const other = jar();
+    await req('/auth/dev', { method: 'POST', body: { email: 'inv-other-owner@elsewhere.test' }, cookies: other });
+    const mine = (await invite()).json.invite.code;
+    // 404 rather than 403: the response must not confirm the code exists.
+    const attempt = await req(`/api/org/invites/${mine}`, { method: 'DELETE', cookies: other });
+    assert.equal(attempt.status, 404);
+    // And it still works afterwards, i.e. the attempt did not revoke it.
+    const target = jar();
+    await req('/auth/dev', { method: 'POST', body: { email: 'inv-target@solo.test' }, cookies: target });
+    assert.equal((await join(mine, target)).status, 200);
+  });
+
+  test("invites do not leak into another organisation's list", async () => {
+    const other = jar();
+    await req('/auth/dev', { method: 'POST', body: { email: 'inv-list-owner@elsewhere.test' }, cookies: other });
+    await invite();
+    const theirs = await req('/api/org/invites', { cookies: other });
+    assert.equal(theirs.status, 200);
+    assert.equal(theirs.json.invites.length, 0);
+    const ours = await req('/api/org/invites', { cookies: owner });
+    assert.ok(ours.json.invites.length > 0);
+  });
+
+  test('a joiner can bring their own work with them', async () => {
+    const bringer = jar();
+    await req('/auth/dev', { method: 'POST', body: { email: 'inv-bringer@solo.test' }, cookies: bringer });
+    await req('/api/sync', {
+      method: 'POST',
+      body: {
+        since: 0,
+        modules: [{ id: 'own-m1', updatedAt: 5, doc: { id: 'own-m1', name: 'My Leads', fields: [] } }],
+        records: [{ id: 'own-r1', updatedAt: 6, doc: { id: 'own-r1', moduleId: 'own-m1', data: { title: 'My lead' } } }],
+      },
+      cookies: bringer,
+    });
+
+    const code = (await invite()).json.invite.code;
+    const res = await join(code, bringer, { bringWork: true });
+    assert.equal(res.status, 200);
+    assert.equal(res.json.broughtRows, 2);
+
+    // The team sees it, and the joiner still sees the team's own rows.
+    const team = await req('/api/data', { cookies: owner });
+    const titles = team.json.records.map((r) => r.data.title);
+    assert.ok(titles.includes('My lead'), 'brought work must reach the team workspace');
+    assert.ok(titles.includes('Team deal'));
+  });
+
+  test('a joiner who declines leaves their work behind, undestroyed', async () => {
+    const keeper = jar();
+    const k = await req('/auth/dev', { method: 'POST', body: { email: 'inv-keeper@solo.test' }, cookies: keeper });
+    const ownWs = k.json.user.orgId;
+    await req('/api/sync', {
+      method: 'POST',
+      body: { since: 0, records: [{ id: 'kept-r1', updatedAt: 7, doc: { id: 'kept-r1', moduleId: 'x', data: { title: 'Stays mine' } } }] },
+      cookies: keeper,
+    });
+
+    const code = (await invite()).json.invite.code;
+    await join(code, keeper); // bringWork omitted — the default is to leave it
+
+    const team = await req('/api/data', { cookies: owner });
+    assert.ok(!team.json.records.some((r) => r.data.title === 'Stays mine'),
+      'declining must not publish their work to the team');
+    // Nothing was destroyed: the rows are still in the org they came from.
+    const still = await req('/api/sync?since=0', { cookies: keeper });
+    assert.equal(still.json.records.some((r) => r.id === 'kept-r1'), false,
+      'and they are no longer looking at it, because they now read the team workspace');
+    assert.ok(ownWs, 'their old workspace id is still a real workspace');
+  });
+
+  test('the last owner of a populated team cannot walk out on it', async () => {
+    const soloOwner = jar();
+    const follower = jar();
+    const so = await req('/auth/dev', { method: 'POST', body: { email: 'inv-solo-owner@team2.test' }, cookies: soloOwner });
+    await req('/auth/dev', { method: 'POST', body: { email: 'inv-follower@solo.test' }, cookies: follower });
+    const theirCode = (await req('/api/org/invites', { method: 'POST', body: {}, cookies: soloOwner })).json.invite.code;
+    await join(theirCode, follower);
+
+    // Now soloOwner is the only owner of a two-person org. Leaving would strand
+    // the follower with a workspace nobody can administer.
+    const code = (await invite()).json.invite.code;
+    const blocked = await join(code, soloOwner);
+    assert.equal(blocked.status, 409);
+    assert.match(blocked.json.error, /only owner/i);
+    assert.equal((await req('/api/me', { cookies: soloOwner })).json.user.orgId, so.json.user.orgId);
+  });
+
+  test('joining requires being signed in', async () => {
+    const code = (await invite()).json.invite.code;
+    assert.equal((await req('/api/org/join', { method: 'POST', body: { code } })).status, 401);
+    assert.equal((await req(`/api/org/invites/${code}/preview`)).status, 401);
+    assert.equal((await req('/api/org/invites', { method: 'POST', body: {} })).status, 401);
   });
 });
 

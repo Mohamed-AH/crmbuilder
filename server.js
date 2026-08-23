@@ -82,9 +82,10 @@ class FileStore {
     try {
       this.s = JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch {
-      this.s = { users: [], orgs: [], data: {}, events: [], items: { modules: {}, records: {} } };
+      this.s = { users: [], orgs: [], invites: [], data: {}, events: [], items: { modules: {}, records: {} } };
     }
     this.s.items = this.s.items || { modules: {}, records: {} };
+    this.s.invites = this.s.invites || [];
   }
   save() {
     fs.writeFileSync(this.file, JSON.stringify(this.s));
@@ -229,6 +230,21 @@ class FileStore {
   async getOrg(id) { return (this.s.orgs || []).find((o) => o.id === id) || null; }
   async listOrgs() { return [...(this.s.orgs || [])]; }
   async countOrgs() { return (this.s.orgs || []).length; }
+
+  // --- invites
+  async createInvite(invite) {
+    this.s.invites = this.s.invites || [];
+    this.s.invites.push(invite);
+    this.save();
+    return invite;
+  }
+  async getInvite(code) { return (this.s.invites || []).find((i) => i.code === code) || null; }
+  async listInvites(orgId) { return (this.s.invites || []).filter((i) => i.orgId === orgId); }
+  async updateInvite(code, patch) {
+    const i = await this.getInvite(code);
+    if (i) { Object.assign(i, patch); this.save(); }
+    return i;
+  }
 }
 
 class MongoStore {
@@ -243,6 +259,7 @@ class MongoStore {
     this.data = db.collection('data');
     this.events = db.collection('events');
     this.orgs = db.collection('orgs');
+    this.invites = db.collection('invites');
     this.cols = { modules: db.collection('modules'), records: db.collection('records') };
 
     // Email stays GLOBALLY unique, deliberately. Sign-in resolves an account
@@ -253,6 +270,8 @@ class MongoStore {
     // that happens to be reading it.
     await this.data.createIndex({ wsId: 1 }, { unique: true });
     await this.orgs.createIndex({ id: 1 }, { unique: true });
+    await this.invites.createIndex({ code: 1 }, { unique: true });
+    await this.invites.createIndex({ orgId: 1, createdAt: -1 });
 
     // orgId leads every scoped index: a query filtered on orgId alone cannot
     // use an index where orgId sits in a trailing position.
@@ -437,6 +456,15 @@ class MongoStore {
   async getOrg(id) { return this.orgs.findOne({ id }, { projection: { _id: 0 } }); }
   async listOrgs() { return this.orgs.find({}, { projection: { _id: 0 } }).toArray(); }
   async countOrgs() { return this.orgs.countDocuments(); }
+
+  // --- invites
+  async createInvite(invite) { await this.invites.insertOne({ ...invite }); return invite; }
+  async getInvite(code) { return this.invites.findOne({ code }, { projection: { _id: 0 } }); }
+  async listInvites(orgId) { return this.invites.find({ orgId }, { projection: { _id: 0 } }).toArray(); }
+  async updateInvite(code, patch) {
+    await this.invites.updateOne({ code }, { $set: patch });
+    return this.getInvite(code);
+  }
 }
 
 const store = process.env.MONGODB_URI
@@ -1186,8 +1214,193 @@ app.get('/api/org', requireAuth, async (req, res) => {
     org: { id: org.id, name: org.name, createdAt: org.createdAt },
     role: req.user.role,
     memberCount: members.length,
+    members: members.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, disabled: !!u.disabled })),
+    canInvite: req.user.role === 'owner' || req.user.role === 'platformAdmin',
   });
 });
+
+/*
+ * Invites.
+ *
+ * There is no email sending in this product, so an invite is a link the owner
+ * copies and sends however they already talk to their colleague. That makes
+ * the code a bearer credential, and it is treated like one: high entropy,
+ * single use, short-lived, revocable, and never written to a log.
+ *
+ * Every failure — unknown, expired, spent, revoked — answers identically, so
+ * the endpoint cannot be used to find out which codes exist.
+ */
+const INVITE_TTL_DAYS = Number(process.env.INVITE_TTL_DAYS || 7);
+const INVITE_REJECTION = 'That invite link is not valid. Ask for a fresh one.';
+
+function inviteState(invite, now = Date.now()) {
+  if (!invite) return 'invalid';
+  if (invite.revokedAt) return 'revoked';
+  if (invite.usedAt) return 'used';
+  if (invite.expiresAt && invite.expiresAt < now) return 'expired';
+  return 'valid';
+}
+
+function publicInvite(invite, state = inviteState(invite)) {
+  return {
+    code: invite.code,
+    role: invite.role,
+    createdAt: invite.createdAt,
+    expiresAt: invite.expiresAt,
+    createdBy: invite.createdBy,
+    usedBy: invite.usedBy || null,
+    usedAt: invite.usedAt || null,
+    revokedAt: invite.revokedAt || null,
+    state,
+  };
+}
+
+// Only an owner of the org may hand out access to it. requireOrgAdmin already
+// pins req.scopeOrgId to the caller's own org; a platform admin acting without
+// one has no org to invite into, and says so rather than guessing.
+function invitingOrg(req, res) {
+  const orgId = req.user.orgId;
+  if (!orgId) {
+    res.status(400).json({ error: 'You are not in an organisation' });
+    return null;
+  }
+  return orgId;
+}
+
+app.post('/api/org/invites', requireAuth, requireOrgAdmin, async (req, res) => {
+  const orgId = invitingOrg(req, res);
+  if (!orgId) return undefined;
+  // Members join as members. Handing out ownership is a separate, deliberate
+  // act an owner performs on someone who is already on the team.
+  const invite = {
+    code: crypto.randomBytes(24).toString('base64url'),
+    orgId,
+    role: 'member',
+    createdBy: req.user.id,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + INVITE_TTL_DAYS * DAY_MS,
+    usedBy: null,
+    usedAt: null,
+    revokedAt: null,
+  };
+  await store.createInvite(invite);
+  res.json({
+    invite: publicInvite(invite, 'valid'),
+    // Built from APP_URL, not from a request header: a Host header is
+    // attacker-controlled, and this link is about to be emailed to someone.
+    url: `${APP_URL}/?invite=${invite.code}`,
+  });
+});
+
+app.get('/api/org/invites', requireAuth, requireOrgAdmin, async (req, res) => {
+  const orgId = invitingOrg(req, res);
+  if (!orgId) return undefined;
+  const invites = (await store.listInvites(orgId)).map((i) => publicInvite(i));
+  invites.sort((a, b) => b.createdAt - a.createdAt);
+  res.json({ invites });
+});
+
+app.delete('/api/org/invites/:code', requireAuth, requireOrgAdmin, async (req, res) => {
+  const orgId = invitingOrg(req, res);
+  if (!orgId) return undefined;
+  const invite = await store.getInvite(req.params.code);
+  // Another org's invite is not found, rather than forbidden — the same
+  // reasoning as resolveTarget: a response must not confirm it exists.
+  if (!invite || invite.orgId !== orgId) return res.status(404).json({ error: 'Invite not found' });
+  await store.updateInvite(invite.code, { revokedAt: Date.now() });
+  res.json({ ok: true });
+});
+
+// What a link says before it is redeemed, so the joiner can be told whose team
+// they are about to join and what happens to their own workspace.
+app.get('/api/org/invites/:code/preview', requireAuth, async (req, res) => {
+  const invite = await store.getInvite(req.params.code);
+  if (inviteState(invite) !== 'valid') return res.status(404).json({ error: INVITE_REJECTION });
+  const org = await store.getOrg(invite.orgId);
+  if (!org) return res.status(404).json({ error: INVITE_REJECTION });
+  const members = await store.listUsers(org.id);
+  res.json({
+    org: { id: org.id, name: org.name, memberCount: members.length },
+    alreadyMember: req.user.orgId === org.id,
+  });
+});
+
+app.post('/api/org/join', requireAuth, async (req, res) => {
+  const code = String((req.body && req.body.code) || '');
+  const invite = await store.getInvite(code);
+  if (inviteState(invite) !== 'valid') return res.status(404).json({ error: INVITE_REJECTION });
+
+  const org = await store.getOrg(invite.orgId);
+  if (!org) return res.status(404).json({ error: INVITE_REJECTION });
+  if (req.user.orgId === org.id) return res.json({ ok: true, org: { id: org.id, name: org.name }, alreadyMember: true });
+
+  /*
+   * Joining means leaving. If the caller is the last owner of an org that
+   * still has other people in it, walking away would strand them with a
+   * workspace nobody can administer — so it is refused, with the fix named.
+   */
+  if (req.user.orgId) {
+    const current = await store.listUsers(req.user.orgId);
+    const owners = current.filter((u) => u.role === 'owner' || u.role === 'platformAdmin');
+    if (current.length > 1 && owners.length === 1 && owners[0].id === req.user.id) {
+      return res.status(409).json({
+        error: 'You are the only owner of your current team. Make someone else an owner before joining another.',
+      });
+    }
+  }
+
+  const fromWs = workspaceIdFor(req.user);
+  const bringWork = req.body && req.body.bringWork === true;
+  let broughtRows = 0;
+  if (bringWork && fromWs !== org.id) {
+    broughtRows = await copyWorkspace(fromWs, org.id, req.user, org.id);
+  }
+
+  await store.updateInvite(invite.code, { usedBy: req.user.id, usedAt: Date.now() });
+  const updated = await store.updateUser(req.user.id, { orgId: org.id, role: invite.role });
+  await store.addEvent('join', req.user.id, org.id).catch(() => {});
+  if (broughtRows) await refreshCounts(updated);
+
+  res.json({
+    ok: true,
+    org: { id: org.id, name: org.name },
+    user: publicUser(updated),
+    broughtRows,
+  });
+});
+
+/*
+ * Copy one workspace's live rows into another.
+ *
+ * Used when someone brings their own work into a team they are joining. Ids
+ * are preserved (they are UUIDs, so nothing can collide with the team's rows)
+ * and `createdBy` keeps naming the person who wrote each row rather than
+ * crediting the whole lot to whoever pressed join. Tombstones are skipped:
+ * there is nothing in the destination for them to delete.
+ */
+async function copyWorkspace(fromWsId, toWsId, user, orgId = toWsId) {
+  if (fromWsId === toWsId) return 0;
+  const now = Date.now();
+  let copied = 0;
+  for (const kind of SYNC_KINDS) {
+    const rows = await store.listItems(kind, fromWsId, { since: 0, includeDeleted: false });
+    if (!rows.length) continue;
+    await store.putItems(kind, rows.map((e) => ({
+      ...e,
+      wsId: toWsId,
+      orgId,
+      createdBy: e.createdBy || user.id,
+      updatedBy: user.id,
+      // Re-dated deliberately: bringing work into a team is an explicit act and
+      // should win the first sync, the same rule an explicit backup restore
+      // follows on the client.
+      updatedAt: now,
+      serverAt: serverStamp(),
+    })));
+    copied += rows.length;
+  }
+  return copied;
+}
 
 // ---- admin: accounts + analytics
 app.get('/api/admin/stats', requireAuth, requireOrgAdmin, async (req, res) => {

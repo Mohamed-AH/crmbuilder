@@ -40,6 +40,10 @@ const Scope = (() => {
   const SCOPED = [
     'settings', 'settingsAt', 'snapshot', 'lastEdit',
     'lastSync', 'dirty', 'syncCursor', 'pushedThrough',
+    // Which workspace the rows in this scope are a replica OF. A scope belongs
+    // to a person; the workspace belongs to their organisation, and those can
+    // part company — joining a team, leaving one, being removed from one.
+    'workspace',
   ];
   // What they were called before scopes existed, for the one-time migration.
   const LEGACY = SCOPED.map((n) => [`crmb:${n}`, n]);
@@ -160,6 +164,27 @@ const Scope = (() => {
     // Written only once the row copy has been verified too, so a failure part
     // way through leaves the migration to be retried rather than skipped.
     markMigrated(scope) { write(MIGRATION_KEY, `v1:${scope}`); },
+
+    /*
+     * Whether this scope's rows still belong to the workspace it is now
+     * syncing with.
+     *
+     * A replica of the old organisation must never be pushed into the new one
+     * — that is the shared-device bug in a different costume. An unset stamp
+     * means a scope that predates this, and is adopted rather than wiped.
+     */
+    workspaceChanged(workspaceId) {
+      const known = Scope.get('workspace');
+      if (!known) {
+        if (workspaceId) Scope.set('workspace', workspaceId);
+        return false;
+      }
+      return !!workspaceId && known !== workspaceId;
+    },
+    markWorkspace(workspaceId) {
+      if (workspaceId) Scope.set('workspace', workspaceId);
+      else Scope.remove('workspace');
+    },
 
     // Which account, if any, has already taken the anonymous workspace. An
     // anonymous scope is offered exactly once so a second sign-in on the same

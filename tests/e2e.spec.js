@@ -876,6 +876,226 @@ test.describe('sample data', () => {
   });
 });
 
+/*
+ * Two people, one workspace.
+ *
+ * The whole point of the org-owned workspace: an owner invites a colleague,
+ * the colleague joins through the link, and they are looking at the same CRM.
+ * Driven in two browser contexts because that is the only way to see it.
+ */
+test.describe('team workspaces', () => {
+  async function inviteLink(page) {
+    await page.goto('/#/settings');
+    await page.click('#invite-btn');
+    const field = page.locator('#invite-url');
+    await expect(field).toBeVisible({ timeout: 20000 });
+    const url = await field.inputValue();
+    await page.click('.modal [data-close]');
+    return url;
+  }
+
+  test('an owner invites, and the colleague joins and sees the same records', async ({ page, browser }) => {
+    const ownerEmail = uniqueEmail('team-owner');
+    await onboard(page, { name: 'Team Co' });
+    await signIn(page, ownerEmail);
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Shared Contact');
+    await page.click('#record-save');
+    await expect(async () => {
+      const data = await (await page.request.get('/api/data')).json();
+      expect(data.records.some((r) => r.data.name === 'Shared Contact')).toBe(true);
+    }).toPass({ timeout: 25000 });
+
+    const url = await inviteLink(page);
+    expect(url).toContain('invite=');
+
+    // A colleague, on their own machine, opening the link.
+    const second = await browser.newContext();
+    const mate = await second.newPage();
+    await mate.goto(new URL(url).pathname + new URL(url).search);
+    await signIn(mate, uniqueEmail('team-mate'), { claim: 'none' });
+
+    await expect(mate.locator('[data-join]').first()).toBeVisible({ timeout: 25000 });
+    await mate.click('[data-join="fresh"]');
+
+    await expect(mate.locator('#workspace-name')).toHaveText('Team Co', { timeout: 25000 });
+    await mate.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(mate.locator('tr:has-text("Shared Contact")')).toBeVisible({ timeout: 25000 });
+
+    // And what the colleague writes reaches the owner — per-record sync
+    // holding across people, not just devices.
+    await mate.click('#add-record-btn');
+    await mate.fill('#f-name', 'Added By Colleague');
+    await mate.click('#record-save');
+    await expect(async () => {
+      const data = await (await page.request.get('/api/data')).json();
+      expect(data.records.some((r) => r.data.name === 'Added By Colleague')).toBe(true);
+    }).toPass({ timeout: 25000 });
+
+    await page.reload();
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(page.locator('tr:has-text("Added By Colleague")')).toBeVisible({ timeout: 25000 });
+    await second.close();
+  });
+
+  /*
+   * The joiner already has an account and a synced workspace of their own.
+   *
+   * Their device holds a replica of THAT workspace. Joining a team has to
+   * throw it away and take the team's instead — pushing it would publish one
+   * organisation's records into another's, the shared-device bug in a
+   * different costume. Deliberately signed in beforehand: a joiner whose work
+   * is still anonymous is covered by the sign-in claim prompt, which is a
+   * different mechanism.
+   */
+  test('a joiner who starts fresh does not publish their own records', async ({ page, browser }) => {
+    const ownerEmail = uniqueEmail('fresh-owner');
+    await onboard(page, { name: 'Fresh Co' });
+    await signIn(page, ownerEmail);
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+    const url = await inviteLink(page);
+
+    const second = await browser.newContext();
+    const mate = await second.newPage();
+    await onboard(mate, { name: 'My Own Co' });
+    await signIn(mate, uniqueEmail('fresh-mate'));
+    await mate.click('#nav-modules .nav-link:has-text("Contacts")');
+    await mate.click('#add-record-btn');
+    await mate.fill('#f-name', 'Strictly Private');
+    await mate.click('#record-save');
+    await expect(async () => {
+      const d = await (await mate.request.get('/api/data')).json();
+      expect(d.records.some((r) => r.data.name === 'Strictly Private')).toBe(true);
+    }).toPass({ timeout: 25000 });
+
+    await mate.goto(new URL(url).pathname + new URL(url).search);
+    await expect(mate.locator('[data-join]').first()).toBeVisible({ timeout: 25000 });
+    await mate.click('[data-join="fresh"]');
+
+    // Wait for the join itself, then let any sync the joiner's client wants to
+    // do actually happen — the leak this guards against would arrive on that
+    // sync, so asserting before it settles would pass for the wrong reason.
+    //
+    // By org id, not by name: an organisation is named after its creator's
+    // email domain, while #workspace-name shows the business name from
+    // settings. They are different strings and only one of them moves here.
+    const ownerOrg = (await (await page.request.get('/api/me')).json()).org.id;
+    await expect(async () => {
+      const me = await (await mate.request.get('/api/me')).json();
+      expect(me.org && me.org.id).toBe(ownerOrg);
+    }).toPass({ timeout: 25000 });
+    await mate.waitForTimeout(3000);
+
+    // The claim that matters: their private record is not in the team's
+    // workspace, whatever is on screen.
+    const team = await (await page.request.get('/api/data')).json();
+    expect(team.records.map((r) => r.data.name),
+      'declining to bring work must not publish it to the team').not.toContain('Strictly Private');
+
+    await expect(mate.locator('#workspace-name')).toHaveText('Fresh Co', { timeout: 25000 });
+    await expect(mate.locator('tr:has-text("Strictly Private")')).toHaveCount(0);
+    await second.close();
+  });
+
+  /*
+   * The leak this guards against, in its only real form.
+   *
+   * Already-synced rows are past the push watermark and would never be re-sent,
+   * so the dangerous case is work the joiner made OFFLINE and has not delivered
+   * yet. The server files every write under the caller's current workspace, so
+   * flushing that queue after the org has moved posts one person's private
+   * records into their new team's CRM.
+   */
+  test('unsynced work from a previous workspace never lands in the new team', async ({ page, browser }) => {
+    test.info().expectedConsoleErrors = [/Failed to fetch|net::ERR|sync/i];
+    await onboard(page, { name: 'Leak Co' });
+    await signIn(page, uniqueEmail('leak-owner'));
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+    const url = await inviteLink(page);
+
+    const second = await browser.newContext();
+    const mate = await second.newPage();
+    await onboard(mate, { name: 'Mate Own Co' });
+    await signIn(mate, uniqueEmail('leak-mate'));
+    await expect(mate.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+
+    // Sync alone is blocked, so the edit stays queued while everything else —
+    // loading the invite, joining — still works. Ordinary offline would not do:
+    // the page load before joining would flush the queue and close the window
+    // this test is about.
+    await second.route('**/api/sync', (route) => route.abort());
+    await mate.click('#nav-modules .nav-link:has-text("Contacts")');
+    await mate.click('#add-record-btn');
+    await mate.fill('#f-name', 'Never Meant For The Team');
+    await mate.click('#record-save');
+    await expect(mate.locator('tr:has-text("Never Meant For The Team")')).toBeVisible();
+
+    await mate.goto(new URL(url).pathname + new URL(url).search);
+    await expect(mate.locator('[data-join]').first()).toBeVisible({ timeout: 25000 });
+    await mate.click('[data-join="fresh"]');
+    // Sync works again the moment the join is under way, which is exactly when
+    // a flush aimed at the wrong workspace would go out.
+    await second.unroute('**/api/sync');
+
+    const ownerOrg = (await (await page.request.get('/api/me')).json()).org.id;
+    await expect(async () => {
+      const me = await (await mate.request.get('/api/me')).json();
+      expect(me.org && me.org.id).toBe(ownerOrg);
+    }).toPass({ timeout: 25000 });
+    await mate.waitForTimeout(3000);
+
+    const team = await (await page.request.get('/api/data')).json();
+    expect(team.records.map((r) => r.data.name),
+      "a queued edit must not be filed under the team the author just joined")
+      .not.toContain('Never Meant For The Team');
+    await second.close();
+  });
+
+  test('a joiner can bring their work into the team on purpose', async ({ page, browser }) => {
+    await onboard(page, { name: 'Bring Co' });
+    await signIn(page, uniqueEmail('bring-owner'));
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+    const url = await inviteLink(page);
+
+    const second = await browser.newContext();
+    const mate = await second.newPage();
+    await onboard(mate, { name: 'Mate Co' });
+    await signIn(mate, uniqueEmail('bring-mate'));
+    await mate.click('#nav-modules .nav-link:has-text("Contacts")');
+    await mate.click('#add-record-btn');
+    await mate.fill('#f-name', 'Comes With Me');
+    await mate.click('#record-save');
+    await expect(async () => {
+      const d = await (await mate.request.get('/api/data')).json();
+      expect(d.records.some((r) => r.data.name === 'Comes With Me')).toBe(true);
+    }).toPass({ timeout: 25000 });
+
+    await mate.goto(new URL(url).pathname + new URL(url).search);
+    await expect(mate.locator('[data-join="bring"]')).toBeVisible({ timeout: 25000 });
+    await mate.click('[data-join="bring"]');
+    await expect(mate.locator('#workspace-name')).toHaveText('Bring Co', { timeout: 25000 });
+
+    await expect(async () => {
+      const team = await (await page.request.get('/api/data')).json();
+      expect(team.records.map((r) => r.data.name)).toContain('Comes With Me');
+    }).toPass({ timeout: 25000 });
+    await second.close();
+  });
+
+  test('the invite link is not left in the address bar', async ({ page }) => {
+    await onboard(page, { name: 'Hygiene Co' });
+    await signIn(page, uniqueEmail('hygiene'));
+    const url = await inviteLink(page);
+    await page.goto(new URL(url).pathname + new URL(url).search);
+    // An invite code is a credential; it does not belong in history or a
+    // screenshot once the page has taken it.
+    await expect(async () => {
+      expect(page.url()).not.toContain('invite=');
+    }).toPass({ timeout: 10000 });
+  });
+});
+
 test.describe('admin', () => {
   test('shows metrics and manages accounts', async ({ page, browser }) => {
     // ADMIN_EMAILS in playwright.config.js guarantees this address is an admin

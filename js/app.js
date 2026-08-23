@@ -1598,6 +1598,14 @@
     // an account the samples were deliberately brought into. "Easy to discard"
     // has to keep being true after sign-in, not only before it.
     const demoCount = allRecords.filter((r) => r._demo).length + allModules.filter((m) => m._demo).length;
+    // Membership and whether this person may invite. Cheap enough to re-ask,
+    // and /api/me's copy goes stale the moment anyone joins or leaves.
+    let org = null;
+    if (Cloud.isAuthed) {
+      try { org = (await Cloud.org.get()); } catch { org = null; }
+      if (org && !org.org) org = null;
+      if (org) org = { ...org.org, memberCount: org.memberCount, members: org.members, canInvite: org.canInvite };
+    }
     const authed = Cloud.isAuthed;
     main.innerHTML = `
       <div class="page">
@@ -1640,6 +1648,28 @@
             <button class="btn btn-primary" id="settings-signin">${icon('log-in', 15)} Sign in</button>` : `
             <p class="settings-hint">This copy of CRM Builder is running without a server — everything is stored on this device. Deploy with the included server (see DEPLOYMENT.md) to enable accounts and sync.</p>`}
         </div>
+        ${authed && org ? `
+        <div class="card">
+          <div class="card-head"><h2>Team</h2></div>
+          <p class="settings-hint">
+            <strong>${esc(org.name)}</strong> — ${org.memberCount === 1 ? 'just you so far' : `${org.memberCount} people`}.
+            Everyone on a team shares one workspace: the same modules, the same records.
+          </p>
+          ${org.members && org.members.length ? `
+            <ul class="team-list">
+              ${org.members.map((m) => `
+                <li>
+                  <span>${esc(m.name || m.email)}${m.id === Cloud.user.id ? ' <span class="muted">(you)</span>' : ''}</span>
+                  <span class="pill ${m.role === 'owner' || m.role === 'platformAdmin' ? 'pill-accent' : ''}">${esc(ROLE_LABELS[m.role] || m.role)}</span>
+                </li>`).join('')}
+            </ul>` : ''}
+          ${org.canInvite ? `
+            <div class="btn-row">
+              <button class="btn btn-primary" id="invite-btn">${icon('user', 15)} Invite a colleague</button>
+            </div>
+            <p class="settings-hint">An invite is a private link that works once and expires after a week. Send it however you normally reach them.</p>`
+    : '<p class="settings-hint">Only an owner can invite people to this team.</p>'}
+        </div>` : ''}
         <div class="card">
           <div class="card-head"><h2>Backup & restore</h2></div>
           <p class="settings-hint">Export a backup file anytime, or use one to move your CRM between devices.</p>
@@ -1675,6 +1705,8 @@
       renderSidebar();
       toast('Workspace saved');
     });
+    const inviteBtn = $('#invite-btn');
+    if (inviteBtn) inviteBtn.addEventListener('click', openInvite);
     $('#export-btn').addEventListener('click', exportData);
     $('#import-btn').addEventListener('click', () => $('#import-file').click());
     $('#import-file').addEventListener('change', importData);
@@ -1732,6 +1764,55 @@
         toast((await Cloud.pushNow()) ? 'Synced' : 'Sync failed — will retry when online');
       });
     }
+  }
+
+  /*
+   * Mint an invite link and put it somewhere the owner can copy it.
+   *
+   * No email is sent — there is no mail plumbing in this product and inventing
+   * some would be a bigger commitment than the feature. The link goes wherever
+   * they already talk to their colleague.
+   */
+  async function openInvite() {
+    const modal = openModal(`
+      <div class="modal-head">
+        <h2>Invite a colleague</h2>
+        <button class="icon-btn" data-close aria-label="Close">${icon('x', 16)}</button>
+      </div>
+      <div class="modal-body"><p class="settings-hint">Creating a link…</p></div>`);
+    $$('[data-close]', modal).forEach((b) => b.addEventListener('click', closeModal));
+
+    let out;
+    try {
+      out = await Cloud.org.invite();
+    } catch (err) {
+      $('.modal-body', modal).innerHTML = `<p class="empty-hint">${esc(err.message || 'Could not create an invite link')}</p>`;
+      return;
+    }
+
+    const expires = new Date(out.invite.expiresAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    $('.modal-body', modal).innerHTML = `
+      <p class="settings-hint">Send this link to the person you want on the team. It works <strong>once</strong> and stops working after <strong>${esc(expires)}</strong>.</p>
+      <div class="form-row">
+        <label for="invite-url">Invite link</label>
+        <input class="input" id="invite-url" type="text" readonly value="${esc(out.url)}">
+      </div>
+      <p class="settings-hint">They will be asked whether to bring their own records with them. Anything they bring becomes visible to everyone on the team.</p>
+      <div class="btn-row"><button class="btn btn-primary" id="invite-copy">${icon('clipboard-list', 15)} Copy link</button></div>`;
+
+    const field = $('#invite-url', modal);
+    field.addEventListener('focus', () => field.select());
+    $('#invite-copy', modal).addEventListener('click', async () => {
+      field.select();
+      try {
+        await navigator.clipboard.writeText(out.url);
+        toast('Invite link copied');
+      } catch {
+        // Clipboard access is refused in plenty of contexts; the link is
+        // selected either way, so say what to do rather than just failing.
+        toast('Press Ctrl/Cmd+C to copy the selected link');
+      }
+    });
   }
 
   function openTemplatePicker() {
@@ -2326,11 +2407,195 @@
     return true;
   }
 
+  /*
+   * Re-pull from scratch when this scope's rows belong to a different
+   * workspace than the one we now sync with.
+   *
+   * Happens on joining a team, leaving one, or being removed from one. The
+   * local replica is of the old organisation: pushing it would publish one
+   * team's records into another's workspace, which is the shared-device bug
+   * wearing a different hat. So push what is owed to the OLD workspace first,
+   * then throw the replica away and take the new one clean.
+   */
+  async function reconcileWorkspace() {
+    if (!Cloud.isAuthed) return false;
+    /*
+     * Only ever act on an answer the server actually gave.
+     *
+     * Offline, /api/me never resolves and Cloud falls back to the cached
+     * identity, which carries no org. Treating that absence as "the workspace
+     * changed" wiped the local replica the moment the connection dropped —
+     * caught by the offline sync test, which is the whole reason it exists.
+     * No fresh answer means no decision.
+     */
+    const workspaceId = Cloud.me.org && Cloud.me.org.id;
+    if (!workspaceId) return false;
+    if (!Scope.workspaceChanged(workspaceId)) return false;
+
+    /*
+     * Deliberately no push here.
+     *
+     * The session's organisation has already moved, and the server files every
+     * write under the caller's CURRENT workspace — so "flushing what is owed to
+     * the old workspace" would post those rows straight into the new team's
+     * CRM. Anything still pending at this point cannot be delivered anywhere it
+     * belongs, so it is dropped, and the user is told rather than left to
+     * notice later.
+     *
+     * The join flow avoids reaching here with unsynced work by pushing BEFORE
+     * it joins, while the old workspace is still the caller's own.
+     */
+    if (Scope.get('dirty')) {
+      console.warn('Unsynced changes to the previous workspace could not be transferred.');
+      toast('Some unsynced changes to your previous workspace could not be brought across');
+      Scope.remove('dirty');
+    }
+
+    // A hard clear, not tombstones: these rows belong to a workspace we are no
+    // longer part of, and a tombstone would travel to the NEW workspace and
+    // delete rows there instead.
+    await DB.clear('records');
+    await DB.clear('modules');
+    Scope.remove('snapshot');
+    // Settings belong to the workspace too — the business name and currency
+    // are the team's, not the person's. Dropping the local copy and its clock
+    // is what lets the new workspace's settings win the pull that follows.
+    Scope.remove('settings');
+    Scope.remove('settingsAt');
+    loadSettingsFromScope();
+    Cloud.resetCursor();
+    Scope.markWorkspace(workspaceId);
+    relationNameCache.clear();
+    await loadModules();
+
+    // Nothing local is left to compare against, so take the new workspace
+    // whole. Without this the app sits on an empty screen until something
+    // else happens to trigger a sync.
+    await Cloud.sync();
+    relationNameCache.clear();
+    await loadModules();
+    return true;
+  }
+
+  // ------------------------------------------------------------ joining a team
+  const INVITE_KEY = 'crmb:pendingInvite';
+
+  /*
+   * Pick an invite code out of the URL and hold on to it.
+   *
+   * Device-level, not scoped: the link is usually opened before signing in,
+   * and sign-in is a full page load (OAuth) or a reload (dev login), so it has
+   * to survive both. Removed from the address bar immediately — an invite code
+   * is a credential and does not belong in browser history or a screenshot.
+   */
+  function captureInvite() {
+    const params = new URLSearchParams(location.search);
+    const code = params.get('invite');
+    if (!code) return;
+    try { localStorage.setItem(INVITE_KEY, code); } catch { /* private mode */ }
+    params.delete('invite');
+    const qs = params.toString();
+    history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : '') + location.hash);
+  }
+
+  async function redeemPendingInvite() {
+    let code = null;
+    try { code = localStorage.getItem(INVITE_KEY); } catch { /* none */ }
+    if (!code) return false;
+    if (!Cloud.isAuthed) {
+      // Held until they sign in — the invite names an account, so there is
+      // nobody to add yet.
+      toast('Sign in to join the team you were invited to');
+      return false;
+    }
+
+    let preview;
+    try {
+      preview = await Cloud.org.preview(code);
+    } catch (err) {
+      localStorage.removeItem(INVITE_KEY);
+      toast(err.status === 404 ? 'That invite link is no longer valid — ask for a fresh one' : 'Could not check that invite link');
+      return false;
+    }
+    if (preview.alreadyMember) {
+      localStorage.removeItem(INVITE_KEY);
+      return false;
+    }
+
+    const inv = await inventory();
+    const choice = await askAboutJoining(preview.org, inv);
+    if (choice === 'cancel') return false;      // asked again next time
+    localStorage.removeItem(INVITE_KEY);
+
+    try {
+      // Deliver anything still pending while this is still our own workspace.
+      // After the join the server would file it under the team instead.
+      if (Scope.get('dirty')) await Cloud.sync().catch(() => {});
+      const out = await Cloud.org.join(code, choice === 'bring');
+      // /api/me is stale the moment the org changes, so refresh it before
+      // anything decides which workspace this device should be holding.
+      await Cloud.init({ getState: fullState, getChanges: localChanges, applyChanges: mergeChanges });
+      await reconcileWorkspace();
+      renderSidebar();
+      route();
+      toast(out.broughtRows
+        ? `Joined ${out.org.name} — your work came with you`
+        : `Joined ${out.org.name}`);
+      return true;
+    } catch (err) {
+      toast(err.message || 'Could not join that team');
+      return false;
+    }
+  }
+
+  /*
+   * The question a joiner has to answer, and it is the same one sign-in asks:
+   * does the work already on this device come with you?
+   *
+   * Said plainly, because joining publishes it to colleagues. Someone's
+   * personal contact list appearing in front of their team is not a surprise
+   * to spring.
+   */
+  function askAboutJoining(org, inv) {
+    return new Promise((resolve) => {
+      const has = inv.hasReal || inv.hasDemo;
+      const count = inv.realRecords.length;
+      const body = has
+        ? `You have ${count} record${count === 1 ? '' : 's'} on this device. You can bring them into ${org.name}, where everyone on the team will be able to see and edit them — or leave them here and start on the team's workspace.`
+        : `You will share ${org.name}'s modules and records with the rest of the team.`;
+
+      const choices = has
+        ? [['fresh', `Join and start on ${org.name}'s workspace`, 'primary'],
+           ['bring', 'Join and bring my work with me', ''],
+           ['cancel', 'Not now', 'ghost']]
+        : [['fresh', `Join ${org.name}`, 'primary'], ['cancel', 'Not now', 'ghost']];
+
+      const modal = openModal(`
+        <div class="modal-head"><h2>Join ${esc(org.name)}?</h2></div>
+        <div class="modal-body">
+          <p class="settings-hint">${esc(body)}</p>
+          <p class="settings-hint">${esc(org.memberCount === 1 ? 'You would be the second person on this team.' : `${org.memberCount} people are already on this team.`)}</p>
+        </div>
+        <div class="modal-foot claim-actions">
+          ${choices.map(([value, label, kind]) => `
+            <button class="btn ${kind === 'primary' ? 'btn-primary' : kind === 'ghost' ? 'btn-ghost' : ''}" data-join="${value}">${esc(label)}</button>`).join('')}
+        </div>`);
+      $$('[data-join]', modal).forEach((btn) => btn.addEventListener('click', () => {
+        closeModal();
+        resolve(btn.dataset.join);
+      }));
+    });
+  }
+
   async function syncInBackground() {
     await Cloud.init({ getState: fullState, getChanges: localChanges, applyChanges: mergeChanges });
     let scopeChanged = false;
     try {
       scopeChanged = await reconcileScope();
+      // Identity first (whose scope), then workspace (whose data that scope is
+      // a replica of). Both can move at once when someone joins a team on a
+      // device where somebody else was last signed in.
+      scopeChanged = (await reconcileWorkspace()) || scopeChanged;
     } catch (err) {
       console.error('Could not settle which workspace to show:', err);
     }
@@ -2352,6 +2617,9 @@
     // Tombstones the whole account has long since seen. Best-effort and never
     // in the way of the sync itself.
     DB.pruneTombstones().catch(() => {});
+    // After the workspace has settled, never before: joining swaps the replica
+    // out, and doing that mid-sync would race the pull that is still landing.
+    await redeemPendingInvite().catch((err) => console.warn('Invite could not be handled:', err));
     if (!changed) return;
     await loadModules();
     if ($('#modal-root').firstChild) return; // mid-edit: leave the screen alone
@@ -2371,6 +2639,7 @@
     $('#scrim').addEventListener('click', closeSidebar);
     updateOnlineBadge();
 
+    captureInvite();
     const params = new URLSearchParams(location.search);
     if (params.get('auth_error')) {
       toast(params.get('auth_error') === 'disabled' ? 'This account has been disabled' : 'Sign-in failed — please try again');

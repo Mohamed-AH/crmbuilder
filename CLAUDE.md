@@ -38,7 +38,7 @@ docs/                 user guide, onboarding playbook, demo script, architecture
 
 ## 2. Current status
 
-**All green:** 74 Node tests + 42 Playwright tests.
+**All green:** 87 Node tests + 47 Playwright tests.
 
 ```sh
 npm install
@@ -59,6 +59,8 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
 - **Per-record delta sync** with tombstoned deletes — see §10
 - **Storage scopes**: one local store per identity, so a shared device cannot
   cross-contaminate and demo data cannot sync — see §11
+- **Shared team workspaces**: org-owned workspaces (stage A) and invite links
+  (stage B) — see §5 and §13
 - Admin dashboard with analytics; **organisations with per-tenant scoping**
 - **Pooled and dedicated deployment blueprints** (`render.yaml`,
   `render.dedicated.yaml`) and a `/health` endpoint
@@ -66,11 +68,8 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
 - Docs: USER-GUIDE, ONBOARDING, DEMO-SCRIPT, ARCHITECTURE, product-tour.html
 
 ### Not built yet
-- **Shared team workspaces** — an org groups people for *administration* only;
-  each account still has its own workspace. See §5. Per-record sync (the old
-  gate on this) is now shipped, so what remains is product work: invites,
-  workspace ownership at the org rather than the account, and a permission
-  model for who may edit which module.
+- **Owner-vs-member enforcement** (stage C) — a member can currently change
+  module schema. **Member management and leaving a team** (stage D).
 - Email sending, third-party integrations.
 
 ---
@@ -94,7 +93,7 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v6`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v7`).
 
 **Tenancy scoping comes from the session, never a request.** That covers both
 `req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
@@ -214,9 +213,8 @@ session only** — never a parameter, query or body, the same rule as
 equal today, and a key named for what it keys is what stops the next reader
 assuming they always will be.
 
-Still unbuilt: invites/join (stage B), owner-vs-member enforcement (stage C),
-member management and leaving (stage D). Until stage B nothing can put two
-people in one org, which is why the tests reach into the store to do it.
+Still unbuilt: owner-vs-member enforcement (stage C), member management and
+leaving (stage D).
 
 ---
 
@@ -406,3 +404,47 @@ calling the functions, because what is under test is what a live upgrade does.
 - **FileStore keeps the store in memory and rewrites the whole file on save**,
   so editing `store.json` under a running server is clobbered by the next write.
   Stop, edit, start — that is what `moveToOrg()` in `tests/api.test.mjs` does.
+
+---
+
+## 13. Invites and joining (stage B)
+
+```
+invites { code, orgId, role, createdBy, createdAt, expiresAt, usedBy, usedAt, revokedAt }
+```
+
+An invite is a link the owner copies and sends themselves — there is no mail
+plumbing in this product. That makes the code a **bearer credential**: 24 random
+bytes, single use, 7 days, revocable, never logged, and stripped from the
+address bar by `captureInvite()` as soon as the page has it.
+
+**Every failure answers identically** (`INVITE_REJECTION`, 404) — unknown,
+expired, spent, revoked. A different response for "wrong" and "expired" would
+let someone enumerate which codes exist.
+
+**Joining means leaving**, so `/api/org/join` refuses when the caller is the
+last owner of an org that still has other members — walking out would strand
+them with a workspace nobody can administer.
+
+### The client side, and the trap that bit
+
+`Scope.workspaceChanged()` stamps which workspace a scope's rows are a replica
+of. When `/api/me` reports a different org, `reconcileWorkspace()` throws the
+replica away and pulls the new workspace clean.
+
+- **Never push after the org has moved.** The server files every write under the
+  caller's *current* workspace, so "flushing what is owed to the old workspace"
+  posts those rows into the new team's CRM. I wrote exactly that bug; the fix is
+  to push **before** joining (while the old workspace is still ours) and to drop
+  and report anything still pending afterwards. Guarded by *"unsynced work from
+  a previous workspace never lands in the new team"*, which needs `/api/sync`
+  blocked to reproduce — plain offline does not work, because the page load
+  before joining flushes the queue and closes the window.
+- **A hard `DB.clear`, not tombstones.** A tombstone would travel to the *new*
+  workspace and delete rows there.
+- **Settings belong to the workspace**, so the scope's `settings`/`settingsAt`
+  are cleared too, or the joiner's own business name outlives the join.
+- **Only act on an answer the server actually gave.** Offline, `/api/me` never
+  resolves and `Cloud.me.org` is absent; treating that as "the org changed"
+  wiped the local workspace the moment the connection dropped. Caught by the
+  offline sync test.

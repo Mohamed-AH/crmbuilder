@@ -267,6 +267,15 @@ const Cloud = (() => {
       pushTimer = setTimeout(() => Cloud.sync(), 1500);
     },
 
+    org: {
+      get: () => api('/api/org', {}, TIMEOUT.admin),
+      invites: () => api('/api/org/invites', {}, TIMEOUT.admin),
+      invite: () => api('/api/org/invites', { method: 'POST', body: '{}' }, TIMEOUT.admin),
+      revoke: (code) => api(`/api/org/invites/${encodeURIComponent(code)}`, { method: 'DELETE' }, TIMEOUT.admin),
+      preview: (code) => api(`/api/org/invites/${encodeURIComponent(code)}/preview`, {}, TIMEOUT.admin),
+      join: (code, bringWork) => api('/api/org/join', { method: 'POST', body: JSON.stringify({ code, bringWork }) }, TIMEOUT.admin),
+    },
+
     admin: {
       stats: () => api('/api/admin/stats', {}, TIMEOUT.admin),
       users: () => api('/api/admin/users', {}, TIMEOUT.admin),

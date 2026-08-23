@@ -184,11 +184,13 @@ with pipelines, boards and currency built in, and works offline as an installed
 app. Narrower on purpose.
 
 **"Multi-user?"**
-Each person gets an account and their own workspace. Sync is per record, so one
-person across a laptop and a phone can edit different records on each and keep
-both. Several people editing *one shared workspace* is not what it does today —
-the sync groundwork for it is in place, the shared workspace itself is not. Say
-that plainly; being caught out later costs more than the honest answer now.
+Yes. An organisation shares one workspace, and an owner invites people with a
+private link from Settings. Per-record sync means two colleagues editing
+different records both keep their work.
+
+Be straight about the edge: everyone on a team can currently edit anything,
+including module fields. Per-role permissions are the next piece of work, not a
+shipped feature.
 
 **"Permissions / field-level security?"**
 Not today. Admins manage accounts, not per-field access.
