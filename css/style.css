@@ -666,3 +666,14 @@ body.tour-open { overflow: hidden; }
   font-size: 14px;
 }
 .team-list li:last-child { border-bottom: 0; }
+
+/* A member opening the module builder sees the schema, not an invitation to
+   change it. Pointer-events rather than the disabled attribute: the fields are
+   still readable and selectable, they just cannot be edited, and the server
+   would refuse the write anyway. */
+.builder-readonly .builder-field input,
+.builder-readonly .builder-field select,
+.builder-readonly .swatch-row { pointer-events: none; opacity: 0.75; }
+.builder-readonly .bf-actions { display: none; }
+
+.record-author { margin: 14px 0 0; padding-top: 10px; border-top: 1px solid var(--border); }

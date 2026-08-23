@@ -1083,6 +1083,64 @@ test.describe('team workspaces', () => {
     await second.close();
   });
 
+  /*
+   * Schema belongs to the owner, and a member is told rather than left guessing.
+   *
+   * The case this really exists for is not somebody poking at a hidden button:
+   * it is an owner who edited a module offline and was demoted before they
+   * reconnected. Their work legitimately vanishes, and the difference between
+   * that being a rule and being a bug report is entirely the message.
+   */
+  test('a demoted member has their module edit reverted, and is told why', async ({ page, browser }) => {
+    const ownerEmail = uniqueEmail('demote-owner');
+    await onboard(page, { name: 'Demote Co' });
+    await signIn(page, ownerEmail);
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+    const url = await inviteLink(page);
+
+    const second = await browser.newContext();
+    const mate = await second.newPage();
+    await mate.goto(new URL(url).pathname + new URL(url).search);
+    await signIn(mate, uniqueEmail('demote-mate'), { claim: 'none' });
+    await expect(mate.locator('[data-join]').first()).toBeVisible({ timeout: 25000 });
+    await mate.click('[data-join="fresh"]');
+    await expect(mate.locator('#nav-modules .nav-link:has-text("Contacts")')).toBeVisible({ timeout: 25000 });
+
+    // They joined as a member, so the builder is read-only and offers no save.
+    await mate.click('#nav-modules .nav-link:has-text("Contacts")');
+    await mate.click('#edit-module-btn');
+    await expect(mate.locator('.builder-readonly')).toBeVisible();
+    await expect(mate.locator('#b-save')).toHaveCount(0);
+    await expect(mate.locator('#b-delete')).toHaveCount(0);
+    await mate.click('.modal [data-close]');
+
+    // Now force the race: a module edit made while their client still believed
+    // it could, delivered after the server knows better.
+    await mate.evaluate(async () => {
+      const mods = await DB.getAll('modules');
+      const target = mods.find((m) => m.name === 'Contacts');
+      await DB.put('modules', { ...target, name: 'Renamed While Demoted', updatedAt: Date.now() });
+      Scope.set('dirty', '1');
+    });
+    await mate.evaluate(() => Cloud.sync());
+
+    // The rename is undone, and the toast names the module rather than leaving
+    // them to conclude the app ate their work.
+    // .last(): several toasts can be on screen at once, and strict mode
+    // refuses a multi-match — the trap that has bitten here before.
+    await expect(mate.locator('.toast').last())
+      .toContainText('Only an owner can change module fields', { timeout: 25000 });
+    await expect(mate.locator('.toast').last()).toContainText('Contacts');
+    await expect(mate.locator('#nav-modules .nav-link:has-text("Contacts")')).toBeVisible();
+    await expect(mate.locator('#nav-modules .nav-link:has-text("Renamed While Demoted")')).toHaveCount(0);
+
+    // And the team never saw it.
+    const team = await (await page.request.get('/api/data')).json();
+    expect(team.modules.map((m) => m.name),
+      "a member's rename must not reach the team").not.toContain('Renamed While Demoted');
+    await second.close();
+  });
+
   test('the invite link is not left in the address bar', async ({ page }) => {
     await onboard(page, { name: 'Hygiene Co' });
     await signIn(page, uniqueEmail('hygiene'));

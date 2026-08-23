@@ -636,6 +636,17 @@ function workspaceIdFor(user) {
   return user.orgId || user.id;
 }
 
+/*
+ * Who may change the shape of a workspace.
+ *
+ * Renaming or deleting a field changes what every record in the team means, so
+ * it belongs to whoever is accountable for the workspace. Members create, edit
+ * and delete records freely — that is the day-to-day work.
+ */
+function canEditSchema(user) {
+  return user.role === 'owner' || user.role === 'platformAdmin';
+}
+
 function requirePlatformAdmin(req, res, next) {
   if (req.user.role !== 'platformAdmin') return res.status(403).json({ error: 'Platform admin only' });
   next();
@@ -720,14 +731,21 @@ function envelope(kind, user, item, now, prior = null) {
 function wireItem(e) {
   return e.deletedAt
     ? { id: e.id, updatedAt: e.updatedAt, deleted: true, deletedAt: e.deletedAt }
-    : { id: e.id, updatedAt: e.updatedAt, doc: e.doc };
+    : { id: e.id, updatedAt: e.updatedAt, doc: e.doc, createdBy: e.createdBy || null, updatedBy: e.updatedBy || null };
 }
 
 async function applyPush(user, body) {
   const wsId = workspaceIdFor(user);
   const now = Date.now();
   const won = { modules: new Set(), records: new Set() };
+  const rejected = { modules: [], records: [] };
+  const mayEditSchema = canEditSchema(user);
   let touched = 0;
+
+  // Modules first, so a module deletion that gets refused is known about
+  // before this workspace's record tombstones are considered — see below.
+  const refusedModuleIds = new Set();   // deletions we refused
+  const absentModuleIds = new Set();    // creations we refused
 
   for (const kind of SYNC_KINDS) {
     const incoming = Array.isArray(body[kind]) ? body[kind] : [];
@@ -752,6 +770,53 @@ async function applyPush(user, body) {
       const prior = existing.get(id);
       const updatedAt = Number(item.updatedAt) || now;
       if (prior && prior.updatedAt >= updatedAt) continue; // the server's copy wins
+
+      /*
+       * A member may not change the shape of the workspace.
+       *
+       * Refused rather than errored: the response carries the server's own
+       * copy back, the client overwrites its local one with it, and the edit
+       * simply un-happens. That is kinder than a failed sync that leaves the
+       * two sides disagreeing, and it is the only behaviour that works for the
+       * case this really exists for — someone who was an owner when they made
+       * the edit offline and was demoted before reconnecting.
+       */
+      if (kind === 'modules' && !mayEditSchema) {
+        if (prior) {
+          rejected.modules.push(wireItem(prior));
+          if (item.deleted) refusedModuleIds.add(id);
+        } else {
+          // A module they created locally that never reached the server. There
+          // is nothing to restore, so the honest answer is that it does not
+          // exist — and its records have nowhere to live either.
+          rejected.modules.push({ id, updatedAt: now, deleted: true, deletedAt: now, absent: true });
+          absentModuleIds.add(id);
+        }
+        continue;
+      }
+
+      // Records belonging to a module the server just refused to create. They
+      // would otherwise land pointing at a module that does not exist. Only
+      // covers rows in this same push, which is the case that actually
+      // happens: a module and its records go dirty together.
+      if (kind === 'records' && !mayEditSchema && !item.deleted
+          && item.doc && absentModuleIds.has(String(item.doc.moduleId))) {
+        rejected.records.push({ id, updatedAt: now, deleted: true, deletedAt: now, absent: true });
+        continue;
+      }
+
+      /*
+       * ...and a record tombstone that only exists because of a module
+       * deletion we just refused has to go with it. Otherwise deleting a
+       * module as a member would restore the module and destroy every record
+       * in it, which is worse than either outcome on its own.
+       */
+      if (kind === 'records' && item.deleted && prior && !prior.deletedAt
+          && prior.doc && refusedModuleIds.has(String(prior.doc.moduleId))) {
+        rejected.records.push(wireItem(prior));
+        continue;
+      }
+
       writes.push(envelope(kind, user, item, now, prior));
       won[kind].add(id);
     }
@@ -782,7 +847,7 @@ async function applyPush(user, body) {
     }
   }
 
-  return { won, touched, settingsWritten };
+  return { won, touched, settingsWritten, rejected };
 }
 
 /*
@@ -1126,7 +1191,14 @@ app.get('/api/me', async (req, res) => {
   if (user && user.orgId) {
     const record = await store.getOrg(user.orgId);
     const members = await store.listUsers(user.orgId);
-    org = { id: user.orgId, name: record ? record.name : '', memberCount: members.length };
+    org = {
+      id: user.orgId,
+      name: record ? record.name : '',
+      memberCount: members.length,
+      // Enough to put a name next to a record's author. Only ever the caller's
+      // own org, and only the fields a teammate would see on the Team screen.
+      members: members.map((m) => ({ id: m.id, name: m.name, email: m.email, role: m.role })),
+    };
   }
   res.json({
     authenticated: !!user,
@@ -1162,13 +1234,21 @@ app.post('/api/sync', requireAuth, async (req, res) => {
     }
   }
 
-  const { won, touched, settingsWritten } = await applyPush(req.user, body);
+  const { won, touched, settingsWritten, rejected } = await applyPush(req.user, body);
   const out = await pullChanges(req.user, since, won);
   if (touched || settingsWritten) {
     await refreshCounts(req.user);
     store.addEvent('sync', req.user.id, req.user.orgId).catch(() => {});
   }
-  res.json({ ...out, pushed: touched, serverTime: Date.now() });
+  const refused = rejected.modules.length + rejected.records.length;
+  res.json({
+    ...out,
+    pushed: touched,
+    // Present only when something was actually refused, so the client can treat
+    // its absence as "nothing to explain" rather than having to count.
+    ...(refused ? { rejected: { ...rejected, reason: 'owner-only' } } : {}),
+    serverTime: Date.now(),
+  });
 });
 
 // ---- whole-snapshot sync (legacy)

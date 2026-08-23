@@ -38,7 +38,7 @@ docs/                 user guide, onboarding playbook, demo script, architecture
 
 ## 2. Current status
 
-**All green:** 87 Node tests + 47 Playwright tests.
+**All green:** 94 Node tests + 48 Playwright tests.
 
 ```sh
 npm install
@@ -59,8 +59,8 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
 - **Per-record delta sync** with tombstoned deletes — see §10
 - **Storage scopes**: one local store per identity, so a shared device cannot
   cross-contaminate and demo data cannot sync — see §11
-- **Shared team workspaces**: org-owned workspaces (stage A) and invite links
-  (stage B) — see §5 and §13
+- **Shared team workspaces**: org-owned workspaces (stage A), invite links
+  (stage B), owner-only schema (stage C) — see §5, §13, §14
 - Admin dashboard with analytics; **organisations with per-tenant scoping**
 - **Pooled and dedicated deployment blueprints** (`render.yaml`,
   `render.dedicated.yaml`) and a `/health` endpoint
@@ -68,8 +68,8 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
 - Docs: USER-GUIDE, ONBOARDING, DEMO-SCRIPT, ARCHITECTURE, product-tour.html
 
 ### Not built yet
-- **Owner-vs-member enforcement** (stage C) — a member can currently change
-  module schema. **Member management and leaving a team** (stage D).
+- **Member management and leaving a team** (stage D) — removing someone,
+  changing a role from the Team screen, `POST /api/org/leave`.
 - Email sending, third-party integrations.
 
 ---
@@ -93,7 +93,7 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v7`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v8`).
 
 **Tenancy scoping comes from the session, never a request.** That covers both
 `req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
@@ -213,8 +213,7 @@ session only** — never a parameter, query or body, the same rule as
 equal today, and a key named for what it keys is what stops the next reader
 assuming they always will be.
 
-Still unbuilt: owner-vs-member enforcement (stage C), member management and
-leaving (stage D).
+Still unbuilt: member management and leaving (stage D).
 
 ---
 
@@ -448,3 +447,48 @@ replica away and pulls the new workspace clean.
   resolves and `Cloud.me.org` is absent; treating that as "the org changed"
   wiped the local workspace the moment the connection dropped. Caught by the
   offline sync test.
+
+---
+
+## 14. Permissions (stage C)
+
+| | owner / platformAdmin | member |
+|---|---|---|
+| records: create, edit, delete | ✅ | ✅ |
+| module fields, add/delete modules | ✅ | ❌ |
+| invite, roles, remove members | ✅ | ❌ |
+
+`canEditSchema()` exists twice on purpose: on the server (`server.js`) it
+decides, and on the client (`js/app.js`) it only avoids offering a button whose
+effect would be undone a second later.
+
+**Refused, not errored.** `applyPush` skips a member's module write and returns
+the server's own copy in `rejected`. The client overwrites its local row with
+that and the edit un-happens. A failed sync would instead leave the two sides
+disagreeing forever.
+
+**Traps:**
+
+- **A rejection cannot be merged by last-write-wins.** The local row is a
+  tombstone or an edit stamped *later* than the server's copy, so the ordinary
+  rule keeps it and re-pushes it every sync, forever. `applyRejections()`
+  overwrites unconditionally and takes the server's clock too, which drops the
+  row back below the push watermark.
+- **A refused module deletion must take its record tombstones with it.**
+  Deleting a module tombstones the module *and* every record in it; refusing
+  only the module restores it and leaves the records destroyed — worse than
+  either outcome. `refusedModuleIds` cascades. Same for a refused module
+  *creation* and the records pointing at it (`absentModuleIds`).
+- **A rejection with nothing to restore is purged, not tombstoned.** A
+  tombstone would be pushed, refused, and reverted on every subsequent sync.
+- **The toast fires after the revert is on screen**, from inside
+  `mergeChanges` — every sync path goes through there, and reporting from
+  `syncInBackground` alone left the debounced push silent.
+- **`.toast` matches several elements**; assert `.last()` (see §4).
+
+The case this really exists for is not a poked-at hidden button: it is someone
+who edited a module offline **as an owner** and was demoted before reconnecting.
+Their work legitimately vanishes, and the named toast is the difference between
+a rule and a bug report. Guarded by *"a demoted member has their module edit
+reverted, and is told why"*, which fails both when the revert is silent and when
+the client ignores the refusal.

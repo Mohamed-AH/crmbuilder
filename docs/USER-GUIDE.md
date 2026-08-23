@@ -275,6 +275,15 @@ the team's workspace, or bring their own records with them. Anything they bring
 becomes visible to everyone on the team, and the prompt says so. Nothing they
 decline to bring is deleted — it stays in their own workspace.
 
+**Who can change what.** Everyone on a team can create, edit and delete
+records — that is the day-to-day work. Only an **owner** can change a module's
+fields, add or delete modules, and invite or manage people. A field rename
+changes what every record in the team means, so it belongs with whoever is
+accountable for the workspace. Members opening the module builder see the
+fields but cannot change them.
+
+Records show who added them once there is more than one person on the team.
+
 Two people editing different records both keep their work. If two people edit
 *the same* record, the later edit wins, exactly as it does across your own
 devices.

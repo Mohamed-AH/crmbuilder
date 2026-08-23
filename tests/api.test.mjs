@@ -831,6 +831,136 @@ describe('invites and joining', () => {
 });
 
 /*
+ * Owner-vs-member permissions.
+ *
+ * Once several people share a workspace, a field rename or deletion changes
+ * what every record in the team means — so schema belongs to whoever is
+ * accountable for it. Records are the day-to-day work and stay open to
+ * everyone. Enforced on the server, because a UI gate is a courtesy.
+ */
+describe('what a member may change', () => {
+  const owner = jar();
+  const member = jar();
+  let orgId = null;
+
+  const push = (body, cookies) => req('/api/sync', { method: 'POST', body: { since: 0, ...body }, cookies });
+  const mod = (id, name, updatedAt) => ({ id, updatedAt, doc: { id, name, fields: [{ key: 'title', label: 'Title', type: 'text' }] } });
+  const rec = (id, moduleId, title, updatedAt) => ({ id, updatedAt, doc: { id, moduleId, data: { title } } });
+
+  before(async () => {
+    const o = await req('/auth/dev', { method: 'POST', body: { email: 'perm-owner@team.test' }, cookies: owner });
+    orgId = o.json.user.orgId;
+    await req('/auth/dev', { method: 'POST', body: { email: 'perm-member@solo.test' }, cookies: member });
+    const code = (await req('/api/org/invites', { method: 'POST', body: {}, cookies: owner })).json.invite.code;
+    await req('/api/org/join', { method: 'POST', body: { code }, cookies: member });
+
+    await push({ modules: [mod('perm-m1', 'Deals', 10)], records: [rec('perm-r1', 'perm-m1', 'Original', 11)] }, owner);
+  });
+
+  test('a member can create, edit and delete records', async () => {
+    const cursor = (await req('/api/sync?since=0', { cookies: member })).json.cursor;
+    const out = await push({ since: cursor, records: [rec('perm-r2', 'perm-m1', 'Member wrote this', 100)] }, member);
+    assert.equal(out.status, 200);
+    assert.equal(out.json.rejected, undefined, 'record writes are not refused');
+
+    const seen = await req('/api/data', { cookies: owner });
+    assert.ok(seen.json.records.some((r) => r.data.title === 'Member wrote this'));
+
+    // ...and delete one, including a record the owner created.
+    await push({ records: [{ id: 'perm-r1', updatedAt: 110, deleted: true }] }, member);
+    const after = await req('/api/data', { cookies: owner });
+    assert.ok(!after.json.records.some((r) => r.id === 'perm-r1'));
+  });
+
+  test('a member cannot change a module, and is told which one', async () => {
+    const out = await push({ modules: [mod('perm-m1', 'Renamed By Member', 200)] }, member);
+    assert.equal(out.status, 200, 'refused, not errored — the sync itself is fine');
+    assert.ok(out.json.rejected, 'the response has to say something was refused');
+    assert.equal(out.json.rejected.reason, 'owner-only');
+    assert.equal(out.json.rejected.modules.length, 1);
+
+    // The server hands back its own copy, which is what lets the client revert.
+    const restored = out.json.rejected.modules[0];
+    assert.equal(restored.id, 'perm-m1');
+    assert.equal(restored.doc.name, 'Deals', 'the rejection carries the truth, not the attempt');
+
+    const stored = await req('/api/data', { cookies: owner });
+    assert.equal(stored.json.modules.find((m) => m.id === 'perm-m1').name, 'Deals');
+  });
+
+  test('a member cannot create a module either', async () => {
+    const out = await push({ modules: [mod('perm-new', 'Sneaky', 300)] }, member);
+    assert.ok(out.json.rejected);
+    assert.equal(out.json.rejected.modules[0].absent, true, 'there is nothing to restore, so say it is gone');
+    const stored = await req('/api/data', { cookies: owner });
+    assert.ok(!stored.json.modules.some((m) => m.id === 'perm-new'));
+  });
+
+  /*
+   * The case that would be worse than either outcome alone.
+   *
+   * Deleting a module tombstones the module AND every record in it. Refusing
+   * only the module would restore it and leave every record destroyed, so the
+   * refusal has to take its records with it.
+   */
+  test('a refused module deletion does not strip the module of its records', async () => {
+    const before = await req('/api/data', { cookies: owner });
+    const inModule = before.json.records.filter((r) => r.moduleId === 'perm-m1');
+    assert.ok(inModule.length > 0, 'need records in the module to be able to lose them');
+
+    const out = await push({
+      modules: [{ id: 'perm-m1', updatedAt: 400, deleted: true }],
+      records: inModule.map((r) => ({ id: r.id, updatedAt: 401, deleted: true })),
+    }, member);
+
+    assert.ok(out.json.rejected);
+    assert.equal(out.json.rejected.modules.length, 1);
+    assert.equal(out.json.rejected.records.length, inModule.length,
+      'every record tombstone that only existed because of the refused deletion must be refused too');
+
+    const after = await req('/api/data', { cookies: owner });
+    assert.ok(after.json.modules.some((m) => m.id === 'perm-m1'), 'the module survives');
+    assert.equal(after.json.records.filter((r) => r.moduleId === 'perm-m1').length, inModule.length,
+      'and so does everything in it');
+  });
+
+  test('an owner changes modules freely', async () => {
+    const cursor = (await req('/api/sync?since=0', { cookies: owner })).json.cursor;
+    const out = await push({ since: cursor, modules: [mod('perm-m1', 'Renamed By Owner', 500)] }, owner);
+    assert.equal(out.json.rejected, undefined);
+    const stored = await req('/api/data', { cookies: owner });
+    assert.equal(stored.json.modules.find((m) => m.id === 'perm-m1').name, 'Renamed By Owner');
+  });
+
+  test('a member cannot invite, promote, or remove anyone', async () => {
+    assert.equal((await req('/api/org/invites', { method: 'POST', body: {}, cookies: member })).status, 403);
+    assert.equal((await req('/api/org/invites', { cookies: member })).status, 403);
+    assert.equal((await req('/api/admin/users', { cookies: member })).status, 403);
+
+    const ownerId = (await req('/api/me', { cookies: owner })).json.user.id;
+    assert.equal((await req(`/api/admin/users/${ownerId}`, { method: 'PATCH', body: { role: 'member' }, cookies: member })).status, 403);
+    assert.equal((await req(`/api/admin/users/${ownerId}`, { method: 'DELETE', cookies: member })).status, 403);
+  });
+
+  test('rows record who wrote them, and an edit does not rewrite authorship', async () => {
+    const { json } = await req('/api/sync?since=0', { cookies: owner });
+    const memberRow = json.records.find((r) => r.id === 'perm-r2');
+    const memberId = (await req('/api/me', { cookies: member })).json.user.id;
+    const ownerId = (await req('/api/me', { cookies: owner })).json.user.id;
+    assert.equal(memberRow.createdBy, memberId);
+
+    // The owner edits it. The author stays the author.
+    const cursor = json.cursor;
+    await push({ since: cursor, records: [rec('perm-r2', 'perm-m1', 'Owner edited it', 600)] }, owner);
+    const after = await req('/api/sync?since=0', { cookies: owner });
+    const edited = after.json.records.find((r) => r.id === 'perm-r2');
+    assert.equal(edited.doc.data.title, 'Owner edited it');
+    assert.equal(edited.createdBy, memberId, 'editing someone else\u2019s record must not claim it');
+    assert.equal(edited.updatedBy, ownerId);
+  });
+});
+
+/*
  * Cross-tenant isolation. These assert the attack, not the happy path: an org
  * owner from tenant B reaching for tenant A's resources. One missed orgId
  * filter is a data leak, so this suite is the gate on that work.

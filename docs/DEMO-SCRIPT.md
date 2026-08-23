@@ -188,9 +188,12 @@ Yes. An organisation shares one workspace, and an owner invites people with a
 private link from Settings. Per-record sync means two colleagues editing
 different records both keep their work.
 
-Be straight about the edge: everyone on a team can currently edit anything,
-including module fields. Per-role permissions are the next piece of work, not a
-shipped feature.
+Owners control the schema — module fields, adding and deleting modules,
+inviting people. Members work with records. The server enforces it, so a member
+whose client tries anyway has the change quietly undone with an explanation
+rather than a failed sync.
+
+Still to come: removing someone from a team, and leaving one. Say so.
 
 **"Permissions / field-level security?"**
 Not today. Admins manage accounts, not per-field access.

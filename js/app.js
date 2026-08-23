@@ -43,6 +43,19 @@
 
   const ROLE_LABELS = { platformAdmin: 'platform admin', owner: 'owner', member: 'member' };
 
+  /*
+   * May this person change the shape of the workspace?
+   *
+   * Mirrors canEditSchema() on the server, which is the one that actually
+   * decides — this only keeps members from being offered a button whose effect
+   * would be undone a second later. Nobody signed in owns their own workspace,
+   * so signed out is allowed: the anonymous scope has no team to protect.
+   */
+  const canEditSchema = () => !Cloud.isAuthed
+    || !Cloud.user
+    || Cloud.user.role === 'owner'
+    || Cloud.user.role === 'platformAdmin';
+
   const MODULE_COLORS = ['#1570ef', '#0e9384', '#099250', '#dc6803', '#c11574', '#6938ef', '#d92d20', '#475467'];
   const MODULE_ICONS = ['package', 'users', 'building-2', 'handshake', 'square-check-big', 'target', 'sticky-note', 'calendar', 'receipt', 'briefcase', 'wrench', 'truck', 'star', 'tag', 'clipboard-list', 'folder', 'map-pin', 'globe', 'phone', 'mail', 'heart', 'database'];
 
@@ -358,6 +371,41 @@
     };
   }
 
+  /*
+   * Writes the server refused, applied as the truth.
+   *
+   * Deliberately NOT last-write-wins. The local row is a tombstone or an edit
+   * stamped later than the server's copy, so the ordinary rule would keep it
+   * and push it again on every sync, forever. A refusal is the server saying
+   * "this is what the row is", and it is taken at its word — including the
+   * local clock, so the reverted row falls behind the push watermark and stops
+   * being offered.
+   *
+   * Returns what was refused so the caller can explain it, which is the whole
+   * difference between this reading as a rule and reading as a bug.
+   */
+  async function applyRejections(rejected) {
+    const undone = [];
+    for (const kind of ['modules', 'records']) {
+      for (const item of rejected[kind] || []) {
+        if (!item || !item.id) continue;
+        const local = await DB.getRaw(kind, item.id);
+        if (local) console.warn('Change refused by the server, reverting:', kind, item.id, local);
+        if (item.absent || item.deleted) {
+          // Nothing on the server to restore. Removed outright rather than
+          // tombstoned: a tombstone would be pushed, refused, and revert
+          // again on every single sync.
+          await DB.purge(kind, item.id);
+        } else {
+          await DB.put(kind, { ...item.doc, id: item.id, updatedAt: item.updatedAt, createdBy: item.createdBy || null });
+        }
+        undone.push({ kind, id: item.id, name: (item.doc && item.doc.name) || (local && local.name) || null });
+      }
+    }
+    if (undone.length) relationNameCache.clear();
+    return undone;
+  }
+
   async function mergeChanges(remote) {
     let changed = 0;
 
@@ -376,7 +424,9 @@
           // the row may arrive from a third device later, out of order.
           else await DB.put(kind, { id: item.id, deletedAt: at, updatedAt: at });
         } else {
-          await DB.put(kind, { ...item.doc, id: item.id, updatedAt: item.updatedAt });
+          await DB.put(kind, {
+            ...item.doc, id: item.id, updatedAt: item.updatedAt, createdBy: item.createdBy || null,
+          });
         }
         changed += 1;
       }
@@ -392,8 +442,34 @@
       }
     }
 
+    // Refusals last, so they overwrite whatever the ordinary merge just wrote
+    // and the two cannot fight over the same row.
+    const undone = remote.rejected ? await applyRejections(remote.rejected) : [];
+    if (undone.length) changed += undone.length;
+
     if (changed) relationNameCache.clear();
+    // Reported from here rather than from the caller, because every path that
+    // syncs comes through this function — boot, the debounced push after an
+    // edit, and "Sync now" — and a refusal that repainted silently on two of
+    // them would be exactly the bug report this is meant to prevent.
+    if (undone.length) await reportRejections(undone);
     return changed;
+  }
+
+  /*
+   * Explain a refusal, after it has landed on screen.
+   *
+   * Order matters: repaint first, then speak. A message that arrives before
+   * the screen changes leaves the reader watching their work disappear a beat
+   * after being told it would — worse than either half alone.
+   */
+  async function reportRejections(undone) {
+    await loadModules();
+    if (!$('#modal-root').firstChild) route();
+    const named = undone.find((r) => r.kind === 'modules' && r.name);
+    toast(named
+      ? `Only an owner can change module fields — ${named.name} was restored`
+      : 'Only an owner can change modules — your change was undone');
   }
 
   // ---------------------------------------------------------------- modal
@@ -1358,7 +1434,7 @@
         <h2>${isNew ? `New ${esc(singular(mod.name).toLowerCase())}` : esc(recordName(mod, record))}</h2>
         <button class="icon-btn" data-close aria-label="Close">${icon('x', 16)}</button>
       </div>
-      <form id="record-form" class="modal-body">${fieldsHTML}</form>
+      <form id="record-form" class="modal-body">${fieldsHTML}${authorHTML(record)}</form>
       <div class="modal-foot">
         ${!isNew ? `<button class="btn btn-danger-ghost" id="record-delete">${icon('trash-2', 15)} Delete</button>` : '<span></span>'}
         <div class="modal-foot-right">
@@ -1425,19 +1501,41 @@
       </div>`;
   }
 
+  /*
+   * Who added this record.
+   *
+   * Only worth showing on a shared workspace — on a team of one it is always
+   * the reader, and a line saying so is noise. The id is resolved against the
+   * member list /api/me already carries.
+   */
+  function authorHTML(record) {
+    if (!record || !record.createdBy) return '';
+    const org = Cloud.me.org;
+    if (!org || !org.memberCount || org.memberCount < 2) return '';
+    const who = (org.members || []).find((m) => m.id === record.createdBy);
+    const name = who ? (who.name || who.email) : null;
+    if (!name) return '';
+    return `<p class="settings-hint record-author">Added by ${esc(name)}</p>`;
+  }
+
   function openBuilder(mod) {
     const isNew = !mod;
+    const mayEdit = canEditSchema();
+    if (isNew && !mayEdit) {
+      toast('Only an owner can add modules to this team');
+      return;
+    }
     const draft = mod || { name: '', icon: 'package', color: MODULE_COLORS[modules.length % MODULE_COLORS.length], fields: [{ label: 'Name', key: 'name', type: 'text', required: true, showInList: true }] };
 
     const modal = openModal(`
       <div class="modal-head">
-        <h2>${isNew ? 'New module' : `Edit ${esc(mod.name)}`}</h2>
+        <h2>${isNew ? 'New module' : `${mayEdit ? 'Edit' : ''} ${esc(mod.name)}`.trim()}</h2>
         <button class="icon-btn" data-close aria-label="Close">${icon('x', 16)}</button>
       </div>
-      <div class="modal-body">
+      <div class="modal-body${mayEdit ? '' : ' builder-readonly'}">
         <div class="form-row">
           <label for="b-name">Module name <span class="req">*</span></label>
-          <input class="input" id="b-name" type="text" placeholder="e.g. Projects, Invoices, Equipment" value="${esc(draft.name)}" required>
+          <input class="input" id="b-name" type="text" placeholder="e.g. Projects, Invoices, Equipment" value="${esc(draft.name)}" ${mayEdit ? 'required' : 'readonly'}>
         </div>
         <div class="builder-meta">
           <div class="form-row">
@@ -1458,14 +1556,15 @@
           <div id="builder-fields">
             ${draft.fields.map((f, i) => builderFieldRowHTML(f, i)).join('')}
           </div>
-          <button class="btn btn-ghost" id="b-add-field">${icon('plus', 15)} Add field</button>
+          ${mayEdit ? `<button class="btn btn-ghost" id="b-add-field">${icon('plus', 15)} Add field</button>` : ''}
         </div>
       </div>
       <div class="modal-foot">
-        ${!isNew ? `<button class="btn btn-danger-ghost" id="b-delete">${icon('trash-2', 15)} Delete module</button>` : '<span></span>'}
+        ${!isNew && mayEdit ? `<button class="btn btn-danger-ghost" id="b-delete">${icon('trash-2', 15)} Delete module</button>` : '<span></span>'}
         <div class="modal-foot-right">
-          <button class="btn btn-ghost" data-close>Cancel</button>
-          <button class="btn btn-primary" id="b-save">${isNew ? 'Create module' : 'Save changes'}</button>
+          ${mayEdit ? '' : '<span class="settings-hint" style="margin:0">Only an owner can change module fields</span>'}
+          <button class="btn btn-ghost" data-close>${mayEdit ? 'Cancel' : 'Close'}</button>
+          ${mayEdit ? `<button class="btn btn-primary" id="b-save">${isNew ? 'Create module' : 'Save changes'}</button>` : ''}
         </div>
       </div>`, { wide: true });
 
@@ -1505,11 +1604,13 @@
         row.parentNode.insertBefore(row, row.previousElementSibling);
       }
     });
-    $('#b-add-field', modal).addEventListener('click', () => {
+    const addFieldBtn = $('#b-add-field', modal);
+    if (addFieldBtn) addFieldBtn.addEventListener('click', () => {
       fieldsBox.insertAdjacentHTML('beforeend', builderFieldRowHTML({ type: 'text' }, Date.now()));
     });
 
-    $('#b-save', modal).addEventListener('click', async () => {
+    const saveBtn = $('#b-save', modal);
+    if (saveBtn) saveBtn.addEventListener('click', async () => {
       const name = $('#b-name', modal).value.trim();
       if (!name) {
         toast('Give your module a name');
