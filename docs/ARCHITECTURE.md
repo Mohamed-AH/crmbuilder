@@ -395,10 +395,29 @@ per org.
    split of existing snapshots, and the legacy endpoints kept working on the
    same rows. Sixteen sync tests plus two two-device browser journeys, each
    checked against the broken state. See §2.2.
-5. **Shared team workspaces** — now unblocked, still unbuilt. The remaining
-   work is an invite/join flow, workspace ownership at the org rather than the
-   account, and a permission model for who may edit which module. None of it
-   risks data loss any more, which was the point of doing (4) first.
+5. **Shared team workspaces** — now unblocked, still unbuilt. Concretely, what
+   remains:
+   - **Re-key rows from `userId` to `orgId`.** `modules` and `records` are
+     keyed `{userId, id}` today; `orgId` rides along for stats and scoping but
+     is not the ownership key, so two colleagues in one org have two separate
+     workspaces. This is a data migration with real risk and deserves its own
+     plan.
+   - **Move settings to the org.** `businessName` and `currency` live on the
+     user's meta document.
+   - **An invite/join flow.** Every signup creates its own org; there is no way
+     into an existing one. An invitee arriving with a personal workspace needs
+     the *same* question the client already asks at sign-in ("bring this with
+     you?"), so that prompt is reusable rather than new work.
+   - **A permission model for data.** `owner`/`member` gate admin routes only —
+     a member can edit anything in their workspace because it is theirs.
+   - **Attribution** (`createdBy`/`updatedBy`) so a shared workspace can show
+     who changed what.
+   - **Operational gaps a shared database needs regardless:** per-org quota and
+     rate limiting so one tenant's 50k-row import cannot degrade others,
+     one-shot org deletion and export, and an audit trail for admin actions.
+
+   None of it risks data loss any more, which was the point of doing (4) first.
+   What is left is product, not safety.
 6. **Database-per-tenant (Option C)** — only if a client's compliance
    requirements demand it and dedicated deployment isn't acceptable.
 
@@ -412,7 +431,13 @@ migration to write and no data-loss window to explain.
 ## 8. What to answer a prospect today
 
 - *"Can our team all use it?"* — Not yet in one shared workspace; each person
-  gets their own. Teams need Option B.
+  gets their own, and an organisation groups them for administration. The sync
+  groundwork for sharing is done; invites and permissions are not.
+- *"We share a computer — is that safe?"* — Yes. Each account has its own local
+  store on a device, so one person's work is never visible to, or synced into,
+  another's account — including edits that had not reached the server yet.
+  Signing out returns the screen to a blank workspace without deleting
+  anything.
 - *"Is our data separate from other customers?"* — In shared hosting, separated
   by account at the API layer. For physical separation, we offer a dedicated
   deployment with its own database (Option D), available now.

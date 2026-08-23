@@ -230,8 +230,15 @@ continue with Google.
   The chip above Settings shows the current state: *Synced*, *Syncing…*,
   *Connecting…*, or *Offline — will sync*.
 
-**Signing out leaves your data on the device.** It stops syncing; it doesn't
-erase anything.
+**Signing out returns you to a blank workspace, and deletes nothing.** Your CRM
+stays on the device under your account and comes straight back when you sign in
+again. This is deliberate: on a shared or family computer, the next person to
+open the app should not be looking at your customers.
+
+**Each account has its own storage on a device.** If two people use the same
+computer, neither can see — or accidentally sync — the other's work, even if one
+of them was in the middle of an edit that hadn't reached the server yet. That
+edit is still waiting for them the next time they sign in.
 
 **How conflicts are resolved:** sync works one record at a time. If you edit a
 contact on your laptop and a different contact on your phone, both survive —
@@ -245,6 +252,22 @@ change, rather than the record quietly reappearing on the next sync.
 
 Sync also sends only what changed, so an edit costs the same whether your
 workspace has fifty records or fifty thousand.
+
+**Anything you do before signing in stays on the device until you say
+otherwise.** The first time you sign in, CRM Builder asks once what to do with
+it — bring it into your account, or leave it where it is. Nothing you typed is
+ever discarded without being asked.
+
+### Sample data
+
+The guided tour needs something to walk through, so it offers to load a small
+fictional business first. It never loads without asking, and it never follows
+you into a real account unless you choose to keep it when you sign in.
+
+To remove it at any point: **Settings → Remove sample data**. Records *you*
+added are kept, including anything you typed into a module the samples created
+— that module stays, and only the sample rows inside it go. The removal syncs,
+so the samples disappear from your other devices too.
 
 ---
 
@@ -321,6 +344,17 @@ the URL a minute early to wake it up.
 Check the sidebar chip. If it says *Offline* or *Connecting…*, sync hasn't
 completed. If it says *Synced* and data is still missing, you may have signed in
 with a different email than before — each account has its own workspace.
+
+**I signed out and my CRM disappeared.**
+Nothing was deleted. Signing out returns the screen to a blank workspace so the
+next person at this computer doesn't see your data; sign back in with the same
+email and everything is there. If you had unsaved changes when you signed out,
+those are waiting too and upload once you're back online.
+
+**Someone else uses this computer and I can see their CRM.**
+You shouldn't be able to — each account's data is stored separately on the
+device. If you're seeing someone else's records, they are still signed in: open
+Settings and sign out, then sign in as yourself.
 
 **My changes aren't syncing.**
 The chip will show *Sync error — retrying* or *Offline*. Changes are safe on the

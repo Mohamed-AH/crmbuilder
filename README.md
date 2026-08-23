@@ -8,12 +8,12 @@ A **modular CRM builder for small businesses** — an installable, offline-first
 - **Custom fields** — text, long text, number, currency, date, dropdown, checkbox, email, phone, link, and *link-to-module* relations. Mark fields required or shown in list view; reorder anytime.
 - **Two views per module** — a dense, searchable table and a drag-and-drop **kanban board** for any module with a dropdown field (deal stages, lead status, …) with per-column counts and currency totals.
 - **Dashboard** — record counts, total tracked value, recent activity, quick add.
-- **Accounts & sync (OAuth)** — sign in with Google and your workspace syncs to MongoDB; use it from any device. Signed out or offline, everything is saved on-device (IndexedDB + a localStorage backup copy) and syncs when you're back.
+- **Accounts & sync (OAuth)** — sign in with Google and your workspace syncs to MongoDB; use it from any device. Signed out or offline, everything is saved on-device (IndexedDB + a localStorage backup copy) and syncs when you're back. Each account gets its own local store, so a shared computer never mixes two people's data — including edits that hadn't reached the server yet.
 - **Workspace settings** — business name and currency (30 currencies; all money fields format accordingly).
 - **Admin dashboard** — account management (promote, disable, delete) plus business analytics: total/active users, workspaces, records, signups per day, and daily active users.
 - **Spreadsheet import/export** — CSV export of the current view, and CSV import with automatic column matching, a mapping step, on-the-fly field creation, and type coercion for money, dates and yes/no columns.
 - **Sortable columns** — click any header; sorting is type-aware (numbers numerically, dates chronologically, dropdowns in pipeline order).
-- **Demo data** — one click fills every module with a coherent fictional business (107 records) for evaluations and demos.
+- **Demo data** — one click fills every module with a coherent fictional business (107 records) for evaluations and demos. It is never loaded without asking, never syncs to an account unless you choose to keep it, and **Settings → Remove sample data** takes it back out while keeping anything you added yourself.
 - **Backup & restore** — export/import the whole workspace as JSON.
 - **PWA** — installable on desktop and mobile, fully offline via a service worker, light & dark mode, Inter typography, Lucide icons.
 
@@ -74,6 +74,7 @@ js/db.js              promise-based IndexedDB wrapper
 js/cloud.js           account + sync layer (server ⇄ local fallback)
 js/csv.js             RFC 4180 CSV reader/writer
 js/templates.js       prebuilt module templates
+js/scope.js           storage scopes — which account local data belongs to
 js/demo-data.js       fictional business used by "Load demo data"
 js/app.js             router, views, module builder, kanban, admin dashboard
 tests/                smoke, API, CSV unit and Playwright end-to-end tests

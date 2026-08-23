@@ -126,6 +126,10 @@ the point of the product — say so, so they don't feel they got it wrong.
    one person across several devices — where per-record sync means edits on a
    laptop and a phone merge rather than overwrite — not for several people
    editing one shared workspace at once.
+5. If they share a computer, tell them signing out is how they hand it over.
+   Each account's data is stored separately on the device, so nobody sees or
+   syncs anyone else's, and signing out never deletes anything — it just puts
+   the workspace away until that person signs back in.
 
 ---
 

@@ -18,6 +18,10 @@ data model. This one is assembled around yours. Everything else is support.
       demo data* on a fresh browser). You get 40 contacts, an 18-deal pipeline
       worth ~$166k, tasks, leads and notes.
 - [ ] Have a **second browser profile** ready and signed out — for the sync moment.
+- [ ] Decide whether to sign in on the demo machine *before* the walkthrough. If
+      you sign in with the sample business loaded, you'll be asked whether to
+      keep it; answering "keep" is fine for a demo and it stays removable from
+      Settings.
 - [ ] Put **`docs/demo-data/demo-contacts.csv`** on your desktop, ready to pick.
       It's built for this moment: 8 rows, 4 of its 5 columns auto-match the
       Contacts module, and the fifth (*Referred by*) doesn't exist yet — that's
@@ -135,8 +139,17 @@ to *Synced*.
 In the second browser profile, sign in as the same account. The workspace
 appears.
 
-> "Sign in with Google, and the workspace follows you. Sign out and the data
-> stays on the device — signing out isn't a delete."
+> "Sign in with Google, and the workspace follows you. Sign out and it drops
+> back to a blank slate — because on a shared machine the next person shouldn't
+> see your customers. Nothing is deleted: sign back in and it's all there,
+> including anything you changed while offline."
+
+If the demo device already has the sample business on it, the sign-in prompt
+appears here. Take the moment — it demos well:
+
+> "It asks once what to do with anything already on this device. Real work
+> comes with you; sample data doesn't, unless you say so. Nothing you typed is
+> ever thrown away without being asked."
 
 ### 8:00 — Admin *(60 seconds)*
 

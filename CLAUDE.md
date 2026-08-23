@@ -21,7 +21,8 @@ server.js             Express: static PWA, OAuth, /api/sync + /api/data, /api/ad
 index.html            app shell (script order matters — see §3)
 css/style.css         Inter + blue/slate palette, light/dark, desktop-first
 js/icons.js           inline Lucide SVGs (generated — see §6)
-js/db.js              IndexedDB wrapper
+js/scope.js           whose data is this — storage scopes (see §11)
+js/db.js              IndexedDB wrapper, one database per scope
 js/csv.js             RFC 4180 CSV reader/writer
 js/templates.js       prebuilt module templates
 js/demo-data.js       fictional business (generated — see §6)
@@ -37,7 +38,7 @@ docs/                 user guide, onboarding playbook, demo script, architecture
 
 ## 2. Current status
 
-**All green:** 64 Node tests + 37 Playwright tests.
+**All green:** 64 Node tests + 42 Playwright tests.
 
 ```sh
 npm install
@@ -56,6 +57,8 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
 - CSV import (column mapping, inline field creation, type coercion) and export
 - Google OAuth, full offline operation
 - **Per-record delta sync** with tombstoned deletes — see §10
+- **Storage scopes**: one local store per identity, so a shared device cannot
+  cross-contaminate and demo data cannot sync — see §11
 - Admin dashboard with analytics; **organisations with per-tenant scoping**
 - **Pooled and dedicated deployment blueprints** (`render.yaml`,
   `render.dedicated.yaml`) and a `/health` endpoint
@@ -91,7 +94,7 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v5`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v6`).
 
 **Tenancy scoping comes from the session, never a request.** See §5.
 
@@ -99,6 +102,14 @@ bumping `CACHE_VERSION` (currently `crmbuilder-v5`).
 is the client's edit time and decides last-write-wins per record; `serverAt` is
 the server's monotonic stamp and is the only thing the delta cursor walks. A
 device with a skewed clock must never be able to move the cursor. See §10.
+
+**Owned data is never claimable.** Only the `anon` scope can be adopted into an
+account, only after an explicit prompt, and only once. A `u:<id>` scope is never
+merged into a different account, whatever is still pending in it. See §11.
+
+**Sync only ever runs in a `u:<id>` scope.** That single check in `Cloud.sync()`
+is what makes demo data unable to reach a server — stronger than keeping it out
+of localStorage, because it holds even if a `_demo` flag is forgotten.
 
 **Deletes are tombstones everywhere** — `DB.delete` on the client, `deletedAt`
 on the server. A row that simply disappears is indistinguishable from one a
@@ -285,3 +296,60 @@ is one deployment per client (Option D). Same code, different env vars.
 `HEALTH_DETAIL=1` exposes org/user counts on the public `/health` — correct on a
 dedicated deployment, a customer count on a pooled one. `DEPLOYMENT.md`
 §"Choosing a deployment shape" has the matrix and the migration runbook.
+
+---
+
+## 11. Storage scopes (`js/scope.js`)
+
+One browser profile is not one person. Before this there was a single
+`crmbuilder` database and one set of unprefixed localStorage keys for every
+visitor, and the sync engine pushed whatever it found to whichever account was
+signed in. The bug that forced it: A signs in, edits, sync fails, leaves; B
+signs in; **A's pending rows were uploaded into B's account.** A clean sign-out
+did not help — the cursor keys were cleared, IndexedDB was not.
+
+```
+anon        IndexedDB `crmbuilder`          never syncs
+u:<userId>  IndexedDB `crmbuilder-u-<id>`   syncs
+```
+
+Scoped localStorage keys are `crmb:<scope>:<name>` — `settings`, `settingsAt`,
+`snapshot`, `lastEdit`, `lastSync`, `dirty`, `syncCursor`, `pushedThrough`.
+Device-level keys stay global: `crmb:auth`, `crmb:user`, `crmb:tourSeen`.
+
+**Traps:**
+
+- **The scope must resolve synchronously at boot**, or the paint-first invariant
+  (§3) breaks. It reads the last known identity from `crmb:user`;
+  `reconcileScope()` corrects a wrong guess once `/api/me` answers.
+- **The last known identity is the wrong answer while a sign-in is in flight.**
+  On a shared PC it is the *previous* person, and OAuth returns as a fresh page
+  load. `Scope.markSignInPending()` makes boot paint `anon` instead — still
+  immediate, just neutral.
+- **A returning user needs no recovery path.** Their scope still holds the rows
+  and the watermark, so the ordinary `updatedAt >= pushedThrough` rule pushes
+  them. If you find yourself writing recovery code here, the scope is wrong.
+- **The anonymous copy must be cleared after a claim**, or the next visitor
+  sees the last one's workspace — but only once a sync confirms it landed
+  (`claimCleanup`). Verify before delete, as in the deployment runbook.
+- **`DB.adoptLegacy()` writes its marker only after counting rows back.** The
+  marker is what stops the migration re-running, so it must not cover a
+  half-copy. Two databases open at once invites a blocked upgrade: read the
+  legacy one out fully and close it before writing.
+
+### Demo data
+
+`_demo: true` on rows we seeded, never on rows the user typed; editing a demo
+row keeps the flag (`{...record}` spread already does this). It rides inside
+`doc`, so **the server needs no change**. The snapshot mirror skips `_demo`
+rows.
+
+`discardDemoData()` only ever deletes rows we created. A demo module the user
+has since added their own record to is **promoted** (flag cleared) rather than
+deleted — deleting it would take their work. Removing that branch makes the
+test *"removing samples keeps work the user added to a sample module"* fail,
+which is how it is checked.
+
+Nothing is seeded without a prompt: `Tour.ensureReady()` no longer seeds, and
+`startTourWithConsent()` asks. Sign-in asks once about anything already on the
+device, with the options computed from what is actually there.
