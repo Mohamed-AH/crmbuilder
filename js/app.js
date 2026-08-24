@@ -213,6 +213,29 @@
 
   const fmtWhen = (ts) => (ts ? new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—');
 
+  const APP_VERSION = 'crmbuilder-v10';
+
+  /*
+   * The last few things that went wrong, kept for a bug report.
+   *
+   * A tester who says "it broke" and a tester who says "it broke, and here is
+   * the exception" are hours apart. Bounded to ten so it cannot grow, and it
+   * wraps console.error rather than replacing it so nothing stops appearing in
+   * devtools.
+   */
+  const recentErrors = [];
+  function noteError(what) {
+    recentErrors.push(`${new Date().toISOString().slice(11, 19)} ${what}`.slice(0, 400));
+    if (recentErrors.length > 10) recentErrors.shift();
+  }
+  const realConsoleError = console.error.bind(console);
+  console.error = (...args) => {
+    try { noteError(args.map((a) => (a && a.stack) || String(a)).join(' ')); } catch { /* never break logging */ }
+    realConsoleError(...args);
+  };
+  window.addEventListener('error', (e) => noteError(`uncaught: ${e.message} (${e.filename}:${e.lineno})`));
+  window.addEventListener('unhandledrejection', (e) => noteError(`unhandled rejection: ${e.reason && e.reason.message ? e.reason.message : e.reason}`));
+
   const relationNameCache = new Map(); // recordId -> display name
 
   // Only ever emit hrefs we control the scheme of — record values arrive from
@@ -593,6 +616,72 @@
         <button class="btn btn-primary" data-close>Keep looking around</button>
       </div>`);
     $$('[data-close]', modal).forEach((b) => b.addEventListener('click', closeModal));
+  }
+
+  /*
+   * Report a problem, with the context already filled in.
+   *
+   * Only offered when signed in: a report from nobody is a report nobody can
+   * follow up. Someone anonymous is told what to do instead rather than being
+   * shown a form that will not work.
+   */
+  async function openProblemReport() {
+    if (!Cloud.isAuthed) {
+      toast('Sign in first so we can follow up on your report');
+      return;
+    }
+
+    let counts = { modules: 0, records: 0 };
+    try {
+      counts = { modules: (await DB.getAll('modules')).length, records: (await DB.getAll('records')).length };
+    } catch { /* storage is exactly what might be broken */ }
+
+    const context = {
+      version: APP_VERSION,
+      route: location.hash || '#/',
+      userAgent: navigator.userAgent,
+      syncStatus: Cloud.status,
+      online: navigator.onLine,
+      ...counts,
+      errors: [...recentErrors],
+    };
+
+    const modal = openModal(`
+      <div class="modal-head">
+        <h2>Report a problem</h2>
+        <button class="icon-btn" data-close aria-label="Close">${icon('x', 16)}</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <label for="report-text">What happened?</label>
+          <textarea class="input" id="report-text" rows="5" placeholder="What you were doing, and what it did instead."></textarea>
+        </div>
+        <p class="settings-hint">
+          Sent with this: version ${esc(context.version)}, screen <code>${esc(context.route)}</code>,
+          sync ${esc(context.syncStatus)}, ${context.modules} module(s) and ${context.records} record(s),
+          your browser, and ${context.errors.length} recent error${context.errors.length === 1 ? '' : 's'}.
+          <strong>Your records are not included.</strong>
+        </p>
+      </div>
+      <div class="modal-foot claim-actions">
+        <button class="btn btn-primary" id="report-send">Send report</button>
+      </div>`);
+    $$('[data-close]', modal).forEach((b) => b.addEventListener('click', closeModal));
+
+    $('#report-send', modal).addEventListener('click', async () => {
+      const message = $('#report-text', modal).value.trim();
+      if (!message) {
+        toast('Say what went wrong first');
+        return;
+      }
+      try {
+        await Cloud.feedback.send(message, context);
+        closeModal();
+        toast('Thanks — report sent');
+      } catch (err) {
+        toast(err.message || 'Could not send that report');
+      }
+    });
   }
 
   function openSignIn() {
@@ -1807,6 +1896,7 @@
             <p class="settings-hint">Signed in as <strong>${esc(Cloud.user.email)}</strong>${Cloud.user.role === 'platformAdmin' ? ' (platform admin)' : Cloud.user.role === 'owner' ? ' (owner)' : ''}. Your workspace syncs automatically; changes made offline sync when you're back online.</p>
             <div class="btn-row">
               <button class="btn" id="sync-now-btn">${icon('refresh-cw', 15)} Sync now</button>
+              <button class="btn" id="report-problem-btn">${icon('sticky-note', 15)} Report a problem</button>
               <button class="btn" id="signout-btn">${icon('log-out', 15)} Sign out</button>
             </div>` : Cloud.me.serverAvailable ? `
             <p class="settings-hint">You're not signed in. Data is saved on this device (with a local backup copy). Sign in to sync it to your account and use it on other devices.</p>
@@ -1892,6 +1982,8 @@
     });
     const inviteBtn = $('#invite-btn');
     if (inviteBtn) inviteBtn.addEventListener('click', openInvite);
+    const reportBtn = $('#report-problem-btn');
+    if (reportBtn) reportBtn.addEventListener('click', openProblemReport);
     bindTeamActions();
     $('#export-btn').addEventListener('click', exportData);
     $('#import-btn').addEventListener('click', () => $('#import-file').click());
@@ -2199,12 +2291,14 @@
     main.innerHTML = '<div class="page"><p class="empty-hint">Loading analytics…</p></div>';
     let stats, usersRes;
     let betaCodes = null;
+    let reports = [];
     try {
       [stats, usersRes] = await Promise.all([Cloud.admin.stats(), Cloud.admin.users()]);
       // Platform admins only, so a 403 here is the expected answer for an org
       // owner rather than something worth reporting.
       if (Cloud.user && Cloud.user.role === 'platformAdmin') {
         betaCodes = await Cloud.admin.betaCodes().catch(() => null);
+        reports = (await Cloud.admin.feedback().catch(() => ({ reports: [] }))).reports;
       }
     } catch (err) {
       // The signed-in role is whatever it was at sign-in; an administrator can
@@ -2241,6 +2335,26 @@
             ${barChart({ data: stats.activeUsers, label: 'active users' })}
           </div>
         </div>
+        ${reports && reports.length ? `
+        <div class="card">
+          <div class="card-head"><h2>Problem reports</h2></div>
+          <ul class="report-list">
+            ${reports.map((r) => `
+              <li class="${r.status === 'resolved' ? 'is-resolved' : ''}">
+                <div class="report-head">
+                  <strong>${esc(r.from)}</strong>
+                  <span class="muted">${esc(fmtWhen(r.createdAt))} · ${esc((r.context && r.context.route) || '')} · sync ${esc((r.context && r.context.syncStatus) || '?')}</span>
+                  <button class="btn btn-ghost" data-report="${esc(r.id)}" data-status="${r.status === 'resolved' ? 'open' : 'resolved'}">${r.status === 'resolved' ? 'Reopen' : 'Resolve'}</button>
+                </div>
+                <p class="report-message">${esc(r.message)}</p>
+                ${r.context && r.context.errors && r.context.errors.length ? `
+                  <details><summary class="muted">${r.context.errors.length} console error(s)</summary>
+                    <pre class="report-errors">${esc(r.context.errors.join('\n'))}</pre>
+                  </details>` : ''}
+                <p class="muted report-meta">${esc((r.context && r.context.version) || '')} · ${(r.context && r.context.records) || 0} record(s) · ${esc(((r.context && r.context.userAgent) || '').slice(0, 90))}</p>
+              </li>`).join('')}
+          </ul>
+        </div>` : ''}
         ${betaCodes ? `
         <div class="card">
           <div class="card-head"><h2>Beta access</h2></div>
@@ -2336,6 +2450,15 @@
 
     const mint = $('#mint-beta-btn');
     if (mint) mint.addEventListener('click', openMintBetaCode);
+
+    $$('[data-report]').forEach((btn) => btn.addEventListener('click', async () => {
+      try {
+        await Cloud.admin.resolveFeedback(btn.dataset.report, btn.dataset.status);
+        renderAdmin();
+      } catch (err) {
+        toast(err.message);
+      }
+    }));
 
     $$('[data-beta-revoke]').forEach((btn) => btn.addEventListener('click', async () => {
       if (!confirm('Revoke this code? Anyone holding it will no longer be able to create an account. People who already used it are unaffected.')) return;
@@ -2467,10 +2590,14 @@
         <div class="btn-row">
           <button class="btn btn-primary" id="route-retry">Try again</button>
           <a class="btn" href="#/">Go to dashboard</a>
+          <button class="btn btn-ghost" id="route-report">Report this</button>
         </div>
       </div></div>`;
     const retry = $('#route-retry');
     if (retry) retry.addEventListener('click', () => route());
+    // Offered right where someone is already looking at something broken.
+    const report = $('#route-report');
+    if (report) report.addEventListener('click', openProblemReport);
   }
 
   function route() {

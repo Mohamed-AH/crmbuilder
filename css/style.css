@@ -680,3 +680,21 @@ body.tour-open { overflow: hidden; }
 .builder-readonly .bf-actions { display: none; }
 
 .record-author { margin: 14px 0 0; padding-top: 10px; border-top: 1px solid var(--border); }
+
+/* Problem reports on the admin dashboard. */
+.report-list { list-style: none; margin: 0; padding: 0; }
+.report-list li { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.report-list li:last-child { border-bottom: 0; }
+.report-list li.is-resolved { opacity: 0.55; }
+.report-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 14px; }
+.report-head .btn { margin-left: auto; }
+.report-message { margin: 8px 0; white-space: pre-wrap; }
+.report-errors {
+  margin: 8px 0 0;
+  padding: 10px;
+  background: var(--bg-subtle, rgba(127, 127, 127, 0.08));
+  border-radius: 6px;
+  font-size: 12px;
+  overflow-x: auto;
+}
+.report-meta { font-size: 12px; margin: 6px 0 0; }

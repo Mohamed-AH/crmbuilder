@@ -280,7 +280,13 @@ const Cloud = (() => {
       leave: () => api('/api/org/leave', { method: 'POST', body: '{}' }, TIMEOUT.admin),
     },
 
+    feedback: {
+      send: (message, context) => api('/api/feedback', { method: 'POST', body: JSON.stringify({ message, context }) }, TIMEOUT.admin),
+    },
+
     admin: {
+      feedback: () => api('/api/admin/feedback', {}, TIMEOUT.admin),
+      resolveFeedback: (id, status) => api(`/api/admin/feedback/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ status }) }, TIMEOUT.admin),
       betaCodes: () => api('/api/admin/beta-codes', {}, TIMEOUT.admin),
       mintBetaCode: (body) => api('/api/admin/beta-codes', { method: 'POST', body: JSON.stringify(body || {}) }, TIMEOUT.admin),
       revokeBetaCode: (code) => api(`/api/admin/beta-codes/${encodeURIComponent(code)}`, { method: 'DELETE' }, TIMEOUT.admin),

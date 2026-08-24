@@ -103,11 +103,12 @@ class FileStore {
     try {
       this.s = JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch {
-      this.s = { users: [], orgs: [], invites: [], betaCodes: [], data: {}, events: [], items: { modules: {}, records: {} } };
+      this.s = { users: [], orgs: [], invites: [], betaCodes: [], feedback: [], data: {}, events: [], items: { modules: {}, records: {} } };
     }
     this.s.items = this.s.items || { modules: {}, records: {} };
     this.s.invites = this.s.invites || [];
     this.s.betaCodes = this.s.betaCodes || [];
+    this.s.feedback = this.s.feedback || [];
   }
   save() {
     fs.writeFileSync(this.file, JSON.stringify(this.s));
@@ -274,6 +275,27 @@ class FileStore {
     return i;
   }
 
+  // --- problem reports
+  async createFeedback(entry) {
+    this.s.feedback = this.s.feedback || [];
+    this.s.feedback.push(entry);
+    // The file store has no TTL, so it keeps a bounded tail instead.
+    if (this.s.feedback.length > 500) this.s.feedback = this.s.feedback.slice(-400);
+    this.save();
+    return entry;
+  }
+  async listFeedback(limit = 100) {
+    return [...(this.s.feedback || [])].sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+  }
+  async updateFeedback(id, patch) {
+    const f = (this.s.feedback || []).find((x) => x.id === id);
+    if (f) { Object.assign(f, patch); this.save(); }
+    return f;
+  }
+  async countFeedbackSince(userId, since) {
+    return (this.s.feedback || []).filter((f) => f.userId === userId && f.createdAt >= since).length;
+  }
+
   // --- beta signup codes
   async createBetaCode(entry) {
     this.s.betaCodes = this.s.betaCodes || [];
@@ -313,6 +335,7 @@ class MongoStore {
     this.orgs = db.collection('orgs');
     this.invites = db.collection('invites');
     this.betaCodes = db.collection('betaCodes');
+    this.feedback = db.collection('feedback');
     this.cols = { modules: db.collection('modules'), records: db.collection('records') };
 
     // Email stays GLOBALLY unique, deliberately. Sign-in resolves an account
@@ -326,6 +349,9 @@ class MongoStore {
     await this.invites.createIndex({ code: 1 }, { unique: true });
     await this.invites.createIndex({ orgId: 1, createdAt: -1 });
     await this.betaCodes.createIndex({ code: 1 }, { unique: true });
+    await this.feedback.createIndex({ createdAt: -1 });
+    await this.feedback.createIndex({ userId: 1, createdAt: -1 });
+    await this.ensureFeedbackTTL();
 
     // orgId leads every scoped index: a query filtered on orgId alone cannot
     // use an index where orgId sits in a trailing position.
@@ -401,6 +427,29 @@ class MongoStore {
         }
       } else {
         console.warn('Could not apply the events TTL index:', err.message);
+      }
+    }
+  }
+  /*
+   * Problem reports expire, because they live in the same 512 MB the customers
+   * do. Single-field on a real Date, the same rule as the events TTL and the
+   * tombstone TTL — expireAfterSeconds on a compound key is accepted and then
+   * silently ignored.
+   */
+  async ensureFeedbackTTL() {
+    const expireAfterSeconds = Number(process.env.FEEDBACK_RETENTION_DAYS || 90) * 86400;
+    try {
+      await this.feedback.createIndex({ reportedOn: 1 }, { expireAfterSeconds });
+    } catch (err) {
+      if (err.code === 85 || err.code === 86) {
+        try {
+          await this.feedback.dropIndex('reportedOn_1');
+          await this.feedback.createIndex({ reportedOn: 1 }, { expireAfterSeconds });
+        } catch (retryErr) {
+          console.warn('Could not apply the feedback TTL index:', retryErr.message);
+        }
+      } else {
+        console.warn('Could not apply the feedback TTL index:', err.message);
       }
     }
   }
@@ -541,6 +590,19 @@ class MongoStore {
   async updateInvite(code, patch) {
     await this.invites.updateOne({ code }, { $set: patch });
     return this.getInvite(code);
+  }
+
+  // --- problem reports
+  async createFeedback(entry) { await this.feedback.insertOne({ ...entry }); return entry; }
+  async listFeedback(limit = 100) {
+    return this.feedback.find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(limit).toArray();
+  }
+  async updateFeedback(id, patch) {
+    await this.feedback.updateOne({ id }, { $set: patch });
+    return this.feedback.findOne({ id }, { projection: { _id: 0 } });
+  }
+  async countFeedbackSince(userId, since) {
+    return this.feedback.countDocuments({ userId, createdAt: { $gte: since } });
   }
 
   // --- beta signup codes
@@ -1895,6 +1957,115 @@ app.get('/api/admin/export', async (req, res) => {
   console.log(`Backup export: ${workspaces.length} workspace(s), ${body.users.length} account(s)`);
   res.setHeader('Cache-Control', 'no-store');
   res.json(body);
+});
+
+/*
+ * Problem reports from inside the app.
+ *
+ * A beta tester who hits a bug should not have to work out how to describe it.
+ * The report carries the diagnostic context automatically — version, route,
+ * browser, sync status, counts, recent console errors — which is the
+ * difference between one message and four rounds of "what browser were you
+ * using?".
+ *
+ * Bounded, because this writes to the same 512 MB the customers use: a size
+ * cap, a rate limit, and a TTL.
+ */
+const FEEDBACK_MAX_BYTES = 4096;
+const FEEDBACK_PER_HOUR = 10;
+const FEEDBACK_WEBHOOK_URL = process.env.FEEDBACK_WEBHOOK_URL || '';
+
+/*
+ * Tell whoever is on call, without telling them the customer's data.
+ *
+ * The summary carries who, when and what they wrote. The diagnostic context
+ * stays in the database: console errors and route state can contain record
+ * names, module names and email addresses, and posting those to a chat service
+ * would make it a processor of beta users' CRM contents — a thing the privacy
+ * policy would then have to disclose. Fire-and-forget, after the response.
+ */
+function notifyFeedback(entry, user) {
+  if (!FEEDBACK_WEBHOOK_URL) return;
+  const text = [
+    `**Problem report** from ${user.email}`,
+    entry.message.slice(0, 1500),
+    `_${entry.id} · ${new Date(entry.createdAt).toISOString()}_`,
+  ].join('\n');
+  fetch(FEEDBACK_WEBHOOK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    // Discord reads `content`, Slack reads `text`. Sending both means one
+    // shape works for either without a provider setting to get wrong.
+    body: JSON.stringify({ content: text, text }),
+    signal: AbortSignal.timeout(8000),
+  }).catch((err) => console.warn('Feedback webhook failed:', err.message));
+}
+
+app.post('/api/feedback', requireAuth, async (req, res) => {
+  const message = String((req.body && req.body.message) || '').trim();
+  if (!message) return res.status(400).json({ error: 'Say what went wrong' });
+  if (Buffer.byteLength(message, 'utf8') > FEEDBACK_MAX_BYTES) {
+    return res.status(413).json({ error: `Keep it under ${FEEDBACK_MAX_BYTES} characters, please` });
+  }
+
+  const recent = await store.countFeedbackSince(req.user.id, Date.now() - 3600000);
+  if (recent >= FEEDBACK_PER_HOUR) {
+    return res.status(429).json({ error: 'That is a lot of reports in an hour. Give it a moment.' });
+  }
+
+  const now = Date.now();
+  const entry = {
+    id: uid(),
+    userId: req.user.id,
+    orgId: req.user.orgId || null,
+    createdAt: now,
+    // A real Date, and the only field the TTL keys on.
+    reportedOn: new Date(now),
+    message,
+    context: sanitiseContext(req.body && req.body.context),
+    status: 'open',
+  };
+  await store.createFeedback(entry);
+  res.json({ ok: true, id: entry.id });
+  // After the response: a slow or dead webhook must not make reporting a bug
+  // feel like another bug.
+  notifyFeedback(entry, req.user);
+});
+
+// Only the fields that help, each bounded. Whatever else the client sends is
+// dropped rather than stored — this document is not a place to accumulate.
+function sanitiseContext(raw) {
+  if (!raw || typeof raw !== 'object') return {};
+  const str = (v, n = 200) => (v == null ? '' : String(v).slice(0, n));
+  return {
+    version: str(raw.version, 40),
+    route: str(raw.route, 200),
+    userAgent: str(raw.userAgent, 300),
+    syncStatus: str(raw.syncStatus, 40),
+    online: raw.online === true,
+    modules: Number(raw.modules) || 0,
+    records: Number(raw.records) || 0,
+    errors: Array.isArray(raw.errors) ? raw.errors.slice(0, 10).map((e) => str(e, 400)) : [],
+  };
+}
+
+app.get('/api/admin/feedback', requireAuth, requirePlatformAdmin, async (req, res) => {
+  const reports = await store.listFeedback(100);
+  const byId = new Map((await store.listUsers()).map((u) => [u.id, u]));
+  res.json({
+    reports: reports.map((f) => ({
+      ...f,
+      from: byId.has(f.userId) ? byId.get(f.userId).email : '(deleted account)',
+    })),
+  });
+});
+
+app.patch('/api/admin/feedback/:id', requireAuth, requirePlatformAdmin, async (req, res) => {
+  const status = req.body && req.body.status;
+  if (status !== 'open' && status !== 'resolved') return res.status(400).json({ error: 'Status must be open or resolved' });
+  const updated = await store.updateFeedback(req.params.id, { status });
+  if (!updated) return res.status(404).json({ error: 'Report not found' });
+  res.json({ ok: true });
 });
 
 // ---- beta codes (platform admin only)

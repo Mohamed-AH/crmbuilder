@@ -11,6 +11,7 @@
 import { test, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,7 +26,7 @@ after(async () => {
 
 let nextPort = 8800 + Math.floor(Math.random() * 400);
 
-async function boot({ signupMode = 'code', adminEmails = '', backupToken = '' } = {}) {
+async function boot({ signupMode = 'code', adminEmails = '', backupToken = '', webhook = '' } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'crmb-signup-'));
   // Sequential, not random: this file boots a server per mode per test, and a
   // narrow random range collides often enough to hang the whole run.
@@ -45,6 +46,7 @@ async function boot({ signupMode = 'code', adminEmails = '', backupToken = '' } 
     SIGNUP_MODE: mode,
     ADMIN_EMAILS: adminEmails,
     BACKUP_TOKEN: backupToken,
+    FEEDBACK_WEBHOOK_URL: webhook,
     NODE_ENV: 'test',
   });
 
@@ -433,5 +435,213 @@ describe('usage reporting', () => {
     // And it is not on the public health check.
     const health = await srv.req('/health');
     assert.equal(health.json.usage, undefined);
+  });
+});
+
+/*
+ * Problem reports.
+ *
+ * These write into the same 512 MB the customers use, so most of what is
+ * asserted here is a bound: who may write, how big, how often, and what the
+ * webhook is and is not told.
+ */
+describe('problem reports', () => {
+  const send = (srv, cookies, message, context) =>
+    srv.req('/api/feedback', { method: 'POST', body: { message, context }, cookies });
+
+  test('a report is stored with its context, and shows up for the operator', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'fb-admin@operator.test' });
+    const admin = await adminOf(srv, 'fb-admin@operator.test');
+    const user = (await srv.signUp('reporter@tester.test')).setCookie;
+
+    const out = await send(srv, user, 'The board lost my deal', {
+      version: 'crmbuilder-v10',
+      route: '#/m/deals',
+      userAgent: 'TestBrowser/1.0',
+      syncStatus: 'offline',
+      online: false,
+      modules: 3,
+      records: 42,
+      errors: ['12:00:01 TypeError: cannot read x'],
+    });
+    assert.equal(out.status, 200);
+    assert.ok(out.json.id);
+
+    const seen = await srv.req('/api/admin/feedback', { cookies: admin });
+    assert.equal(seen.status, 200);
+    const report = seen.json.reports.find((r) => r.id === out.json.id);
+    assert.ok(report, 'the operator has to be able to see it');
+    assert.equal(report.from, 'reporter@tester.test');
+    assert.equal(report.message, 'The board lost my deal');
+    assert.equal(report.status, 'open');
+    // The context is the point: this is what saves four rounds of "what
+    // browser were you using?".
+    assert.equal(report.context.records, 42);
+    assert.equal(report.context.syncStatus, 'offline');
+    assert.equal(report.context.errors.length, 1);
+  });
+
+  test('only whitelisted context fields are kept', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'fb-admin2@operator.test' });
+    const admin = await adminOf(srv, 'fb-admin2@operator.test');
+    const user = (await srv.signUp('kitchen-sink@tester.test')).setCookie;
+
+    await send(srv, user, 'here is everything', {
+      route: '#/',
+      // Not part of the contract, and this document is not a place to
+      // accumulate whatever a client feels like sending.
+      entireWorkspace: [{ secret: 'should not be stored' }],
+      password: 'hunter2',
+      errors: Array.from({ length: 50 }, (_, i) => `error ${i}`),
+    });
+
+    const { reports } = (await srv.req('/api/admin/feedback', { cookies: admin })).json;
+    const ctx = reports[0].context;
+    assert.equal(ctx.entireWorkspace, undefined);
+    assert.equal(ctx.password, undefined);
+    assert.equal(ctx.errors.length, 10, 'the error list is capped, not merely trimmed on display');
+  });
+
+  test('an oversized report is refused', async () => {
+    const srv = await boot({ signupMode: 'open' });
+    await adminOf(srv, 'fb-admin3@operator.test');
+    const user = (await srv.signUp('verbose@tester.test')).setCookie;
+    assert.equal((await send(srv, user, 'x'.repeat(5000))).status, 413);
+    assert.equal((await send(srv, user, '   ')).status, 400, 'and an empty one says so');
+  });
+
+  test('a flood is rate limited', async () => {
+    const srv = await boot({ signupMode: 'open' });
+    await adminOf(srv, 'fb-admin4@operator.test');
+    const user = (await srv.signUp('floods@tester.test')).setCookie;
+    const codes = [];
+    for (let i = 0; i < 12; i += 1) codes.push((await send(srv, user, `report ${i}`)).status);
+    assert.ok(codes.includes(429), `expected a 429 in ${codes.join(',')}`);
+    assert.equal(codes.filter((c) => c === 200).length, 10, 'ten an hour, then stop');
+  });
+
+  test('reporting requires an account, and reading them requires being the operator', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'fb-admin5@operator.test' });
+    await adminOf(srv, 'fb-admin5@operator.test');
+    const ordinary = (await srv.signUp('nosy@tester.test')).setCookie;
+
+    assert.equal((await srv.req('/api/feedback', { method: 'POST', body: { message: 'hi' } })).status, 401);
+    assert.equal((await srv.req('/api/admin/feedback')).status, 401);
+    // Reports are other people's words about their own data.
+    assert.equal((await srv.req('/api/admin/feedback', { cookies: ordinary })).status, 403);
+  });
+
+  test('an operator can resolve and reopen', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'fb-admin6@operator.test' });
+    const admin = await adminOf(srv, 'fb-admin6@operator.test');
+    const user = (await srv.signUp('resolver@tester.test')).setCookie;
+    const id = (await send(srv, user, 'something broke')).json.id;
+
+    assert.equal((await srv.req(`/api/admin/feedback/${id}`, { method: 'PATCH', body: { status: 'resolved' }, cookies: admin })).status, 200);
+    let { reports } = (await srv.req('/api/admin/feedback', { cookies: admin })).json;
+    assert.equal(reports.find((r) => r.id === id).status, 'resolved');
+
+    await srv.req(`/api/admin/feedback/${id}`, { method: 'PATCH', body: { status: 'open' }, cookies: admin });
+    ({ reports } = (await srv.req('/api/admin/feedback', { cookies: admin })).json);
+    assert.equal(reports.find((r) => r.id === id).status, 'open');
+
+    assert.equal((await srv.req(`/api/admin/feedback/${id}`, { method: 'PATCH', body: { status: 'banana' }, cookies: admin })).status, 400);
+  });
+
+  /*
+   * The webhook is a notification, not the record.
+   *
+   * If it is unset, or set to something that refuses the request, the report
+   * still has to be stored — otherwise a rotated URL silently swallows every
+   * bug report and nobody finds out until they wonder why the beta went quiet.
+   */
+  test('a report is stored whether or not a webhook is configured', async () => {
+    const without = await boot({ signupMode: 'open', adminEmails: 'fb-a@operator.test' });
+    const adminA = await adminOf(without, 'fb-a@operator.test');
+    const userA = (await without.signUp('no-hook@tester.test')).setCookie;
+    assert.equal((await send(without, userA, 'no webhook here')).status, 200);
+    assert.equal((await without.req('/api/admin/feedback', { cookies: adminA })).json.reports.length, 1);
+
+    // A webhook that cannot possibly work: nothing is listening on that port.
+    const broken = await boot({
+      signupMode: 'open',
+      adminEmails: 'fb-b@operator.test',
+      webhook: 'http://127.0.0.1:9/hook',
+    });
+    const adminB = await adminOf(broken, 'fb-b@operator.test');
+    const userB = (await broken.signUp('broken-hook@tester.test')).setCookie;
+    const out = await send(broken, userB, 'webhook is dead');
+    assert.equal(out.status, 200, 'a dead webhook must not make reporting a bug feel like another bug');
+    assert.equal((await broken.req('/api/admin/feedback', { cookies: adminB })).json.reports.length, 1,
+      'and the report is kept regardless');
+  });
+});
+
+/*
+ * What the webhook is told.
+ *
+ * This is the claim the store-and-push design rests on: the notification
+ * carries who and what they wrote, and the diagnostic context stays in the
+ * database. Console errors and route state can contain record names, module
+ * names and email addresses, and posting those to a chat service would make it
+ * a processor of beta users' CRM contents — a thing the privacy policy would
+ * then have to disclose. Worth proving rather than commenting.
+ */
+describe('webhook payload', () => {
+  test('carries the message, and none of the diagnostic context', async () => {
+    const received = [];
+    const hook = createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        received.push(body);
+        res.writeHead(204).end();
+      });
+    });
+    await new Promise((r) => hook.listen(0, '127.0.0.1', r));
+    const hookUrl = `http://127.0.0.1:${hook.address().port}/hook`;
+
+    try {
+      const srv = await boot({ signupMode: 'open', adminEmails: 'hook-admin@operator.test', webhook: hookUrl });
+      const admin = await adminOf(srv, 'hook-admin@operator.test');
+      const user = (await srv.signUp('hook-user@tester.test')).setCookie;
+
+      await srv.req('/api/feedback', {
+        method: 'POST',
+        cookies: user,
+        body: {
+          message: 'the pipeline column vanished',
+          context: {
+            route: '#/m/deals',
+            userAgent: 'SecretBrowser/9 on SecretOS',
+            syncStatus: 'offline',
+            records: 4242,
+            errors: ['TypeError while rendering Acme Corp / jane@customer.example'],
+          },
+        },
+      });
+
+      // Fired after the response, so give it a moment to land.
+      const deadline = Date.now() + 5000;
+      while (!received.length && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+      assert.equal(received.length, 1, 'the operator should be told at all');
+
+      const payload = received[0];
+      assert.match(payload, /the pipeline column vanished/, 'the message is the useful part');
+      assert.match(payload, /hook-user@tester\.test/, 'and who said it');
+
+      // None of this may leave the database.
+      assert.doesNotMatch(payload, /SecretBrowser/, 'no browser fingerprint');
+      assert.doesNotMatch(payload, /jane@customer\.example/, 'no customer email from a console error');
+      assert.doesNotMatch(payload, /Acme Corp/, 'no record names from a console error');
+      assert.doesNotMatch(payload, /4242/, 'no record counts');
+
+      // And the full context IS kept, where it is useful and disclosed.
+      const { reports } = (await srv.req('/api/admin/feedback', { cookies: admin })).json;
+      assert.match(reports[0].context.errors[0], /Acme Corp/);
+      assert.equal(reports[0].context.records, 4242);
+    } finally {
+      await new Promise((r) => hook.close(r));
+    }
   });
 });

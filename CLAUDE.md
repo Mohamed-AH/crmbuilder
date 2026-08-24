@@ -38,7 +38,7 @@ docs/                 user guide, onboarding playbook, demo script, architecture
 
 ## 2. Current status
 
-**All green:** 121 Node tests + 53 Playwright tests.
+**All green:** 129 Node tests + 53 Playwright tests.
 
 ```sh
 npm install
@@ -70,8 +70,7 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
 
 ### Not built yet
 - Email sending, third-party integrations.
-- In-app problem reports (beta stage 3); privacy/terms pages and the go-live
-  runbook (stage 4).
+- Privacy/terms pages and the go-live runbook (beta stage 4).
 - **Per-module permissions** — everyone on a team sees every module. Considered
   and set aside: it needs per-module filtering in sync, or a member receives
   rows they cannot see.
@@ -624,3 +623,36 @@ minutes. Two consequences worth remembering: that is continuous, so it consumes
 ~744 of Render's 750 monthly instance-hours and only works while this is the
 only free service on the account; and 14 minutes against a 15-minute idle
 timeout is one missed check from asleep.
+
+---
+
+## 18. Problem reports (beta stage 3)
+
+`POST /api/feedback` stores the message plus a **whitelisted** context —
+version, route, browser, sync status, counts, and up to ten recent console
+errors from a ring buffer that wraps `console.error` at boot. Bounded because
+it writes to the same 512 MB the customers use: 4 KB message, ten an hour per
+user, and a 90-day TTL keyed on `reportedOn` (a real `Date`, single-field —
+the same rule as the events and tombstone TTLs).
+
+**Stored *and* pushed.** `FEEDBACK_WEBHOOK_URL` gets a Discord/Slack-shaped
+POST after the row is written, carrying who, when and what they wrote — and
+**none of the diagnostic context**. Console errors can contain record names,
+module names and customer email addresses, so sending them to a chat service
+would make it a processor of beta users' CRM contents. There is a test that
+stands up a local HTTP server and asserts the payload contains the message but
+not the browser string, not a record count, and not an email lifted from an
+error message.
+
+**Traps:**
+
+- **The webhook is a notification, not the record.** A test boots against
+  `http://127.0.0.1:9` — nothing listening — and requires the report to be
+  stored anyway. A rotated URL must not silently swallow every bug report.
+- **It fires after the response.** A slow or dead webhook must not make
+  reporting a bug feel like another bug.
+- **`sanitiseContext` is a whitelist, not a cleanup.** Anything the client
+  invents is dropped rather than stored; the error list is capped at ten on the
+  way in, not on the way out.
+- **`console.error` is wrapped, never replaced** — devtools keeps working, and
+  the wrapper's own failure can never stop a log line.
