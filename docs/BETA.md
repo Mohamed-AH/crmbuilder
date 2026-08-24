@@ -89,6 +89,37 @@ record names and customer email addresses, and sending those to a chat service
 would make it a processor of your testers' CRM contents. Those stay in the
 database, where the privacy policy already accounts for them.
 
+### Someone asked to join
+
+People who find the site on their own can knock. Signing in without an invite
+lands them on the private-beta screen, which now offers **Ask to join the beta**
+and a line about what they would use it for.
+
+They appear under **Admin → Requests to join**, and — if you set
+`FEEDBACK_WEBHOOK_URL` — arrive wherever bug reports do.
+
+**Approving lets them straight in. Nothing is emailed.** The approval
+allowlists their address, so they come back, press the same button that refused
+them, and it works. That is deliberate: there is no mail plumbing in this
+product, and an approval that depends on you sending a link is an approval that
+sits unsent. Approving copies a short reply to your clipboard if you want to
+tell them anyway — that is a courtesy, not the mechanism.
+
+Worth knowing before you work the queue:
+
+- **The address is always real.** A request can only carry an email its sender
+  has just proved to Google they control, so there is nothing to verify.
+- **Declining is silent and final.** They see the ordinary private-beta screen,
+  are not told they were turned down, and cannot ask again. That avoids an
+  argument by email; it also means a misclick is invisible to both sides.
+- **Someone still waiting is told so** rather than being shown "invite-only" a
+  second time, which reads as having been ignored.
+- **Approvals expire after 30 days** if unused (`ACCESS_APPROVAL_DAYS`). They
+  can ask again.
+- **Watch storage as you say yes.** The panel shows the usage warning at 60% and
+  85%, because that is the moment the decision is being made. Nothing is
+  enforced.
+
 ### Keeping it awake
 
 UptimeRobot pings `/health` every 14 minutes, which is inside Render's ~15
@@ -102,6 +133,7 @@ minutes against a 15-minute timeout is one missed check away from a cold start.
 | Symptom | First thing to check |
 |---|---|
 | Nobody can sign up | Consent screen still in Testing? `SIGNUP_MODE=closed`? Code spent or expired? |
+| Someone says they asked and heard nothing | Admin → Requests to join. Approving is what lets them in; they do not need a link. |
 | A tester sees "private beta" | Their code is spent, expired or revoked. Mint another. |
 | Everything is slow on first load | Cold start. Check UptimeRobot is actually running. |
 | Data looks wrong for one person | Ask them to check Settings → the sync chip, and to export a backup before you touch anything. |
@@ -146,6 +178,10 @@ you. Settings → **Report a problem** sends your message with the technical
 details attached, so you do not have to describe what browser you are on. Small
 irritations are as useful as crashes — those are the things that never get
 reported and never get fixed.
+
+**Pass it on if you like.** Anyone can open the site and use it without an
+account. If they want one, signing in with Google shows them a *Ask to join the
+beta* button — we work through those by hand.
 
 **Known rough edges right now:**
 

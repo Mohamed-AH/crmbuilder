@@ -1391,6 +1391,74 @@ test.describe('beta access', () => {
     await page.locator('#signin-btn').click();
     await expect(page.locator('.modal-head h2')).toHaveText('Sign in');
   });
+
+  /*
+   * A stranger who was turned away can knock.
+   *
+   * The server half of this — the cookie, the queue, approval letting them in
+   * — is in tests/signup.test.mjs, which can boot a gated server; this suite
+   * runs one server in `open` mode, so the refusal is injected. What is proved
+   * here is the screen: that being refused offers a way to ask at all, that
+   * asking says so, and that the client sends the note and nothing else.
+   */
+  test('a refused stranger is offered a way to ask, and told when they have', async ({ page }) => {
+    // The refusal is the point of the test, so its 403 is a diagnostic.
+    test.info().expectedConsoleErrors = [/403 \(Forbidden\)/];
+    await page.route('**/auth/dev', (route) => route.fulfill({
+      status: 403,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'That beta code is not valid. Ask for a fresh one.', reason: 'beta' }),
+    }));
+    const sent = [];
+    await page.route('**/api/access-request', (route) => {
+      sent.push(route.request().postDataJSON());
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, status: 'received' }) });
+    });
+
+    await page.goto('/');
+    await page.locator('#onboard-signin').waitFor({ timeout: 15000 });
+    await page.locator('#onboard-signin').click();
+    await page.fill('#dev-email', 'turned-away@example.com');
+    await page.click('#dev-login-form button[type=submit]');
+
+    // A refusal is a screen, not a toast that fades before it is read.
+    await expect(page.locator('.modal-head h2')).toHaveText('This is a private beta');
+    await page.fill('#ask-note', 'I run a two-person landscaping business');
+    await page.click('#ask-send');
+
+    await expect(page.locator('#ask-block')).toContainText('Asked');
+    await expect(page.locator('#ask-send')).toHaveCount(0, { timeout: 5000 });
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].note).toBe('I run a two-person landscaping business');
+    // The address is established by the server at the refusal and read from an
+    // httpOnly cookie. There is deliberately nothing here to put one in.
+    expect(sent[0].email).toBeUndefined();
+
+    // And the dead end is gone: they can still use the product.
+    await page.click('.modal [data-close]');
+    await expect(page.locator('.template-card').first()).toBeVisible();
+  });
+
+  test('someone already on the list is told that, not that it is invite-only', async ({ page }) => {
+    // The refusal is the point of the test, so its 403 is a diagnostic.
+    test.info().expectedConsoleErrors = [/403 \(Forbidden\)/];
+    await page.route('**/auth/dev', (route) => route.fulfill({
+      status: 403,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'That beta code is not valid. Ask for a fresh one.', reason: 'pending' }),
+    }));
+    await page.goto('/');
+    await page.locator('#onboard-signin').waitFor({ timeout: 15000 });
+    await page.locator('#onboard-signin').click();
+    await page.fill('#dev-email', 'already-asked@example.com');
+    await page.click('#dev-login-form button[type=submit]');
+
+    await expect(page.locator('.modal-head h2')).toHaveText('You are on the list');
+    // Nothing to ask for twice, and nothing to watch an inbox for.
+    await expect(page.locator('#ask-send')).toHaveCount(0);
+    await expect(page.locator('.modal-body')).toContainText('nothing to wait for in your inbox');
+  });
 });
 
 test.describe('admin', () => {

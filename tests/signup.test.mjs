@@ -737,3 +737,192 @@ describe('webhook payload', () => {
     assert.doesNotMatch(srv.log(), /FAKE-TOKEN/, 'without writing the bot token into the logs');
   });
 });
+
+/*
+ * Access requests — the door for someone who arrived on their own.
+ *
+ * The whole design rests on one claim: a request can only ever carry an
+ * address its sender has proved to Google they control. Most of what is
+ * asserted here is that claim, and the shapes around it that make the queue
+ * bounded and the decisions honest.
+ */
+describe('access requests', () => {
+  // A refused signup is what hands over the right to ask, so this is how a
+  // test gets hold of the cookie the endpoint reads.
+  const refuse = async (srv, email) => {
+    const out = await srv.signUp(email);
+    assert.equal(out.status, 403, `expected ${email} to be refused: ${out.text}`);
+    return out.setCookie;
+  };
+
+  test('a refused stranger can ask, and the operator sees it', async () => {
+    const srv = await boot({ adminEmails: 'req-admin@operator.test' });
+    const admin = await adminOf(srv, 'req-admin@operator.test');
+
+    const asking = await refuse(srv, 'stranger@example.test');
+    const asked = await srv.req('/api/access-request', {
+      method: 'POST', cookies: asking, body: { note: 'I run a small bakery' },
+    });
+    assert.equal(asked.status, 200);
+    assert.equal(asked.json.status, 'received');
+
+    const seen = await srv.req('/api/admin/access-requests', { cookies: admin });
+    assert.equal(seen.status, 200);
+    assert.equal(seen.json.pending, 1);
+    const row = seen.json.requests.find((r) => r.email === 'stranger@example.test');
+    assert.ok(row, 'the operator has to be able to see it');
+    assert.equal(row.note, 'I run a small bakery');
+    assert.equal(row.status, 'pending');
+  });
+
+  /*
+   * The one that matters.
+   *
+   * The address comes from the cookie the server set at the refusal, never
+   * from the body. A version reading req.body.email lets anyone queue up as
+   * anyone — and, once approved, hand that account to whoever asked for it.
+   */
+  test('a request cannot claim an address its sender does not control', async () => {
+    const srv = await boot({ adminEmails: 'spoof-admin@operator.test' });
+    const admin = await adminOf(srv, 'spoof-admin@operator.test');
+
+    // No refusal, no cookie: nothing to grant, whatever the body says.
+    const naked = await srv.req('/api/access-request', {
+      method: 'POST', body: { email: 'ceo@bigcorp.test', note: 'let me in' },
+    });
+    assert.equal(naked.status, 403, 'an unauthenticated caller cannot queue anybody');
+
+    // A real refusal for one address, a body naming a different one.
+    const asking = await refuse(srv, 'honest@example.test');
+    const out = await srv.req('/api/access-request', {
+      method: 'POST',
+      cookies: asking,
+      body: { email: 'ceo@bigcorp.test', name: 'The Boss', note: 'hello' },
+    });
+    assert.equal(out.status, 200);
+
+    const { requests } = (await srv.req('/api/admin/access-requests', { cookies: admin })).json;
+    const emails = requests.map((r) => r.email);
+    assert.deepEqual(emails, ['honest@example.test'], 'only the proved address is ever recorded');
+    assert.equal(requests[0].name, '', 'and the body cannot dress it up either');
+  });
+
+  test('an approved address signs in with no code at all', async () => {
+    const srv = await boot({ adminEmails: 'approve-admin@operator.test' });
+    const admin = await adminOf(srv, 'approve-admin@operator.test');
+
+    const asking = await refuse(srv, 'wants-in@example.test');
+    await srv.req('/api/access-request', { method: 'POST', cookies: asking, body: { note: 'please' } });
+
+    const decided = await srv.req('/api/admin/access-requests/wants-in@example.test/decide', {
+      method: 'POST', cookies: admin, body: { decision: 'approved' },
+    });
+    assert.equal(decided.status, 200);
+    assert.match(decided.json.message, /sign in with Google/, 'a paste-ready line for replying by hand');
+
+    // The whole point: they come back and the same button simply works.
+    const back = await srv.signUp('wants-in@example.test');
+    assert.equal(back.status, 200, `an approved address must get in: ${back.text}`);
+
+    const { requests } = (await srv.req('/api/admin/access-requests', { cookies: admin })).json;
+    assert.ok(requests[0].usedAt, 'and the approval is marked used');
+  });
+
+  test('someone still waiting is told so, rather than told the beta is invite-only', async () => {
+    const srv = await boot({ adminEmails: 'wait-admin@operator.test' });
+    await adminOf(srv, 'wait-admin@operator.test');
+
+    const asking = await refuse(srv, 'waiting@example.test');
+    await srv.req('/api/access-request', { method: 'POST', cookies: asking, body: {} });
+
+    const again = await srv.signUp('waiting@example.test');
+    assert.equal(again.status, 403);
+    assert.equal(again.json.reason, 'pending', 'being ignored and being queued are different things');
+
+    // Someone who never asked is unchanged, so this is not a blanket rewording.
+    const never = await srv.signUp('never-asked@example.test');
+    assert.equal(never.json.reason, 'beta');
+  });
+
+  test('a declined person gets the ordinary refusal, and cannot re-queue', async () => {
+    const srv = await boot({ adminEmails: 'no-admin@operator.test' });
+    const admin = await adminOf(srv, 'no-admin@operator.test');
+
+    const asking = await refuse(srv, 'declined@example.test');
+    await srv.req('/api/access-request', { method: 'POST', cookies: asking, body: { note: 'first ask' } });
+    await srv.req('/api/admin/access-requests/declined@example.test/decide', {
+      method: 'POST', cookies: admin, body: { decision: 'declined' },
+    });
+
+    // Not told they were turned down: that starts an argument nobody wins.
+    const retry = await srv.signUp('declined@example.test');
+    assert.equal(retry.json.reason, 'beta', 'the generic screen, not a rejection notice');
+
+    const asking2 = retry.setCookie;
+    await srv.req('/api/access-request', { method: 'POST', cookies: asking2, body: { note: 'second ask' } });
+    const { requests } = (await srv.req('/api/admin/access-requests', { cookies: admin })).json;
+    assert.equal(requests.length, 1, 'and asking again does not put them back in the queue');
+    assert.equal(requests[0].status, 'declined');
+    assert.equal(requests[0].note, 'first ask', 'the decided row is not rewritten by a later ask');
+  });
+
+  test('asking twice is one row, and an overlong note is cut down', async () => {
+    const srv = await boot({ adminEmails: 'twice-admin@operator.test' });
+    const admin = await adminOf(srv, 'twice-admin@operator.test');
+
+    for (const note of ['first go', 'x'.repeat(5000)]) {
+      const asking = await refuse(srv, 'repeats@example.test');
+      assert.equal((await srv.req('/api/access-request', { method: 'POST', cookies: asking, body: { note } })).status, 200);
+    }
+    const { requests, pending } = (await srv.req('/api/admin/access-requests', { cookies: admin })).json;
+    assert.equal(requests.length, 1, 'one row per address however many times they ask');
+    assert.equal(pending, 1);
+    assert.ok(requests[0].note.length <= 500, `note should be bounded, got ${requests[0].note.length}`);
+  });
+
+  test('open signups let a still-pending request through', async () => {
+    const srv = await boot({ adminEmails: 'mode-admin@operator.test' });
+    await adminOf(srv, 'mode-admin@operator.test');
+    const asking = await refuse(srv, 'pending-then-open@example.test');
+    await srv.req('/api/access-request', { method: 'POST', cookies: asking, body: {} });
+
+    // A request left over from when the door was shut must not keep them out
+    // once it is open.
+    await srv.setMode('open');
+    const out = await srv.signUp('pending-then-open@example.test');
+    assert.equal(out.status, 200, `open means open: ${out.text}`);
+  });
+
+  test('the queue is for the operator only', async () => {
+    const srv = await boot({ adminEmails: 'own-admin@operator.test' });
+    const admin = await adminOf(srv, 'own-admin@operator.test');
+    // An ordinary account needs a code to exist at all in this mode, which is
+    // the point — the caller under test is a real signed-in tester, not a
+    // stranger holding the ask cookie.
+    const code = (await mintCode(srv, admin, { maxUses: 5 })).code.code;
+    const joined = await srv.signUp('ordinary@tester.test', code);
+    assert.equal(joined.status, 200, joined.text);
+    const ordinary = joined.setCookie;
+
+    assert.equal((await srv.req('/api/admin/access-requests')).status, 401);
+    // Other people's addresses and what they wrote about themselves.
+    assert.equal((await srv.req('/api/admin/access-requests', { cookies: ordinary })).status, 403);
+    assert.equal((await srv.req('/api/admin/access-requests/x@y.test/decide', {
+      method: 'POST', cookies: ordinary, body: { decision: 'approved' },
+    })).status, 403);
+  });
+
+  test('a decision has to be one of the two, on a request that exists', async () => {
+    const srv = await boot({ adminEmails: 'valid-admin@operator.test' });
+    const admin = await adminOf(srv, 'valid-admin@operator.test');
+    const asking = await refuse(srv, 'real@example.test');
+    await srv.req('/api/access-request', { method: 'POST', cookies: asking, body: {} });
+
+    assert.equal((await srv.req('/api/admin/access-requests/real@example.test/decide', {
+      method: 'POST', cookies: admin, body: { decision: 'maybe' },
+    })).status, 400);
+    assert.equal((await srv.req('/api/admin/access-requests/ghost@example.test/decide', {
+      method: 'POST', cookies: admin, body: { decision: 'approved' },
+    })).status, 404);
+  });
+});

@@ -103,12 +103,13 @@ class FileStore {
     try {
       this.s = JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch {
-      this.s = { users: [], orgs: [], invites: [], betaCodes: [], feedback: [], data: {}, events: [], items: { modules: {}, records: {} } };
+      this.s = { users: [], orgs: [], invites: [], betaCodes: [], feedback: [], accessRequests: [], data: {}, events: [], items: { modules: {}, records: {} } };
     }
     this.s.items = this.s.items || { modules: {}, records: {} };
     this.s.invites = this.s.invites || [];
     this.s.betaCodes = this.s.betaCodes || [];
     this.s.feedback = this.s.feedback || [];
+    this.s.accessRequests = this.s.accessRequests || [];
   }
   save() {
     fs.writeFileSync(this.file, JSON.stringify(this.s));
@@ -319,6 +320,33 @@ class FileStore {
     this.save();
     return c;
   }
+
+  // --- access requests
+  async getAccessRequest(email) {
+    return (this.s.accessRequests || []).find((r) => r.email === email) || null;
+  }
+  // One row per address however many times they ask, so the queue cannot be
+  // inflated by repeating the request.
+  async upsertAccessRequest(entry) {
+    const existing = await this.getAccessRequest(entry.email);
+    if (existing) { Object.assign(existing, entry); this.save(); return existing; }
+    this.s.accessRequests.push(entry);
+    this.save();
+    return entry;
+  }
+  async listAccessRequests(status) {
+    const all = [...(this.s.accessRequests || [])];
+    const rows = status ? all.filter((r) => r.status === status) : all;
+    return rows.sort((a, b) => b.requestedAt - a.requestedAt);
+  }
+  async countAccessRequests(status) {
+    return (this.s.accessRequests || []).filter((r) => !status || r.status === status).length;
+  }
+  async updateAccessRequest(email, patch) {
+    const r = await this.getAccessRequest(email);
+    if (r) { Object.assign(r, patch); this.save(); }
+    return r;
+  }
 }
 
 class MongoStore {
@@ -336,6 +364,7 @@ class MongoStore {
     this.invites = db.collection('invites');
     this.betaCodes = db.collection('betaCodes');
     this.feedback = db.collection('feedback');
+    this.accessRequests = db.collection('accessRequests');
     this.cols = { modules: db.collection('modules'), records: db.collection('records') };
 
     // Email stays GLOBALLY unique, deliberately. Sign-in resolves an account
@@ -352,6 +381,11 @@ class MongoStore {
     await this.feedback.createIndex({ createdAt: -1 });
     await this.feedback.createIndex({ userId: 1, createdAt: -1 });
     await this.ensureFeedbackTTL();
+
+    // One row per address, so asking twice updates rather than queues twice.
+    await this.accessRequests.createIndex({ email: 1 }, { unique: true });
+    await this.accessRequests.createIndex({ status: 1, requestedAt: -1 });
+    await this.ensureAccessRequestTTL();
 
     // orgId leads every scoped index: a query filtered on orgId alone cannot
     // use an index where orgId sits in a trailing position.
@@ -452,6 +486,51 @@ class MongoStore {
         console.warn('Could not apply the feedback TTL index:', err.message);
       }
     }
+  }
+  /*
+   * Access requests age out, but only the ones that should.
+   *
+   * expiresOn is a real Date carried ONLY by rows we want gone — declined
+   * ones, and approvals nobody used. A pending request has no such field, and
+   * the TTL monitor skips non-Date values, so the queue itself is untouched.
+   * Exactly the tombstone trick: the alternative, a TTL on requestedAt, would
+   * quietly delete the approvals that ARE the allowlist.
+   */
+  async ensureAccessRequestTTL() {
+    try {
+      await this.accessRequests.createIndex({ expiresOn: 1 }, { expireAfterSeconds: 0 });
+    } catch (err) {
+      if (err.code === 85 || err.code === 86) {
+        try {
+          await this.accessRequests.dropIndex('expiresOn_1');
+          await this.accessRequests.createIndex({ expiresOn: 1 }, { expireAfterSeconds: 0 });
+        } catch (retryErr) {
+          console.warn('Could not apply the access request TTL index:', retryErr.message);
+        }
+      } else {
+        console.warn('Could not apply the access request TTL index:', err.message);
+      }
+    }
+  }
+  async getAccessRequest(email) {
+    return this.accessRequests.findOne({ email }, { projection: { _id: 0 } });
+  }
+  async upsertAccessRequest(entry) {
+    await this.accessRequests.updateOne({ email: entry.email }, { $set: entry }, { upsert: true });
+    return entry;
+  }
+  async listAccessRequests(status) {
+    return this.accessRequests
+      .find(status ? { status } : {}, { projection: { _id: 0 } })
+      .sort({ requestedAt: -1 })
+      .toArray();
+  }
+  async countAccessRequests(status) {
+    return this.accessRequests.countDocuments(status ? { status } : {});
+  }
+  async updateAccessRequest(email, patch) {
+    await this.accessRequests.updateOne({ email }, { $set: patch });
+    return this.getAccessRequest(email);
   }
   async countUsers() { return this.users.countDocuments(); }
   async getUserByEmail(email) { return this.users.findOne({ email }, { projection: { _id: 0 } }); }
@@ -1365,7 +1444,11 @@ app.get('/auth/google/callback', async (req, res) => {
     // Authenticated by Google, but not yet allowed to exist here.
     const gate = await checkSignup(info.email, req.cookies[BETA_COOKIE]);
     res.clearCookie(BETA_COOKIE);
-    if (!gate.ok) return res.redirect(`/?auth_error=${gate.reason}`);
+    if (!gate.ok) {
+      offerToAsk(res, info.email, info.name);
+      return res.redirect(`/?auth_error=${gate.reason}`);
+    }
+    clearAskCookie(res);
 
     const user = await upsertUser({ email: info.email, name: info.name, picture: info.picture, provider: 'google' });
     if (user.disabled) return res.redirect('/?auth_error=disabled');
@@ -1392,11 +1475,16 @@ app.post('/auth/dev', async (req, res) => {
   // and this is the seam that can.
   const gate = await checkSignup(email, req.body.beta);
   if (!gate.ok) {
+    // Same seam as the Google path: the refusal is what hands over the right
+    // to ask. Without this the request flow would only be reachable through
+    // OAuth, which no test can drive.
+    offerToAsk(res, email, req.body.name || '');
     return res.status(403).json({
       error: gate.reason === 'closed' ? 'Signups are closed right now.' : SIGNUP_REJECTION,
       reason: gate.reason,
     });
   }
+  clearAskCookie(res);
 
   const user = await upsertUser({ email, name: req.body.name || '', provider: 'dev' });
   if (user.disabled) return res.status(403).json({ error: 'Account disabled' });
@@ -1600,7 +1688,42 @@ async function checkSignup(email, code) {
    */
   if ((await store.countUsers()) === 0) return { ok: true };
 
+  /*
+   * Somebody asked, and the operator said yes.
+   *
+   * Ordered after the three bypasses above and before the mode test, because
+   * an approval is a decision about this person specifically and outranks the
+   * deployment's default posture — including `closed`, which is about not
+   * taking new strangers, not about reneging on an answer already given.
+   *
+   * The request is marked used rather than consumed: unlike a beta code there
+   * is nothing to spend, and once the account exists the first bypass covers
+   * them forever.
+   */
+  const asked = await store.getAccessRequest(String(email).toLowerCase());
+  if (asked && asked.status === 'approved') {
+    return { ok: true, consume: () => store.updateAccessRequest(asked.email, { usedAt: Date.now() }) };
+  }
+
+  // Before the pending check, not after: a request left over from when this
+  // deployment was gated must not keep someone out once signups are open.
   if (SIGNUP_MODE === 'open') return { ok: true };
+
+  /*
+   * A deliberate exception to "every refusal answers identically".
+   *
+   * That rule exists so nobody can probe which codes are real (§13, §16). It
+   * does not apply here: the only way to see this answer is to have just
+   * proved control of the address to Google, so it tells the caller nothing
+   * they did not already know. Without it, someone who asked last week is told
+   * again that the beta is invite-only, reads it as being ignored, and asks
+   * again — which is worse for them and worse for the queue.
+   *
+   * Ahead of the `closed` check because it is the more specific truth: they
+   * are on a list somebody can still act on, which "signups are paused" denies.
+   */
+  if (asked && asked.status === 'pending') return { ok: false, reason: 'pending' };
+
   if (SIGNUP_MODE === 'closed') {
     return { ok: false, reason: 'closed' };
   }
@@ -2168,6 +2291,191 @@ app.delete('/api/admin/beta-codes/:code', requireAuth, requirePlatformAdmin, asy
   if (!entry) return res.status(404).json({ error: 'Code not found' });
   await store.updateBetaCode(entry.code, { revokedAt: Date.now() });
   res.json({ ok: true });
+});
+
+/*
+ * Access requests — the door for someone who arrived on their own.
+ *
+ * Until this existed, a stranger who signed in without an invite hit a screen
+ * saying the beta was invite-only and offering nothing but "keep looking
+ * around". This is the knock.
+ *
+ * The design turns on one fact: at the moment we refuse someone, we already
+ * hold their Google-verified email. So the request hangs off the refusal
+ * rather than off a form. A typed form would take an unverified string on an
+ * unauthenticated endpoint — anyone could queue up as ceo@bigcorp.com, and it
+ * would be a spam surface writing into the same 512 MB the customers use.
+ * Refusing first costs an attacker a full OAuth round trip per row.
+ *
+ * The address therefore comes from the ASK_COOKIE and nothing else. Never
+ * req.body. That is the same rule as req.scopeOrgId and workspaceIdFor():
+ * identity comes from what the server established, never from what the caller
+ * says about themselves.
+ */
+const ASK_COOKIE = 'crmb_pending';
+const ASK_TTL_MS = 600000; // ten minutes: long enough to read the screen and decide
+const ASK_NOTE_MAX = 500;
+const ASK_PENDING_CEILING = Number(process.env.ACCESS_REQUEST_CEILING || 500);
+const ASK_APPROVAL_DAYS = Number(process.env.ACCESS_APPROVAL_DAYS || 30);
+
+// Handed out at the point of refusal, and only there.
+function offerToAsk(res, email, name) {
+  const payload = Buffer.from(JSON.stringify({ e: email, n: String(name || '').slice(0, 80) }))
+    .toString('base64url');
+  res.cookie(ASK_COOKIE, payload, {
+    httpOnly: true, sameSite: 'lax', secure: IS_PROD, maxAge: ASK_TTL_MS,
+  });
+}
+
+function clearAskCookie(res) {
+  res.clearCookie(ASK_COOKIE);
+}
+
+function readAskCookie(req) {
+  const raw = req.cookies[ASK_COOKIE];
+  if (!raw) return null;
+  try {
+    const { e, n } = JSON.parse(Buffer.from(String(raw), 'base64url').toString('utf8'));
+    if (!e || typeof e !== 'string') return null;
+    return { email: e.toLowerCase(), name: typeof n === 'string' ? n : '' };
+  } catch {
+    return null;
+  }
+}
+
+function publicAccessRequest(r) {
+  return {
+    email: r.email,
+    name: r.name || '',
+    note: r.note || '',
+    status: r.status,
+    requestedAt: r.requestedAt,
+    decidedAt: r.decidedAt || null,
+    usedAt: r.usedAt || null,
+  };
+}
+
+/*
+ * Tell whoever is on call that somebody asked.
+ *
+ * Unlike a problem report there is nothing to withhold here: the message IS
+ * the record, and it is three fields the person deliberately submitted about
+ * themselves. Same transport, same fire-after-the-response rule.
+ */
+function notifyAccessRequest(entry) {
+  if (!FEEDBACK_WEBHOOK_URL) return;
+  const head = `Access request from ${entry.email}`;
+  const body = entry.note || '(no note)';
+  const foot = `${entry.name || 'no name given'} · ${new Date(entry.requestedAt).toISOString()}`;
+  const req = webhookRequest(FEEDBACK_WEBHOOK_URL, {
+    rich: [`**${head}**`, body, `_${foot}_`].join('\n'),
+    plain: [head, body, foot].join('\n'),
+  });
+  if (req.error) {
+    console.warn(`Access request webhook not sent: ${req.error}`);
+    return;
+  }
+  fetch(req.url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req.body),
+    signal: AbortSignal.timeout(8000),
+  }).then((r) => {
+    if (!r.ok) console.warn(`Access request webhook rejected the notification: HTTP ${r.status}`);
+  }).catch((err) => console.warn('Access request webhook failed:', err.message));
+}
+
+app.post('/api/access-request', async (req, res) => {
+  const who = readAskCookie(req);
+  // No cookie means they never reached a refusal, so there is nothing to
+  // grant. 403 rather than 401: this is not a route you authenticate into.
+  if (!who) return res.status(403).json({ error: 'Sign in first, and we will offer this if you need it.' });
+
+  const note = String((req.body && req.body.note) || '').trim().slice(0, ASK_NOTE_MAX);
+  const existing = await store.getAccessRequest(who.email);
+
+  // Already decided: say what is true without letting them re-queue. A
+  // declined person who could ask again would simply ask again.
+  if (existing && existing.status !== 'pending') {
+    clearAskCookie(res);
+    return res.json({ ok: true, status: existing.status === 'approved' ? 'approved' : 'received' });
+  }
+
+  if (!existing && (await store.countAccessRequests('pending')) >= ASK_PENDING_CEILING) {
+    // The queue is not allowed to grow into the customers' storage.
+    return res.status(503).json({ error: 'The waiting list is full right now. Try again in a few days.' });
+  }
+
+  const entry = {
+    email: who.email,
+    name: who.name,
+    note,
+    status: 'pending',
+    requestedAt: existing ? existing.requestedAt : Date.now(),
+    updatedAt: Date.now(),
+    decidedAt: null,
+    decidedBy: null,
+    usedAt: null,
+  };
+  await store.upsertAccessRequest(entry);
+  clearAskCookie(res);
+  res.json({ ok: true, status: 'received' });
+  // After the response, like every other notification here.
+  notifyAccessRequest(entry);
+});
+
+// ---- admin: access requests (platform admin only)
+// Who may create an account on this deployment is a platform decision, not an
+// org owner's — the same reasoning as the beta codes above.
+app.get('/api/admin/access-requests', requireAuth, requirePlatformAdmin, async (req, res) => {
+  const rows = await store.listAccessRequests();
+  res.json({
+    requests: rows.map(publicAccessRequest),
+    pending: rows.filter((r) => r.status === 'pending').length,
+    // Approving people into a full database should say so at the moment of the
+    // decision, not on a dashboard nobody happens to be looking at.
+    usage: await usageReport(),
+  });
+});
+
+app.post('/api/admin/access-requests/:email/decide', requireAuth, requirePlatformAdmin, async (req, res) => {
+  const decision = req.body && req.body.decision;
+  if (decision !== 'approved' && decision !== 'declined') {
+    return res.status(400).json({ error: 'Decision must be approved or declined' });
+  }
+  const email = String(req.params.email || '').toLowerCase();
+  const entry = await store.getAccessRequest(email);
+  if (!entry) return res.status(404).json({ error: 'Request not found' });
+
+  /*
+   * Approval allowlists the address. It does not mint a code.
+   *
+   * There is no email sending in this product, so a code-based approval ends
+   * with the operator pasting a link into their own mail client and the tester
+   * waiting on it — the manual step this whole flow exists to remove. An
+   * allowlisted address means they come back, press the same button that
+   * refused them, and are simply in.
+   *
+   * expiresOn is set on both outcomes and is a real Date, because it is the
+   * single field the TTL keys on. A pending row never carries it, so the queue
+   * itself is never swept — see ensureAccessRequestTTL.
+   */
+  const now = Date.now();
+  await store.updateAccessRequest(email, {
+    status: decision,
+    decidedAt: now,
+    decidedBy: req.user.id,
+    expiresOn: new Date(now + ASK_APPROVAL_DAYS * DAY_MS),
+  });
+  res.json({
+    ok: true,
+    status: decision,
+    // A convenience for operators who want to reply by hand, not the mechanism:
+    // the approval already stands without anybody sending anything.
+    message: decision === 'approved'
+      ? `You're in — open ${APP_URL} and sign in with Google using ${email}.`
+      : null,
+  });
 });
 
 // ---- admin: accounts + analytics

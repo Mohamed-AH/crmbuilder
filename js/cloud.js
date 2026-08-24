@@ -62,6 +62,9 @@ const Cloud = (() => {
       const body = await res.json().catch(() => ({}));
       const err = new Error(body.error || `HTTP ${res.status}`);
       err.status = res.status;
+      // Some refusals are a state the caller has to render differently rather
+      // than a message to show — a gated signup being the case that matters.
+      if (body.reason) err.reason = body.reason;
       throw err;
     }
     return res.json();
@@ -286,12 +289,28 @@ const Cloud = (() => {
       send: (message, context) => api('/api/feedback', { method: 'POST', body: JSON.stringify({ message, context }) }, TIMEOUT.admin),
     },
 
+    /*
+     * Ask to be let into the beta.
+     *
+     * Sends only the note. The address is whatever the server established when
+     * it refused the sign-in a moment ago and is read from an httpOnly cookie
+     * the client cannot see or set — so there is deliberately nothing here to
+     * pass an email through, and adding one would not work.
+     */
+    requestAccess: (note) => api('/api/access-request', { method: 'POST', body: JSON.stringify({ note }) }, TIMEOUT.auth),
+
     admin: {
       feedback: () => api('/api/admin/feedback', {}, TIMEOUT.admin),
       resolveFeedback: (id, status) => api(`/api/admin/feedback/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ status }) }, TIMEOUT.admin),
       betaCodes: () => api('/api/admin/beta-codes', {}, TIMEOUT.admin),
       mintBetaCode: (body) => api('/api/admin/beta-codes', { method: 'POST', body: JSON.stringify(body || {}) }, TIMEOUT.admin),
       revokeBetaCode: (code) => api(`/api/admin/beta-codes/${encodeURIComponent(code)}`, { method: 'DELETE' }, TIMEOUT.admin),
+      accessRequests: () => api('/api/admin/access-requests', {}, TIMEOUT.admin),
+      decideAccessRequest: (email, decision) => api(
+        `/api/admin/access-requests/${encodeURIComponent(email)}/decide`,
+        { method: 'POST', body: JSON.stringify({ decision }) },
+        TIMEOUT.admin,
+      ),
       stats: () => api('/api/admin/stats', {}, TIMEOUT.admin),
       users: () => api('/api/admin/users', {}, TIMEOUT.admin),
       update: (id, patch) => api(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }, TIMEOUT.admin),

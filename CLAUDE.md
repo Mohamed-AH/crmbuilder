@@ -40,7 +40,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 131 Node tests + 56 Playwright tests.
+**All green:** 140 Node tests + 58 Playwright tests.
 
 ```sh
 npm install
@@ -71,6 +71,8 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
 - **Self-serve beta signup**, complete: the code gate (stage 1), backups and
   measured usage (stage 2), problem reports (stage 3), and the legal pages,
   beta notice and runbook (stage 4) — see §16, §17, §18, §19
+- **Access requests**: a stranger who arrives on their own can ask, and an
+  approval lets them straight in with nothing to email — see §20
 - Docs: USER-GUIDE, ONBOARDING, DEMO-SCRIPT, ARCHITECTURE, BETA, product-tour.html
 
 ### Not built yet
@@ -100,7 +102,7 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v12`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v13`).
 
 **Tenancy scoping comes from the session, never a request.** That covers both
 `req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
@@ -761,3 +763,69 @@ does not need a warning about one.
 - **The acknowledgement is not assumed to have landed.** `Cloud.acceptBeta()`
   failing leaves `betaAcceptedAt` unset, so the notice returns next time. Shown
   twice is a minor annoyance; recorded-but-never-sent is a false record.
+
+---
+
+## 20. Access requests — people who arrive on their own
+
+Until this, a stranger who signed in without an invite got a screen saying the
+beta was invite-only and one button, *Keep looking around*. A dead end with no
+way to knock.
+
+**The whole design turns on one fact:** at the moment we refuse someone, we
+already hold their **Google-verified email**. The callback had it and threw it
+away. So the request hangs off the refusal, never off a form.
+
+A typed form would take an unverified string on an unauthenticated endpoint —
+anyone could queue as `ceo@bigcorp.com` and, once approved, be handed that
+account. Refusing first costs an attacker a full OAuth round trip per row. That
+is why there is no "request access" form and should not be one.
+
+```
+accessRequests { email, name, note, status, requestedAt, decidedAt,
+                 decidedBy, usedAt, expiresOn }
+```
+
+**The address comes from `ASK_COOKIE` and nothing else — never `req.body`.**
+`offerToAsk()` sets it at the point of refusal (both the Google callback and
+`/auth/dev`), ten minutes, httpOnly, beside `crmb_oauth_state` and `crmb_beta`
+for the same reasons. Same rule as `req.scopeOrgId` and `workspaceIdFor()`:
+identity is what the server established, never what the caller claims. Guarded
+by *"a request cannot claim an address its sender does not control"*, which
+fails the moment the handler reads `req.body.email`.
+
+**Approval allowlists the address. It does not mint a code.** There is no mail
+plumbing in this product (§13), so a code-based approval ends with the operator
+pasting a link into their own mail client and the tester waiting on it — the
+manual step this whole flow exists to remove. An allowlisted address means they
+come back, press the button that refused them, and are in. The clipboard reply
+is a courtesy, not the mechanism.
+
+**Traps:**
+
+- **Bypass order is load-bearing.** `approved` sits after the three existing
+  bypasses and **before** `open`; `pending` sits **after** `open` and before
+  `closed`. Putting `pending` ahead of `open` means a request left over from
+  when the door was shut keeps someone out once it is open — guarded by *"open
+  signups let a still-pending request through"*. Putting it after `closed`
+  means someone on the list is told signups are paused, which denies that
+  anyone can still act on them.
+- **`pending` is a deliberate exception to identical rejections.** Everything
+  else answers the same way so codes cannot be enumerated (§13, §16). This one
+  does not, because the only way to see it is to have just proved control of
+  the address to Google — it tells the caller nothing they did not know. Without
+  it, someone who asked last week is told "invite-only" again, reads it as being
+  ignored, and asks again.
+- **Declined is silent, and cannot re-queue.** The handler short-circuits on any
+  non-pending row and answers *received* without writing. Telling someone they
+  were turned down starts an argument; letting them re-ask makes the decision
+  meaningless. The screen says the same thing whatever came back, so the client
+  cannot leak the distinction either.
+- **`expiresOn` is a real `Date` carried only by decided rows.** Single-field
+  TTL, same trick as tombstones (§10) and the feedback TTL (§17). A TTL on
+  `requestedAt` would quietly delete the approvals that *are* the allowlist.
+- **The E2E half is injected, not real.** `playwright.config.js` pins
+  `SIGNUP_MODE=open`, so no refusal is reachable there; the server loop is
+  covered in `tests/signup.test.mjs`, which boots a gated server. The E2E tests
+  prove the screen, and declare the deliberate 403 via
+  `test.info().expectedConsoleErrors`.

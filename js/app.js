@@ -601,6 +601,25 @@
    * they were about to try still works without an account at all.
    */
   function explainClosedSignup(reason) {
+    // Already on the list. Nothing to ask for, and saying "invite-only" to
+    // someone who asked last week reads as having been ignored.
+    if (reason === 'pending') {
+      const waiting = openModal(`
+        <div class="modal-head">
+          <h2>You are on the list</h2>
+          <button class="icon-btn" data-close aria-label="Close">${icon('x', 16)}</button>
+        </div>
+        <div class="modal-body">
+          <p class="settings-hint">We have your request and we are working through them by hand. When it is your turn, signing in with the same Google account is all it takes — there is nothing else to do and nothing to wait for in your inbox.</p>
+          <p class="settings-hint"><strong>Meanwhile the whole thing works without an account.</strong> Anything you build on this device is yours to keep, and it comes with you when you do get in.</p>
+        </div>
+        <div class="modal-foot claim-actions">
+          <button class="btn btn-primary" data-close>Carry on</button>
+        </div>`);
+      $$('[data-close]', waiting).forEach((b) => b.addEventListener('click', closeModal));
+      return;
+    }
+
     const modal = openModal(`
       <div class="modal-head">
         <h2>${reason === 'closed' ? 'Signups are paused' : 'This is a private beta'}</h2>
@@ -611,11 +630,43 @@
     ? 'New accounts are paused while we work through the current round of testing.'
     : 'Accounts are invite-only for now. If someone sent you a link with a code in it, open that link and sign in from there.'}</p>
         <p class="settings-hint"><strong>You can still use the whole thing without an account.</strong> Everything on this device works offline — modules, records, import, export. An account only adds syncing between devices and sharing with a team, and you can bring your work with you if you get one later.</p>
+        <div id="ask-block">
+          <div class="form-row">
+            <label for="ask-note">Want in? Tell us what you would use it for <span class="muted">(optional)</span></label>
+            <textarea class="input" id="ask-note" rows="2" placeholder="e.g. I run a two-person landscaping business and track jobs in a spreadsheet"></textarea>
+          </div>
+        </div>
       </div>
       <div class="modal-foot claim-actions">
-        <button class="btn btn-primary" data-close>Keep looking around</button>
+        <button class="btn" data-close>Keep looking around</button>
+        <button class="btn btn-primary" id="ask-send">${icon('user-plus', 15)} Ask to join the beta</button>
       </div>`);
     $$('[data-close]', modal).forEach((b) => b.addEventListener('click', closeModal));
+
+    const send = $('#ask-send', modal);
+    if (send) {
+      send.addEventListener('click', async () => {
+        send.disabled = true;
+        send.textContent = 'Sending…';
+        try {
+          await Cloud.requestAccess($('#ask-note', modal).value.trim());
+          // Deliberately the same wording whatever came back. The server says
+          // "received" for a decision already made, and re-litigating that on
+          // screen would tell someone they were turned down — which starts an
+          // argument and helps nobody.
+          $('#ask-block', modal).innerHTML = `<p class="settings-hint"><strong>Asked.</strong> We go through these by hand. When you are in, signing in with the same Google account is all it takes — nothing will arrive in your inbox that you need to click.</p>`;
+          send.remove();
+        } catch (err) {
+          send.disabled = false;
+          send.textContent = 'Ask to join the beta';
+          // The ten-minute window on the refusal cookie can lapse while the
+          // screen sits open, and "try signing in again" is the actual fix.
+          toast(err && err.status === 403
+            ? 'That took a while — sign in again and we will offer this straight away'
+            : 'Could not send that just now — try again in a moment');
+        }
+      });
+    }
   }
 
   /*
@@ -807,6 +858,14 @@
           Scope.markSignInPending();
           location.reload(); // boot re-runs and reconciles local vs cloud data
         } catch (err) {
+          // A gated refusal is a screen, not a toast — and the same screen the
+          // Google path gets, since the server ran the identical check and has
+          // already handed over the right to ask.
+          if (err.reason === 'beta' || err.reason === 'closed' || err.reason === 'pending') {
+            closeModal();
+            explainClosedSignup(err.reason);
+            return;
+          }
           toast(err.message);
         }
       });
@@ -2397,6 +2456,7 @@
     let stats, usersRes;
     let betaCodes = null;
     let reports = [];
+    let access = null;
     try {
       [stats, usersRes] = await Promise.all([Cloud.admin.stats(), Cloud.admin.users()]);
       // Platform admins only, so a 403 here is the expected answer for an org
@@ -2404,6 +2464,7 @@
       if (Cloud.user && Cloud.user.role === 'platformAdmin') {
         betaCodes = await Cloud.admin.betaCodes().catch(() => null);
         reports = (await Cloud.admin.feedback().catch(() => ({ reports: [] }))).reports;
+        access = await Cloud.admin.accessRequests().catch(() => null);
       }
     } catch (err) {
       // The signed-in role is whatever it was at sign-in; an administrator can
@@ -2457,6 +2518,28 @@
                     <pre class="report-errors">${esc(r.context.errors.join('\n'))}</pre>
                   </details>` : ''}
                 <p class="muted report-meta">${esc((r.context && r.context.version) || '')} · ${(r.context && r.context.records) || 0} record(s) · ${esc(((r.context && r.context.userAgent) || '').slice(0, 90))}</p>
+              </li>`).join('')}
+          </ul>
+        </div>` : ''}
+        ${access && access.requests.length ? `
+        <div class="card">
+          <div class="card-head"><h2>Requests to join${access.pending ? ` <span class="count-badge">${access.pending} waiting</span>` : ''}</h2></div>
+          <p class="settings-hint">People who signed in without an invite and asked. <strong>Approving lets them straight in</strong> — they sign in again with the same Google account and it works. Nothing is emailed, so there is nothing for them to wait on.</p>
+          ${access.usage && (access.usage.level === 'warn' || access.usage.level === 'critical') ? `
+            <p class="settings-hint"><strong>Storage is at ${esc(String(access.usage.percent))}%.</strong> Worth taking a backup before you add more people.</p>` : ''}
+          <ul class="team-list">
+            ${access.requests.map((r) => `
+              <li>
+                <span class="team-who">${esc(r.name || r.email)}
+                  <span class="muted">· ${esc(r.email)} · asked ${esc(fmtWhen(r.requestedAt))}</span>
+                  ${r.note ? `<br><span class="muted">${esc(r.note)}</span>` : ''}
+                </span>
+                <span class="pill ${r.status === 'approved' ? 'pill-ok' : r.status === 'declined' ? 'pill-danger' : 'pill-accent'}">${esc(r.status)}${r.usedAt ? ' · joined' : ''}</span>
+                <span class="team-actions">
+                  ${r.status === 'pending' ? `
+                    <button class="icon-btn" data-ask-yes="${esc(r.email)}" title="Approve — they can sign in from now on">${icon('shield-check', 15)}</button>
+                    <button class="icon-btn" data-ask-no="${esc(r.email)}" title="Decline">${icon('ban', 15)}</button>` : ''}
+                </span>
               </li>`).join('')}
           </ul>
         </div>` : ''}
@@ -2584,6 +2667,42 @@
       } catch {
         prompt('Copy this signup link:', url);
       }
+    }));
+
+    const decide = async (email, decision) => {
+      try {
+        const out = await Cloud.admin.decideAccessRequest(email, decision);
+        // Approval needs no delivery — that is the whole design — but the
+        // operator will usually want to say so anyway, so the line is offered
+        // rather than assumed.
+        if (out.message) {
+          try {
+            await navigator.clipboard.writeText(out.message);
+            toast('Approved — a reply is on your clipboard');
+          } catch {
+            toast('Approved — they can sign in now');
+          }
+        } else {
+          toast('Declined');
+        }
+        renderAdmin();
+      } catch (err) {
+        toast(err.message);
+      }
+    };
+
+    $$('[data-ask-yes]').forEach((btn) => btn.addEventListener('click', () => {
+      const email = btn.dataset.askYes;
+      if (!confirm(`Approve ${email}? They will be able to create an account by signing in with that Google address.`)) return;
+      decide(email, 'approved');
+    }));
+
+    $$('[data-ask-no]').forEach((btn) => btn.addEventListener('click', () => {
+      const email = btn.dataset.askNo;
+      // Said plainly because it is not reversible from this screen and the
+      // person is never told, so a misclick is silent on both sides.
+      if (!confirm(`Decline ${email}? They will see the ordinary private-beta screen and cannot ask again.`)) return;
+      decide(email, 'declined');
     }));
   }
 
@@ -3292,7 +3411,7 @@
     const authError = params.get('auth_error');
     if (authError) {
       history.replaceState(null, '', location.pathname + location.hash);
-      if (authError === 'beta' || authError === 'closed') {
+      if (authError === 'beta' || authError === 'closed' || authError === 'pending') {
         // Not a failure on their part, so it gets a screen rather than a toast
         // that disappears before it has been read.
         setTimeout(() => explainClosedSignup(authError), 300);
