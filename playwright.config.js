@@ -35,6 +35,11 @@ module.exports = defineConfig({
         // Pin the admin account so the admin tests don't depend on which test
         // happened to create the very first account.
         ADMIN_EMAILS: 'e2e-admin@example.com',
+        // These journeys are about the app, not the signup gate — every one of
+        // them creates an account, and threading a beta code through all of
+        // them would test the harness. The gate has its own suite in
+        // tests/signup.test.mjs, with a server per mode.
+        SIGNUP_MODE: 'open',
       },
     },
   }),

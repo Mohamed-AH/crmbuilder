@@ -36,7 +36,28 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 const DEV_LOGIN = process.env.ALLOW_DEV_LOGIN === '1' || (!IS_PROD && !GOOGLE_CLIENT_ID);
 
 const COOKIE = 'crmb_session';
+const BETA_COOKIE = 'crmb_beta';
 const DAY_MS = 86400000;
+
+/*
+ * Who may create an account.
+ *
+ *   code    a beta code is required to SIGN UP (the default while in beta)
+ *   open    anyone who can authenticate gets an account
+ *   closed  no new accounts at all; existing ones still work
+ *
+ * In every mode this gates signup only. Signing back in never asks again —
+ * an account that exists is an account that exists, and a returning tester
+ * being challenged for a code they used weeks ago is the friction this whole
+ * flow is meant to avoid.
+ */
+const SIGNUP_MODE = ['code', 'open', 'closed'].includes(process.env.SIGNUP_MODE)
+  ? process.env.SIGNUP_MODE
+  : 'code';
+// Every refusal says the same thing, for the same reason invites do: a
+// different answer for "wrong" and "spent" is a way to find out which codes
+// exist.
+const SIGNUP_REJECTION = 'That beta code is not valid. Ask for a fresh one.';
 
 function dayKey(ts = Date.now()) {
   return new Date(ts).toISOString().slice(0, 10);
@@ -82,10 +103,11 @@ class FileStore {
     try {
       this.s = JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch {
-      this.s = { users: [], orgs: [], invites: [], data: {}, events: [], items: { modules: {}, records: {} } };
+      this.s = { users: [], orgs: [], invites: [], betaCodes: [], data: {}, events: [], items: { modules: {}, records: {} } };
     }
     this.s.items = this.s.items || { modules: {}, records: {} };
     this.s.invites = this.s.invites || [];
+    this.s.betaCodes = this.s.betaCodes || [];
   }
   save() {
     fs.writeFileSync(this.file, JSON.stringify(this.s));
@@ -245,6 +267,30 @@ class FileStore {
     if (i) { Object.assign(i, patch); this.save(); }
     return i;
   }
+
+  // --- beta signup codes
+  async createBetaCode(entry) {
+    this.s.betaCodes = this.s.betaCodes || [];
+    this.s.betaCodes.push(entry);
+    this.save();
+    return entry;
+  }
+  async getBetaCode(code) { return (this.s.betaCodes || []).find((c) => c.code === code) || null; }
+  async listBetaCodes() { return [...(this.s.betaCodes || [])]; }
+  async updateBetaCode(code, patch) {
+    const c = await this.getBetaCode(code);
+    if (c) { Object.assign(c, patch); this.save(); }
+    return c;
+  }
+  // Atomic in the only sense this store has one: nothing else runs between the
+  // read and the write. Mongo does it with a conditional update.
+  async consumeBetaCode(code) {
+    const c = await this.getBetaCode(code);
+    if (!c || c.useCount >= c.maxUses) return null;
+    c.useCount += 1;
+    this.save();
+    return c;
+  }
 }
 
 class MongoStore {
@@ -260,6 +306,7 @@ class MongoStore {
     this.events = db.collection('events');
     this.orgs = db.collection('orgs');
     this.invites = db.collection('invites');
+    this.betaCodes = db.collection('betaCodes');
     this.cols = { modules: db.collection('modules'), records: db.collection('records') };
 
     // Email stays GLOBALLY unique, deliberately. Sign-in resolves an account
@@ -272,6 +319,7 @@ class MongoStore {
     await this.orgs.createIndex({ id: 1 }, { unique: true });
     await this.invites.createIndex({ code: 1 }, { unique: true });
     await this.invites.createIndex({ orgId: 1, createdAt: -1 });
+    await this.betaCodes.createIndex({ code: 1 }, { unique: true });
 
     // orgId leads every scoped index: a query filtered on orgId alone cannot
     // use an index where orgId sits in a trailing position.
@@ -464,6 +512,30 @@ class MongoStore {
   async updateInvite(code, patch) {
     await this.invites.updateOne({ code }, { $set: patch });
     return this.getInvite(code);
+  }
+
+  // --- beta signup codes
+  async createBetaCode(entry) { await this.betaCodes.insertOne({ ...entry }); return entry; }
+  async getBetaCode(code) { return this.betaCodes.findOne({ code }, { projection: { _id: 0 } }); }
+  async listBetaCodes() { return this.betaCodes.find({}, { projection: { _id: 0 } }).toArray(); }
+  async updateBetaCode(code, patch) {
+    await this.betaCodes.updateOne({ code }, { $set: patch });
+    return this.getBetaCode(code);
+  }
+  /*
+   * Take one use, or nothing.
+   *
+   * The cap has to hold when two people redeem the last use at the same
+   * moment, so the check lives in the update's filter rather than in a read
+   * before it — read-then-write would let both through.
+   */
+  async consumeBetaCode(code) {
+    const res = await this.betaCodes.findOneAndUpdate(
+      { code, $expr: { $lt: ['$useCount', '$maxUses'] } },
+      { $inc: { useCount: 1 } },
+      { returnDocument: 'after', projection: { _id: 0 } }
+    );
+    return res && (res.value || res);
   }
 }
 
@@ -1120,6 +1192,20 @@ app.get('/auth/google', (req, res) => {
   if (!GOOGLE_CLIENT_ID) return res.status(404).send('Google OAuth is not configured');
   const state = crypto.randomBytes(16).toString('hex');
   res.cookie('crmb_oauth_state', state, { httpOnly: true, sameSite: 'lax', secure: IS_PROD, maxAge: 600000 });
+  /*
+   * Carry the beta code across the round trip to Google in an httpOnly cookie,
+   * beside the state nonce and for the same reason: it has to come back to us
+   * unmodified, and it must not be readable by script. It is NOT validated
+   * here — validation happens in the callback, against the email Google
+   * actually returns, because only then do we know whether this is a signup at
+   * all.
+   */
+  const beta = String(req.query.beta || '').slice(0, 128);
+  if (beta) {
+    res.cookie(BETA_COOKIE, beta, { httpOnly: true, sameSite: 'lax', secure: IS_PROD, maxAge: 600000 });
+  } else {
+    res.clearCookie(BETA_COOKIE);
+  }
   const params = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
     redirect_uri: `${APP_URL}/auth/google/callback`,
@@ -1156,8 +1242,18 @@ app.get('/auth/google/callback', async (req, res) => {
     });
     const info = await infoRes.json();
     if (!info.email) throw new Error('no email from Google');
+
+    // Authenticated by Google, but not yet allowed to exist here.
+    const gate = await checkSignup(info.email, req.cookies[BETA_COOKIE]);
+    res.clearCookie(BETA_COOKIE);
+    if (!gate.ok) return res.redirect(`/?auth_error=${gate.reason}`);
+
     const user = await upsertUser({ email: info.email, name: info.name, picture: info.picture, provider: 'google' });
     if (user.disabled) return res.redirect('/?auth_error=disabled');
+    // Only now, with an account that actually exists. A use burnt on a failed
+    // token exchange is a tester who cannot get in and a code that says it was
+    // redeemed.
+    if (gate.consume) await gate.consume();
     setSession(res, user);
     res.redirect('/');
   } catch (err) {
@@ -1171,8 +1267,21 @@ app.post('/auth/dev', async (req, res) => {
   if (!DEV_LOGIN) return res.status(404).json({ error: 'Not available' });
   const email = String(req.body.email || '').trim().toLowerCase();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'Valid email required' });
+
+  // The same gate as the Google path. Correct in its own right, and the reason
+  // any of this is testable: the OAuth callback cannot be driven from a test,
+  // and this is the seam that can.
+  const gate = await checkSignup(email, req.body.beta);
+  if (!gate.ok) {
+    return res.status(403).json({
+      error: gate.reason === 'closed' ? 'Signups are closed right now.' : SIGNUP_REJECTION,
+      reason: gate.reason,
+    });
+  }
+
   const user = await upsertUser({ email, name: req.body.name || '', provider: 'dev' });
   if (user.disabled) return res.status(403).json({ error: 'Account disabled' });
+  if (gate.consume) await gate.consume();
   setSession(res, user);
   res.json({ user: publicUser(user) });
 });
@@ -1206,6 +1315,7 @@ app.get('/api/me', async (req, res) => {
     org,
     googleEnabled: !!GOOGLE_CLIENT_ID,
     devLoginEnabled: DEV_LOGIN,
+    signupMode: SIGNUP_MODE,
     storage: store.kind(),
   });
 });
@@ -1298,6 +1408,79 @@ app.get('/api/org', requireAuth, async (req, res) => {
     canInvite: req.user.role === 'owner' || req.user.role === 'platformAdmin',
   });
 });
+
+/*
+ * Beta signup codes.
+ *
+ * A platform-level code that lets a stranger create an account, as distinct
+ * from an org invite, which adds someone to a team that already exists. Kept
+ * in its own collection rather than folded into `invites` because they are
+ * different things that happen to look alike — the same reason `wsId` is not
+ * `orgId` and `deleteUser` is not `deleteWorkspace`.
+ *
+ * Multi-use with a cap, so one code covers one batch of testers.
+ */
+function betaCodeState(entry, now = Date.now()) {
+  if (!entry) return 'invalid';
+  if (entry.revokedAt) return 'revoked';
+  if (entry.expiresAt && entry.expiresAt < now) return 'expired';
+  if (entry.useCount >= entry.maxUses) return 'spent';
+  return 'valid';
+}
+
+function publicBetaCode(entry) {
+  return {
+    code: entry.code,
+    label: entry.label || '',
+    maxUses: entry.maxUses,
+    useCount: entry.useCount,
+    remaining: Math.max(0, entry.maxUses - entry.useCount),
+    createdAt: entry.createdAt,
+    expiresAt: entry.expiresAt,
+    revokedAt: entry.revokedAt || null,
+    state: betaCodeState(entry),
+  };
+}
+
+/*
+ * May this email create an account right now, and at what cost?
+ *
+ * Returns { ok } or { ok: false, reason }. `consume` is a function the caller
+ * runs ONLY once an account has actually been created — a failed token
+ * exchange or an already-existing user must not burn a use.
+ */
+async function checkSignup(email, code) {
+  const existing = await store.getUserByEmail(String(email).toLowerCase());
+  // An account that exists is never gated. This is the whole point.
+  if (existing) return { ok: true, existing };
+  // The operator can always get in, whatever the mode — locking yourself out
+  // of your own deployment is not a security feature.
+  if (ADMIN_EMAILS.includes(String(email).toLowerCase())) return { ok: true };
+
+  /*
+   * The first account on an empty deployment is always allowed.
+   *
+   * Otherwise a fresh install in code mode is bricked: minting a code needs a
+   * platform admin, and the only way to become one is to sign up. ADMIN_EMAILS
+   * is the intended escape hatch, but a deployment where nobody set it would
+   * have no way in at all. This is the same bootstrap upsertUser already
+   * applies when it makes that first account a platformAdmin.
+   */
+  if ((await store.countUsers()) === 0) return { ok: true };
+
+  if (SIGNUP_MODE === 'open') return { ok: true };
+  if (SIGNUP_MODE === 'closed') {
+    return { ok: false, reason: 'closed' };
+  }
+
+  const entry = code ? await store.getBetaCode(String(code)) : null;
+  if (betaCodeState(entry) !== 'valid') return { ok: false, reason: 'beta' };
+  // Deferred on purpose: the caller runs this only once the account exists, so
+  // a failure between here and the write cannot burn a tester's only way in.
+  // No test reaches that path — it needs a database fault mid-callback — so
+  // this is a deliberate, unguarded ordering rather than a proven one.
+  return { ok: true, consume: () => store.consumeBetaCode(entry.code) };
+}
 
 /*
  * Invites.
@@ -1585,6 +1768,40 @@ async function copyWorkspace(fromWsId, toWsId, user, orgId = toWsId) {
   }
   return copied;
 }
+
+// ---- beta codes (platform admin only)
+// Handing out the right to create accounts on this deployment is a platform
+// concern, not an org owner's — requirePlatformAdmin, deliberately, not
+// requireOrgAdmin.
+app.get('/api/admin/beta-codes', requireAuth, requirePlatformAdmin, async (req, res) => {
+  const codes = (await store.listBetaCodes()).map(publicBetaCode);
+  codes.sort((a, b) => b.createdAt - a.createdAt);
+  res.json({ codes, signupMode: SIGNUP_MODE });
+});
+
+app.post('/api/admin/beta-codes', requireAuth, requirePlatformAdmin, async (req, res) => {
+  const maxUses = Math.min(Math.max(Number(req.body && req.body.maxUses) || 10, 1), 1000);
+  const days = Math.min(Math.max(Number(req.body && req.body.days) || 30, 1), 365);
+  const entry = {
+    code: crypto.randomBytes(9).toString('base64url'),
+    label: String((req.body && req.body.label) || '').slice(0, 60),
+    maxUses,
+    useCount: 0,
+    createdBy: req.user.id,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + days * DAY_MS,
+    revokedAt: null,
+  };
+  await store.createBetaCode(entry);
+  res.json({ code: publicBetaCode(entry), url: `${APP_URL}/?beta=${entry.code}` });
+});
+
+app.delete('/api/admin/beta-codes/:code', requireAuth, requirePlatformAdmin, async (req, res) => {
+  const entry = await store.getBetaCode(req.params.code);
+  if (!entry) return res.status(404).json({ error: 'Code not found' });
+  await store.updateBetaCode(entry.code, { revokedAt: Date.now() });
+  res.json({ ok: true });
+});
 
 // ---- admin: accounts + analytics
 app.get('/api/admin/stats', requireAuth, requireOrgAdmin, async (req, res) => {

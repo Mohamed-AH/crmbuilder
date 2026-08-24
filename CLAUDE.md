@@ -30,7 +30,7 @@ js/tour.js            guided walkthrough engine (no dependencies)
 js/cloud.js           account + sync layer, server ⇄ local fallback
 js/app.js             router, all views, module builder, kanban, admin, tour steps
 sw.js                 service worker (BUMP CACHE_VERSION on any asset change)
-tests/                smoke, API contract, CSV unit, Playwright E2E
+tests/                smoke, API contract, CSV unit, signup gate, migrations, E2E
 docs/                 user guide, onboarding playbook, demo script, architecture
 ```
 
@@ -38,7 +38,7 @@ docs/                 user guide, onboarding playbook, demo script, architecture
 
 ## 2. Current status
 
-**All green:** 104 Node tests + 50 Playwright tests.
+**All green:** 114 Node tests + 53 Playwright tests.
 
 ```sh
 npm install
@@ -70,6 +70,7 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
 
 ### Not built yet
 - Email sending, third-party integrations.
+- Backups, usage measurement and in-app problem reports (beta stages 2–3).
 - **Per-module permissions** — everyone on a team sees every module. Considered
   and set aside: it needs per-module filtering in sync, or a member receives
   rows they cannot see.
@@ -95,7 +96,7 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v9`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v10`).
 
 **Tenancy scoping comes from the session, never a request.** That covers both
 `req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
@@ -537,3 +538,44 @@ version, and not an implied remote wipe.
   Assert emptiness from the dashboard.
 - **`fmtWhen` was scoped inside `renderAdmin`** and had to be hoisted before
   Settings could use it.
+
+---
+
+## 16. Signup and the beta gate (`SIGNUP_MODE`)
+
+There was never a signup step: `upsertUser` creates the account on the first
+successful callback. `SIGNUP_MODE` (`code` default · `open` · `closed`) decides
+who is allowed to reach that point.
+
+**The gate is on signup, never on sign-in.** `checkSignup(email, code)` returns
+`{ ok: true }` immediately for an account that already exists — a returning
+tester must never be asked for a code they used weeks ago. Consumption is
+deferred to a `consume()` the caller runs only after the account exists.
+
+**Order of the bypasses matters:**
+
+1. account exists → in
+2. `ADMIN_EMAILS` → in
+3. **no users at all → in** — without this a fresh deployment in `code` mode is
+   bricked: minting a code needs a platform admin, and becoming one needs a
+   signup. Same bootstrap `upsertUser` already uses for the first
+   `platformAdmin`. Found by the tests, not by reading the code.
+
+**Traps:**
+
+- **`SIGNUP_MODE` is process-wide**, so a mode cannot be toggled under a running
+  server. `tests/signup.test.mjs` boots one per mode; `api.test.mjs` and
+  `playwright.config.js` both pin `SIGNUP_MODE=open`, because those suites are
+  about everything else and threading a code through all of them would test the
+  harness.
+- **The code crosses the Google round trip in an httpOnly cookie**
+  (`crmb_beta`), beside `crmb_oauth_state` and for the same reasons. It is
+  validated in the *callback*, against the email Google actually returned —
+  only there is it known whether this is a signup at all.
+- **Every refusal answers identically** (`SIGNUP_REJECTION`) — unknown, spent,
+  revoked, expired. A test asserts the wordings are one set, not four.
+- **"A use is spent only on account creation" is deliberate but untested.** No
+  reachable path fails between the check and the write: a returning user
+  short-circuits earlier, a malformed address is rejected earlier. The first
+  version of that test passed with the ordering broken, so it now claims only
+  what it proves and the code says the ordering is unguarded.

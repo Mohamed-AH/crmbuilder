@@ -570,8 +570,35 @@
   }
 
   // ---------------------------------------------------------------- sign in
+  /*
+   * Why the sign-in did not become an account.
+   *
+   * Worth a screen rather than a toast: the person did nothing wrong, they are
+   * probably confused, and the useful thing to tell them is that the product
+   * they were about to try still works without an account at all.
+   */
+  function explainClosedSignup(reason) {
+    const modal = openModal(`
+      <div class="modal-head">
+        <h2>${reason === 'closed' ? 'Signups are paused' : 'This is a private beta'}</h2>
+        <button class="icon-btn" data-close aria-label="Close">${icon('x', 16)}</button>
+      </div>
+      <div class="modal-body">
+        <p class="settings-hint">${reason === 'closed'
+    ? 'New accounts are paused while we work through the current round of testing.'
+    : 'Accounts are invite-only for now. If someone sent you a link with a code in it, open that link and sign in from there.'}</p>
+        <p class="settings-hint"><strong>You can still use the whole thing without an account.</strong> Everything on this device works offline — modules, records, import, export. An account only adds syncing between devices and sharing with a team, and you can bring your work with you if you get one later.</p>
+      </div>
+      <div class="modal-foot claim-actions">
+        <button class="btn btn-primary" data-close>Keep looking around</button>
+      </div>`);
+    $$('[data-close]', modal).forEach((b) => b.addEventListener('click', closeModal));
+  }
+
   function openSignIn() {
     const { googleEnabled, devLoginEnabled } = Cloud.me;
+    // Only asked for when the deployment actually gates signups.
+    const needsCode = Cloud.me.signupMode === 'code';
     const modal = openModal(`
       <div class="modal-head">
         <h2>Sign in</h2>
@@ -580,7 +607,7 @@
       <div class="modal-body">
         <p class="settings-hint">Sign in to save your CRM to your account and access it from any device. Your data also always stays available on this device.</p>
         ${googleEnabled ? `
-          <a class="btn btn-google btn-block" href="/auth/google" id="google-signin">
+          <a class="btn btn-google btn-block" href="/auth/google${betaCode() ? `?beta=${encodeURIComponent(betaCode())}` : ''}" id="google-signin">
             <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.6-.4-3.9z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.9 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.6 39.6 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C41 35.4 44 30.2 44 24c0-1.3-.1-2.6-.4-3.9z"/></svg>
             Continue with Google
           </a>` : ''}
@@ -593,6 +620,12 @@
             </div>
             <button class="btn btn-primary btn-block" type="submit">${icon('log-in', 15)} Sign in</button>
           </form>` : ''}
+        ${needsCode ? `
+          <div class="form-row">
+            <label for="beta-code">Beta code</label>
+            <input class="input" id="beta-code" type="text" placeholder="Paste the code you were sent" value="${esc(betaCode())}">
+            <p class="settings-hint">Only needed the first time, to create your account. Already have one? Leave it blank.</p>
+          </div>` : ''}
         ${!googleEnabled && !devLoginEnabled ? '<p class="empty-hint">Sign-in is not configured on this server. See DEPLOYMENT.md to enable Google OAuth.</p>' : ''}
       </div>
       <div class="modal-foot"><span class="settings-hint" style="margin:0">We only use your email to identify your workspace.</span></div>`);
@@ -600,14 +633,27 @@
     // The round trip to Google comes back as a fresh page load, and the last
     // known identity on this device may be somebody else's. Tell boot not to
     // trust it, so nobody's workspace flashes up for the wrong person.
+    const codeField = $('#beta-code', modal);
     const google = $('#google-signin', modal);
-    if (google) google.addEventListener('click', () => Scope.markSignInPending());
+    if (google) {
+      google.addEventListener('click', (e) => {
+        Scope.markSignInPending();
+        // A code typed in just now has to reach the redirect, which was built
+        // when the modal opened.
+        const typed = codeField ? codeField.value.trim() : '';
+        if (typed) {
+          e.preventDefault();
+          try { localStorage.setItem(BETA_KEY, typed); } catch { /* private mode */ }
+          location.href = `/auth/google?beta=${encodeURIComponent(typed)}`;
+        }
+      });
+    }
     const form = $('#dev-login-form', modal);
     if (form) {
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         try {
-          await Cloud.devLogin($('#dev-email', modal).value.trim());
+          await Cloud.devLogin($('#dev-email', modal).value.trim(), '', codeField ? codeField.value.trim() : betaCode());
           Scope.markSignInPending();
           location.reload(); // boot re-runs and reconciles local vs cloud data
         } catch (err) {
@@ -2152,8 +2198,14 @@
     }
     main.innerHTML = '<div class="page"><p class="empty-hint">Loading analytics…</p></div>';
     let stats, usersRes;
+    let betaCodes = null;
     try {
       [stats, usersRes] = await Promise.all([Cloud.admin.stats(), Cloud.admin.users()]);
+      // Platform admins only, so a 403 here is the expected answer for an org
+      // owner rather than something worth reporting.
+      if (Cloud.user && Cloud.user.role === 'platformAdmin') {
+        betaCodes = await Cloud.admin.betaCodes().catch(() => null);
+      }
     } catch (err) {
       // The signed-in role is whatever it was at sign-in; an administrator can
       // change it since. A 403 here means exactly that, so say the plain thing
@@ -2189,6 +2241,32 @@
             ${barChart({ data: stats.activeUsers, label: 'active users' })}
           </div>
         </div>
+        ${betaCodes ? `
+        <div class="card">
+          <div class="card-head"><h2>Beta access</h2></div>
+          <p class="settings-hint">
+            Signups are <strong>${esc(betaCodes.signupMode)}</strong>.
+            ${betaCodes.signupMode === 'code'
+    ? 'A code is needed to create an account, and never to sign back in. Send the link; it carries the code.'
+    : betaCodes.signupMode === 'open'
+      ? 'Anyone who can sign in with Google gets an account. Codes below are ignored.'
+      : 'No new accounts are being created. Everyone who already has one still works.'}
+          </p>
+          ${betaCodes.codes.length ? `
+            <ul class="team-list">
+              ${betaCodes.codes.map((c) => `
+                <li>
+                  <span class="team-who">${esc(c.label || 'Unlabelled')} <span class="muted">· ${c.remaining} of ${c.maxUses} left · expires ${esc(fmtWhen(c.expiresAt))}</span></span>
+                  <span class="pill ${c.state === 'valid' ? 'pill-ok' : ''}">${esc(c.state)}</span>
+                  <span class="team-actions">
+                    ${c.state === 'valid' ? `
+                      <button class="icon-btn" data-beta-copy="${esc(c.code)}" title="Copy the invite link">${icon('clipboard-list', 15)}</button>
+                      <button class="icon-btn" data-beta-revoke="${esc(c.code)}" title="Revoke">${icon('ban', 15)}</button>` : ''}
+                  </span>
+                </li>`).join('')}
+            </ul>` : '<p class="settings-hint">No codes yet.</p>'}
+          <div class="btn-row"><button class="btn btn-primary" id="mint-beta-btn">${icon('plus', 15)} New beta code</button></div>
+        </div>` : ''}
         <div class="card table-card">
           <div class="card-head admin-users-head">
             <h2>Accounts</h2>
@@ -2254,6 +2332,96 @@
           toast(err.message);
         }
       });
+    });
+
+    const mint = $('#mint-beta-btn');
+    if (mint) mint.addEventListener('click', openMintBetaCode);
+
+    $$('[data-beta-revoke]').forEach((btn) => btn.addEventListener('click', async () => {
+      if (!confirm('Revoke this code? Anyone holding it will no longer be able to create an account. People who already used it are unaffected.')) return;
+      try {
+        await Cloud.admin.revokeBetaCode(btn.dataset.betaRevoke);
+        toast('Code revoked');
+        renderAdmin();
+      } catch (err) {
+        toast(err.message);
+      }
+    }));
+
+    $$('[data-beta-copy]').forEach((btn) => btn.addEventListener('click', async () => {
+      const url = `${location.origin}/?beta=${encodeURIComponent(btn.dataset.betaCopy)}`;
+      try {
+        await navigator.clipboard.writeText(url);
+        toast('Signup link copied');
+      } catch {
+        prompt('Copy this signup link:', url);
+      }
+    }));
+  }
+
+  /*
+   * Mint a code for one batch of testers.
+   *
+   * A cap and an expiry rather than an open-ended key: on a free database the
+   * number of people who can create an account is the only lever there is, and
+   * a code that lives forever is one you will forget you issued.
+   */
+  async function openMintBetaCode() {
+    const modal = openModal(`
+      <div class="modal-head">
+        <h2>New beta code</h2>
+        <button class="icon-btn" data-close aria-label="Close">${icon('x', 16)}</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <label for="beta-label">What is this batch?</label>
+          <input class="input" id="beta-label" type="text" placeholder="e.g. Launch week, plumbers group">
+        </div>
+        <div class="builder-meta">
+          <div class="form-row">
+            <label for="beta-uses">How many accounts</label>
+            <input class="input" id="beta-uses" type="number" min="1" max="1000" value="10">
+          </div>
+          <div class="form-row">
+            <label for="beta-days">Valid for (days)</label>
+            <input class="input" id="beta-days" type="number" min="1" max="365" value="30">
+          </div>
+        </div>
+      </div>
+      <div class="modal-foot claim-actions">
+        <button class="btn btn-primary" id="beta-create">Create code</button>
+      </div>`);
+    $$('[data-close]', modal).forEach((b) => b.addEventListener('click', closeModal));
+
+    $('#beta-create', modal).addEventListener('click', async () => {
+      try {
+        const out = await Cloud.admin.mintBetaCode({
+          label: $('#beta-label', modal).value.trim(),
+          maxUses: Number($('#beta-uses', modal).value) || 10,
+          days: Number($('#beta-days', modal).value) || 30,
+        });
+        $('.modal-body', modal).innerHTML = `
+          <p class="settings-hint">Send this link to the batch. It creates up to <strong>${out.code.maxUses}</strong> accounts and stops working on <strong>${esc(fmtWhen(out.code.expiresAt))}</strong>.</p>
+          <div class="form-row">
+            <label for="beta-url">Signup link</label>
+            <input class="input" id="beta-url" type="text" readonly value="${esc(out.url)}">
+          </div>`;
+        $('.modal-foot', modal).innerHTML = '<button class="btn btn-primary" id="beta-copy">Copy link</button>';
+        const field = $('#beta-url', modal);
+        field.addEventListener('focus', () => field.select());
+        field.select();
+        $('#beta-copy', modal).addEventListener('click', async () => {
+          field.select();
+          try {
+            await navigator.clipboard.writeText(out.url);
+            toast('Signup link copied');
+          } catch {
+            toast('Press Ctrl/Cmd+C to copy the selected link');
+          }
+        });
+      } catch (err) {
+        toast(err.message);
+      }
     });
   }
 
@@ -2680,6 +2848,34 @@
     return true;
   }
 
+  // ------------------------------------------------------------ beta access
+  const BETA_KEY = 'crmb:betaCode';
+
+  /*
+   * Lift a beta code out of the URL and hold on to it.
+   *
+   * Same shape as captureInvite() below, and device-level for the same reason:
+   * the link is opened before signing in, and sign-in is a full page load. It
+   * is stripped from the address bar immediately — a code that lets someone
+   * create an account is a credential, not a query parameter to leave lying in
+   * browser history.
+   *
+   * Held only; the server decides. A code in localStorage is a suggestion.
+   */
+  function captureBetaCode() {
+    const params = new URLSearchParams(location.search);
+    const code = params.get('beta');
+    if (!code) return;
+    try { localStorage.setItem(BETA_KEY, code); } catch { /* private mode */ }
+    params.delete('beta');
+    const qs = params.toString();
+    history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : '') + location.hash);
+  }
+
+  const betaCode = () => {
+    try { return localStorage.getItem(BETA_KEY) || ''; } catch { return ''; }
+  };
+
   // ------------------------------------------------------------ joining a team
   const INVITE_KEY = 'crmb:pendingInvite';
 
@@ -2843,10 +3039,18 @@
     updateOnlineBadge();
 
     captureInvite();
+    captureBetaCode();
     const params = new URLSearchParams(location.search);
-    if (params.get('auth_error')) {
-      toast(params.get('auth_error') === 'disabled' ? 'This account has been disabled' : 'Sign-in failed — please try again');
+    const authError = params.get('auth_error');
+    if (authError) {
       history.replaceState(null, '', location.pathname + location.hash);
+      if (authError === 'beta' || authError === 'closed') {
+        // Not a failure on their part, so it gets a screen rather than a toast
+        // that disappears before it has been read.
+        setTimeout(() => explainClosedSignup(authError), 300);
+      } else {
+        toast(authError === 'disabled' ? 'This account has been disabled' : 'Sign-in failed — please try again');
+      }
     }
 
     // Watchdog: if local data is slow or wedged, show the UI anyway. Whatever

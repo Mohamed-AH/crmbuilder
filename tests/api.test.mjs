@@ -104,6 +104,10 @@ function startServer() {
       ALLOW_DEV_LOGIN: '1',
       MONGODB_URI: '',
       SESSION_SECRET: TEST_SECRET,
+      // These suites are about everything except the signup gate, and making
+      // a hundred of them carry a beta code would test the harness rather than
+      // the product. The gate has its own file, with servers in each mode.
+      SIGNUP_MODE: 'open',
       NODE_ENV: 'test',
     },
     stdio: ['ignore', 'pipe', 'pipe'],

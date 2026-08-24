@@ -117,8 +117,8 @@ const Cloud = (() => {
       return me;
     },
 
-    async devLogin(email, name) {
-      const out = await api('/auth/dev', { method: 'POST', body: JSON.stringify({ email, name }) }, TIMEOUT.auth);
+    async devLogin(email, name, beta) {
+      const out = await api('/auth/dev', { method: 'POST', body: JSON.stringify({ email, name, beta }) }, TIMEOUT.auth);
       me.authenticated = true;
       me.user = out.user;
       me.serverAvailable = true;
@@ -281,6 +281,9 @@ const Cloud = (() => {
     },
 
     admin: {
+      betaCodes: () => api('/api/admin/beta-codes', {}, TIMEOUT.admin),
+      mintBetaCode: (body) => api('/api/admin/beta-codes', { method: 'POST', body: JSON.stringify(body || {}) }, TIMEOUT.admin),
+      revokeBetaCode: (code) => api(`/api/admin/beta-codes/${encodeURIComponent(code)}`, { method: 'DELETE' }, TIMEOUT.admin),
       stats: () => api('/api/admin/stats', {}, TIMEOUT.admin),
       users: () => api('/api/admin/users', {}, TIMEOUT.admin),
       update: (id, patch) => api(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }, TIMEOUT.admin),

@@ -1249,6 +1249,52 @@ test.describe('team workspaces', () => {
   });
 });
 
+/*
+ * What a stranger sees when the beta will not have them.
+ *
+ * The server-side gate has its own suite; this is about the screen. Someone
+ * turned away has done nothing wrong, and the useful thing to tell them is
+ * that the product still works without an account — which is true, and is the
+ * whole reason the gate is defensible in the first place.
+ */
+test.describe('beta access', () => {
+  test('a refused signup is explained, not just failed', async ({ page }) => {
+    await page.goto('/?auth_error=beta');
+    await expect(page.locator('.modal')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('.modal')).toContainText('private beta');
+    await expect(page.locator('.modal')).toContainText('without an account');
+    // The code is not left in the address bar either.
+    expect(page.url()).not.toContain('auth_error');
+
+    await page.click('.modal [data-close]');
+    // And they land in a working app rather than a dead end.
+    await expect(page.locator('.template-card').first()).toBeVisible();
+    await page.click('#onboard-create');
+    await expect(page.locator('#nav-modules .nav-link').first()).toBeVisible();
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Works Without An Account');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Works Without An Account")')).toBeVisible();
+  });
+
+  test('paused signups say so rather than blaming the visitor', async ({ page }) => {
+    await page.goto('/?auth_error=closed');
+    await expect(page.locator('.modal')).toContainText('paused', { timeout: 15000 });
+  });
+
+  test('a beta code is taken out of the address bar on arrival', async ({ page }) => {
+    await page.goto('/?beta=some-code-from-an-invite');
+    await expect(page.locator('.template-card').first()).toBeVisible();
+    // A code that creates accounts is a credential; it does not belong in
+    // history or a screenshot once the page has it.
+    await expect(async () => {
+      expect(page.url()).not.toContain('beta=');
+    }).toPass({ timeout: 10000 });
+    const held = await page.evaluate(() => localStorage.getItem('crmb:betaCode'));
+    expect(held).toBe('some-code-from-an-invite');
+  });
+});
+
 test.describe('admin', () => {
   test('shows metrics and manages accounts', async ({ page, browser }) => {
     // ADMIN_EMAILS in playwright.config.js guarantees this address is an admin
