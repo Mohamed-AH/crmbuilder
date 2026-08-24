@@ -1,0 +1,76 @@
+# Nightly backup, because MongoDB M0 has none.
+#
+# The free Atlas tier gives no automated backups and no point-in-time recovery,
+# so this is the whole safety net for beta users' data. It pulls the deployment's
+# export and keeps it as a build artifact.
+#
+# Two secrets are required, and the job is a no-op without them:
+#   BACKUP_URL    the deployment, e.g. https://crmbuilder-v1.onrender.com
+#   BACKUP_TOKEN  the same value as the BACKUP_TOKEN env var on the service
+#
+# The token goes in a header, never the URL — Render logs request URLs, and a
+# token in a query string is a credential written to plaintext logs.
+name: Nightly backup
+
+on:
+  schedule:
+    # 03:20 UTC. Deliberately not on the hour: GitHub's scheduled queue is
+    # busiest then, and this job has no reason to compete for it.
+    - cron: '20 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  backup:
+    name: Export and keep
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the secrets are set
+        id: check
+        env:
+          URL: ${{ secrets.BACKUP_URL }}
+          TOKEN: ${{ secrets.BACKUP_TOKEN }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$TOKEN" ]; then
+            echo "BACKUP_URL or BACKUP_TOKEN is not set — skipping."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch the export
+        if: steps.check.outputs.ready == 'true'
+        env:
+          URL: ${{ secrets.BACKUP_URL }}
+          TOKEN: ${{ secrets.BACKUP_TOKEN }}
+        run: |
+          set -euo pipefail
+          stamp="$(date -u +%Y-%m-%d)"
+          # --fail-with-body so an error page is never mistaken for a backup,
+          # and a generous timeout because a sleeping free instance takes a
+          # minute to wake.
+          curl --fail-with-body --silent --show-error \
+               --max-time 300 --retry 3 --retry-delay 20 \
+               -H "Authorization: Bearer ${TOKEN}" \
+               -o "crmbuilder-backup-${stamp}.json" \
+               "${URL%/}/api/admin/export"
+
+          # A backup nobody looked at is a rumour. Fail loudly if it is not
+          # the shape a restore expects.
+          node -e '
+            const fs = require("fs");
+            const file = process.argv[1];
+            const b = JSON.parse(fs.readFileSync(file, "utf8"));
+            if (b.kind !== "backup") throw new Error("not a backup document");
+            const records = (b.workspaces || []).reduce((n, w) => n + (w.records || []).length, 0);
+            console.log(`${b.workspaces.length} workspace(s), ${b.users.length} account(s), ${records} record(s)`);
+            console.log(`${(fs.statSync(file).size / 1024).toFixed(1)} kB`);
+          ' "crmbuilder-backup-${stamp}.json"
+
+      - name: Keep it
+        if: steps.check.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: crmbuilder-backup
+          path: crmbuilder-backup-*.json
+          retention-days: 30
+          if-no-files-found: error

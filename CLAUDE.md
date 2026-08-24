@@ -38,7 +38,7 @@ docs/                 user guide, onboarding playbook, demo script, architecture
 
 ## 2. Current status
 
-**All green:** 114 Node tests + 53 Playwright tests.
+**All green:** 121 Node tests + 53 Playwright tests.
 
 ```sh
 npm install
@@ -70,7 +70,8 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
 
 ### Not built yet
 - Email sending, third-party integrations.
-- Backups, usage measurement and in-app problem reports (beta stages 2–3).
+- In-app problem reports (beta stage 3); privacy/terms pages and the go-live
+  runbook (stage 4).
 - **Per-module permissions** — everyone on a team sees every module. Considered
   and set aside: it needs per-module filtering in sync, or a member receives
   rows they cannot see.
@@ -579,3 +580,47 @@ deferred to a `consume()` the caller runs only after the account exists.
   short-circuits earlier, a malformed address is rejected earlier. The first
   version of that test passed with the ordering broken, so it now claims only
   what it proves and the code says the ordering is unguarded.
+
+---
+
+## 17. Backups and usage (beta stage 2)
+
+M0 has **no automated backups and no point-in-time recovery**, so
+`GET /api/admin/export` plus `.github/workflows/backup.yml` is the entire
+safety net. `scripts/restore.mjs` puts one back, into Mongo or the file store.
+
+**The export is the highest-value route in the app** — one request returns
+every customer's data — so it is deliberately awkward:
+
+- **404, not 401, when `BACKUP_TOKEN` is unset.** Nothing should be able to
+  discover whether a deployment has backups.
+- **`Authorization: Bearer` only.** A *correct* token in a query string is
+  refused with an explanation, because Render logs request URLs; `?token=`
+  writes a credential into plaintext logs, browser history and `Referer`.
+  Guarded by a test that sends the right token the wrong way.
+- **An admin session is not a token.** A stolen cookie must not also be a
+  database dump. Also guarded.
+- Compared by hashing both sides — `timingSafeEqual` throws on a length
+  mismatch, and the throw would itself leak the length.
+
+**Traps:**
+
+- **HTTP strips trailing whitespace from header values**, so `Bearer <token> `
+  arrives as the correct token. A test asserting that variant is refused fails
+  for a reason that has nothing to do with the code. Use a genuinely different
+  token instead.
+- **Tombstones older than `TOMBSTONE_RETENTION_DAYS` are pruned at boot**, so a
+  restore of old test data comes back without them and looks like the restore
+  lost them. It did not; the retention policy did its job.
+- **Usage is measured, not estimated.** `storageStats()` asks MongoDB for
+  `dataSize + indexSize` rather than multiplying records by a bytes-per-record
+  figure, because indexes and tombstones are real storage and an estimate that
+  ignores them reads fine right up until the tier fills.
+- **Nothing is enforced.** A cap firing mid-beta looks like the bug the tester
+  was chasing.
+
+**Keep-warm is configuration, not code.** UptimeRobot pings `/health` every 14
+minutes. Two consequences worth remembering: that is continuous, so it consumes
+~744 of Render's 750 monthly instance-hours and only works while this is the
+only free service on the account; and 14 minutes against a 15-minute idle
+timeout is one missed check from asleep.

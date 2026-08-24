@@ -136,6 +136,125 @@ and set the env vars above plus `NODE_ENV=production` and a random `SESSION_SECR
 5. Run the audit from a machine that can reach the URL:
    `BASE_URL=https://<your-app>.onrender.com npm run test:smoke`
 
+## Running a beta
+
+### Keeping the service awake
+
+Render's free tier spins a web service down after ~15 minutes idle, and the
+first request afterwards waits 30–60 seconds. That is survivable for a demo you
+control and corrosive for testers who drop in unannounced, so point an external
+uptime checker at `/health`.
+
+**Currently configured: UptimeRobot, every 14 minutes.** That is inside the
+idle window, so the service stays up continuously.
+
+Two things to know about that:
+
+- **It uses your whole free allowance.** Render gives 750 instance-hours a month
+  across the account, and a 31-day month is 744 hours. Continuous keep-warm
+  leaves ~6 hours of headroom and only works if this is the only free service
+  on the account. If you add another, either narrow the ping to working hours
+  or expect to be throttled.
+- **14 minutes against a 15-minute timeout is one missed check from asleep.**
+  Ten minutes would give real margin. Not worth changing on its own, but if you
+  see cold starts in the logs, that is the first thing to look at.
+
+Do not use GitHub Actions for this. Scheduled workflows are explicitly
+best-effort and are routinely delayed under load, which at this cadence means
+the service sleeps anyway.
+
+### Backups
+
+**MongoDB M0 has no automated backups and no point-in-time recovery.** The
+nightly export in `.github/workflows/backup.yml` is the entire safety net.
+
+Set up:
+
+1. Generate a token: `openssl rand -base64 32`
+2. Add `BACKUP_TOKEN` to the Render service's environment.
+3. Add the same value as a GitHub Actions **secret** named `BACKUP_TOKEN`, plus
+   `BACKUP_URL` set to the deployment's URL.
+4. Run the workflow once by hand (Actions → Nightly backup → Run workflow) and
+   check the artifact.
+
+The endpoint is `GET /api/admin/export`, and it is deliberately awkward:
+
+- It returns 404 when `BACKUP_TOKEN` is unset, so nothing can discover whether
+  a deployment has backups.
+- The token goes in `Authorization: Bearer …` and **only** there. A correct
+  token in a query string is refused with an explanation, because Render logs
+  request URLs — `?token=` writes a credential into plaintext logs, browser
+  history and `Referer`.
+- A platform-admin session is **not** accepted in place of the token. A stolen
+  admin cookie must not also be a database dump.
+
+Rotate the token if a backup artifact is ever shared, since the artifact is the
+data the token protects.
+
+### Restoring, and testing that you can
+
+An untested backup is a rumour. Do this once before opening the beta, and again
+whenever the export format changes:
+
+1. Download an artifact from the Nightly backup workflow.
+2. Create a scratch Atlas database (or run locally with no `MONGODB_URI`, which
+   uses the JSON file store).
+3. Restore into it:
+   ```sh
+   # into a scratch Atlas database
+   BACKUP_FILE=crmbuilder-backup-YYYY-MM-DD.json \
+     MONGODB_URI="mongodb+srv://.../scratch" node scripts/restore.mjs
+
+   # or into a local file store, which needs nothing set up
+   BACKUP_FILE=crmbuilder-backup-YYYY-MM-DD.json \
+     DATA_DIR=./data/restored node scripts/restore.mjs
+   ```
+   It refuses to write into a database that already holds accounts unless
+   `RESTORE_OVERWRITE=1` is set — restoring over live data should take saying
+   twice — and counts the rows back out afterwards.
+4. Start the server against the restored data, sign in as one of the restored
+   accounts, and confirm the workspace is there with the right record count.
+
+This round trip has been run, not just written down: a workspace with a live
+record, changed settings and one deleted record was exported, restored into an
+empty store, and read back with the live record present, the settings intact,
+and the deletion still a deletion.
+
+One thing that will look like a bug and is not: **tombstones older than
+`TOMBSTONE_RETENTION_DAYS` are pruned at boot**, so restoring very old test
+data can come back without its tombstones. That is the retention policy doing
+its job, not the restore losing them.
+
+The export carries **raw envelopes including tombstones**. That is deliberate:
+a restore that dropped tombstones would resurrect every deleted record on every
+device at the next sync.
+
+### Watching usage
+
+`/api/admin/stats` and `/health` both report a `usage` block to a platform
+admin: real `dataSize + indexSize` from MongoDB rather than an estimate, and a
+`level` of `ok`, `warn` (60%) or `critical` (85%) against the 512 MB M0 limit.
+
+Nothing is enforced. A hard cap firing mid-beta looks like the bug the tester
+was chasing, and you end up debugging your own limiter. The numbers exist to be
+looked at before that becomes a decision.
+
+### Who can sign up
+
+`SIGNUP_MODE` controls it:
+
+| Value | Effect |
+|---|---|
+| `code` (default) | A beta code is needed to **create** an account. Signing back in never asks. |
+| `open` | Anyone who can authenticate gets an account. |
+| `closed` | No new accounts; everyone who has one still works. |
+
+Mint codes from the admin dashboard (**Beta access → New beta code**), each with
+a use cap and an expiry, and send the link it gives you. Three bypasses exist,
+in this order: an account that already exists, an address in `ADMIN_EMAILS`, and
+the very first account on an empty deployment — without that last one a fresh
+install in `code` mode would have no way in at all.
+
 ## Local development
 
 ```sh

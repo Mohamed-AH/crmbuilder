@@ -25,7 +25,7 @@ after(async () => {
 
 let nextPort = 8800 + Math.floor(Math.random() * 400);
 
-async function boot({ signupMode = 'code', adminEmails = '' } = {}) {
+async function boot({ signupMode = 'code', adminEmails = '', backupToken = '' } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'crmb-signup-'));
   // Sequential, not random: this file boots a server per mode per test, and a
   // narrow random range collides often enough to hang the whole run.
@@ -44,6 +44,7 @@ async function boot({ signupMode = 'code', adminEmails = '' } = {}) {
     SESSION_SECRET: 'signup-test-secret',
     SIGNUP_MODE: mode,
     ADMIN_EMAILS: adminEmails,
+    BACKUP_TOKEN: backupToken,
     NODE_ENV: 'test',
   });
 
@@ -308,5 +309,129 @@ describe('signup gate: open and closed', () => {
       'closing signups must not lock out the people already using it');
     // And the operator, so a closed deployment is not a bricked one.
     assert.equal((await srv.signUp('ops3@operator.test')).status, 200);
+  });
+});
+
+/*
+ * The backup export.
+ *
+ * One request returns every customer's data, which makes it the highest-value
+ * route in the application. Nearly everything asserted here is a way it must
+ * refuse.
+ */
+describe('backup export', () => {
+  const TOKEN = 'a-long-backup-token-for-tests';
+
+  test('does not exist unless a token is configured', async () => {
+    const srv = await boot({ signupMode: 'open' });
+    const out = await srv.req('/api/admin/export');
+    // 404, not 401: nothing should be able to find out whether a deployment
+    // has backups switched on.
+    assert.equal(out.status, 404);
+  });
+
+  test('a correct token in the header works', async () => {
+    const srv = await boot({ signupMode: 'open', backupToken: TOKEN });
+    const admin = await adminOf(srv, 'backup-owner@operator.test');
+    await srv.req('/api/sync', {
+      method: 'POST',
+      cookies: admin,
+      body: {
+        since: 0,
+        modules: [{ id: 'bk-m1', updatedAt: 10, doc: { id: 'bk-m1', name: 'Deals', fields: [] } }],
+        records: [{ id: 'bk-r1', updatedAt: 11, doc: { id: 'bk-r1', moduleId: 'bk-m1', data: { title: 'Keep me' } } }],
+      },
+    });
+
+    const out = await srv.req('/api/admin/export', { headers: { Authorization: `Bearer ${TOKEN}` } });
+    assert.equal(out.status, 200);
+    assert.equal(out.json.kind, 'backup');
+    assert.ok(out.json.users.length >= 1);
+    assert.equal(out.json.workspaces.length, 1);
+    const ws = out.json.workspaces[0];
+    assert.ok(ws.records.some((r) => r.id === 'bk-r1'), 'the point of a backup is the records');
+    // Raw envelopes, so a restore keeps the sync clocks rather than making
+    // every row look brand new to every device.
+    assert.ok(ws.records[0].serverAt, 'envelopes, not bare documents');
+  });
+
+  test('tombstones are in the backup', async () => {
+    const srv = await boot({ signupMode: 'open', backupToken: TOKEN });
+    const admin = await adminOf(srv, 'tomb-owner@operator.test');
+    await srv.req('/api/sync', {
+      method: 'POST',
+      cookies: admin,
+      body: { since: 0, records: [{ id: 'gone-r1', updatedAt: 10, doc: { id: 'gone-r1', moduleId: 'm', data: {} } }] },
+    });
+    await srv.req('/api/sync', {
+      method: 'POST',
+      cookies: admin,
+      body: { since: 0, records: [{ id: 'gone-r1', updatedAt: 20, deleted: true }] },
+    });
+
+    const out = await srv.req('/api/admin/export', { headers: { Authorization: `Bearer ${TOKEN}` } });
+    const rows = out.json.workspaces[0].records;
+    const tomb = rows.find((r) => r.id === 'gone-r1');
+    assert.ok(tomb, 'a restore that dropped tombstones would resurrect every deleted record');
+    assert.ok(tomb.deletedAt);
+  });
+
+  test('a wrong token is refused', async () => {
+    const srv = await boot({ signupMode: 'open', backupToken: TOKEN });
+    assert.equal((await srv.req('/api/admin/export', { headers: { Authorization: 'Bearer nope' } })).status, 401);
+    // Shorter and longer than the real one: the comparison hashes both sides
+    // first, so a length mismatch is a mismatch rather than a thrown error
+    // that would itself leak the length.
+    assert.equal((await srv.req('/api/admin/export', { headers: { Authorization: `Bearer ${TOKEN.slice(0, -1)}` } })).status, 401);
+    assert.equal((await srv.req('/api/admin/export', { headers: { Authorization: `Bearer ${TOKEN}x` } })).status, 401);
+    assert.equal((await srv.req('/api/admin/export', { headers: { Authorization: TOKEN } })).status, 401,
+      'the Bearer scheme is required, not optional');
+    assert.equal((await srv.req('/api/admin/export')).status, 401);
+  });
+
+  /*
+   * The one that motivated putting this on a header at all.
+   *
+   * Render's edge logs request URLs, so a token in a query string is written
+   * to plaintext logs — and to browser history, and to the Referer of anything
+   * the page loads next. Accepting it "just this once" is how it ends up there.
+   */
+  test('a CORRECT token in the query string is still refused', async () => {
+    const srv = await boot({ signupMode: 'open', backupToken: TOKEN });
+    const out = await srv.req(`/api/admin/export?token=${encodeURIComponent(TOKEN)}`);
+    assert.equal(out.status, 400);
+    assert.match(out.json.error, /header/i, 'and it says what to do instead');
+    assert.equal(out.json.workspaces, undefined, 'no data comes back either way');
+  });
+
+  test('an admin session is not a backup token', async () => {
+    const srv = await boot({ signupMode: 'open', backupToken: TOKEN });
+    const admin = await adminOf(srv, 'session-owner@operator.test');
+    const out = await srv.req('/api/admin/export', { cookies: admin });
+    // A stolen admin cookie must not also be a whole-database dump.
+    assert.equal(out.status, 401);
+  });
+});
+
+describe('usage reporting', () => {
+  test('a platform admin sees how full the deployment is; nobody else does', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'usage-admin@operator.test' });
+    const admin = await adminOf(srv, 'usage-admin@operator.test');
+    const ordinary = (await srv.signUp('usage-member@tester.test')).setCookie;
+
+    const stats = await srv.req('/api/admin/stats', { cookies: admin });
+    assert.equal(stats.status, 200);
+    assert.ok(stats.json.usage, 'the operator needs to see this before it becomes a decision');
+    assert.equal(typeof stats.json.usage.workspaces, 'number');
+    assert.ok(['ok', 'warn', 'critical', 'unknown'].includes(stats.json.usage.level));
+
+    // An org owner would otherwise be able to infer how many other customers
+    // share the database with them.
+    const theirs = await srv.req('/api/admin/stats', { cookies: ordinary });
+    if (theirs.status === 200) assert.equal(theirs.json.usage, undefined);
+
+    // And it is not on the public health check.
+    const health = await srv.req('/health');
+    assert.equal(health.json.usage, undefined);
   });
 });

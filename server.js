@@ -148,6 +148,12 @@ class FileStore {
     this.save();
   }
   async listWorkspaceIds() { return Object.keys(this.s.data); }
+  // The file store knows exactly how big it is, because it is one file.
+  async storageStats() {
+    let bytes = 0;
+    try { bytes = fs.statSync(this.file).size; } catch { /* not written yet */ }
+    return { bytes, measured: true, limitBytes: null };
+  }
 
   // Move a workspace from one ownership key to another. Used once, to hand
   // account-keyed rows over to the organisation that owns them.
@@ -424,6 +430,29 @@ class MongoStore {
   }
   async listWorkspaceIds() {
     return (await this.data.find({}, { projection: { _id: 0, wsId: 1 } }).toArray()).map((d) => d.wsId);
+  }
+  /*
+   * How much of the database is actually used.
+   *
+   * Asked of MongoDB rather than estimated from a bytes-per-record figure:
+   * indexes, tombstones and the meta documents are all real storage, and an
+   * estimate that ignores them is the kind of number that reads fine right up
+   * until the tier fills. Falls back to reporting nothing rather than
+   * guessing if the command is not permitted.
+   */
+  async storageStats() {
+    try {
+      const stats = await this.client.db(process.env.MONGODB_DB || 'crmbuilder').command({ dbStats: 1 });
+      return {
+        bytes: (stats.dataSize || 0) + (stats.indexSize || 0),
+        dataBytes: stats.dataSize || 0,
+        indexBytes: stats.indexSize || 0,
+        measured: true,
+        limitBytes: Number(process.env.STORAGE_LIMIT_BYTES || 512 * 1024 * 1024),
+      };
+    } catch (err) {
+      return { bytes: null, measured: false, error: err.message, limitBytes: null };
+    }
   }
   async rekeyWorkspace(fromId, toId) {
     if (fromId === toId) return 0;
@@ -1157,6 +1186,31 @@ app.use(cookieParser());
 const BOOT_AT = Date.now();
 const HEALTH_DETAIL = process.env.HEALTH_DETAIL === '1';
 
+/*
+ * How full the database is, and how worried to be.
+ *
+ * Measured, not enforced. A hard cap that fires during a bug hunt looks like
+ * the bug the tester was chasing, and you end up debugging your own limiter
+ * rather than the product. The job of these numbers is to be looked at before
+ * that becomes a decision.
+ */
+async function usageReport() {
+  const stats = await store.storageStats().catch(() => ({ bytes: null, measured: false }));
+  const totals = await store.dataStats(null);
+  const limit = stats.limitBytes || null;
+  const pct = limit && stats.bytes != null ? Math.round((stats.bytes / limit) * 1000) / 10 : null;
+  return {
+    ...stats,
+    workspaces: totals.workspaces,
+    records: totals.records,
+    modules: totals.modules,
+    percentOfLimit: pct,
+    // 60 is "start thinking", 85 is "do something this week". Neither stops
+    // anybody from using the product.
+    level: pct == null ? 'unknown' : pct >= 85 ? 'critical' : pct >= 60 ? 'warn' : 'ok',
+  };
+}
+
 app.get('/healthz', (req, res) => res.json({ ok: true, storage: store.kind() }));
 
 app.get('/health', async (req, res) => {
@@ -1176,6 +1230,8 @@ app.get('/health', async (req, res) => {
   if (HEALTH_DETAIL || (user && user.role === 'platformAdmin')) {
     try {
       body.counts = { orgs: await store.countOrgs(), users: await store.countUsers() };
+      body.usage = await usageReport();
+      body.signupMode = SIGNUP_MODE;
     } catch (err) {
       // A health check that fails because a count failed is worse than one
       // that reports the outage it was asked about.
@@ -1769,6 +1825,78 @@ async function copyWorkspace(fromWsId, toWsId, user, orgId = toWsId) {
   return copied;
 }
 
+/*
+ * Whole-deployment export, for the backup M0 does not give you.
+ *
+ * This is the highest-value route in the application: one request returns
+ * every customer's data. It is therefore off unless BACKUP_TOKEN is set,
+ * authenticated ONLY by that token, and never by a session — a stolen admin
+ * cookie must not also be a database dump.
+ *
+ * The token travels in the Authorization header and nowhere else. A correct
+ * token in a query string is refused outright rather than accepted with a
+ * warning: Render's edge logs request URLs, so ?token= writes a credential
+ * into plaintext logs, into browser history, and into the Referer of anything
+ * the page later loads.
+ */
+const BACKUP_TOKEN = process.env.BACKUP_TOKEN || '';
+
+function tokenMatches(given) {
+  if (!BACKUP_TOKEN || !given) return false;
+  // Hash both sides first: timingSafeEqual throws on a length mismatch, and
+  // the throw would itself leak the length.
+  const a = crypto.createHash('sha256').update(String(given)).digest();
+  const b = crypto.createHash('sha256').update(BACKUP_TOKEN).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+app.get('/api/admin/export', async (req, res) => {
+  // Indistinguishable from a route that does not exist when it is switched
+  // off. Nothing should be able to find out that a deployment has backups.
+  if (!BACKUP_TOKEN) return res.status(404).json({ error: 'Not found' });
+
+  if (req.query.token) {
+    console.warn('Backup export refused: token supplied as a query parameter');
+    return res.status(400).json({
+      error: 'Send the token in the Authorization header, not the URL. URLs are logged.',
+    });
+  }
+
+  const header = String(req.get('authorization') || '');
+  const given = header.startsWith('Bearer ') ? header.slice(7) : '';
+  if (!tokenMatches(given)) {
+    console.warn(`Backup export refused: bad token from ${req.ip}`);
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const wsIds = await store.listWorkspaceIds();
+  const workspaces = [];
+  for (const wsId of wsIds) {
+    const meta = await store.getData(wsId);
+    // Raw envelopes, tombstones included: a restore that drops them would
+    // resurrect every deleted record on the next sync.
+    const [modules, records] = await Promise.all([
+      store.listItems('modules', wsId, { since: 0 }),
+      store.listItems('records', wsId, { since: 0 }),
+    ]);
+    workspaces.push({ wsId, meta, modules, records });
+  }
+
+  const body = {
+    app: 'crmbuilder',
+    kind: 'backup',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    storage: store.kind(),
+    orgs: await store.listOrgs(),
+    users: await store.listUsers(),
+    workspaces,
+  };
+  console.log(`Backup export: ${workspaces.length} workspace(s), ${body.users.length} account(s)`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(body);
+});
+
 // ---- beta codes (platform admin only)
 // Handing out the right to create accounts on this deployment is a platform
 // concern, not an org owner's — requirePlatformAdmin, deliberately, not
@@ -1825,8 +1953,14 @@ app.get('/api/admin/stats', requireAuth, requireOrgAdmin, async (req, res) => {
     if (e.day in activeByDay) activeByDay[e.day].add(e.userId);
   });
   const data = await store.dataStats(req.scopeOrgId);
+  // What the deployment is actually using. Platform admins only — an org owner
+  // has no business knowing how full the shared database is, and could infer
+  // how many other customers are on it.
+  let usage = null;
+  if (req.isPlatformAdmin) usage = await usageReport();
   res.json({
     scope: req.isPlatformAdmin ? 'platform' : 'org',
+    ...(usage ? { usage } : {}),
     orgId: req.scopeOrgId,
     totals: {
       users: users.length,
