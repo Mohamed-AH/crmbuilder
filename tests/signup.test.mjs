@@ -79,6 +79,10 @@ async function boot({ signupMode = 'code', adminEmails = '', backupToken = '', w
   const api = {
     base,
     stop,
+    // Everything the server has written to stdout/stderr. Some guarantees are
+    // only observable there — a webhook that could never be delivered has to
+    // say so somewhere, and the saying is the behaviour under test.
+    log: () => log,
     // Restart against the same data on a different setting: the only way to
     // ask what happens to an account that was created before the door closed.
     async setMode(next) {
@@ -643,5 +647,93 @@ describe('webhook payload', () => {
     } finally {
       await new Promise((r) => hook.close(r));
     }
+  });
+
+  /*
+   * Telegram takes a different shape, and getting it wrong fails silently.
+   *
+   * sendMessage wants chat_id and text as parameters — a Discord-shaped
+   * {content} body is accepted by the transport and simply never delivered.
+   * Detection is on the path, which is why this can be driven by a local
+   * server at all.
+   */
+  test('a Telegram bot URL is sent what Telegram actually reads', async () => {
+    const seen = [];
+    const hook = createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        seen.push({ url: req.url, body });
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"ok":true}');
+      });
+    });
+    await new Promise((r) => hook.listen(0, '127.0.0.1', r));
+    const port = hook.address().port;
+
+    try {
+      const srv = await boot({
+        signupMode: 'open',
+        adminEmails: 'tg-admin@operator.test',
+        webhook: `http://127.0.0.1:${port}/bot12345:FAKE-TOKEN/sendMessage?chat_id=-1001234567890`,
+      });
+      await adminOf(srv, 'tg-admin@operator.test');
+      const user = (await srv.signUp('tg-user@tester.test')).setCookie;
+
+      await srv.req('/api/feedback', {
+        method: 'POST',
+        cookies: user,
+        body: {
+          // Characters Telegram's markdown parsers choke on. With a parse_mode
+          // set, this report would be refused with a 400 and the operator
+          // would never hear about it.
+          message: 'the _totals_ row shows [object Object] * broken',
+          context: { userAgent: 'SecretBrowser/9', records: 4242 },
+        },
+      });
+
+      const deadline = Date.now() + 5000;
+      while (!seen.length && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+      assert.equal(seen.length, 1, 'the operator should be told at all');
+
+      const sent = JSON.parse(seen[0].body);
+      assert.equal(sent.chat_id, '-1001234567890', 'chat_id has to be in the body, not left in the URL');
+      assert.equal(seen[0].url, '/bot12345:FAKE-TOKEN/sendMessage', 'and taken off the query string');
+      assert.equal(sent.parse_mode, undefined, 'no parse_mode: a stray _ or [ would get the message refused');
+      assert.match(sent.text, /the _totals_ row shows \[object Object\] \* broken/, 'sent verbatim');
+      assert.match(sent.text, /tg-user@tester\.test/, 'and who said it');
+      assert.doesNotMatch(sent.text, /\*\*/, 'the Discord bolding does not belong here');
+
+      // The privacy rule is the same whichever service is on the other end.
+      assert.doesNotMatch(seen[0].body, /SecretBrowser/, 'no browser fingerprint');
+      assert.doesNotMatch(seen[0].body, /4242/, 'no record counts');
+    } finally {
+      await new Promise((r) => hook.close(r));
+    }
+  });
+
+  /*
+   * A Telegram URL with no chat_id cannot be delivered, and that must be said
+   * at the point it happens rather than swallowed — the operator would
+   * otherwise be waiting on notifications that were never sendable.
+   */
+  test('a Telegram URL missing chat_id is reported, and the report is still stored', async () => {
+    const srv = await boot({
+      signupMode: 'open',
+      adminEmails: 'tg-admin2@operator.test',
+      webhook: 'https://api.telegram.org/bot12345:FAKE-TOKEN/sendMessage',
+    });
+    const admin = await adminOf(srv, 'tg-admin2@operator.test');
+    const user = (await srv.signUp('tg-user2@tester.test')).setCookie;
+
+    const out = await srv.req('/api/feedback', {
+      method: 'POST', cookies: user, body: { message: 'nowhere to send this' },
+    });
+    assert.equal(out.status, 200, 'a misconfigured webhook is not the reporter’s problem');
+    const { reports } = (await srv.req('/api/admin/feedback', { cookies: admin })).json;
+    assert.equal(reports.length, 1, 'the record is what survives a bad notification path');
+
+    await new Promise((r) => setTimeout(r, 300));
+    assert.match(srv.log(), /no \?chat_id=/, 'and the operator is told why nothing arrives');
+    assert.doesNotMatch(srv.log(), /FAKE-TOKEN/, 'without writing the bot token into the logs');
   });
 });

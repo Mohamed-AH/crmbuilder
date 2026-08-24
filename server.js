@@ -1998,20 +1998,74 @@ const FEEDBACK_WEBHOOK_URL = process.env.FEEDBACK_WEBHOOK_URL || '';
  * would make it a processor of beta users' CRM contents — a thing the privacy
  * policy would then have to disclose. Fire-and-forget, after the response.
  */
-function notifyFeedback(entry, user) {
-  if (!FEEDBACK_WEBHOOK_URL) return;
-  const text = [
-    `**Problem report** from ${user.email}`,
-    entry.message.slice(0, 1500),
-    `_${entry.id} · ${new Date(entry.createdAt).toISOString()}_`,
-  ].join('\n');
-  fetch(FEEDBACK_WEBHOOK_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+/*
+ * Telegram's Bot API is not a webhook, so the payload has to be built for it.
+ *
+ * Identified by the path (`/bot<token>/sendMessage`) rather than the hostname,
+ * because that is what actually describes the API shape: it also matches a
+ * self-hosted Bot API server, and — the reason it is worth doing — it can be
+ * driven by a local capture server in a test. A hostname check could only be
+ * tested by talking to Telegram.
+ *
+ * The URL contains the bot token, so it is a credential in the same class as
+ * BACKUP_TOKEN and must never reach a log line. Nothing here interpolates it.
+ */
+const TELEGRAM_PATH = /^\/bot[^/]+\/sendMessage$/;
+
+function webhookRequest(rawUrl, { rich, plain }) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return { error: 'FEEDBACK_WEBHOOK_URL is not a valid URL' };
+  }
+  if (!TELEGRAM_PATH.test(url.pathname)) {
     // Discord reads `content`, Slack reads `text`. Sending both means one
     // shape works for either without a provider setting to get wrong.
-    body: JSON.stringify({ content: text, text }),
+    return { url: url.toString(), body: { content: rich, text: rich } };
+  }
+
+  // chat_id is a parameter, not part of the path. Taken off the query string
+  // and moved into the body rather than left for Telegram to merge with a JSON
+  // body — that merge is not something the Bot API docs promise, and a silently
+  // undelivered notification is the failure mode this whole design avoids.
+  const chatId = url.searchParams.get('chat_id');
+  if (!chatId) {
+    return { error: 'FEEDBACK_WEBHOOK_URL looks like Telegram but has no ?chat_id=' };
+  }
+  url.search = '';
+  return {
+    url: url.toString(),
+    // No parse_mode on purpose. Telegram would then reject the whole message
+    // with a 400 over an unbalanced `_` or `[` in someone's bug report, and the
+    // notification would vanish for a formatting reason — so the text carries
+    // no markup for it to parse.
+    body: { chat_id: chatId, text: plain, disable_web_page_preview: true },
+  };
+}
+
+function notifyFeedback(entry, user) {
+  if (!FEEDBACK_WEBHOOK_URL) return;
+  const head = `Problem report from ${user.email}`;
+  const foot = `${entry.id} · ${new Date(entry.createdAt).toISOString()}`;
+  const message = entry.message.slice(0, 1500);
+  const req = webhookRequest(FEEDBACK_WEBHOOK_URL, {
+    rich: [`**${head}**`, message, `_${foot}_`].join('\n'),
+    plain: [head, message, foot].join('\n'),
+  });
+  if (req.error) {
+    console.warn(`Feedback webhook not sent: ${req.error}`);
+    return;
+  }
+  fetch(req.url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req.body),
     signal: AbortSignal.timeout(8000),
+  }).then((r) => {
+    // Telegram answers 200 with {ok:false} for a bad chat_id or a bot that was
+    // never started by the recipient, so a resolved fetch is not delivery.
+    if (!r.ok) console.warn(`Feedback webhook rejected the notification: HTTP ${r.status}`);
   }).catch((err) => console.warn('Feedback webhook failed:', err.message));
 }
 

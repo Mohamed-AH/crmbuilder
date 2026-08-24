@@ -24,7 +24,7 @@ step this whole flow exists to remove.
 | `SIGNUP_MODE` | `code` | A beta code creates an account; signing back in never asks |
 | `ADMIN_EMAILS` | your address | Bypasses the gate, so you cannot lock yourself out |
 | `BACKUP_TOKEN` | a random 32 bytes | Enables the nightly export; without it there is no backup |
-| `FEEDBACK_WEBHOOK_URL` | optional Discord/Slack | Real-time notice of problem reports |
+| `FEEDBACK_WEBHOOK_URL` | optional Discord / Slack / Telegram | Real-time notice of problem reports — see *Where problem reports get pinged* |
 | `MONGODB_URI` | your Atlas string | Without it, data is lost on every redeploy |
 
 **3. Confirm the backup works before anyone depends on it.**
@@ -52,6 +52,42 @@ BASE_URL=https://your-app.onrender.com npm run test:smoke
   Resolve them as you go so the list stays meaningful.
 - **Watch the codes.** Admin → Beta access shows uses remaining. Revoke one if a
   link escapes further than you meant.
+
+### Where problem reports get pinged
+
+`FEEDBACK_WEBHOOK_URL` is optional. Every report is stored either way and shows
+up under Admin → Problem reports; the ping is only so you hear about it without
+looking. Three services work, detected from the URL — there is no provider
+setting to get wrong.
+
+**Discord** — Server Settings → Integrations → Webhooks → New Webhook, copy the
+URL. **Slack** — an Incoming Webhook app, copy the URL.
+
+**Telegram** takes two steps, because the Bot API needs to know which chat:
+
+1. Message [@BotFather](https://t.me/BotFather), `/newbot`, and keep the token
+   it gives you.
+2. Send your new bot a message (a bot cannot start a conversation), then open
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` and read `message.chat.id`
+   out of the response. For a group, add the bot to it first and post something
+   there; group ids are negative, which is normal.
+
+```
+FEEDBACK_WEBHOOK_URL=https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT_ID>
+```
+
+The `chat_id` has to be on the URL — without it the report is still stored, and
+the log says why nothing arrived.
+
+**Treat that URL as a credential.** It carries the bot token, so anyone holding
+it can post as your bot. It is an environment variable for the same reason
+`BACKUP_TOKEN` is, and nothing logs it. Revoke with `/revoke` in BotFather.
+
+Whichever service you point it at, it is told **who reported, when, and what
+they wrote — and none of the diagnostic context.** Console errors can contain
+record names and customer email addresses, and sending those to a chat service
+would make it a processor of your testers' CRM contents. Those stay in the
+database, where the privacy policy already accounts for them.
 
 ### Keeping it awake
 

@@ -40,7 +40,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 129 Node tests + 53 Playwright tests.
+**All green:** 131 Node tests + 53 Playwright tests.
 
 ```sh
 npm install
@@ -639,8 +639,8 @@ it writes to the same 512 MB the customers use: 4 KB message, ten an hour per
 user, and a 90-day TTL keyed on `reportedOn` (a real `Date`, single-field —
 the same rule as the events and tombstone TTLs).
 
-**Stored *and* pushed.** `FEEDBACK_WEBHOOK_URL` gets a Discord/Slack-shaped
-POST after the row is written, carrying who, when and what they wrote — and
+**Stored *and* pushed.** `FEEDBACK_WEBHOOK_URL` gets a POST after the row is
+written, carrying who, when and what they wrote — and
 **none of the diagnostic context**. Console errors can contain record names,
 module names and customer email addresses, so sending them to a chat service
 would make it a processor of beta users' CRM contents. There is a test that
@@ -660,6 +660,29 @@ error message.
   way in, not on the way out.
 - **`console.error` is wrapped, never replaced** — devtools keeps working, and
   the wrapper's own failure can never stop a log line.
+
+### Webhook shapes (Discord · Slack · Telegram)
+
+Discord reads `content`, Slack reads `text`; sending both means one payload
+serves either with no provider setting to get wrong. **Telegram is not a
+webhook at all** — `sendMessage` takes `chat_id` and `text` as parameters, so a
+`{content}` body is accepted by the transport and simply never delivered.
+
+- **Detected by the path** (`/bot<token>/sendMessage`), not the hostname. That
+  is what actually describes the API shape, it also covers a self-hosted Bot API
+  server, and — the reason it is worth doing — a local capture server can match
+  it, so the payload is testable without talking to Telegram.
+- **No `parse_mode`.** With one set, a report containing an unbalanced `_` or
+  `[` gets the whole message refused with a 400 and the notification vanishes
+  for a formatting reason. The text carries no markup for Telegram to parse.
+- **`chat_id` is moved out of the query string into the body** rather than left
+  for Telegram to merge with a JSON body — that merge is not something the Bot
+  API docs promise.
+- **The URL is a credential**: it contains the bot token. Same class as
+  `BACKUP_TOKEN`, and nothing interpolates it into a log line. A test asserts
+  the token does not appear in the server's output.
+- **A resolved `fetch` is not delivery.** Telegram answers 200 with
+  `{ok:false}` for a bad `chat_id`, or for a bot the recipient never started.
 
 ---
 
