@@ -586,6 +586,12 @@ test.describe('accounts and sync', () => {
     await context.setOffline(true);
     await page.reload();
     await expect(page.locator('#nav-modules .nav-link:has-text("Tasks")')).toBeVisible({ timeout: 15000 });
+    // Nothing may put a modal over the app just because the server is
+    // unreachable. The beta notice did exactly that: /api/me never answers
+    // offline, so signupMode was absent and "not open" read as "gated beta".
+    // Asserted here rather than left to a click timeout, which reports the
+    // symptom several lines later and blames the wrong thing.
+    await expect(page.locator('.modal-backdrop')).toHaveCount(0);
     await page.click('#nav-modules .nav-link:has-text("Tasks")');
     await page.click('#add-record-btn');
     await page.fill('#f-title', 'Written while offline');

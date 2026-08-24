@@ -19,6 +19,8 @@ No build step, no frontend framework — plain ES5-ish scripts loaded in order b
 ```
 server.js             Express: static PWA, OAuth, /api/sync + /api/data, /api/admin/*, /api/org, /health
 index.html            app shell (script order matters — see §3)
+privacy.html          privacy policy | terms.html  terms of use  (see §19)
+legal.css             styling for those two — they load no app JS at all
 css/style.css         Inter + blue/slate palette, light/dark, desktop-first
 js/icons.js           inline Lucide SVGs (generated — see §6)
 js/scope.js           whose data is this — storage scopes (see §11)
@@ -31,7 +33,7 @@ js/cloud.js           account + sync layer, server ⇄ local fallback
 js/app.js             router, all views, module builder, kanban, admin, tour steps
 sw.js                 service worker (BUMP CACHE_VERSION on any asset change)
 tests/                smoke, API contract, CSV unit, signup gate, migrations, E2E
-docs/                 user guide, onboarding playbook, demo script, architecture
+docs/                 user guide, onboarding, demo script, architecture, BETA runbook
 ```
 
 ---
@@ -66,11 +68,13 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
 - **Pooled and dedicated deployment blueprints** (`render.yaml`,
   `render.dedicated.yaml`) and a `/health` endpoint
 - One-click demo business (107 records) and a 6-step guided tour
-- Docs: USER-GUIDE, ONBOARDING, DEMO-SCRIPT, ARCHITECTURE, product-tour.html
+- **Self-serve beta signup**, complete: the code gate (stage 1), backups and
+  measured usage (stage 2), problem reports (stage 3), and the legal pages,
+  beta notice and runbook (stage 4) — see §16, §17, §18, §19
+- Docs: USER-GUIDE, ONBOARDING, DEMO-SCRIPT, ARCHITECTURE, BETA, product-tour.html
 
 ### Not built yet
 - Email sending, third-party integrations.
-- Privacy/terms pages and the go-live runbook (beta stage 4).
 - **Per-module permissions** — everyone on a team sees every module. Considered
   and set aside: it needs per-module filtering in sync, or a member receives
   rows they cannot see.
@@ -96,7 +100,7 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v10`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v11`).
 
 **Tenancy scoping comes from the session, never a request.** That covers both
 `req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
@@ -656,3 +660,50 @@ error message.
   way in, not on the way out.
 - **`console.error` is wrapped, never replaced** — devtools keeps working, and
   the wrapper's own failure can never stop a log line.
+
+---
+
+## 19. Legal pages and the beta notice (beta stage 4)
+
+The last thing between here and strangers signing themselves up. Google will
+not publish an OAuth consent screen without a privacy policy URL, and until it
+is published every tester has to be added to the Testing list by hand — which is
+the manual step the whole signup plan exists to remove.
+
+`privacy.html` and `terms.html` are **standalone pages**: their own `legal.css`,
+no app JS, no service-worker shell. They have to render for someone who has
+never opened the app and may have JavaScript off — Google's reviewer included.
+`express.static(__dirname, { extensions: ['html'] })` already serves them at
+`/privacy` and `/terms` with no route.
+
+**The service worker bug this uncovered, which was real and pre-existing.** The
+navigation handler answered *every* navigation with `index.html` **and** wrote
+the fetched response back into the cache under `index.html`. So `/privacy` would
+have shown the CRM, and worse, the *next* load of the app would have served the
+privacy page as the app shell — a poisoned cache that survives a reload. Fixed
+with a `STANDALONE_PAGES` list that returns early, straight to the network.
+`CACHE_VERSION` is now `crmbuilder-v11`; anything added to those pages must be
+added to that list too, or it silently becomes the app.
+
+**The notice is recorded, not just displayed.** `POST /api/me/beta-accepted`
+stamps `betaAcceptedAt` on the user, so "they were told the data might go" is
+answerable from the database rather than asserted. Shown after the first
+successful sign-in, never before: someone who has not decided to have an account
+does not need a warning about one.
+
+**Traps:**
+
+- **Absence is not an answer.** The first version skipped the notice when
+  `signupMode === 'open'` — so offline, where `/api/me` never resolves and the
+  field is simply absent, every user got a modal over their app asking them to
+  acknowledge something the client could not record. It tests for `code` or
+  `closed` now: a mode the server positively stated. Exactly §13's rule, and the
+  offline sync E2E test is what caught it, by timing out on a click the backdrop
+  was intercepting. That test now asserts `.modal-backdrop` count is 0 straight
+  after the offline reload, so the next occurrence names itself.
+- **`Cloud.me.serverAvailable` is not "the server answered."**
+  `offlineIdentity()` sets it from the cached auth flag, so it is true offline
+  for anyone who was signed in. Do not reach for it as the online check.
+- **The acknowledgement is not assumed to have landed.** `Cloud.acceptBeta()`
+  failing leaves `betaAcceptedAt` unset, so the notice returns next time. Shown
+  twice is a minor annoyance; recorded-but-never-sent is a false record.

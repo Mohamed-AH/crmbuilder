@@ -280,6 +280,8 @@ const Cloud = (() => {
       leave: () => api('/api/org/leave', { method: 'POST', body: '{}' }, TIMEOUT.admin),
     },
 
+    acceptBeta: () => api('/api/me/beta-accepted', { method: 'POST', body: '{}' }, TIMEOUT.auth),
+
     feedback: {
       send: (message, context) => api('/api/feedback', { method: 'POST', body: JSON.stringify({ message, context }) }, TIMEOUT.admin),
     },

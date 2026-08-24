@@ -28,6 +28,7 @@ A **modular CRM builder for small businesses** — an installable, offline-first
 | **[Product Tour](docs/product-tour.html)** | Customer-facing overview for prospects, leads and recruiters. Third person; pairs with the in-app guided tour. |
 | **[Architecture](docs/ARCHITECTURE.md)** | Capacity limits, multi-tenancy options, and the pooled vs dedicated deployment paths. |
 | **[Deployment](DEPLOYMENT.md)** | Getting it running on Render + MongoDB Atlas + Google OAuth. |
+| **[Running the beta](docs/BETA.md)** | Operator runbook for opening it to testers, plus the tester-facing note to send with the invite. |
 | **[Marketing](MARKETING.md)** | B2B/B2C copy and launch threads. |
 
 ## Testing
@@ -69,7 +70,10 @@ See **[DEPLOYMENT.md](DEPLOYMENT.md)** — Render free tier (via the included `r
 server.js             Express server: static PWA, Google OAuth, sync API, admin API
 render.yaml           Render blueprint (free tier)
 index.html            app shell
+privacy.html          privacy policy — a real page, and what Google needs to publish the consent screen
+terms.html            terms of use
 css/style.css         styles (Inter, light/dark, desktop-first)
+legal.css             standalone styling for the two pages above (they load no app JS)
 js/icons.js           inline Lucide SVG icons
 js/db.js              promise-based IndexedDB wrapper
 js/cloud.js           account + sync layer (server ⇄ local fallback)
@@ -79,7 +83,7 @@ js/scope.js           storage scopes — which account local data belongs to
 js/demo-data.js       fictional business used by "Load demo data"
 js/app.js             router, views, module builder, kanban, admin dashboard
 tests/                smoke, API, CSV unit and Playwright end-to-end tests
-docs/                 user guide, onboarding playbook, demo script, web manual
+docs/                 user guide, onboarding playbook, demo script, beta runbook, web manual
 sw.js                 offline-first service worker (bump CACHE_VERSION on asset changes)
 manifest.webmanifest  PWA manifest
 fonts/, icons/        self-hosted Inter + app icons

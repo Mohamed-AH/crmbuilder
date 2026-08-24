@@ -249,6 +249,22 @@ await check('sync model', async () => {
   return `per-record · ${h.deployment}${h.tenant ? ` · ${h.tenant}` : ''} · up ${h.uptimeSec}s`;
 });
 
+await check('privacy and terms are reachable', async () => {
+  // Google will not publish an OAuth consent screen without a privacy policy
+  // URL, so this failing means signups cannot be opened at all.
+  const missing = [];
+  for (const path of ['/privacy', '/terms']) {
+    const { res, err } = await get(path);
+    if (err || !res.ok) { missing.push(`${path} (${err ? err.message : res.status})`); continue; }
+    const body = await res.text();
+    // The service worker used to answer every navigation with the app shell,
+    // which would make these look present and be the CRM.
+    if (/id="app"/.test(body)) missing.push(`${path} (served the app shell)`);
+  }
+  if (missing.length) throw new Error(missing.join(', '));
+  return 'both present';
+});
+
 await check('sign-in method', async () => {
   if (me?.googleEnabled) return 'Google OAuth enabled';
   if (isLocal) return { status: 'INFO', detail: 'no OAuth (local dev)' };

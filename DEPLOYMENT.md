@@ -138,6 +138,10 @@ and set the env vars above plus `NODE_ENV=production` and a random `SESSION_SECR
 
 ## Running a beta
 
+The step-by-step version — publish the consent screen, mint a code, what to
+watch, and the note to send testers — is **[docs/BETA.md](docs/BETA.md)**. This
+section is the reference for the moving parts it refers to.
+
 ### Keeping the service awake
 
 Render's free tier spins a web service down after ~15 minutes idle, and the

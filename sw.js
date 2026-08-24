@@ -4,7 +4,7 @@
  * API/auth requests are network-only (never cached).
  * Bump CACHE_VERSION whenever any precached asset changes.
  */
-const CACHE_VERSION = 'crmbuilder-v10';
+const CACHE_VERSION = 'crmbuilder-v11';
 const APP_SHELL = [
   './',
   './index.html',
@@ -49,6 +49,22 @@ self.addEventListener('fetch', (event) => {
 
   // Dynamic data is never cached — the client handles offline itself.
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/')) return;
+
+  /*
+   * Real pages that are NOT the app, and must not be served the app's shell.
+   *
+   * The navigation handler below answers every navigation with index.html and
+   * writes whatever it fetched back over the cached copy — so without this,
+   * opening /privacy would show the CRM, and would then poison the cached
+   * shell with the privacy page. Both failures are silent.
+   */
+  const STANDALONE_PAGES = ['/privacy', '/terms'];
+  if (STANDALONE_PAGES.includes(url.pathname) || STANDALONE_PAGES.some((p) => url.pathname === `${p}.html`)) {
+    // Handled by the browser, not by us: no cache entry, so these are the one
+    // part of the site that needs a connection. That is the right trade — they
+    // are read once, and serving a stale policy is worse than serving none.
+    return;
+  }
 
   // Navigations serve the cached shell immediately and refresh it in the
   // background. Free-tier hosts sleep when idle, and network-first here meant

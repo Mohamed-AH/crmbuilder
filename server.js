@@ -640,6 +640,7 @@ function publicUser(u) {
   return {
     id: u.id, email: u.email, name: u.name, picture: u.picture || '',
     role: u.role, orgId: u.orgId || null, createdAt: u.createdAt,
+    betaAcceptedAt: u.betaAcceptedAt || 0,
   };
 }
 
@@ -1513,6 +1514,19 @@ app.put('/api/data', requireAuth, async (req, res) => {
 });
 
 // ---- the caller's own organisation
+/*
+ * "I understand this is a beta."
+ *
+ * Recorded against the account rather than in localStorage, so it survives a
+ * new device and is answerable later. The notice itself is the honest part —
+ * free beta, backups are daily, export anything you care about — and storing
+ * the acknowledgement is what makes it more than a claim that we showed it.
+ */
+app.post('/api/me/beta-accepted', requireAuth, async (req, res) => {
+  const user = await store.updateUser(req.user.id, { betaAcceptedAt: Date.now() });
+  res.json({ ok: true, betaAcceptedAt: user.betaAcceptedAt });
+});
+
 app.get('/api/org', requireAuth, async (req, res) => {
   if (!req.user.orgId) return res.json({ org: null });
   const org = await store.getOrg(req.user.orgId);

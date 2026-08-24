@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy — CRM Builder</title>
+<meta name="description" content="What CRM Builder collects, why, and how to get rid of it.">
+<link rel="stylesheet" href="/legal.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="back" href="/">← CRM Builder</a>
+    <h1>Privacy</h1>
+    <p class="updated">Last updated 24 August 2026 · applies to the free beta at this address</p>
+  </header>
+
+  <div class="callout">
+    <p><strong>The short version.</strong> Your CRM lives on your own device. It
+    is only copied to our server if you sign in, and only so you can use it on
+    more than one device. We do not sell anything, we do not run advertising or
+    third-party analytics, and you can take everything with you or delete it at
+    any time from Settings.</p>
+  </div>
+
+  <h2>What we hold, and why</h2>
+  <p><strong>If you never sign in:</strong> nothing. The app runs entirely in
+  your browser and stores your modules and records there. No account exists and
+  we have no way to identify you.</p>
+
+  <p><strong>If you sign in with Google,</strong> we receive and store your
+  email address, your name, and your profile picture URL. We use these to
+  identify your workspace, to show who you are in the app, and to name you to
+  colleagues if you join a team. We do not receive your Google password and we
+  ask for no access to any other Google service.</p>
+
+  <p><strong>Your CRM contents</strong> — the modules, fields and records you
+  create — are stored on our server so they can sync between your devices and,
+  if you are on a team, be shared with that team.</p>
+
+  <p><strong>Operational records:</strong> we keep a log of sign-ins and syncs,
+  used to see whether the service is working and how much of it is being used.
+  These expire automatically after 90 days.</p>
+
+  <p><strong>Problem reports:</strong> if you use <em>Report a problem</em>, we
+  store what you wrote plus your app version, the screen you were on, your
+  browser, your sync status, how many modules and records you have, and up to
+  ten recent error messages from your browser's console. The app tells you this
+  before you send. Reports are deleted automatically after 90 days.</p>
+
+  <h2>Who else sees it</h2>
+  <p>The service runs on <strong>Render</strong> (hosting) and
+  <strong>MongoDB Atlas</strong> (database). Both hold the data on our behalf in
+  order to run the service. Sign-in is provided by <strong>Google</strong>.</p>
+
+  <p>If a problem report is sent, we may receive a notification containing
+  <strong>your email address and what you wrote</strong> — the diagnostic
+  details and any error messages stay in our database and are not forwarded
+  anywhere.</p>
+
+  <p>That is the complete list. There is no advertising network, no analytics
+  product, and nobody buys anything from us.</p>
+
+  <h2>Teams</h2>
+  <p>A workspace belongs to an organisation, not to a person. Everyone on a team
+  can see and edit everything in that team's workspace, and records show who
+  added them. If you bring your own records into a team when you join, the app
+  says so first and asks. Leaving a team, or being removed from one, gives you a
+  fresh empty workspace and removes the team's data from your device the next
+  time it connects.</p>
+
+  <h2>Getting your data out, and deleting it</h2>
+  <ul>
+    <li><strong>Export:</strong> Settings → Export backup gives you everything
+    as a JSON file, and each module exports as CSV. No approval needed and no
+    waiting.</li>
+    <li><strong>Delete:</strong> Settings → Danger zone deletes the workspace.
+    Deleting the last account in an organisation deletes that organisation's
+    workspace too.</li>
+    <li><strong>Ask us:</strong> if you want your account removed and cannot do
+    it yourself, contact us at the address below.</li>
+  </ul>
+
+  <h2>Where it is kept, and how long</h2>
+  <p>Data sits on Render and MongoDB Atlas infrastructure, currently in their
+  US regions. We keep your workspace for as long as your account exists.
+  Deleted records leave a marker for up to 180 days so the deletion can reach
+  your other devices; the contents are removed immediately. Activity logs and
+  problem reports expire after 90 days.</p>
+
+  <div class="callout">
+    <p><strong>This is a free beta, and backups are limited.</strong> The
+    database tier we are on provides no point-in-time recovery. We take a daily
+    export, so the worst case is losing up to a day. Please keep your own JSON
+    backup of anything you would be upset to lose.</p>
+  </div>
+
+  <h2>Security</h2>
+  <p>Everything travels over HTTPS. Sessions are httpOnly cookies. We never see
+  or store a password. Each account's data on a shared computer is kept in a
+  separate local store, so one person's work cannot be read or uploaded by the
+  next person to sign in.</p>
+
+  <h2>Changes</h2>
+  <p>If this page changes in a way that affects you, we will say so in the app
+  rather than quietly editing the date.</p>
+
+  <h2>Contact</h2>
+  <p>Questions, or a request to delete your data: use <em>Report a problem</em>
+  in the app, or contact the person who invited you to the beta.</p>
+
+  <footer>
+    <a href="/">Back to CRM Builder</a> · <a href="/terms">Terms</a>
+  </footer>
+</div>
+</body>
+</html>

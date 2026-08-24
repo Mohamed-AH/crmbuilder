@@ -698,3 +698,6 @@ body.tour-open { overflow: hidden; }
   overflow-x: auto;
 }
 .report-meta { font-size: 12px; margin: 6px 0 0; }
+
+.beta-points { margin: 0 0 14px; padding-left: 20px; }
+.beta-points li { margin-bottom: 8px; color: var(--muted, inherit); font-size: 14px; line-height: 1.55; }

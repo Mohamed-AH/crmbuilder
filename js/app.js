@@ -684,6 +684,56 @@
     });
   }
 
+  /*
+   * Say what a free beta means, once, and remember that we did.
+   *
+   * Shown after the first successful sign-in rather than before it: someone
+   * who has not decided to have an account yet does not need a warning about
+   * an account. The acknowledgement goes to the server, so it survives a new
+   * device and is answerable later.
+   */
+  async function showBetaNoticeIfNeeded() {
+    if (!Cloud.isAuthed || !Cloud.user) return;
+    // Only on an answer the server actually gave, so the test is for a mode
+    // that gates signups rather than for "not open". Offline, /api/me never
+    // resolves and signupMode is absent; reading that absence as "not open"
+    // put a modal over the app of anyone working with the connection down and
+    // asked them to acknowledge something we could not record. Same rule as
+    // §13 — and note Cloud.me.serverAvailable is not the signal here, since
+    // offlineIdentity() sets it from the cached auth flag.
+    if (Cloud.me.signupMode !== 'code' && Cloud.me.signupMode !== 'closed') return;
+    if (Cloud.user.betaAcceptedAt) return;
+
+    await new Promise((resolve) => {
+      const modal = openModal(`
+        <div class="modal-head"><h2>Welcome to the beta</h2></div>
+        <div class="modal-body">
+          <p class="settings-hint">Thanks for testing this. Two things worth knowing before you put real work in:</p>
+          <ul class="beta-points">
+            <li><strong>Keep your own backup.</strong> We take one every day, so the realistic worst case is losing a day. Settings → Export backup gives you everything as a file, any time.</li>
+            <li><strong>It may be slow to wake.</strong> The first visit after a quiet spell can take up to a minute to sign in. The app itself always loads instantly from your device.</li>
+          </ul>
+          <p class="settings-hint">Found something broken? <strong>Settings → Report a problem</strong> sends it with the details we need. That is the whole point of the beta.</p>
+          <p class="settings-hint"><a href="/privacy" target="_blank" rel="noopener">Privacy</a> · <a href="/terms" target="_blank" rel="noopener">Terms</a></p>
+        </div>
+        <div class="modal-foot claim-actions">
+          <button class="btn btn-primary" id="beta-ok">Got it</button>
+        </div>`);
+      $('#beta-ok', modal).addEventListener('click', () => {
+        closeModal();
+        resolve();
+      });
+    });
+
+    try {
+      await Cloud.acceptBeta();
+      if (Cloud.user) Cloud.user.betaAcceptedAt = Date.now();
+    } catch {
+      // Offline, or the server is asleep. Shown again next time rather than
+      // silently treated as accepted.
+    }
+  }
+
   function openSignIn() {
     const { googleEnabled, devLoginEnabled } = Cloud.me;
     // Only asked for when the deployment actually gates signups.
@@ -3146,6 +3196,7 @@
     // After the workspace has settled, never before: joining swaps the replica
     // out, and doing that mid-sync would race the pull that is still landing.
     await redeemPendingInvite().catch((err) => console.warn('Invite could not be handled:', err));
+    await showBetaNoticeIfNeeded().catch(() => { /* never block the app on a notice */ });
     if (!changed) return;
     await loadModules();
     if ($('#modal-root').firstChild) return; // mid-edit: leave the screen alone
