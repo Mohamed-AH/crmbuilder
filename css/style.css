@@ -287,6 +287,15 @@ a.stat-card:hover, .stat-card-add:hover { border-color: var(--border-strong); bo
 .template-desc { color: var(--text-soft); font-size: 12.5px; }
 .onboard-actions { margin-top: 24px; text-align: center; display: flex; flex-direction: column; gap: 14px; align-items: center; }
 .onboard-buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+/* Set apart rather than made louder: the anonymous path above stays the
+   primary action, this only has to stop reading as somebody else's door. */
+.onboard-invite {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  max-width: 460px; padding: 14px 18px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface-2);
+}
+.onboard-invite .settings-hint { margin: 0; }
 
 .template-list { display: flex; flex-direction: column; gap: 8px; }
 .template-line {

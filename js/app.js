@@ -738,13 +738,18 @@
     const { googleEnabled, devLoginEnabled } = Cloud.me;
     // Only asked for when the deployment actually gates signups.
     const needsCode = Cloud.me.signupMode === 'code';
+    // Someone holding an invite is here to create an account, not to return to
+    // one. Same single Google button either way — only the framing moves.
+    const signingUp = !!betaCode() && !Cloud.isAuthed;
     const modal = openModal(`
       <div class="modal-head">
-        <h2>Sign in</h2>
+        <h2>${signingUp ? 'Create your account' : 'Sign in'}</h2>
         <button class="icon-btn" data-close aria-label="Close">${icon('x', 16)}</button>
       </div>
       <div class="modal-body">
-        <p class="settings-hint">Sign in to save your CRM to your account and access it from any device. Your data also always stays available on this device.</p>
+        <p class="settings-hint">${signingUp
+    ? 'Your account is created the first time you continue with Google — there is no separate form. It saves this CRM so you can open it on your phone too, and share it with colleagues.'
+    : 'Sign in to save your CRM to your account and access it from any device. Your data also always stays available on this device.'}</p>
         ${googleEnabled ? `
           <a class="btn btn-google btn-block" href="/auth/google${betaCode() ? `?beta=${encodeURIComponent(betaCode())}` : ''}" id="google-signin">
             <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.6-.4-3.9z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.9 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.6 39.6 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C41 35.4 44 30.2 44 24c0-1.3-.1-2.6-.4-3.9z"/></svg>
@@ -879,6 +884,36 @@
     }));
   }
 
+  /*
+   * The door for someone who does not have an account yet.
+   *
+   * There is no separate signup: upsertUser creates the account on the first
+   * successful callback, so signing up and signing in are one click. That is
+   * fine for the plumbing and was wrong on the screen — every label said "sign
+   * in" and "already have an account?", which is the opposite of true for the
+   * one audience the beta gate was built for. Someone arriving on an invite
+   * link was being told, by the only affordance on the page, that it was meant
+   * for other people.
+   *
+   * So the label follows the context while the flow stays single-path. Kept
+   * below the primary action on purpose: using the whole CRM without an account
+   * is the fastest way to understand it, and that has to stay the loudest
+   * option on this screen.
+   */
+  function accountAffordanceHTML() {
+    // serverAvailable gates this because a static-hosted or asleep deployment
+    // has nothing to sign in to; syncInBackground() repaints once /api/me lands.
+    if (!Cloud.me.serverAvailable || Cloud.isAuthed) return '';
+    if (!betaCode()) {
+      return `<button class="btn btn-ghost" id="onboard-signin">${icon('log-in', 15)} Already have an account? Sign in</button>`;
+    }
+    return `
+      <div class="onboard-invite">
+        <p class="settings-hint">Your beta invite is ready. Creating an account keeps this CRM on your other devices — everything here works without one either way.</p>
+        <button class="btn" id="onboard-signin">${icon('user-plus', 15)} Create your account</button>
+      </div>`;
+  }
+
   function renderOnboarding(main) {
     main.innerHTML = `
       <div class="page onboarding">
@@ -918,7 +953,7 @@
             <button class="btn" id="onboard-tour">${icon('map-pin', 15)} Take the tour</button>
           </div>
           <button class="btn btn-ghost" id="onboard-custom">Start with a custom module instead</button>
-          ${Cloud.me.serverAvailable && !Cloud.isAuthed ? `<button class="btn btn-ghost" id="onboard-signin">${icon('log-in', 15)} Already have an account? Sign in</button>` : ''}
+          ${accountAffordanceHTML()}
         </div>
       </div>`;
     $('#onboard-create').addEventListener('click', async () => {
@@ -3047,6 +3082,21 @@
     params.delete('beta');
     const qs = params.toString();
     history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : '') + location.hash);
+    // Say that the link was understood, at the moment its code vanishes out of
+    // the address bar. Without this the invite disappears silently and the
+    // tester has no signal that anything happened.
+    //
+    // Deliberately not validated first: a client-side check would have to ask
+    // the server whether this code is real, which is an oracle for enumerating
+    // codes — the same reason every rejection in §13/§16 answers identically.
+    // So this reports receipt, not validity, and a bad code is refused at the
+    // callback with a screen that explains itself.
+    //
+    // Safe before the first paint: #toast-root is static in index.html and
+    // route() only ever replaces #main. The toast is reassurance and it fades;
+    // the onboarding call to action below is the part that has to persist,
+    // because on a cold start this is gone before sign-in is even possible.
+    toast('Beta invite applied');
   }
 
   const betaCode = () => {

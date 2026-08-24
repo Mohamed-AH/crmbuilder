@@ -224,7 +224,13 @@ test.describe('records', () => {
     await page.fill('#f-name', 'Persistent Percy');
     await page.click('#record-save');
     await page.reload();
-    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    // Wait for the sidebar to come back before clicking it. Boot paints from
+    // IndexedDB, so under load the nav can still be re-rendering when the click
+    // lands — this failed once in a full run and never in isolation, which is
+    // the signature of that race rather than of anything about reloading.
+    const contacts = page.locator('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(contacts).toBeVisible({ timeout: 15000 });
+    await contacts.click();
     await expect(page.locator('tr:has-text("Persistent Percy")')).toBeVisible();
   });
 });
@@ -1298,6 +1304,57 @@ test.describe('beta access', () => {
     }).toPass({ timeout: 10000 });
     const held = await page.evaluate(() => localStorage.getItem('crmb:betaCode'));
     expect(held).toBe('some-code-from-an-invite');
+  });
+
+  /*
+   * The invite link, walked end to end by the person it was sent to.
+   *
+   * There is no signup screen — the account is created on the first successful
+   * callback — and for a long time every label on that single path said "sign
+   * in" and "already have an account?". Someone arriving on an invite has no
+   * account, so the only affordance on the page was telling them it was meant
+   * for somebody else. What is asserted here is the wording, because the
+   * wording was the whole defect.
+   */
+  test('an invited tester is offered an account, not asked if they already have one', async ({ page }) => {
+    await page.goto('/?beta=e2e-welcome-code');
+
+    // The code leaves the address bar; something has to say it was understood.
+    await expect(page.locator('.toast').last()).toContainText('Beta invite applied');
+
+    // Waits for the repaint after /api/me: the affordance cannot render until
+    // we know a server exists to sign in to.
+    const cta = page.locator('#onboard-signin');
+    await expect(cta).toBeVisible({ timeout: 15000 });
+    await expect(cta).toContainText('Create your account');
+    await expect(cta).not.toContainText('Already have an account');
+    await expect(page.locator('.onboard-invite')).toContainText('works without one');
+
+    await cta.click();
+    await expect(page.locator('.modal-head h2')).toHaveText('Create your account');
+    await expect(page.locator('.modal-body')).toContainText('no separate form');
+
+    // And it is one path, not two: the ordinary sign-in completes the signup.
+    await page.fill('#dev-email', 'invited-tester@example.com');
+    await page.click('#dev-login-form button[type=submit]');
+    await expect(page.locator('.user-chip')).toBeVisible({ timeout: 15000 });
+    // The chip shows a display name, so the account itself is what gets
+    // asserted — the claim is that an account now exists for this address.
+    const me = await (await page.request.get('/api/me')).json();
+    expect(me.authenticated).toBe(true);
+    expect(me.user.email).toBe('invited-tester@example.com');
+  });
+
+  /*
+   * The other half of the same rule: nobody without an invite should be told
+   * to create one. This is what fails if the new copy is applied unconditionally.
+   */
+  test('a visitor with no invite is still asked whether they already have an account', async ({ page }) => {
+    await page.goto('/');
+    const cta = page.locator('#onboard-signin');
+    await expect(cta).toBeVisible({ timeout: 15000 });
+    await expect(cta).toContainText('Already have an account');
+    await expect(page.locator('.onboard-invite')).toHaveCount(0);
   });
 });
 

@@ -40,7 +40,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 131 Node tests + 53 Playwright tests.
+**All green:** 131 Node tests + 55 Playwright tests.
 
 ```sh
 npm install
@@ -100,7 +100,7 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v11`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v12`).
 
 **Tenancy scoping comes from the session, never a request.** That covers both
 `req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
@@ -551,6 +551,25 @@ There was never a signup step: `upsertUser` creates the account on the first
 successful callback. `SIGNUP_MODE` (`code` default · `open` · `closed`) decides
 who is allowed to reach that point.
 
+**One path, two labels.** That design is right for the plumbing and was wrong on
+the screen: every string said *Sign in* and *Already have an account?*, so the
+one audience the gate exists for — someone arriving on an invite link, with no
+account — was told by the only affordance on the page that it was meant for
+other people. `accountAffordanceHTML()` and `openSignIn()` now read `betaCode()`
+and say *Create your account* instead. The flow underneath is untouched; only
+the framing moves. Two E2E tests hold both directions, and each fails when the
+copy is made unconditional in either direction — one alone would pass on a
+version that always says "create".
+
+`captureBetaCode()` toasts *Beta invite applied* as it strips the code. Three
+things about that: it is safe before the first paint (`#toast-root` is static in
+`index.html`, and `route()` only replaces `#main`); it reports **receipt, not
+validity**, because a client-side check would have to ask the server whether a
+code is real, which is an oracle for enumerating codes — a bad code is refused
+at the callback instead, by the screen that explains itself; and it fades, so on
+a cold start it can be gone before sign-in is even possible. The onboarding call
+to action is the durable half, and the toast is the reassurance.
+
 **The gate is on signup, never on sign-in.** `checkSignup(email, code)` returns
 `{ ok: true }` immediately for an account that already exists — a returning
 tester must never be asked for a code they used weeks ago. Consumption is
@@ -705,7 +724,7 @@ the fetched response back into the cache under `index.html`. So `/privacy` would
 have shown the CRM, and worse, the *next* load of the app would have served the
 privacy page as the app shell — a poisoned cache that survives a reload. Fixed
 with a `STANDALONE_PAGES` list that returns early, straight to the network.
-`CACHE_VERSION` is now `crmbuilder-v11`; anything added to those pages must be
+`CACHE_VERSION` is now `crmbuilder-v12`; anything added to those pages must be
 added to that list too, or it silently becomes the app.
 
 **The notice is recorded, not just displayed.** `POST /api/me/beta-accepted`
