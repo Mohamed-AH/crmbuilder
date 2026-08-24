@@ -1328,7 +1328,7 @@ test.describe('beta access', () => {
     await expect(cta).toBeVisible({ timeout: 15000 });
     await expect(cta).toContainText('Create your account');
     await expect(cta).not.toContainText('Already have an account');
-    await expect(page.locator('.onboard-invite')).toContainText('works without one');
+    await expect(page.locator('.onboard-account')).toContainText('beta invite is ready');
 
     await cta.click();
     await expect(page.locator('.modal-head h2')).toHaveText('Create your account');
@@ -1346,15 +1346,50 @@ test.describe('beta access', () => {
   });
 
   /*
-   * The other half of the same rule: nobody without an invite should be told
-   * to create one. This is what fails if the new copy is applied unconditionally.
+   * "Can this visitor create an account" is two questions, not one.
+   *
+   * An invite is one way in; open signups are the other. Keying the copy on
+   * the invite alone was right for the beta and wrong the moment SIGNUP_MODE
+   * goes to `open` — which is the setting this deployment ends up on — because
+   * then every new visitor can create an account and was being asked whether
+   * they already had one. The suite runs in `open` mode (playwright.config.js).
    */
-  test('a visitor with no invite is still asked whether they already have an account', async ({ page }) => {
+  test('open signups offer an account to a visitor with no invite', async ({ page }) => {
+    await page.goto('/');
+    const cta = page.locator('#onboard-signin');
+    await expect(cta).toBeVisible({ timeout: 15000 });
+    await expect(cta).toContainText('Create your account');
+    await expect(cta).not.toContainText('Already have an account');
+    // The invite wording must not appear for someone who was not invited.
+    await expect(page.locator('.onboard-account')).not.toContainText('beta invite');
+    await cta.click();
+    await expect(page.locator('.modal-head h2')).toHaveText('Create your account');
+  });
+
+  /*
+   * And the other half: a gated deployment cannot offer what it will refuse.
+   *
+   * SIGNUP_MODE is process-wide, so rather than boot a second server this
+   * drives the client with the answer a `code`-mode server would give — which
+   * is the input the affordance actually reads.
+   */
+  test('a gated deployment with no invite asks whether they already have an account', async ({ page }) => {
+    await page.route('**/api/me', async (route) => {
+      const res = await route.fetch();
+      const body = await res.json();
+      body.signupMode = 'code';
+      await route.fulfill({ response: res, json: body });
+    });
     await page.goto('/');
     const cta = page.locator('#onboard-signin');
     await expect(cta).toBeVisible({ timeout: 15000 });
     await expect(cta).toContainText('Already have an account');
-    await expect(page.locator('.onboard-invite')).toHaveCount(0);
+    await expect(page.locator('.onboard-account')).toHaveCount(0);
+
+    // The sidebar's own button is a sign-in offer at all times: it is what a
+    // returning user presses, and it must not retitle itself for them.
+    await page.locator('#signin-btn').click();
+    await expect(page.locator('.modal-head h2')).toHaveText('Sign in');
   });
 });
 

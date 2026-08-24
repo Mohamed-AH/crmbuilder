@@ -40,7 +40,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 131 Node tests + 55 Playwright tests.
+**All green:** 131 Node tests + 56 Playwright tests.
 
 ```sh
 npm install
@@ -555,11 +555,23 @@ who is allowed to reach that point.
 the screen: every string said *Sign in* and *Already have an account?*, so the
 one audience the gate exists for — someone arriving on an invite link, with no
 account — was told by the only affordance on the page that it was meant for
-other people. `accountAffordanceHTML()` and `openSignIn()` now read `betaCode()`
-and say *Create your account* instead. The flow underneath is untouched; only
-the framing moves. Two E2E tests hold both directions, and each fails when the
-copy is made unconditional in either direction — one alone would pass on a
-version that always says "create".
+other people. `accountAffordanceHTML()` and `openSignIn()` now say *Create your
+account* instead. The flow underneath is untouched; only the framing moves.
+
+**`canCreateAccount()` is the one rule**, and it is two conditions, not one: an
+invite in hand, **or** `signupMode === 'open'`. Keying on the invite alone was
+right for the beta and wrong the moment signups open — which is where this
+deployment ends up — because then every new visitor can create an account and
+was being asked whether they already had one. `code` without an invite, and
+`closed`, keep the sign-in wording: a deployment must not offer what it will
+refuse. Three E2E tests pin the three outcomes and each fails on a different
+mutation of that expression, so no one of them passes on a version that always
+says "create".
+
+**Open signups do not retitle the modal on their own.** `openSignIn({ signUp })`
+takes the intent from the caller, because the sidebar's *Sign in to sync* is
+what returning users press all day. An invite in hand is the one signal strong
+enough to stand alone.
 
 `captureBetaCode()` toasts *Beta invite applied* as it strips the code. Three
 things about that: it is safe before the first paint (`#toast-root` is static in

@@ -573,7 +573,7 @@
 
     $('#user-area').innerHTML = syncStatusHTML();
     const signinBtn = $('#signin-btn');
-    if (signinBtn) signinBtn.addEventListener('click', openSignIn);
+    if (signinBtn) signinBtn.addEventListener('click', () => openSignIn());
 
     $('#workspace-name').textContent = SETTINGS.businessName || 'CRM Builder';
     $('#workspace-name-mini').textContent = SETTINGS.businessName || 'CRM Builder';
@@ -584,7 +584,7 @@
     if (area) {
       area.innerHTML = syncStatusHTML();
       const signinBtn = $('#signin-btn');
-      if (signinBtn) signinBtn.addEventListener('click', openSignIn);
+      if (signinBtn) signinBtn.addEventListener('click', () => openSignIn());
     }
   });
 
@@ -734,13 +734,19 @@
     }
   }
 
-  function openSignIn() {
+  function openSignIn({ signUp = false } = {}) {
     const { googleEnabled, devLoginEnabled } = Cloud.me;
     // Only asked for when the deployment actually gates signups.
     const needsCode = Cloud.me.signupMode === 'code';
     // Someone holding an invite is here to create an account, not to return to
     // one. Same single Google button either way — only the framing moves.
-    const signingUp = !!betaCode() && !Cloud.isAuthed;
+    //
+    // Open signups do NOT imply this on their own: the sidebar's "Sign in to
+    // sync" is pressed by returning users all day, and titling their modal
+    // "Create your account" would be wrong for them. So the intent comes from
+    // the caller that knows it — the onboarding button — and an invite in hand
+    // is the one signal strong enough to stand on its own.
+    const signingUp = !Cloud.isAuthed && (signUp || !!betaCode());
     const modal = openModal(`
       <div class="modal-head">
         <h2>${signingUp ? 'Create your account' : 'Sign in'}</h2>
@@ -899,18 +905,32 @@
    * below the primary action on purpose: using the whole CRM without an account
    * is the fastest way to understand it, and that has to stay the loudest
    * option on this screen.
+   *
+   * The question it answers is "can this visitor create an account right now",
+   * which is two things and not one. An invite is one way; `open` signups are
+   * the other, and keying on the invite alone told every new visitor of an open
+   * deployment that the only door was for people who already had an account.
+   * Once the beta closes and SIGNUP_MODE goes to `open`, that is everybody.
    */
+  const canCreateAccount = () => !!betaCode() || Cloud.me.signupMode === 'open';
+
   function accountAffordanceHTML() {
     // serverAvailable gates this because a static-hosted or asleep deployment
     // has nothing to sign in to; syncInBackground() repaints once /api/me lands.
+    // It also means signupMode below is an answer the server actually gave: an
+    // unauthenticated visitor only gets here once /api/me has landed.
     if (!Cloud.me.serverAvailable || Cloud.isAuthed) return '';
-    if (!betaCode()) {
+    if (!canCreateAccount()) {
+      // `code` without an invite, or `closed`: they cannot create an account,
+      // so the honest offer is the one for people who already have one.
       return `<button class="btn btn-ghost" id="onboard-signin">${icon('log-in', 15)} Already have an account? Sign in</button>`;
     }
     return `
-      <div class="onboard-invite">
-        <p class="settings-hint">Your beta invite is ready. Creating an account keeps this CRM on your other devices — everything here works without one either way.</p>
-        <button class="btn" id="onboard-signin">${icon('user-plus', 15)} Create your account</button>
+      <div class="onboard-account">
+        <p class="settings-hint">${betaCode()
+    ? 'Your beta invite is ready. Creating an account keeps this CRM on your other devices — everything here works without one either way.'
+    : 'Creating an account keeps this CRM on your other devices and lets you share it with colleagues — everything here works without one either way.'}</p>
+        <button class="btn" id="onboard-signin" data-signup="1">${icon('user-plus', 15)} Create your account</button>
       </div>`;
   }
 
@@ -978,7 +998,7 @@
     $('#onboard-demo').addEventListener('click', () => loadDemoData({ replace: false }));
     $('#onboard-tour').addEventListener('click', startTourWithConsent);
     const signin = $('#onboard-signin');
-    if (signin) signin.addEventListener('click', openSignIn);
+    if (signin) signin.addEventListener('click', () => openSignIn({ signUp: signin.dataset.signup === '1' }));
   }
 
   async function createFromTemplate(t, withSamples) {
@@ -2106,7 +2126,7 @@
       await loadDemoData({ replace });
     });
     const signinBtn = $('#settings-signin');
-    if (signinBtn) signinBtn.addEventListener('click', openSignIn);
+    if (signinBtn) signinBtn.addEventListener('click', () => openSignIn());
     const signoutBtn = $('#signout-btn');
     if (signoutBtn) {
       signoutBtn.addEventListener('click', async () => {
