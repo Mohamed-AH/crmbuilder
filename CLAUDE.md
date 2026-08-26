@@ -40,7 +40,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 149 Node tests + 68 Playwright tests.
+**All green:** 153 Node tests + 69 Playwright tests.
 
 ```sh
 npm install
@@ -102,7 +102,7 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v17`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v18`).
 
 **Tenancy scoping comes from the session, never a request.** That covers both
 `req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
@@ -1018,9 +1018,9 @@ and one cannot be built as worded.
 
 | Ask | Where it stands |
 |---|---|
-| Total users and orgs | ☐ Stage A. `/health` reports both to a platform admin, but `/api/admin/stats` has no org count and there is **no org list at all** — `listOrgs()` is used only by the backup export |
-| Per-org and combined usage | ☐ Stage A. `dataStats(orgId)` counts rows per org; nothing measures **bytes** per org |
-| Render + Mongo quotas | ☐ Stage A. Mongo is measured already (`storageStats`). **Render is not obtainable** — see below |
+| Total users and orgs | ✅ Stage A — `GET /api/admin/platform` + the Deployment and Organisations cards. Was: `/health` reports both to a platform admin, but `/api/admin/stats` has no org count and there is **no org list at all** — `listOrgs()` is used only by the backup export |
+| Per-org and combined usage | ✅ Stage A — `usageByOrg()`, measured with `$bsonSize` (Mongo) and serialised length (file store), cached 30s |
+| Resource quotas | ✅ Stage A — three meters: Mongo, RSS, monthly egress. Uptime hours dropped — see below |
 | Halt user signups | ✅ Done — the mode switch, §16 |
 | Halt org creation | ☐ Stage B. A **separate** lever, and not a duplicate of the above — see below |
 | Pause/resume a user | ✅ Done — `disabled` + `PATCH /api/admin/users/:id` |
@@ -1029,12 +1029,24 @@ and one cannot be built as worded.
 
 ### Three decisions taken before any code
 
-**Render instance-hours cannot be read from Render.** No API exposes free-tier
-consumption, so the panel does not pretend to: it accumulates *our own* uptime
-into the `platform` document (`BOOT_AT` alone resets on restart) and shows
-hours-this-month against 750. It reads slightly low — it cannot see time
-between a crash and the next ping — and is labelled an estimate for exactly
-that reason. Do not "fix" this by inventing a Render endpoint.
+**Three meters, and uptime hours are deliberately not one of them.** Render
+does not publish free-tier consumption and a number we cannot check is worse
+than none, so that idea was dropped. What is measured instead, all from inside
+the process: **Mongo `dataSize + indexSize` / 512 MB** (already built),
+**`process.memoryUsage().rss` / 512 MB**, and **outbound bytes this month /
+5 GB**. Two things about those last two that are easy to get wrong later:
+
+- **RSS is a point sample taken when `/health` is hit**, so it catches a *leak*,
+  not a burst — the sudden allocation that OOM-kills the container happens
+  between pings and will not be seen. A high-water mark is stored alongside so
+  the panel shows the worst observed rather than the last glance. Do not
+  present it as protection against an OOM kill.
+- **The egress counter must never write per request.** It accumulates in memory
+  and flushes on an interval; a crash costs one interval's bytes, which is far
+  cheaper than write amplification that would itself consume the storage quota.
+  It counts application bytes, not what Render bills, and
+  `EGRESS_LIMIT_BYTES` should be checked against Render's current plan — a
+  wrongly encoded limit is worse than none.
 
 **Org creation needs its own gate, and this is not tidiness.** Every signup
 mints an org, so pausing signups today also locks out every *invited teammate*
@@ -1052,9 +1064,9 @@ anonymous callers.
 
 ### Stages
 
-- ☐ **A — see it.** `GET /api/admin/platform`: combined counts, per-org rows
-  (members, records, modules, **bytes**, last active), and both quotas with the
-  `ok`/`warn`/`critical` levels `usageReport()` already computes. Per-org bytes
+- ✅ **A — see it.** Shipped. `GET /api/admin/platform`: combined counts, per-org rows
+  (members, records, modules, **bytes**, last active), and the three meters with
+  the `ok`/`warn`/`critical` levels `usageReport()` already computes. Per-org bytes
   is the real work: `$bsonSize` in a `$group` by `orgId` on Mongo, summed
   `JSON.stringify` lengths in the file store. **Measured, never
   records × a constant** — §17 records why that estimate reads fine right up
@@ -1066,8 +1078,8 @@ anonymous callers.
   works, **nothing is deleted**. `deleteAccount` stays the only thing that can
   remove a workspace (§5) and nothing here may touch it. The wording is one
   word from deletion and a decade of data apart — §15's lesson.
-- ☐ **C — alerts.** Rules for storage, projected Render hours, signup spikes,
-  a single heavy org, and the access-request queue. **Escalate-only and never
+- ☐ **C — alerts.** Mongo storage at 60/85/95%, RSS at 70/85%, egress at
+  60/85%, signup spikes, and a single tenant over 25% of the database. **Escalate-only and never
   repeated at the same level**: state per rule in the `platform` document, so
   60% notifies once and stays quiet until 85%, re-arming only after a drop. An
   alert that fires hourly trains you to ignore it, which is worse than none.
@@ -1082,3 +1094,26 @@ anonymous callers.
   notifier: evaluate and store first, notify after the response.
 - **Suspension is reversible and customer-visible.** It is not deletion, and
   the screen has to say which.
+
+### Stage A as built
+
+`GET /api/admin/platform` (platform admin only, 30s cache because
+`usageByOrg()` scans) returns combined counts, a per-org table sorted heaviest
+first with each tenant's share of stored bytes, and the three meters.
+
+**Two things found while building it:**
+
+- **The egress counter has to flush on SIGTERM.** Render's free tier spins down
+  after ~15 minutes idle and signals to do it, so with only an interval flush
+  every sleep lost whatever had been counted since the last write — on a quiet
+  service, most of it. The month's figure would have read far too low to be
+  worth having. Bounded by a 2s race so a slow database cannot stop the process
+  exiting. Guarded by *"egress is counted, persisted, and still there after a
+  restart"*, which fails without the handler.
+- **A pre-existing bug in the access-requests panel**: it read
+  `access.usage.percent`, but `usageReport()` returns `percentOfLimit`, so the
+  storage warning rendered "Storage is at undefined%".
+
+The per-org test asserts that **one large record outweighs six small ones**.
+That is the assertion that fails the moment anybody swaps the measurement back
+for records × a constant, which is the trap §17 already records.

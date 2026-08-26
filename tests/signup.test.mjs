@@ -1137,3 +1137,97 @@ describe('platform admins are not the org owner\'s to manage', () => {
     assert.ok(!left.some((u) => u.email === 'second-op@operator.test'));
   });
 });
+
+/*
+ * What the deployment is carrying.
+ *
+ * The three limits this can actually hit are Atlas storage, container RAM and
+ * monthly egress. Uptime hours are deliberately not among them — Render does
+ * not publish free-tier consumption, and a number nobody can check is worse
+ * than no number.
+ */
+describe('platform usage and quotas', () => {
+  test('reports every organisation, with bytes that are measured rather than counted', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'plat-admin@operator.test' });
+    const admin = await adminOf(srv, 'plat-admin@operator.test');
+
+    // Two tenants: one with a handful of large records, one with more small
+    // ones. If bytes were records × a constant, the second would look bigger.
+    const heavy = (await srv.signUp('heavy@tenant.test')).setCookie;
+    const light = (await srv.signUp('light@tenant.test')).setCookie;
+    const push = (cookies, records) => srv.req('/api/sync', {
+      method: 'POST', cookies, body: { modules: [], records, settings: null },
+    });
+    await push(heavy, [{ id: 'h1', updatedAt: Date.now(), doc: { moduleId: 'm', data: { note: 'x'.repeat(4000) } } }]);
+    await push(light, Array.from({ length: 6 }, (_, i) => ({
+      id: `l${i}`, updatedAt: Date.now(), doc: { moduleId: 'm', data: { note: 'y' } },
+    })));
+
+    const out = await srv.req('/api/admin/platform', { cookies: admin });
+    assert.equal(out.status, 200, out.text);
+
+    // Three tenants exist (the operator has an org too).
+    assert.equal(out.json.counts.orgs, 3);
+    assert.equal(out.json.counts.users, 3);
+
+    const rows = out.json.orgs;
+    const big = rows.find((r) => r.name && r.records === 1);
+    const many = rows.find((r) => r.records === 6);
+    assert.ok(big && many, `expected both tenants: ${JSON.stringify(rows)}`);
+    assert.ok(
+      big.bytes > many.bytes,
+      `one large record must outweigh six small ones — ${big.bytes} vs ${many.bytes}. `
+      + 'Equal-ish numbers mean this went back to counting rows.',
+    );
+    // Heaviest first, so the tenant worth looking at is the one you see.
+    assert.equal(rows[0].bytes, Math.max(...rows.map((r) => r.bytes)));
+    assert.ok(rows[0].shareOfData > 0);
+  });
+
+  test('the three meters are present, and each knows its own limit', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'meter-admin@operator.test' });
+    const admin = await adminOf(srv, 'meter-admin@operator.test');
+    const { meters } = (await srv.req('/api/admin/platform', { cookies: admin })).json;
+
+    for (const name of ['storage', 'ram', 'egress']) {
+      assert.ok(meters[name], `missing the ${name} meter`);
+      assert.ok('level' in meters[name], `${name} has no level`);
+    }
+    // RAM is a real reading against the container limit, with the worst seen
+    // kept alongside the last glance.
+    assert.ok(meters.ram.bytes > 0, 'RSS should be a real measurement');
+    assert.ok(meters.ram.peakBytes >= meters.ram.bytes);
+    assert.equal(meters.ram.limitBytes, 512 * 1024 * 1024);
+    assert.equal(meters.egress.limitBytes, 5 * 1024 * 1024 * 1024);
+    assert.equal(meters.egress.month, new Date().toISOString().slice(0, 7));
+  });
+
+  /*
+   * The egress counter has to survive a restart, because a monthly allowance
+   * that resets whenever the free tier spins down measures nothing.
+   */
+  test('egress is counted, persisted, and still there after a restart', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'egress-admin@operator.test' });
+    const admin = await adminOf(srv, 'egress-admin@operator.test');
+
+    // Enough responses to be unmistakably more than zero.
+    for (let i = 0; i < 20; i += 1) await srv.req('/api/me');
+    const before = (await srv.req('/api/admin/platform', { cookies: admin })).json.meters.egress.bytes;
+    assert.ok(before > 0, 'responses should have been counted');
+
+    await srv.setMode('open'); // restarts against the same data directory
+    const admin2 = await adminOf(srv, 'egress-admin@operator.test');
+    const after = (await srv.req('/api/admin/platform', { cookies: admin2 })).json.meters.egress.bytes;
+    assert.ok(after >= before, `the month's total must not reset on a restart: ${after} < ${before}`);
+  });
+
+  test('the platform view is for the operator alone', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'only-admin@operator.test' });
+    await adminOf(srv, 'only-admin@operator.test');
+    const ordinary = (await srv.signUp('nosy@tenant.test')).setCookie;
+    // Another tenant's name, size and share of the database is not an org
+    // owner's business, and would tell them who else is on the deployment.
+    assert.equal((await srv.req('/api/admin/platform')).status, 401);
+    assert.equal((await srv.req('/api/admin/platform', { cookies: ordinary })).status, 403);
+  });
+});

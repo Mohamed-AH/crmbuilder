@@ -1624,6 +1624,33 @@ test.describe('admin', () => {
     }
   });
 
+  /*
+   * What the deployment is carrying, on one screen.
+   *
+   * Three limits this can actually hit — Atlas storage, container RAM, monthly
+   * egress — plus which tenant is heaviest. Uptime hours are deliberately not
+   * here: Render does not publish free-tier consumption and a number nobody
+   * can check is worse than none.
+   */
+  test('the deployment card shows the three meters and who is heaviest', async ({ page }) => {
+    await page.goto('/');
+    await signIn(page, 'e2e-admin@example.com');
+    await page.goto('/#/admin');
+    await expect(page.locator('.meter-grid')).toBeVisible({ timeout: 20000 });
+
+    const meters = page.locator('.meter');
+    await expect(meters).toHaveCount(3);
+    await expect(page.locator('.meter-head')).toContainText(['Database', 'Memory', 'Bandwidth']);
+    // Real readings, not placeholders — an empty meter would render an em dash.
+    await expect(meters.filter({ hasText: 'Memory' })).toContainText(/\d+(\.\d+)? MB of 512 MB/);
+    await expect(meters.filter({ hasText: 'Bandwidth' })).toContainText(/of 5(\.0)? GB/);
+
+    // And the tenant table, with a share column so dominance is visible.
+    await expect(page.locator('h2:has-text("Organisations")')).toBeVisible();
+    const firstRow = page.locator('.card:has(h2:has-text("Organisations")) tbody tr').first();
+    await expect(firstRow).toContainText('%');
+  });
+
   test('shows metrics and manages accounts', async ({ page, browser }) => {
     // ADMIN_EMAILS in playwright.config.js guarantees this address is an admin
     // regardless of which test created the first account.

@@ -24,22 +24,40 @@ rather than assumed.
 
 ## Three things worth deciding before any code
 
-### The honest answer on Render
+### Three meters, and what each one can actually tell you
 
-Render's API does not expose free-tier instance-hour consumption. I cannot
-promise a readout of a number Render does not publish, so the plan does not
-pretend to: **we measure our own uptime instead.**
+Uptime hours were dropped: Render does not publish free-tier consumption, and a
+number we cannot check is worse than no number. The three that follow are all
+measurable from inside the process.
 
-`BOOT_AT` already exists but resets on every restart, so the accumulator lives
-in the `platform` settings document — each `/health` hit adds the elapsed time
-since the last stamp and rolls over at month end. That gives "hours this
-service has been awake this month, measured by us" against the 750 the account
-allows, which is the number that actually matters because this is the only
-service on it.
+**MongoDB storage — 512 MB.** Already measured: `dbStats` gives real
+`dataSize + indexSize`, not records × a constant. The most trustworthy of the
+three, and the one that ends the beta if it fills.
 
-It will read slightly low (it cannot see time between a crash and the next
-ping) and it is labelled as an estimate for that reason. If a Render API key is
-ever added, the panel can cross-check; that is not a dependency.
+**App RAM — 512 MB.** `process.memoryUsage().rss`. Two honest caveats, both of
+which shape the alerting:
+
+- RSS is what the Node process holds, not what the container is billed for.
+  Close enough on a single-process container, and it is the only figure we can
+  read from inside.
+- It is a **point sample**, taken when `/health` is hit — every 14 minutes.
+  A spike between pings is invisible. So this catches a **leak**, not a burst:
+  slow growth over hours will trip it; the sudden allocation that actually
+  OOM-kills the container will not. A high-water mark is stored alongside the
+  current value so the panel shows the worst seen, not just the last glance.
+
+**Outbound bandwidth — 5 GB/month.** Counted by middleware over every response
+body. Three things to keep straight:
+
+- It counts **application bytes**, not what Render bills — TLS framing and
+  headers are not in it. A lower bound, and labelled as one.
+- It **must not write to the database per request.** The counter lives in
+  memory and flushes on an interval, so a crash costs at most one interval's
+  bytes rather than a write amplification that would itself eat the storage
+  quota.
+- **`EGRESS_LIMIT_BYTES` is configurable and the 5 GB default should be checked
+  against Render's current plan.** A limit encoded wrongly is worse than none:
+  too low and the alerts are noise, too high and they never come.
 
 ### Why orgs need their own gate
 
@@ -76,9 +94,9 @@ asleep and there is nothing to alert about anyway.
 - **Counts**: users, orgs, workspaces, records, modules — combined.
 - **Per-org rows**: name, members, records, modules, bytes, created, last
   active. Sorted by bytes so the heavy tenants are the ones you see first.
-- **Quotas**: Mongo bytes against 512 MB (measured), Render hours against 750
-  (our own accumulator), each with the `ok`/`warn`/`critical` level
-  `usageReport()` already computes.
+- **Three meters**: Mongo bytes / 512 MB, RSS / 512 MB (plus the high-water
+  mark), egress bytes this month / 5 GB — each with the `ok`/`warn`/`critical`
+  level `usageReport()` already computes.
 
 **Per-org bytes is the one piece of real work here.** `dataStats` counts rows,
 not size. Mongo can total the real thing with `$bsonSize` in a `$group` over
@@ -113,11 +131,11 @@ this stage may touch it.
 
 | Rule | Fires when |
 |---|---|
-| Storage | Mongo crosses 60%, then 85%, then 95% |
-| Render hours | Projected month-end crosses 750 |
-| Signup spike | Signups in the last hour exceed N (default 10) or the last 24h exceed M (default 40) |
-| Heavy org | One org's bytes exceed a share of the database (default 25%) |
-| Access queue | Pending requests exceed a ceiling |
+| Mongo storage | Crosses 60%, then 85%, then 95% |
+| App RAM | RSS crosses 70%, then 85% |
+| Egress | Crosses 3 GB (60%), then 4.25 GB (85%) |
+| Signup spike | More than 10 signups in an hour (configurable) |
+| Heavy tenant | One org holds more than 25% of the database |
 
 **Escalate-only, and never repeat at the same level.** A rule that fires once an
 hour trains you to ignore it, and an alert you ignore is worse than none. State
@@ -134,7 +152,7 @@ proves the wiring without waiting for a real threshold.
 
 | File | Change |
 |---|---|
-| `server.js` | `perOrgUsage()`; uptime accumulator; `/api/admin/platform`; `orgCreation` in the gate; org suspend/resume + a sync guard; alert rules and evaluation on `/health` |
+| `server.js` | `perOrgUsage()`; egress middleware + flush; RSS sampling; `/api/admin/platform`; `orgCreation` in the gate; org suspend/resume + a sync guard; alert rules and evaluation on `/health` |
 | `js/app.js` | Organisations card; org-creation toggle; suspend/resume with reason; alert thresholds panel and test button |
 | `js/cloud.js` | `Cloud.admin.platform()`, `setOrgCreation`, `suspendOrg`, `alerts` |
 | `tests/signup.test.mjs` | org gate, invited-teammate exemption, suspend behaviour, alert rules and their de-duplication |
@@ -147,6 +165,7 @@ Each guarantee checked against the state that breaks it, per §9:
 
 - **Per-org bytes are measured, not estimated** — a workspace with a few large
   records must not report the same as one with many small ones.
+- **The egress counter survives a restart** and does not write per request.
 - **Closing org creation still lets an invited teammate in.** This is the one
   that matters; a version that simply refuses every signup fails it.
 - **A suspended org cannot write and has lost nothing** — sync refused with a

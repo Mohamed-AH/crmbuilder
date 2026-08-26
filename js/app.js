@@ -195,6 +195,15 @@
     return v ? String(v) : '(untitled)';
   }
 
+  function fmtBytes(n) {
+    if (n == null || Number.isNaN(Number(n))) return '—';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let v = Number(n);
+    let i = 0;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+    return `${v < 10 && i > 0 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
+  }
+
   function fmtCurrency(v) {
     const n = Number(v);
     if (Number.isNaN(n)) return String(v);
@@ -2732,6 +2741,7 @@
     let betaCodes = null;
     let reports = [];
     let access = null;
+    let platform = null;
     try {
       [stats, usersRes] = await Promise.all([Cloud.admin.stats(), Cloud.admin.users()]);
       // Platform admins only, so a 403 here is the expected answer for an org
@@ -2740,6 +2750,7 @@
         betaCodes = await Cloud.admin.betaCodes().catch(() => null);
         reports = (await Cloud.admin.feedback().catch(() => ({ reports: [] }))).reports;
         access = await Cloud.admin.accessRequests().catch(() => null);
+        platform = await Cloud.admin.platform().catch(() => null);
       }
     } catch (err) {
       // The signed-in role is whatever it was at sign-in; an administrator can
@@ -2796,12 +2807,51 @@
               </li>`).join('')}
           </ul>
         </div>` : ''}
+        ${platform ? `
+        <div class="card">
+          <div class="card-head"><h2>Deployment</h2></div>
+          <p class="settings-hint">${platform.counts.users} account${platform.counts.users === 1 ? '' : 's'} across ${platform.counts.orgs} organisation${platform.counts.orgs === 1 ? '' : 's'} · ${platform.counts.records.toLocaleString()} records${platform.counts.disabled ? ` · ${platform.counts.disabled} paused` : ''}</p>
+          <div class="meter-grid">
+            ${[
+    ['Database', platform.meters.storage, 'Atlas M0 · counts indexes and tombstones, not just records'],
+    ['Memory', platform.meters.ram, `Container RSS · peak seen ${fmtBytes(platform.meters.ram.peakBytes)}`],
+    ['Bandwidth', platform.meters.egress, `Response bodies sent in ${platform.meters.egress.month} · excludes headers, so the real figure is higher`],
+  ].map(([label, m, note]) => `
+              <div class="meter" data-level="${esc(m.level)}">
+                <div class="meter-head"><span>${esc(label)}</span><strong>${m.percent == null ? '—' : `${m.percent}%`}</strong></div>
+                <div class="meter-bar"><span style="width:${Math.min(100, m.percent || 0)}%"></span></div>
+                <p class="muted">${fmtBytes(m.bytes)} of ${fmtBytes(m.limitBytes)}</p>
+                <p class="muted meter-note">${esc(note)}</p>
+              </div>`).join('')}
+          </div>
+          <p class="settings-hint">Memory is sampled when this page loads, so it catches a slow leak rather than a sudden spike — the burst that would actually restart the container happens between looks.</p>
+        </div>
+        <div class="card table-card">
+          <div class="card-head"><h2>Organisations</h2></div>
+          <p class="settings-hint">Heaviest first. Share is of what is actually stored, so one tenant dominating the database is visible without doing the arithmetic.</p>
+          <div class="table-scroll">
+            <table class="records-table">
+              <thead><tr><th>Organisation</th><th>People</th><th>Records</th><th>Stored</th><th>Share</th><th>Last active</th></tr></thead>
+              <tbody>
+                ${platform.orgs.map((o) => `
+                  <tr>
+                    <td data-label="Organisation"><strong>${esc(o.name || '—')}</strong>${o.suspendedAt ? ' <span class="pill pill-danger">paused</span>' : ''}</td>
+                    <td data-label="People" class="td-num">${o.members}</td>
+                    <td data-label="Records" class="td-num">${o.records.toLocaleString()}</td>
+                    <td data-label="Stored" class="td-num">${fmtBytes(o.bytes)}</td>
+                    <td data-label="Share" class="td-num">${o.shareOfData}%</td>
+                    <td data-label="Last active">${o.lastActiveAt ? fmtWhen(o.lastActiveAt) : '—'}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>` : ''}
         ${access && access.requests.length ? `
         <div class="card">
           <div class="card-head"><h2>Requests to join${access.pending ? ` <span class="count-badge">${access.pending} waiting</span>` : ''}</h2></div>
           <p class="settings-hint">People who signed in without an invite and asked. <strong>Approving lets them straight in</strong> — they sign in again with the same Google account and it works. Nothing is emailed, so there is nothing for them to wait on.</p>
           ${access.usage && (access.usage.level === 'warn' || access.usage.level === 'critical') ? `
-            <p class="settings-hint"><strong>Storage is at ${esc(String(access.usage.percent))}%.</strong> Worth taking a backup before you add more people.</p>` : ''}
+            <p class="settings-hint"><strong>Storage is at ${esc(String(access.usage.percentOfLimit))}%.</strong> Worth taking a backup before you add more people.</p>` : ''}
           <ul class="team-list">
             ${access.requests.map((r) => `
               <li>

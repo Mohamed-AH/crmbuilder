@@ -298,6 +298,33 @@ class FileStore {
     };
   }
 
+  /*
+   * Bytes per organisation, measured rather than estimated.
+   *
+   * records × a constant reads fine right up until the tier fills, because
+   * indexes and tombstones are real storage — the same trap the whole-database
+   * figure already avoids (§17). Here that means summing what the rows
+   * actually serialise to.
+   */
+  async usageByOrg() {
+    const totals = new Map();
+    const add = (orgId, bytes, kind) => {
+      const key = orgId || '(none)';
+      const t = totals.get(key) || { orgId: key, bytes: 0, records: 0, modules: 0 };
+      t.bytes += bytes;
+      t[kind] += 1;
+      totals.set(key, t);
+    };
+    for (const kind of SYNC_KINDS) {
+      for (const bucket of Object.values(this.s.items[kind] || {})) {
+        for (const row of Object.values(bucket)) {
+          add(row.orgId, Buffer.byteLength(JSON.stringify(row), 'utf8'), kind);
+        }
+      }
+    }
+    return [...totals.values()];
+  }
+
   // --- organisations
   async createOrg(org) {
     this.s.orgs = this.s.orgs || [];
@@ -719,6 +746,34 @@ class MongoStore {
     const agg = await this.data.aggregate(pipeline).toArray();
     const s = agg[0] || {};
     return { workspaces: s.workspaces || 0, records: s.records || 0, modules: s.modules || 0 };
+  }
+
+  /*
+   * Bytes per organisation, measured with $bsonSize rather than estimated.
+   *
+   * records × a constant reads fine right up until the tier fills, because
+   * indexes and tombstones are real storage — the same trap the whole-database
+   * figure already avoids (§17). $bsonSize gives what the document actually
+   * occupies, which is the number worth acting on.
+   *
+   * This scans both collections, so the caller caches it. At beta scale that
+   * is cheap; it would not stay cheap.
+   */
+  async usageByOrg() {
+    const totals = new Map();
+    for (const kind of SYNC_KINDS) {
+      const rows = await this.cols[kind].aggregate([
+        { $group: { _id: '$orgId', bytes: { $sum: { $bsonSize: '$$ROOT' } }, n: { $sum: 1 } } },
+      ]).toArray();
+      for (const r of rows) {
+        const key = r._id || '(none)';
+        const t = totals.get(key) || { orgId: key, bytes: 0, records: 0, modules: 0 };
+        t.bytes += r.bytes || 0;
+        t[kind] += r.n || 0;
+        totals.set(key, t);
+      }
+    }
+    return [...totals.values()];
   }
 
   // --- organisations
@@ -1433,6 +1488,86 @@ async function migrateToOrgWorkspaces() {
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1); // Render terminates TLS at the proxy
+
+/*
+ * Count what goes out, without paying for the counting.
+ *
+ * Free-tier egress is a monthly allowance and nothing here could see it until
+ * now. The count is application body bytes — TLS framing and headers are not
+ * in it, so it is a lower bound and is labelled as one.
+ *
+ * It must NEVER write to the database per response. A counter that persisted
+ * on every request would generate more storage traffic than the thing it is
+ * measuring, on the same 512 MB the customers use. So it accumulates in memory
+ * and flushes on an interval; a crash costs at most one interval's bytes,
+ * which is the right trade.
+ */
+const EGRESS_LIMIT_BYTES = Number(process.env.EGRESS_LIMIT_BYTES || 5 * 1024 * 1024 * 1024);
+const EGRESS_FLUSH_MS = Number(process.env.EGRESS_FLUSH_MS || 60000);
+// A burst is written out before the interval is up, so a single large download
+// is not sitting only in memory when the process goes away.
+const EGRESS_FLUSH_BYTES = Number(process.env.EGRESS_FLUSH_BYTES || 256 * 1024);
+let egressPending = 0;      // bytes counted but not yet written
+let egressFlushAt = 0;      // when we last wrote
+
+const monthKey = (at = Date.now()) => new Date(at).toISOString().slice(0, 7);
+
+async function flushEgress(force = false) {
+  const now = Date.now();
+  if (!egressPending) return;
+  if (!force && egressPending < EGRESS_FLUSH_BYTES && now - egressFlushAt < EGRESS_FLUSH_MS) return;
+  const bytes = egressPending;
+  egressPending = 0;
+  egressFlushAt = now;
+  try {
+    const p = await store.getPlatformSettings();
+    const month = monthKey(now);
+    // A new month starts from this flush, not from zero-plus-history.
+    const base = p.egressMonth === month ? (p.egressBytes || 0) : 0;
+    await store.updatePlatformSettings({ egressMonth: month, egressBytes: base + bytes });
+  } catch (err) {
+    // Put them back rather than losing the count to a transient write failure.
+    egressPending += bytes;
+    console.warn('Could not record egress:', err.message);
+  }
+}
+
+app.use((req, res, next) => {
+  const write = res.write.bind(res);
+  const end = res.end.bind(res);
+  const size = (chunk) => (chunk ? Buffer.byteLength(chunk, typeof chunk === 'string' ? 'utf8' : undefined) : 0);
+  res.write = (chunk, ...rest) => { egressPending += size(chunk); return write(chunk, ...rest); };
+  res.end = (chunk, ...rest) => {
+    if (typeof chunk !== 'function') egressPending += size(chunk);
+    // Fire-and-forget, after the response has been handed over.
+    flushEgress().catch(() => {});
+    return end(chunk, ...rest);
+  };
+  next();
+});
+
+/*
+ * Write the tail out before the process goes.
+ *
+ * Render's free tier spins down after ~15 minutes idle and sends SIGTERM to do
+ * it, so without this every sleep would lose whatever had been counted since
+ * the last flush — which on a quiet service is most of it, and the monthly
+ * figure would read far too low to be worth having.
+ */
+let shuttingDown = false;
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.on(signal, async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    // Bounded: a slow database must not stop the process exiting.
+    await Promise.race([
+      flushEgress(true).catch(() => {}),
+      new Promise((r) => setTimeout(r, 2000)),
+    ]);
+    process.exit(0);
+  });
+}
+
 app.use(express.json({ limit: '8mb' }));
 app.use(cookieParser());
 
@@ -1461,6 +1596,54 @@ const HEALTH_DETAIL = process.env.HEALTH_DETAIL === '1';
  * rather than the product. The job of these numbers is to be looked at before
  * that becomes a decision.
  */
+/*
+ * The three limits this deployment can actually hit, and what each meter is
+ * worth. Levels are shared so the panel and the alerts agree by construction.
+ */
+const RAM_LIMIT_BYTES = Number(process.env.RAM_LIMIT_BYTES || 512 * 1024 * 1024);
+let rssHighWater = 0;
+
+function meter(bytes, limit, warn, critical) {
+  const pct = limit && bytes != null ? Math.round((bytes / limit) * 1000) / 10 : null;
+  return {
+    bytes,
+    limitBytes: limit,
+    percent: pct,
+    level: pct == null ? 'unknown' : pct >= critical ? 'critical' : pct >= warn ? 'warn' : 'ok',
+  };
+}
+
+/*
+ * RSS is a point sample, taken whenever this is called — which in practice is
+ * the /health ping, every 14 minutes.
+ *
+ * So it catches a LEAK, not a burst: slow growth over hours trips it, and the
+ * sudden allocation that actually OOM-kills the container happens between
+ * pings and is never seen. The high-water mark is kept so the panel can show
+ * the worst observed rather than the last glance, but it does not change what
+ * this can promise. Do not present it as protection against an OOM kill.
+ */
+function ramReport() {
+  const rss = process.memoryUsage().rss;
+  if (rss > rssHighWater) rssHighWater = rss;
+  return { ...meter(rss, RAM_LIMIT_BYTES, 70, 85), peakBytes: rssHighWater, sampledAt: Date.now() };
+}
+
+async function egressReport() {
+  const p = await store.getPlatformSettings().catch(() => ({}));
+  const month = monthKey();
+  // Anything counted since the last flush belongs to the figure on screen,
+  // otherwise the panel reads a minute behind for no reason.
+  const stored = p.egressMonth === month ? (p.egressBytes || 0) : 0;
+  return {
+    ...meter(stored + egressPending, EGRESS_LIMIT_BYTES, 60, 85),
+    month,
+    // Application body bytes only — TLS framing and headers are not counted,
+    // so the real figure Render bills is higher than this.
+    measures: 'response bodies',
+  };
+}
+
 async function usageReport() {
   const stats = await store.storageStats().catch(() => ({ bytes: null, measured: false }));
   const totals = await store.dataStats(null);
@@ -2628,6 +2811,81 @@ app.post('/api/admin/access-requests/:email/decide', requireAuth, requirePlatfor
       ? `You're in — open ${APP_URL} and sign in with Google using ${email}.`
       : null,
   });
+});
+
+/*
+ * What the deployment is carrying, per tenant and in total.
+ *
+ * Platform admin only: an org owner has no business knowing how full the
+ * shared database is, or who else is on it.
+ *
+ * Cached, because usageByOrg() scans every module and record. Thirty seconds
+ * is long enough that a reload or a nervous refresh costs one scan, and short
+ * enough that the number is still the one you are acting on.
+ */
+const PLATFORM_CACHE_MS = Number(process.env.PLATFORM_CACHE_MS || 30000);
+let platformCache = { at: 0, body: null };
+
+app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, res) => {
+  const now = Date.now();
+  if (platformCache.body && now - platformCache.at < PLATFORM_CACHE_MS && !req.query.fresh) {
+    return res.json({ ...platformCache.body, cached: true });
+  }
+
+  const [orgs, users, usage, byOrg, egress] = await Promise.all([
+    store.listOrgs(),
+    store.listUsers(),
+    usageReport(),
+    store.usageByOrg().catch((err) => {
+      console.warn('Could not measure per-organisation usage:', err.message);
+      return [];
+    }),
+    egressReport(),
+  ]);
+
+  const bytesFor = new Map(byOrg.map((o) => [o.orgId, o]));
+  const totalBytes = byOrg.reduce((a, o) => a + o.bytes, 0);
+  const rows = orgs.map((o) => {
+    const members = users.filter((u) => u.orgId === o.id);
+    const measured = bytesFor.get(o.id) || { bytes: 0, records: 0, modules: 0 };
+    return {
+      id: o.id,
+      name: o.name,
+      createdAt: o.createdAt,
+      suspendedAt: o.suspendedAt || null,
+      members: members.length,
+      lastActiveAt: members.reduce((a, u) => Math.max(a, u.lastActiveAt || 0), 0),
+      records: measured.records,
+      modules: measured.modules,
+      bytes: measured.bytes,
+      // Share of what is actually stored, so one tenant dominating is visible
+      // without doing arithmetic.
+      shareOfData: totalBytes ? Math.round((measured.bytes / totalBytes) * 1000) / 10 : 0,
+    };
+  });
+  // Heaviest first: the ones worth looking at are the ones you see.
+  rows.sort((a, b) => b.bytes - a.bytes);
+
+  const body = {
+    counts: {
+      users: users.length,
+      orgs: orgs.length,
+      disabled: users.filter((u) => u.disabled).length,
+      suspendedOrgs: orgs.filter((o) => o.suspendedAt).length,
+      workspaces: usage.workspaces,
+      records: usage.records,
+      modules: usage.modules,
+    },
+    meters: {
+      storage: { ...meter(usage.bytes, usage.limitBytes, 60, 85), measured: usage.measured },
+      ram: ramReport(),
+      egress,
+    },
+    orgs: rows,
+    measuredAt: now,
+  };
+  platformCache = { at: now, body };
+  res.json({ ...body, cached: false });
 });
 
 // ---- admin: accounts + analytics
