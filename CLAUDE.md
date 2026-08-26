@@ -40,7 +40,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 164 Node tests + 71 Playwright tests.
+**All green:** 168 Node tests + 72 Playwright tests.
 
 ```sh
 npm install
@@ -102,7 +102,7 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v20`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v21`).
 
 **Tenancy scoping comes from the session, never a request.** That covers both
 `req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
@@ -1211,7 +1211,8 @@ is for.
 
 **Resume point for this work.** Reasoning is in `docs/TIER-2.md`; status is here.
 
-- ☐ **2c — field-level merge.** Two people editing *different fields of the
+- ✅ **2c — field-level merge.** Shipped — see below.
+- ☐ ~~2c~~ Two people editing *different fields of the
   same record* lose one edit today, with no bad actor involved. Untested:
   `two devices editing different records` covers the case per-record sync was
   built for; the same-record case is silently lossy. **First deliverable is a
@@ -1250,3 +1251,40 @@ merge per field.
 Also: §22's field purge **deletes keys**, and an absent key has no clock — so a
 purge could be silently undone by a stale copy unless it becomes a clocked
 change. The two features fight if that is missed.
+
+### 2c as built
+
+`fieldsAt: { key: ts }` inside `doc`, so the stored shape is unchanged.
+`stampChangedFields` advances a key's clock only when its value actually moved,
+so a record nobody has edited since creation carries no map and costs nothing.
+
+**A missing key means clock 0, never the row's `updatedAt`.** That is the whole
+design and it is easy to get backwards: falling back to the row clock means a
+copy that never touched a field still claims to have set it when it was last
+saved, so an untouched stale value beats somebody's real edit. Zero says "as
+far as this copy knows, nobody ever edited this" — which is what absence means,
+and it makes a partial map correct too. Guarded; swapping in the row-clock
+fallback fails three tests.
+
+**The merge runs on the server**, in `applyPush`, and **runs even when the
+incoming row is newer** — a newer row can still carry a stale value for a field
+somebody else changed, and skipping the merge on that branch is exactly how the
+edit is lost.
+
+**A merged row is NOT added to `won`.** `won` is what a push must not have
+echoed back, because the device already has it — but a merged row is not what
+they sent, so the pusher has to receive it or their screen keeps showing the
+value they just lost.
+
+**`updatedAt` becomes `max(prior, incoming)`,** and the reason is client-side:
+`mergeChanges` skips any incoming row whose clock is not newer than the local
+one, so the device that fed the merge would ignore the result and keep its
+stale copy. The test asserting it has to run **immediately after the merge** —
+the next push heals a wrong stamp and hides the defect, which the first version
+of that test did, passing on the bug.
+
+**§22's purge now clocks its removals.** A key with no clock counts as never
+edited, so a colleague still holding the value would win the merge and put it
+back. Its own test fails if the purge forgets.
+
+Tombstones stay whole-row: deleting a record is not a field edit.

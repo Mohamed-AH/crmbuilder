@@ -352,6 +352,35 @@
    * one option and were not; the gentle-sounding one still emptied the device.
    * Naming the three is what stops that being rediscovered.
    */
+  /*
+   * A clock per field, advanced only for the fields that actually moved.
+   *
+   * This is what lets two people edit different fields of one record and both
+   * keep their edit — the server merges key by key on these (see mergeFields).
+   * Only changed keys advance, so a record nobody has edited since it was
+   * created carries no map at all and costs nothing; the map grows one entry
+   * at a time, and only for contested fields.
+   *
+   * A key the user cleared is still a change and still gets a clock. A key
+   * REMOVED from the schema is handled by the purge path, which clocks its
+   * removals for the same reason — otherwise a stale copy would put the value
+   * back on the next sync.
+   */
+  function stampChangedFields(previous, nextData, at) {
+    const clocks = { ...((previous && previous.fieldsAt) || {}) };
+    const before = (previous && previous.data) || {};
+    const keys = new Set([...Object.keys(before), ...Object.keys(nextData)]);
+    for (const key of keys) {
+      const was = before[key];
+      const now = nextData[key];
+      // Absent and empty are the same thing to a user who cleared a box, and
+      // treating them as different would stamp a clock on every save.
+      const same = (was === now) || ((was === undefined || was === '') && (now === undefined || now === ''));
+      if (!same) clocks[key] = at;
+    }
+    return clocks;
+  }
+
   async function importState({ modules: mods, records, settings }, { mode = 'merge', stamp = false } = {}) {
     const now = Date.now();
     const incoming = new Set([...(mods || []).map((m) => m && m.id), ...(records || []).map((r) => r && r.id)]);
@@ -1845,7 +1874,7 @@
       const now = Date.now();
       const toSave = isNew
         ? { id: uid(), moduleId: mod.id, data: newData, createdAt: now, updatedAt: now }
-        : { ...record, data: newData, updatedAt: now };
+        : { ...record, data: newData, updatedAt: now, fieldsAt: stampChangedFields(record, newData, now) };
       await DB.put('records', toSave);
       await persist();
       closeModal();
@@ -2042,8 +2071,17 @@
     if (!touched.length) return;
     await Promise.all(touched.map((r) => {
       const data = { ...r.data };
-      for (const k of keys) delete data[k];
-      return DB.put('records', { ...r, data, updatedAt: now });
+      /*
+       * The removal is CLOCKED, not just done.
+       *
+       * Field-level merge resolves each key on its own clock, and a key with
+       * no clock counts as never edited — so a colleague still holding the old
+       * value would win the merge and quietly put it back on their next sync.
+       * Stamping the removal is what makes "deleted" survive a stale copy.
+       */
+      const fieldsAt = { ...(r.fieldsAt || {}) };
+      for (const k of keys) { delete data[k]; fieldsAt[k] = now; }
+      return DB.put('records', { ...r, data, fieldsAt, updatedAt: now });
     }));
     relationNameCache.clear();
   }

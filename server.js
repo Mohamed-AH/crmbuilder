@@ -1189,6 +1189,86 @@ async function wouldStrandDeployment(target) {
  * A replayed push therefore changes nothing, which is what makes the retry on
  * a flaky connection safe.
  */
+/*
+ * Field-level merge.
+ *
+ * `fieldsAt` is a clock per key, carried inside `doc` so the stored shape does
+ * not change. A key's clock is the moment its value last actually moved — set
+ * on save for the keys that changed, and left alone for the rest.
+ *
+ * **A missing key means zero, not the row's clock.** That is the whole design,
+ * and getting it wrong is subtle: falling back to `updatedAt` would mean a row
+ * that never touched a field still claims to have set it at the moment it was
+ * last saved, so an untouched stale value beats somebody's real edit. Zero
+ * says "as far as this copy knows, nobody has ever edited this", which is what
+ * a missing entry actually means — and it makes a partial map safe, so a
+ * client that only sends clocks for what it changed is correct too.
+ *
+ * Ties go to the stored copy, the same rule the row-level path uses (§10), so
+ * a replayed push still changes nothing.
+ */
+function hasFieldClocks(doc) {
+  return !!(doc && doc.fieldsAt && typeof doc.fieldsAt === 'object');
+}
+
+function mergeFields(prior, item, incomingAt) {
+  const pDoc = prior.doc || {};
+  const iDoc = item.doc || {};
+  const pAtMap = hasFieldClocks(pDoc) ? pDoc.fieldsAt : {};
+  const iAtMap = hasFieldClocks(iDoc) ? iDoc.fieldsAt : {};
+  const pData = pDoc.data || {};
+  const iData = iDoc.data || {};
+
+  const keys = new Set([
+    ...Object.keys(pData), ...Object.keys(iData),
+    ...Object.keys(pAtMap), ...Object.keys(iAtMap),
+  ]);
+
+  const data = {};
+  const fieldsAt = {};
+  let tookAnything = false;
+  for (const key of keys) {
+    const pAt = Number(pAtMap[key]) || 0;
+    const iAt = Number(iAtMap[key]) || 0;
+    const takeIncoming = iAt > pAt;
+    if (takeIncoming) tookAnything = true;
+    const src = takeIncoming ? iData : pData;
+    // A key absent from the winning side was REMOVED there — §22's purge
+    // clocks its removals, so a stale copy cannot quietly put the value back.
+    if (key in src) data[key] = src[key];
+    const at = takeIncoming ? iAt : pAt;
+    if (at) fieldsAt[key] = at;
+  }
+
+  // Nothing the incoming row carried was newer than what is stored. Skipping
+  // keeps a replayed push free, and keeps `serverAt` from ticking for nothing.
+  if (!tookAnything && incomingAt <= prior.updatedAt) return null;
+
+  return {
+    ...item,
+    /*
+     * The merged row must be at least as new as either half.
+     *
+     * Otherwise the copy the pusher is still holding — which predates the
+     * merge and knows nothing of the other person's field — is newer than the
+     * result and can be pushed straight back over it, undoing them a second
+     * time.
+     */
+    updatedAt: Math.max(prior.updatedAt || 0, incomingAt),
+    doc: { ...docShell(pDoc, iDoc), data, ...(Object.keys(fieldsAt).length ? { fieldsAt } : {}) },
+  };
+}
+
+// Everything on the doc that is NOT merged per key — id, moduleId, and any
+// other scalar the record carries. The incoming row wins these; they are
+// identity rather than content, and a record does not change module in a way
+// two people race over.
+function docShell(pDoc, iDoc) {
+  const { data: _id, fieldsAt: _if, ...incoming } = iDoc;
+  const { data: _pd, fieldsAt: _pf, ...stored } = pDoc;
+  return { ...stored, ...incoming };
+}
+
 function envelope(kind, user, item, now, prior = null) {
   const deleted = !!item.deleted;
   const updatedAt = Number(item.updatedAt) || now;
@@ -1251,7 +1331,26 @@ async function applyPush(user, body) {
     for (const [id, item] of byId) {
       const prior = existing.get(id);
       const updatedAt = Number(item.updatedAt) || now;
-      if (prior && prior.updatedAt >= updatedAt) continue; // the server's copy wins
+
+      /*
+       * Three outcomes, not two.
+       *
+       * Whole-row last-write-wins is right for a tombstone and for any row
+       * that carries no per-field clocks — an older client's, or one nobody
+       * has edited since it was created. It is wrong for two people editing
+       * different fields of the same record, which is the ordinary case it
+       * used to lose: whoever pushed second overwrote the whole row.
+       *
+       * So when either side has a `fieldsAt` map, the row is merged key by
+       * key instead of one side being skipped outright. Note this runs even
+       * when the incoming row is NEWER: a newer row can still be carrying a
+       * stale value for a field somebody else changed, and skipping the merge
+       * on that branch is exactly how the edit would be lost.
+       */
+      const canMerge = kind === 'records' && prior && !prior.deletedAt && !item.deleted
+        && prior.doc && item.doc && (hasFieldClocks(prior.doc) || hasFieldClocks(item.doc));
+
+      if (!canMerge && prior && prior.updatedAt >= updatedAt) continue; // the server's copy wins
 
       /*
        * A member may not change the shape of the workspace.
@@ -1296,6 +1395,21 @@ async function applyPush(user, body) {
       if (kind === 'records' && item.deleted && prior && !prior.deletedAt
           && prior.doc && refusedModuleIds.has(String(prior.doc.moduleId))) {
         rejected.records.push(wireItem(prior));
+        continue;
+      }
+
+      if (canMerge) {
+        const merged = mergeFields(prior, item, updatedAt);
+        if (!merged) continue; // nothing the incoming row had was newer
+        writes.push(envelope(kind, user, merged, now, prior));
+        /*
+         * Deliberately NOT added to `won`.
+         *
+         * `won` is what a push must not have echoed back at it, because a row
+         * is already on the device that sent it. A merged row is not what
+         * they sent — it carries somebody else's field — so the pusher has to
+         * receive it or their screen keeps showing the value they just lost.
+         */
         continue;
       }
 

@@ -366,6 +366,130 @@ describe('per-record sync', () => {
     assert.equal(byId.r2.doc.data.title, 'Edited by B', "B's write must not have clobbered A's, nor A's B's");
   });
 
+  /*
+   * Two people, one record, different fields.
+   *
+   * Per-record sync fixed the case where two devices edited DIFFERENT records
+   * and one lost their work. This is the case it did not fix: A changes the
+   * phone number while B changes the email on the same contact, and whoever
+   * syncs second overwrites the whole row. No bad actor, no offline device
+   * left for a fortnight — just two people on a two-person team working at
+   * the same time.
+   *
+   * A field carries its own clock in `fieldsAt`, so each key resolves on its
+   * own rather than the row resolving as a lump.
+   */
+  test('two people editing different fields of one record both keep their edit', async () => {
+    const a = device();
+    const b = device();
+    await a.pull();
+    await b.pull();
+
+    // The shared starting point.
+    const base = {
+      id: 'shared', updatedAt: 1000,
+      doc: { id: 'shared', moduleId: 'm1', data: { phone: '111', email: 'old@x.test', name: 'Dana' } },
+    };
+    await a.push({ records: [base] });
+    await b.pull();
+
+    // A changes the phone. B changes the email. B lands second.
+    await a.push({ records: [{
+      id: 'shared', updatedAt: 2000,
+      doc: {
+        id: 'shared', moduleId: 'm1',
+        data: { phone: '222', email: 'old@x.test', name: 'Dana' },
+        fieldsAt: { phone: 2000 },
+      },
+    }] });
+    await b.push({ records: [{
+      id: 'shared', updatedAt: 2001,
+      doc: {
+        id: 'shared', moduleId: 'm1',
+        data: { phone: '111', email: 'new@x.test', name: 'Dana' },
+        fieldsAt: { email: 2001 },
+      },
+    }] });
+
+    const server = await device().pull();
+    const row = server.records.find((r) => r.id === 'shared');
+    assert.equal(row.doc.data.email, 'new@x.test', "B's edit is the later one and must stand");
+    assert.equal(row.doc.data.phone, '222',
+      "A's phone edit was to a different field and must survive B's push — this is the whole point");
+    assert.equal(row.doc.data.name, 'Dana', 'and the field neither of them touched is unchanged');
+  });
+
+  /*
+   * A merged row has to be newer than either half.
+   *
+   * Otherwise the copy A is still holding — stamped 2000, and unaware of B's
+   * email — is "newer" than nothing and can be pushed straight back over the
+   * merge, undoing B a second time.
+   */
+  test('a merged record cannot be clobbered by the stale copy that fed it', async () => {
+    const a = device();
+    const b = device();
+    await a.pull();
+    await b.pull();
+    await a.push({ records: [{
+      id: 'stale', updatedAt: 1000,
+      doc: { id: 'stale', moduleId: 'm1', data: { one: 'a', two: 'a' } },
+    }] });
+
+    await a.push({ records: [{
+      id: 'stale', updatedAt: 3000,
+      doc: { id: 'stale', moduleId: 'm1', data: { one: 'A-edit', two: 'a' }, fieldsAt: { one: 3000 } },
+    }] });
+    await b.push({ records: [{
+      id: 'stale', updatedAt: 2000,
+      doc: { id: 'stale', moduleId: 'm1', data: { one: 'a', two: 'B-edit' }, fieldsAt: { two: 2000 } },
+    }] });
+
+    /*
+     * Asserted HERE, before anything else touches the row.
+     *
+     * B's push carried the older clock (2000) but merged into A's stored 3000.
+     * The result must be stamped 3000. Checked immediately because the very
+     * next push would heal a wrong stamp and hide the defect — the first
+     * version of this test did exactly that and passed on the bug.
+     *
+     * What it costs to get wrong is on the CLIENT: mergeChanges skips any
+     * incoming row whose clock is not newer than the local one, so A — still
+     * holding 3000 — would ignore the merged row and keep showing the email
+     * it just lost. The end-to-end test is where that consequence is seen.
+     */
+    let row = (await device().pull()).records.find((r) => r.id === 'stale');
+    assert.equal(row.updatedAt, 3000,
+      'a merged row takes the newer of the two clocks, or the device that fed it will ignore the merge');
+    assert.equal(row.doc.data.one, 'A-edit');
+    assert.equal(row.doc.data.two, 'B-edit');
+
+    // And re-sending the copy that predates the merge changes nothing.
+    await a.push({ records: [{
+      id: 'stale', updatedAt: 3000,
+      doc: { id: 'stale', moduleId: 'm1', data: { one: 'A-edit', two: 'a' }, fieldsAt: { one: 3000 } },
+    }] });
+    row = (await device().pull()).records.find((r) => r.id === 'stale');
+    assert.equal(row.doc.data.two, 'B-edit', 'the merge must not be undone by the copy that predates it');
+  });
+
+  /*
+   * A row with no per-field clocks resolves exactly as it always did.
+   *
+   * Older clients keep syncing through a deploy, the same guarantee /api/data
+   * already carries.
+   */
+  test('a record without field clocks still resolves whole-row', async () => {
+    const a = device();
+    await a.pull();
+    await a.push({ records: [rec('nofields', 'First', 1000)] });
+    await a.push({ records: [rec('nofields', 'Second', 2000)] });
+    await a.push({ records: [rec('nofields', 'Stale', 1500)] });
+
+    const row = (await device().pull()).records.find((r) => r.id === 'nofields');
+    assert.equal(row.doc.data.title, 'Second', 'no field clocks means the newest row wins outright');
+  });
+
   test('the same record edited twice resolves to the later clock, not the later request', async () => {
     const a = device();
     await a.pull();
@@ -1346,5 +1470,62 @@ describe('admin surface', () => {
     const { json } = await req('/api/admin/users', { cookies: admin });
     assert.equal(json.users.find((u) => u.id === userId), undefined);
     assert.equal((await req('/api/data', { cookies: user })).status, 401);
+  });
+});
+
+/*
+ * A removed field must stay removed, even against a copy that still has it.
+ *
+ * Removing a field's values (§22) deletes keys. Under field-level merge a key
+ * with no clock counts as never edited, so a colleague still holding the old
+ * value would win and quietly put it back. Clocking the removal is what stops
+ * that, and this is the test that fails if the purge path forgets to.
+ */
+describe('a clocked field removal', () => {
+  const cookies = jar();
+  const device = () => {
+    let cursor = 0;
+    return {
+      async push(records) {
+        const { status, json } = await req('/api/sync', { method: 'POST', body: { since: cursor, records }, cookies });
+        assert.equal(status, 200, JSON.stringify(json));
+        cursor = json.cursor;
+        return json;
+      },
+      async pull() {
+        const { json } = await req('/api/sync?since=0', { cookies });
+        return json;
+      },
+    };
+  };
+
+  before(async () => {
+    await req('/auth/dev', { method: 'POST', body: { email: 'purge-merge@example.com' }, cookies });
+  });
+
+  test('survives a stale colleague who still holds the value', async () => {
+    const a = device();
+    const b = device();
+    await a.push([{
+      id: 'p1', updatedAt: 1000,
+      doc: { id: 'p1', moduleId: 'm1', data: { keep: 'yes', secret: 'confidential' } },
+    }]);
+
+    // A removes the field, and clocks the removal.
+    await a.push([{
+      id: 'p1', updatedAt: 2000,
+      doc: { id: 'p1', moduleId: 'm1', data: { keep: 'yes' }, fieldsAt: { secret: 2000 } },
+    }]);
+
+    // B has been offline with the old copy and pushes it back, later.
+    await b.push([{
+      id: 'p1', updatedAt: 3000,
+      doc: { id: 'p1', moduleId: 'm1', data: { keep: 'yes', secret: 'confidential' } },
+    }]);
+
+    const row = (await device().pull()).records.find((r) => r.id === 'p1');
+    assert.equal(row.doc.data.keep, 'yes');
+    assert.equal(row.doc.data.secret, undefined,
+      'a clocked removal must beat an unclocked copy, however new that copy claims to be');
   });
 });

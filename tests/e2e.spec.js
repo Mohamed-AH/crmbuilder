@@ -740,6 +740,75 @@ test.describe('accounts and sync', () => {
    * person's record simply disappeared. Driven through the real UI in two
    * browser contexts, because the failure was only ever visible there.
    */
+  /*
+   * Two people, one record, different fields — through the real app.
+   *
+   * The test below covers two devices editing DIFFERENT records, which is what
+   * per-record sync was built for. This is the case it did not fix: A changes
+   * the phone while B changes the email on the same contact, and whoever
+   * synced second used to overwrite the whole row. No offline device, no bad
+   * actor — just two people working at once.
+   */
+  test('two people editing different fields of one contact both keep their edit', async ({ page, browser }) => {
+    const email = uniqueEmail('field-merge');
+    await onboard(page, { templates: ['Contacts'] });
+    await signIn(page, email);
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Dana Shared');
+    await page.fill('#f-email', 'old@example.com');
+    await page.fill('#f-phone', '111');
+    await page.click('#record-save');
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+
+    // The colleague, on the same workspace, with the record already in hand.
+    const second = await browser.newContext();
+    const page2 = await second.newPage();
+    await page2.goto('/');
+    await signIn(page2, email);
+    // The record has to be on the server before the colleague can have it —
+    // asserted here so a slow first push fails as itself rather than as a
+    // missing row twenty seconds later.
+    await expect(async () => {
+      const data = await (await page2.request.get('/api/data')).json();
+      expect(data.records.some((r) => r.data && r.data.name === 'Dana Shared')).toBe(true);
+    }).toPass({ timeout: 20000 });
+    await expect(page2.locator('#nav-modules .nav-link:has-text("Contacts")')).toBeVisible({ timeout: 20000 });
+    await page2.reload();
+    await page2.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(page2.locator('tr:has-text("Dana Shared")')).toBeVisible({ timeout: 20000 });
+
+    // A edits the phone.
+    await page.click('tr:has-text("Dana Shared") td:first-child');
+    await page.fill('#f-phone', '222');
+    await page.click('#record-save');
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+
+    // B, who never saw that, edits the email.
+    await page2.click('tr:has-text("Dana Shared") td:first-child');
+    await page2.fill('#f-email', 'new@example.com');
+    await page2.click('#record-save');
+    await expect(page2.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+
+    // Both edits stand, on the server, which is what propagates.
+    await expect(async () => {
+      const data = await (await page.request.get('/api/data')).json();
+      const row = data.records.find((r) => r.data && r.data.name === 'Dana Shared');
+      expect(row).toBeTruthy();
+      expect(row.data.email).toBe('new@example.com');
+      expect(row.data.phone).toBe('222');
+    }).toPass({ timeout: 30000 });
+
+    // And the person who lost the race sees the other's field once they pull,
+    // rather than their own stale copy.
+    await page.reload();
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('tr:has-text("Dana Shared") td:first-child');
+    await expect(page.locator('#f-email')).toHaveValue('new@example.com', { timeout: 20000 });
+    await expect(page.locator('#f-phone')).toHaveValue('222');
+    await second.close();
+  });
+
   test('two devices editing different records both keep their work', async ({ page, browser }) => {
     const email = uniqueEmail('two-device');
     await onboard(page, { name: 'Two Device Co' });
