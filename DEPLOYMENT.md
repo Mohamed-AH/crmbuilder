@@ -160,6 +160,29 @@ and set the env vars above plus `NODE_ENV=production` and a random `SESSION_SECR
 4. Install it: browser menu → *Install CRM Builder* (desktop) or *Add to Home Screen* (mobile).
 5. Run the audit from a machine that can reach the URL:
    `BASE_URL=https://<your-app>.onrender.com npm run test:smoke`
+6. `https://<your-app>.onrender.com/CLAUDE.md` should be **404**, with exactly
+   that capitalisation. The audit checks this and seven sibling paths, but it
+   is worth seeing once by hand — see *What the deployment publishes*.
+
+### What the deployment publishes
+
+The server serves an explicit allow-list, not the repository: `css/`, `js/`,
+`fonts/`, `icons/`, the root HTML pages with `/privacy` and `/terms` aliases,
+`legal.css`, `manifest.webmanifest`, `sw.js`, and exactly two documents —
+`/docs/manual.html` and `/docs/product-tour.html`, which are customer-facing.
+
+Everything else 404s, including every other file under `docs/`, the markdown at
+the repository root, `package.json` and `.git/`. **Adding a file to the app
+means adding it to that list** (`ASSET_DIRS` / `PUBLIC_ROOT_FILES` /
+`PUBLIC_DOCS` in `server.js`), or it works locally from cache and 404s in
+production.
+
+This replaced `express.static(__dirname)`, which published the whole repository
+— including, on any deployment that had fallen back to the file store,
+`/data/store.json`. Two things had kept it invisible: Linux is case-sensitive,
+so `/claude.md` missed `CLAUDE.md` entirely, and the SPA catch-all answered
+every unmatched path with 200 and the app shell, so a probe that found nothing
+and a probe that found a file looked the same.
 
 ## Running a beta
 

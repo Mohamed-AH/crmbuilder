@@ -3522,18 +3522,77 @@ app.delete('/api/admin/users/:id', requireAuth, requireOrgAdmin, async (req, res
 });
 
 // ---- static PWA
-app.use(express.static(__dirname, {
-  extensions: ['html'],
-  setHeaders(res, filePath) {
-    if (filePath.endsWith('sw.js')) res.setHeader('Cache-Control', 'no-cache');
-    if (filePath.endsWith('.woff2')) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-  },
-}));
+//
+// An explicit allow-list, NOT express.static(__dirname). Serving the repository
+// root served the whole repository: /CLAUDE.md and /docs/BETA.md returned
+// internal notes, /package.json the dependency list, /.git/config the remote —
+// and a deployment that ever lost MONGODB_URI falls back to the file store,
+// which would have published every customer's records at /data/store.json.
+//
+// It hid well, which is why it lasted. Linux is case-sensitive, so the obvious
+// probe (/claude.md) missed the file and fell through to the SPA catch-all,
+// which answered 200 with the app shell. Nothing 404s, so "no such file" and
+// "found the app" looked identical from outside.
+//
+// Adding a file to the app means adding it here, to sw.js's APP_SHELL, and to
+// the smoke test's ASSETS — or it 404s in production while working locally
+// from cache.
+
+const ASSET_DIRS = ['css', 'js', 'fonts', 'icons'];
+
+// Root files that are part of the app. The extensionless aliases replace
+// express.static's `extensions: ['html']`, which went with the wildcard —
+// /privacy and /terms are the URLs Google's consent screen points at.
+const PUBLIC_ROOT_FILES = [
+  'index.html', 'privacy.html', 'terms.html',
+  'legal.css', 'manifest.webmanifest', 'sw.js',
+];
+
+// These two are deliberately public and their URLs may already be in somebody's
+// inbox, so the paths are frozen. Everything else under docs/ stays unserved.
+const PUBLIC_DOCS = ['manual.html', 'product-tour.html'];
+
+function cacheHeaders(res, filePath) {
+  if (filePath.endsWith('sw.js')) res.setHeader('Cache-Control', 'no-cache');
+  if (filePath.endsWith('.woff2')) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+}
+
+function sendPublicFile(rel) {
+  return (req, res) => {
+    cacheHeaders(res, rel);
+    res.sendFile(path.join(__dirname, rel));
+  };
+}
+
+for (const dir of ASSET_DIRS) {
+  app.use(`/${dir}`, express.static(path.join(__dirname, dir), { setHeaders: cacheHeaders }));
+}
+for (const name of PUBLIC_ROOT_FILES) {
+  app.get(`/${name}`, sendPublicFile(name));
+  if (name.endsWith('.html')) app.get(`/${name.slice(0, -5)}`, sendPublicFile(name));
+}
+for (const name of PUBLIC_DOCS) {
+  app.get(`/docs/${name}`, sendPublicFile(path.join('docs', name)));
+}
 
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/') || req.path.startsWith('/auth/')) {
     return res.status(404).json({ error: 'Not found' });
   }
+  /*
+   * A request that names a file is not a client route. Routing here is
+   * hash-based (#/m/<id>), so the server never needs to answer an extensioned
+   * path with the shell — and answering 200 + 40 KB of HTML is what made the
+   * exposure above invisible to probing.
+   *
+   * extname() alone is not enough: it returns '' for /.git/config and /.env,
+   * because their basenames carry no extension. The dot-segment test is what
+   * covers those, and dropping it re-opens exactly the paths this is for.
+   */
+  const namesAFile = path.extname(req.path) !== ''
+    || req.path.split('/').some((seg) => seg.length > 1 && seg.startsWith('.'));
+  if (namesAFile) return res.status(404).type('txt').send('Not found');
+
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 

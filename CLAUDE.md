@@ -103,8 +103,14 @@ to render *and still navigate*.
 
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
-Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v22`).
+Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
+allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
+(currently `crmbuilder-v22`). Miss the allow-list and it 404s in production
+while working locally from cache.
+
+**The server serves an allow-list, never the repository.** Anything not named
+in `ASSET_DIRS`, `PUBLIC_ROOT_FILES` or `PUBLIC_DOCS` is not reachable. See
+§28 — the previous `express.static(__dirname)` published the whole repo.
 
 **Tenancy scoping comes from the session, never a request.** That covers both
 `req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
@@ -1379,3 +1385,84 @@ were consequences of decisions rather than features:
 it now carries them with defaults, and the signup gate's bypass order is
 written out in full, because the *order* is the security property (§16, §20)
 and a list of modes does not convey it.
+
+---
+
+## 28. The server served the whole repository
+
+`express.static(__dirname)` published every file in the repo. On the live
+deployment that meant `/CLAUDE.md` (74 KB of these notes), `/DEPLOYMENT.md`,
+`/docs/BETA.md` (the operator runbook), `/package.json` and `/.git/config`.
+No credentials were in any of them — that was checked, not assumed — so this
+was disclosure, not a breach. The one that could have been a breach:
+**`/data/store.json`**. It is gitignored so it never shipped, but a deployment
+that lost `MONGODB_URI` falls back to the file store, and would then have
+served every customer's records on a guessable path.
+
+**Why it survived this long is the part worth keeping.** Two behaviours hid it
+from exactly the probe you would run:
+
+- **Linux is case-sensitive.** The obvious guess, `/claude.md`, does not match
+  `CLAUDE.md`. It missed the file entirely.
+- **The SPA catch-all answers everything.** A path that matched no file fell
+  through to `app.get('*')`, which returned **200 and the app shell**. So
+  `/claude.md`, `/cla` and `/totally-made-up-path` all looked identical to
+  `/some/real/route`. "No such file" and "found the app" were indistinguishable
+  from outside, and nothing on the site 404s to contradict you.
+
+That is why this was found by reading `server.js` rather than by probing it,
+and why the smoke test now asserts **content, not status**.
+
+### What replaced it
+
+Three explicit lists — `ASSET_DIRS` (`css`, `js`, `fonts`, `icons`),
+`PUBLIC_ROOT_FILES` and `PUBLIC_DOCS` — and nothing else is reachable.
+
+- **The extensionless aliases are load-bearing.** `express.static`'s
+  `extensions: ['html']` went with the wildcard, and it is what served
+  `/privacy` and `/terms` — the URLs on Google's OAuth consent screen. Losing
+  them silently would un-publish the consent screen. Generated from the
+  `.html` entries rather than hand-listed, so the two cannot drift.
+- **`docs/manual.html` and `docs/product-tour.html` stay public and their
+  paths are frozen.** They are customer-facing and the URLs may already be in
+  somebody's inbox. Everything else under `docs/` is now unserved, which is
+  what makes internal docs private **by construction rather than by
+  obscurity** — the thing the doc reorganisation was going to have to work
+  around.
+- **Cache headers had to come along.** `sw.js` must stay `no-cache` and
+  `.woff2` immutable; those lived in the wildcard's `setHeaders` and would
+  have been dropped silently. A stale service worker is a bad way to find out.
+
+### The catch-all now 404s anything that names a file
+
+Routing here is entirely hash-based (`#/m/<id>`), so the server never needs to
+answer an extensioned path with the shell. Serving 200 + 40 KB of HTML for a
+missing icon was both wasteful and the thing that made the exposure invisible.
+
+**`path.extname()` alone is not enough, and this is the trap.** It returns `''`
+for `/.git/config` and `/.env`, because those basenames carry no extension — so
+an extension-only test leaves precisely the dotfile paths this exists to close.
+The dot-segment check is the other half. Removing it looks like tidying and
+re-opens `/.git/`.
+
+### Verification
+
+Eight paths asserted unreachable in `tests/smoke.mjs`, checked against the
+broken state per §9: on the pre-fix server the new block fails **seven times
+with byte counts** (`HTTP 200 exposed internal working notes (73790b)`).
+`/.env` warns rather than fails there, honestly — the file does not exist
+locally, so it fell to the shell.
+
+The assertion is **content-based on purpose**. A status-only check would pass
+against the old server for every path the catch-all answered, which was all of
+them. `scope.js`, `tour.js`, `legal.css` and `sw.js` were also missing from
+`ASSETS`; an allow-list makes that gap load-bearing, so they are covered now.
+
+**No `CACHE_VERSION` bump.** Nothing precached changed — `server.js` is not in
+the app shell.
+
+**Trap hit while testing this:** §4's `pkill -f "[s]erver\.js"` rule. The
+bracket protects the pattern from matching itself, but the compound command
+*also* contained `git stash push -q server.js`, so pkill matched the shell
+running it and killed the job mid-way, leaving the stash unpopped. Kill by
+recorded PID when the command has to mention the file.

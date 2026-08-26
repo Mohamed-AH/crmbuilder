@@ -110,6 +110,13 @@ const ASSETS = [
   ['/js/templates.js', 'javascript'],
   ['/js/csv.js', 'javascript'],
   ['/js/demo-data.js', 'javascript'],
+  // scope.js and tour.js are in index.html and sw.js's APP_SHELL but were not
+  // checked here. That gap costs more now the server serves an allow-list: a
+  // file left off it 404s in production while still working locally from cache.
+  ['/js/scope.js', 'javascript'],
+  ['/js/tour.js', 'javascript'],
+  ['/legal.css', 'text/css'],
+  ['/sw.js', 'javascript'],
   ['/manifest.webmanifest', 'json'],
   ['/fonts/inter-var-latin.woff2', 'font'],
   ['/icons/icon-192.png', 'image/png'],
@@ -127,6 +134,36 @@ for (const [path, expectType] of ASSETS) {
       return { status: 'WARN', detail: `content-type ${type}` };
     }
     return '';
+  });
+}
+
+// The server used to run express.static(__dirname), which served the whole
+// repository. This asserts the allow-list that replaced it, and it is written
+// against content rather than status: the failure being guarded is a file
+// leaking, and a leak that arrives with a 200 is the one that matters.
+const MUST_NOT_SERVE = [
+  ['/CLAUDE.md', 'internal working notes'],
+  ['/DEPLOYMENT.md', 'deployment runbook'],
+  ['/docs/BETA.md', 'operator runbook'],
+  ['/docs/ARCHITECTURE.md', 'internal design notes'],
+  ['/package.json', 'dependency list'],
+  ['/.git/config', 'repository metadata'],
+  ['/.env', 'environment file'],
+  // Only present when a deployment has fallen back to the file store — which
+  // is exactly when it would be every customer's records on a guessable path.
+  ['/data/store.json', 'file-store database'],
+];
+
+for (const [path, what] of MUST_NOT_SERVE) {
+  await check(`${path} is not served`, async () => {
+    const { res, err } = await get(path);
+    if (err) throw new Error(err.message);
+    if (res.status === 404) return '404';
+    const body = await res.text();
+    // The catch-all answers unknown non-file paths with the shell. That is not
+    // a leak, so it passes — but it must be the shell and nothing else.
+    if (/id="app"/.test(body)) return { status: 'WARN', detail: 'served the app shell, not a 404' };
+    throw new Error(`HTTP ${res.status} exposed ${what} (${body.length}b)`);
   });
 }
 
