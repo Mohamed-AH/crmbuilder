@@ -1637,3 +1637,59 @@ describe('record roles', () => {
     assert.equal((await req('/api/me', { cookies: hand })).json.user.role, 'owner');
   });
 });
+
+/*
+ * Prototype pollution through the one place a client-chosen key is used as an
+ * object key: the field merge (§26).
+ *
+ * A probe found nothing exploitable — see §30 — so this is a guard, and the
+ * test exists to keep it. What it really protects is the *next* version of
+ * mergeFields: extending it to merge nested values recursively is the obvious
+ * refactor, and it is the one that makes a __proto__ key live.
+ */
+describe('a pushed record cannot carry dangerous field keys', () => {
+  const hand = jar();
+
+  before(async () => {
+    await req('/auth/dev', { method: 'POST', body: { email: 'proto-guard@example.com' }, cookies: hand });
+  });
+
+  test('__proto__ and friends are dropped on create and on merge', async () => {
+    const evil = JSON.parse(
+      '{"__proto__": {"polluted": "yes"}, "constructor": "c", "prototype": "p", "normal": "kept"}',
+    );
+    const clocks = JSON.parse('{"__proto__": 9999, "normal": 1}');
+
+    await req('/api/sync', {
+      method: 'POST', cookies: hand,
+      body: { since: 0, records: [{ id: 'evil', updatedAt: 1000, doc: { moduleId: 'm1', data: evil, fieldsAt: clocks } }] },
+    });
+
+    // The second push of the same id is what exercises mergeFields, which is
+    // where the assignment actually happens.
+    const merged = await req('/api/sync', {
+      method: 'POST', cookies: hand,
+      body: {
+        since: 0,
+        records: [{
+          id: 'evil', updatedAt: 2000,
+          doc: { moduleId: 'm1', data: JSON.parse('{"__proto__": {"polluted": "again"}, "normal": "updated"}'), fieldsAt: { normal: 2 } },
+        }],
+      },
+    });
+    assert.equal(merged.status, 200, 'a hostile key must not crash the merge');
+
+    const pulled = await req('/api/sync?since=0', { cookies: hand });
+    const row = pulled.json.records.find((r) => r.id === 'evil');
+    const keys = Object.keys(row.doc.data);
+    for (const bad of ['__proto__', 'constructor', 'prototype']) {
+      assert.ok(!keys.includes(bad), `${bad} must not be stored as a field key`);
+    }
+    assert.equal(row.doc.data.normal, 'updated', 'while ordinary fields merge as usual');
+
+    // Nothing leaked onto the server's own objects: a fresh response must not
+    // have grown a property the payload asked for.
+    const me = await req('/api/me', { cookies: hand });
+    assert.ok(!JSON.stringify(me.json).includes('polluted'), 'Object.prototype is untouched');
+  });
+});

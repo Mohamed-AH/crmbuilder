@@ -1257,6 +1257,28 @@ function hasFieldClocks(doc) {
   return !!(doc && doc.fieldsAt && typeof doc.fieldsAt === 'object');
 }
 
+/*
+ * Field keys that must never be written onto an object.
+ *
+ * This is the ONE place in the codebase that does `obj[key] = value` with a
+ * key the client chose, so it is the one place the guard has to be. It is
+ * defence in depth rather than a fix: a probe pushing `__proto__` payloads
+ * through both the create and the merge path polluted nothing, because three
+ * unrelated facts happen to hold — there is no `for...in` anywhere, so an
+ * inherited property is never enumerated; every other merge uses spread, which
+ * *defines* rather than *assigns* and so never fires the `__proto__` setter;
+ * and JSON serialisation drops the payload before it reaches storage.
+ *
+ * Safety that emerges from three unrelated properties is safety that a future
+ * refactor removes by accident. A recursive merge here — the obvious way
+ * somebody would extend this for nested field values — makes it live. Naming
+ * the keys makes the guarantee local and testable instead.
+ *
+ * The UI cannot produce these anyway: `slug()` turns `__proto__` into `proto`.
+ * Only a hand-written API call or a hand-edited backup can carry one.
+ */
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 function mergeFields(prior, item, incomingAt) {
   const pDoc = prior.doc || {};
   const iDoc = item.doc || {};
@@ -1274,6 +1296,7 @@ function mergeFields(prior, item, incomingAt) {
   const fieldsAt = {};
   let tookAnything = false;
   for (const key of keys) {
+    if (UNSAFE_KEYS.has(key)) continue;
     const pAt = Number(pAtMap[key]) || 0;
     const iAt = Number(iAtMap[key]) || 0;
     const takeIncoming = iAt > pAt;
@@ -2282,13 +2305,17 @@ app.post('/auth/dev', async (req, res) => {
    */
   const beta = typeof req.body.beta === 'string' ? req.body.beta : '';
   const invite = typeof req.body.invite === 'string' ? req.body.invite : '';
+  // Not a filter, so not injection — but it is stored as the account's name
+  // and rendered on the admin screen, and an object there becomes the string
+  // "[object Object]" for a person nobody can then identify.
+  const name = String(req.body.name || '').slice(0, 200);
   const gate = await checkSignup(email, beta, invite);
   if (!gate.ok) {
     authFailure('signup_refused', { email, reason: gate.reason }, req);
     // Same seam as the Google path: the refusal is what hands over the right
     // to ask. Without this the request flow would only be reachable through
     // OAuth, which no test can drive.
-    offerToAsk(res, email, req.body.name || '');
+    offerToAsk(res, email, name);
     return res.status(403).json({
       error: gate.reason === 'closed' ? 'Signups are closed right now.' : SIGNUP_REJECTION,
       reason: gate.reason,
@@ -2296,7 +2323,7 @@ app.post('/auth/dev', async (req, res) => {
   }
   clearAskCookie(res);
 
-  const user = await upsertUser({ email, name: req.body.name || '', provider: 'dev' });
+  const user = await upsertUser({ email, name, provider: 'dev' });
   if (user.disabled) {
     authFailure('disabled_account', { email }, req);
     return res.status(403).json({ error: 'Account disabled' });

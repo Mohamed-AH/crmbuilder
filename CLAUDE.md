@@ -77,7 +77,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 179 Node tests + 73 Playwright tests.
+**All green:** 180 Node tests + 73 Playwright tests.
 
 ```sh
 npm install
@@ -1606,8 +1606,8 @@ claims held and two did not.
 ### Phases
 
 - ✅ **1 — Auth and session.** Shipped — see below.
-- ☐ **2 — Injection and data integrity.** Exhaustive filter-coercion sweep,
-  prototype pollution, mass assignment, confirm no `$where`.
+- ✅ **2 — Injection and data integrity.** Shipped — see below. Three of the
+  four suspicions were **false**; the fourth is a guard, not a fix.
 - ☐ **3 — XSS.** Every interpolation reaching an `innerHTML` sink, then CSP as
   defence in depth (after the sweep, not instead of it).
 - ☐ **4 — Network hardening.** Security headers, rate limits, per-route payload
@@ -1700,3 +1700,59 @@ invisible. Deliberately never logged: the beta code, the invite code, the OAuth
 state and the session token — all bearer credentials (§13, §16). The email is
 included because it is what makes a burst diagnosable and it is already stored
 on the account.
+
+### Phase 2 as built — mostly a list of things that were already fine
+
+The valuable output here is the **negative** result, recorded so nobody
+"hardens" any of it later by reading a generic checklist rather than the source.
+
+**No server-side JavaScript execution.** `$where`, `mapReduce`, `$function`,
+`$accumulator` and `eval` do not appear anywhere in `server.js`.
+
+**NoSQL injection is not reachable — swept exhaustively, not spot-checked.**
+Filters are built as `{ email }` / `{ code }` / `{ id }` shorthand, so the
+control is coercion at the call site. Every one was walked:
+
+- **`req.params` is always a string** in Express, and seven store calls take one
+  directly. Nothing to do.
+- **`req.query`** is coerced at every use (`String(...)`, `Number(...)`) or
+  compared in a way that fails closed — an array `state` is `!==` the cookie and
+  is refused.
+- **`req.body`** was the one real gap, and it was `/auth/dev`'s `beta`/`invite`,
+  closed in Phase 1. Everything still uncoerced is validated against a fixed
+  allow-list *before* use (`TEAM_ROLES.includes(role)`, `mode`, `status`,
+  `decision`) — an object fails `includes` and fails `!== 'open'`.
+
+**Mass assignment is not present.** Both role-changing routes build an explicit
+patch object; neither spreads `req.body`. `PATCH /api/admin/users/:id` allows
+exactly `role` (from `TEAM_ROLES`, with `platformAdmin` gated on the caller
+already being one) and `disabled` (`typeof === 'boolean'`). There is no
+Mongoose, so the `findByIdAndUpdate(req.body)` shape the checklist warns about
+has no equivalent here.
+
+**Prototype pollution: probed, and nothing was exploitable.** A record pushed
+with `__proto__`, `constructor` and `prototype` as field keys — through both the
+create path and the merge path — polluted nothing, and `/api/me` did not grow a
+property. Three unrelated facts happen to make that true:
+
+1. **There is no `for...in` anywhere in the codebase**, so an inherited property
+   is never enumerated.
+2. **Every merge except one uses spread**, which *defines* rather than
+   *assigns* and so never fires the `__proto__` setter. That covers
+   `docShell`, `importState` and the `DB.put` paths.
+3. JSON serialisation drops the payload before it reaches storage.
+
+**A guard went in anyway, and the reason is worth keeping.** Safety that emerges
+from three unrelated properties is safety a future refactor removes by accident,
+and `mergeFields` is the *one* place that does `obj[key] = value` with a
+client-chosen key. Making it recursive to merge nested values is the obvious
+next extension, and it is exactly what would make this live. `UNSAFE_KEYS`
+makes the guarantee local and testable rather than emergent. The test is
+written against the refactor, not against today's code.
+
+**The UI cannot produce such a key regardless**: `slug()` turns `__proto__` into
+`proto`. Only a hand-written API call or a hand-edited backup carries one.
+
+**One tidy-up:** `req.body.name` reached `upsertUser` uncoerced. Not a filter and
+not injection — but an object stored as an account's name renders as
+`[object Object]` on the admin screen, for a person nobody can then identify.
