@@ -245,7 +245,9 @@ looked at before that becomes a decision.
 
 ### Who can sign up
 
-`SIGNUP_MODE` controls it:
+`SIGNUP_MODE` sets the **starting** mode. After that it is changed from
+**Admin → Beta access**, which takes effect immediately and needs no redeploy —
+and, once used, wins over the variable so a deploy cannot silently undo it:
 
 | Value | Effect |
 |---|---|

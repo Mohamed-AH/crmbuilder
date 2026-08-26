@@ -3,10 +3,12 @@
  *
  *   node --test tests/signup.test.mjs
  *
- * SIGNUP_MODE is process-wide, so each mode gets its own server rather than
- * being toggled underneath one. The Google callback cannot be driven from a
- * test — there is no Google to answer — so the gate is exercised through
- * /auth/dev, which runs the identical check for the identical reason.
+ * SIGNUP_MODE is only the default now — the live mode is stored and can be
+ * changed from the admin panel — but a server per mode is still how the
+ * env-var path gets covered, and boot({ signupMode }) is what sets it. The
+ * Google callback cannot be driven from a test — there is no Google to answer
+ * — so the gate is exercised through /auth/dev, which runs the identical check
+ * for the identical reason.
  */
 import { test, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -924,5 +926,85 @@ describe('access requests', () => {
     assert.equal((await srv.req('/api/admin/access-requests/ghost@example.test/decide', {
       method: 'POST', cookies: admin, body: { decision: 'approved' },
     })).status, 404);
+  });
+});
+
+/*
+ * Changing the mode without a redeploy.
+ *
+ * The env var used to be read once at boot, so opening or pausing signups
+ * meant an environment change and minutes of downtime on a free tier — at
+ * exactly the moments you least want it. The live value now lives in the
+ * database. What is asserted here is the precedence, because getting that
+ * backwards is the failure that hurts: a redeploy silently undoing a decision
+ * the operator made in the panel.
+ */
+describe('signup mode from the admin panel', () => {
+  const setMode = (srv, cookies, mode) =>
+    srv.req('/api/admin/signup-mode', { method: 'PUT', cookies, body: { mode } });
+
+  test('a mode set in the panel takes effect at once, with no restart', async () => {
+    const srv = await boot({ signupMode: 'code', adminEmails: 'mode-op@operator.test' });
+    const admin = await adminOf(srv, 'mode-op@operator.test');
+
+    // Gated to begin with.
+    assert.equal((await srv.signUp('early@tester.test')).status, 403);
+
+    assert.equal((await setMode(srv, admin, 'open')).status, 200);
+    const walkIn = await srv.signUp('walk-in@tester.test');
+    assert.equal(walkIn.status, 200, `open should mean open immediately: ${walkIn.text}`);
+
+    // And back again, still without touching the environment.
+    assert.equal((await setMode(srv, admin, 'closed')).status, 200);
+    const late = await srv.signUp('too-late@tester.test');
+    assert.equal(late.status, 403);
+    assert.equal(late.json.reason, 'closed');
+
+    // The operator is never locked out of their own deployment.
+    assert.equal((await srv.signUp('mode-op@operator.test')).status, 200);
+    // Nor is anyone who already has an account.
+    assert.equal((await srv.signUp('walk-in@tester.test')).status, 200);
+  });
+
+  /*
+   * The one that matters. SIGNUP_MODE is the default for a deployment that has
+   * never set one; once the panel has spoken, it decides. A version where the
+   * env var wins would quietly revert the operator on the next deploy.
+   */
+  test('a panel decision survives a restart, and the env var does not undo it', async () => {
+    const srv = await boot({ signupMode: 'code', adminEmails: 'persist-op@operator.test' });
+    const admin = await adminOf(srv, 'persist-op@operator.test');
+    await setMode(srv, admin, 'open');
+
+    // Restart with SIGNUP_MODE=code still in the environment, as a redeploy
+    // would. The stored decision has to win.
+    await srv.setMode('code');
+    const after = await srv.signUp('after-restart@tester.test');
+    assert.equal(after.status, 200, `the panel decision must outlive a redeploy: ${after.text}`);
+
+    const me = await srv.req('/api/me');
+    assert.equal(me.json.signupMode, 'open', 'and the live value is what clients are told');
+  });
+
+  test('a deployment that never set one follows its environment', async () => {
+    const open = await boot({ signupMode: 'open' });
+    assert.equal((await open.req('/api/me')).json.signupMode, 'open');
+    const shut = await boot({ signupMode: 'closed' });
+    assert.equal((await shut.req('/api/me')).json.signupMode, 'closed');
+  });
+
+  test('only the platform operator can change it, and only to a real mode', async () => {
+    const srv = await boot({ signupMode: 'code', adminEmails: 'guard-op@operator.test' });
+    const admin = await adminOf(srv, 'guard-op@operator.test');
+    const code = (await mintCode(srv, admin, { maxUses: 5 })).code.code;
+    const ordinary = (await srv.signUp('ordinary-mode@tester.test', code)).setCookie;
+
+    assert.equal((await srv.req('/api/admin/signup-mode', { method: 'PUT', body: { mode: 'open' } })).status, 401);
+    assert.equal((await setMode(srv, ordinary, 'open')).status, 403);
+    assert.equal((await setMode(srv, admin, 'banana')).status, 400);
+    assert.equal((await setMode(srv, admin, '')).status, 400);
+
+    // None of that moved it.
+    assert.equal((await srv.req('/api/me')).json.signupMode, 'code');
   });
 });

@@ -296,6 +296,8 @@ a.stat-card:hover, .stat-card-add:hover { border-color: var(--border-strong); bo
   background: var(--surface-2);
 }
 .onboard-account .settings-hint { margin: 0; }
+.mode-switch { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+.mode-switch .btn[disabled] { opacity: 1; cursor: default; }
 
 .template-list { display: flex; flex-direction: column; gap: 8px; }
 .template-line {

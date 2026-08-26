@@ -21,7 +21,7 @@ step this whole flow exists to remove.
 
 | Variable | Beta value | Why |
 |---|---|---|
-| `SIGNUP_MODE` | `code` | A beta code creates an account; signing back in never asks |
+| `SIGNUP_MODE` | `code` | The *starting* mode only — change it later from Admin → Beta access, no redeploy |
 | `ADMIN_EMAILS` | your address | Bypasses the gate, so you cannot lock yourself out |
 | `BACKUP_TOKEN` | a random 32 bytes | Enables the nightly export; without it there is no backup |
 | `FEEDBACK_WEBHOOK_URL` | optional Discord / Slack / Telegram | Real-time notice of problem reports — see *Where problem reports get pinged* |
@@ -52,6 +52,12 @@ BASE_URL=https://your-app.onrender.com npm run test:smoke
   Resolve them as you go so the list stays meaningful.
 - **Watch the codes.** Admin → Beta access shows uses remaining. Revoke one if a
   link escapes further than you meant.
+- **Open or pause signups from that same panel.** *Invite only* · *Open* ·
+  *Paused*, effective immediately and with no redeploy. Once you set it there,
+  the `SIGNUP_MODE` variable stops deciding — a redeploy will not quietly undo
+  you. Whatever it says, you and everyone who already has an account can always
+  sign in, so pausing cannot lock you out. Accounts created while it is open
+  keep working after you close it again.
 
 ### Where problem reports get pinged
 
@@ -132,7 +138,7 @@ minutes against a 15-minute timeout is one missed check away from a cold start.
 
 | Symptom | First thing to check |
 |---|---|
-| Nobody can sign up | Consent screen still in Testing? `SIGNUP_MODE=closed`? Code spent or expired? |
+| Nobody can sign up | Consent screen still in Testing? Mode set to Paused in Admin → Beta access? Code spent or expired? |
 | Someone says they asked and heard nothing | Admin → Requests to join. Approving is what lets them in; they do not need a link. |
 | A tester sees "private beta" | Their code is spent, expired or revoked. Mint another. |
 | Everything is slow on first load | Cold start. Check UptimeRobot is actually running. |
@@ -141,8 +147,8 @@ minutes against a 15-minute timeout is one missed check away from a cold start.
 
 ### Closing the beta
 
-Set `SIGNUP_MODE=closed`. Existing accounts keep working; no new ones are
-created. Take a final backup before changing anything else.
+Admin → Beta access → **Paused**. Existing accounts keep working; no new ones
+are created. Take a final backup before changing anything else.
 
 ---
 

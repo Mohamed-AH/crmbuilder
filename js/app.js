@@ -2554,6 +2554,17 @@
       ? 'Anyone who can sign in with Google gets an account. Codes below are ignored.'
       : 'No new accounts are being created. Everyone who already has one still works.'}
           </p>
+          <div class="mode-switch">
+            ${[
+    ['code', 'Invite only', 'A code or an approved request creates an account'],
+    ['open', 'Open', 'Anyone who signs in with Google gets an account'],
+    ['closed', 'Paused', 'No new accounts; everyone who has one still works'],
+  ].map(([value, label, why]) => `
+              <button class="btn ${betaCodes.signupMode === value ? 'btn-primary' : ''}"
+                      data-mode="${value}" title="${esc(why)}"
+                      ${betaCodes.signupMode === value ? 'disabled' : ''}>${esc(label)}</button>`).join('')}
+          </div>
+          <p class="settings-hint">Takes effect immediately — no redeploy. This outlives restarts, so the <code>SIGNUP_MODE</code> variable stops deciding once you set it here. You and everyone with an account can always sign in, whatever this says.</p>
           ${betaCodes.codes.length ? `
             <ul class="team-list">
               ${betaCodes.codes.map((c) => `
@@ -2666,6 +2677,20 @@
         toast('Signup link copied');
       } catch {
         prompt('Copy this signup link:', url);
+      }
+    }));
+
+    $$('[data-mode]').forEach((btn) => btn.addEventListener('click', async () => {
+      const mode = btn.dataset.mode;
+      // Opening the door is the one that cannot be quietly undone — anyone who
+      // signs up in the meantime keeps their account when it closes again.
+      if (mode === 'open' && !confirm('Open signups to anyone who can sign in with Google?\n\nAccounts created while it is open stay, even after you close it again.')) return;
+      try {
+        await Cloud.admin.setSignupMode(mode);
+        toast(`Signups are now ${mode}`);
+        renderAdmin();
+      } catch (err) {
+        toast(err.message);
       }
     }));
 

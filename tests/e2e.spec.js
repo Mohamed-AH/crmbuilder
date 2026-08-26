@@ -1462,6 +1462,45 @@ test.describe('beta access', () => {
 });
 
 test.describe('admin', () => {
+  /*
+   * Opening and pausing signups from the panel.
+   *
+   * This used to need an environment change and a redeploy — minutes of
+   * downtime on a free tier to flip one word, at the two moments you least
+   * want it: the beta filling up, or something going wrong.
+   *
+   * The suite's server boots with SIGNUP_MODE=open, so this ends by putting it
+   * back: the mode is now stored, and leaving it changed would leak into every
+   * test that runs after this one.
+   */
+  test('signups can be paused and reopened without a redeploy', async ({ page }) => {
+    await page.goto('/');
+    await signIn(page, 'e2e-admin@example.com');
+    await page.goto('/#/admin');
+    await expect(page.locator('.mode-switch')).toBeVisible({ timeout: 20000 });
+
+    try {
+      await page.click('.mode-switch [data-mode="closed"]');
+      await expect(page.locator('.toast').last()).toContainText('now closed');
+      // The live value, not the environment's — asserted at the API because
+      // that is what every client is told on boot.
+      await expect(async () => {
+        const me = await (await page.request.get('/api/me')).json();
+        expect(me.signupMode).toBe('closed');
+      }).toPass({ timeout: 10000 });
+
+      // The button for the current mode is the one you cannot press again.
+      await expect(page.locator('.mode-switch [data-mode="closed"]')).toBeDisabled();
+    } finally {
+      page.on('dialog', (d) => d.accept());
+      await page.click('.mode-switch [data-mode="open"]');
+      await expect(async () => {
+        const me = await (await page.request.get('/api/me')).json();
+        expect(me.signupMode).toBe('open');
+      }).toPass({ timeout: 10000 });
+    }
+  });
+
   test('shows metrics and manages accounts', async ({ page, browser }) => {
     // ADMIN_EMAILS in playwright.config.js guarantees this address is an admin
     // regardless of which test created the first account.

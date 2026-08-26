@@ -51,9 +51,56 @@ const DAY_MS = 86400000;
  * being challenged for a code they used weeks ago is the friction this whole
  * flow is meant to avoid.
  */
-const SIGNUP_MODE = ['code', 'open', 'closed'].includes(process.env.SIGNUP_MODE)
+const SIGNUP_MODES = ['code', 'open', 'closed'];
+/*
+ * The env var is the DEFAULT, not the answer.
+ *
+ * It used to be read once at boot, which meant opening or pausing signups
+ * needed an environment change and a redeploy — minutes of downtime on a free
+ * tier to flip one word, at exactly the moments you least want it: the beta
+ * filling up, or something going wrong. So the live value lives in the
+ * database and the operator changes it from the admin panel.
+ *
+ * Precedence, and it matters: once a mode has been set from the panel, that is
+ * the mode. SIGNUP_MODE only decides for a deployment that has never set one.
+ * A redeploy therefore does NOT quietly undo a decision made in the panel,
+ * which is the whole point — but it also means the env var stops being the
+ * place to look, so /health and the panel both report the live value.
+ */
+const SIGNUP_MODE_DEFAULT = SIGNUP_MODES.includes(process.env.SIGNUP_MODE)
   ? process.env.SIGNUP_MODE
   : 'code';
+
+// Read on every signup and every boot of every client, so it is cached. The
+// invalidate-on-write keeps a single instance exact; the TTL is what makes a
+// multi-instance deployment converge rather than stay wrong.
+let signupModeCache = { value: null, at: 0 };
+const SIGNUP_MODE_TTL_MS = 30000;
+
+async function signupMode() {
+  const now = Date.now();
+  if (signupModeCache.value && now - signupModeCache.at < SIGNUP_MODE_TTL_MS) return signupModeCache.value;
+  let stored = null;
+  try {
+    stored = (await store.getPlatformSettings()).signupMode;
+  } catch (err) {
+    // A settings read must never be what stops people signing in.
+    console.warn('Could not read the signup mode, using the deployment default:', err.message);
+  }
+  const value = SIGNUP_MODES.includes(stored) ? stored : SIGNUP_MODE_DEFAULT;
+  signupModeCache = { value, at: now };
+  return value;
+}
+
+async function setSignupMode(mode, userId) {
+  await store.updatePlatformSettings({
+    signupMode: mode,
+    signupModeSetAt: Date.now(),
+    signupModeSetBy: userId,
+  });
+  signupModeCache = { value: mode, at: Date.now() };
+  return mode;
+}
 // Every refusal says the same thing, for the same reason invites do: a
 // different answer for "wrong" and "spent" is a way to find out which codes
 // exist.
@@ -103,13 +150,14 @@ class FileStore {
     try {
       this.s = JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch {
-      this.s = { users: [], orgs: [], invites: [], betaCodes: [], feedback: [], accessRequests: [], data: {}, events: [], items: { modules: {}, records: {} } };
+      this.s = { users: [], orgs: [], invites: [], betaCodes: [], feedback: [], accessRequests: [], platform: {}, data: {}, events: [], items: { modules: {}, records: {} } };
     }
     this.s.items = this.s.items || { modules: {}, records: {} };
     this.s.invites = this.s.invites || [];
     this.s.betaCodes = this.s.betaCodes || [];
     this.s.feedback = this.s.feedback || [];
     this.s.accessRequests = this.s.accessRequests || [];
+    this.s.platform = this.s.platform || {};
   }
   save() {
     fs.writeFileSync(this.file, JSON.stringify(this.s));
@@ -321,6 +369,14 @@ class FileStore {
     return c;
   }
 
+  // --- platform settings (one small document, deployment-wide)
+  async getPlatformSettings() { return { ...(this.s.platform || {}) }; }
+  async updatePlatformSettings(patch) {
+    this.s.platform = { ...(this.s.platform || {}), ...patch };
+    this.save();
+    return { ...this.s.platform };
+  }
+
   // --- access requests
   async getAccessRequest(email) {
     return (this.s.accessRequests || []).find((r) => r.email === email) || null;
@@ -365,6 +421,7 @@ class MongoStore {
     this.betaCodes = db.collection('betaCodes');
     this.feedback = db.collection('feedback');
     this.accessRequests = db.collection('accessRequests');
+    this.platform = db.collection('platform');
     this.cols = { modules: db.collection('modules'), records: db.collection('records') };
 
     // Email stays GLOBALLY unique, deliberately. Sign-in resolves an account
@@ -511,6 +568,14 @@ class MongoStore {
         console.warn('Could not apply the access request TTL index:', err.message);
       }
     }
+  }
+  // One singleton document, addressed by a fixed id so it cannot fork.
+  async getPlatformSettings() {
+    return (await this.platform.findOne({ id: 'platform' }, { projection: { _id: 0, id: 0 } })) || {};
+  }
+  async updatePlatformSettings(patch) {
+    await this.platform.updateOne({ id: 'platform' }, { $set: patch }, { upsert: true });
+    return this.getPlatformSettings();
   }
   async getAccessRequest(email) {
     return this.accessRequests.findOne({ email }, { projection: { _id: 0 } });
@@ -1373,7 +1438,7 @@ app.get('/health', async (req, res) => {
     try {
       body.counts = { orgs: await store.countOrgs(), users: await store.countUsers() };
       body.usage = await usageReport();
-      body.signupMode = SIGNUP_MODE;
+      body.signupMode = await signupMode();
     } catch (err) {
       // A health check that fails because a count failed is worse than one
       // that reports the outage it was asked about.
@@ -1522,7 +1587,7 @@ app.get('/api/me', async (req, res) => {
     org,
     googleEnabled: !!GOOGLE_CLIENT_ID,
     devLoginEnabled: DEV_LOGIN,
-    signupMode: SIGNUP_MODE,
+    signupMode: await signupMode(),
     storage: store.kind(),
   });
 });
@@ -1707,7 +1772,8 @@ async function checkSignup(email, code) {
 
   // Before the pending check, not after: a request left over from when this
   // deployment was gated must not keep someone out once signups are open.
-  if (SIGNUP_MODE === 'open') return { ok: true };
+  const mode = await signupMode();
+  if (mode === 'open') return { ok: true };
 
   /*
    * A deliberate exception to "every refusal answers identically".
@@ -1724,7 +1790,7 @@ async function checkSignup(email, code) {
    */
   if (asked && asked.status === 'pending') return { ok: false, reason: 'pending' };
 
-  if (SIGNUP_MODE === 'closed') {
+  if (mode === 'closed') {
     return { ok: false, reason: 'closed' };
   }
 
@@ -2266,7 +2332,28 @@ app.patch('/api/admin/feedback/:id', requireAuth, requirePlatformAdmin, async (r
 app.get('/api/admin/beta-codes', requireAuth, requirePlatformAdmin, async (req, res) => {
   const codes = (await store.listBetaCodes()).map(publicBetaCode);
   codes.sort((a, b) => b.createdAt - a.createdAt);
-  res.json({ codes, signupMode: SIGNUP_MODE });
+  res.json({ codes, signupMode: await signupMode() });
+});
+
+/*
+ * Change who may create an account, without a redeploy.
+ *
+ * Platform admin only, and deliberately not requireOrgAdmin: this is the whole
+ * deployment's front door, not one org's business. Nothing here can lock the
+ * operator out — ADMIN_EMAILS and an account that already exists bypass the
+ * mode entirely, so even `closed` leaves every current user and every admin
+ * able to sign in.
+ */
+app.put('/api/admin/signup-mode', requireAuth, requirePlatformAdmin, async (req, res) => {
+  const mode = req.body && req.body.mode;
+  if (!SIGNUP_MODES.includes(mode)) {
+    return res.status(400).json({ error: `Mode must be one of: ${SIGNUP_MODES.join(', ')}` });
+  }
+  await setSignupMode(mode, req.user.id);
+  // Worth a log line: it is a security-relevant setting and the row records
+  // only the latest change, not the history.
+  console.log(`Signup mode set to "${mode}" by ${req.user.email}`);
+  res.json({ ok: true, signupMode: mode });
 });
 
 app.post('/api/admin/beta-codes', requireAuth, requirePlatformAdmin, async (req, res) => {

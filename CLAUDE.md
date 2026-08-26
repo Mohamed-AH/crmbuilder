@@ -40,7 +40,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 140 Node tests + 58 Playwright tests.
+**All green:** 144 Node tests + 59 Playwright tests.
 
 ```sh
 npm install
@@ -102,7 +102,7 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v13`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v14`).
 
 **Tenancy scoping comes from the session, never a request.** That covers both
 `req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
@@ -600,11 +600,21 @@ deferred to a `consume()` the caller runs only after the account exists.
 
 **Traps:**
 
-- **`SIGNUP_MODE` is process-wide**, so a mode cannot be toggled under a running
-  server. `tests/signup.test.mjs` boots one per mode; `api.test.mjs` and
-  `playwright.config.js` both pin `SIGNUP_MODE=open`, because those suites are
-  about everything else and threading a code through all of them would test the
-  harness.
+- **`SIGNUP_MODE` is the default, not the answer.** The live mode is stored
+  (`platform` settings) and changed from Admin → Beta access, because opening or
+  pausing signups used to need an environment change and a redeploy — minutes of
+  free-tier downtime at the two moments you least want it. **Precedence is
+  load-bearing:** a stored mode wins, so a redeploy cannot silently undo the
+  operator; the env var only decides for a deployment that never set one.
+  Guarded by *"a panel decision survives a restart, and the env var does not
+  undo it"*, which fails the moment the env var wins.
+  Cached in-process, invalidated on write, with a 30s TTL so a multi-instance
+  deployment converges rather than staying wrong.
+  `tests/signup.test.mjs` still boots one server per mode to cover the env-var
+  path; `api.test.mjs` and `playwright.config.js` both pin `SIGNUP_MODE=open`,
+  because those suites are about everything else. The E2E test that flips the
+  mode **restores it in a `finally`** — the value is stored now, so leaving it
+  changed would leak into every test after it.
 - **The code crosses the Google round trip in an httpOnly cookie**
   (`crmb_beta`), beside `crmb_oauth_state` and for the same reasons. It is
   validated in the *callback*, against the email Google actually returned —
@@ -738,7 +748,7 @@ the fetched response back into the cache under `index.html`. So `/privacy` would
 have shown the CRM, and worse, the *next* load of the app would have served the
 privacy page as the app shell — a poisoned cache that survives a reload. Fixed
 with a `STANDALONE_PAGES` list that returns early, straight to the network.
-`CACHE_VERSION` is now `crmbuilder-v12`; anything added to those pages must be
+`CACHE_VERSION` is now `crmbuilder-v14`; anything added to those pages must be
 added to that list too, or it silently becomes the app.
 
 **The notice is recorded, not just displayed.** `POST /api/me/beta-accepted`

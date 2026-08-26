@@ -305,6 +305,7 @@ const Cloud = (() => {
       betaCodes: () => api('/api/admin/beta-codes', {}, TIMEOUT.admin),
       mintBetaCode: (body) => api('/api/admin/beta-codes', { method: 'POST', body: JSON.stringify(body || {}) }, TIMEOUT.admin),
       revokeBetaCode: (code) => api(`/api/admin/beta-codes/${encodeURIComponent(code)}`, { method: 'DELETE' }, TIMEOUT.admin),
+      setSignupMode: (mode) => api('/api/admin/signup-mode', { method: 'PUT', body: JSON.stringify({ mode }) }, TIMEOUT.admin),
       accessRequests: () => api('/api/admin/access-requests', {}, TIMEOUT.admin),
       decideAccessRequest: (email, decision) => api(
         `/api/admin/access-requests/${encodeURIComponent(email)}/decide`,
