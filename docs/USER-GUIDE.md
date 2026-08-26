@@ -124,8 +124,18 @@ To change a module later, open it and click the **pencil** icon.
 
 **Renaming a field keeps its data.** The label is what you see; the underlying
 key stays put, so renaming "Phone" to "Mobile" doesn't empty the column.
-Deleting a field, however, removes that field's values from every record in
-the module.
+
+**Deleting a field asks what to do with what's in it.** If any records hold a
+value, you're told how many and offered a choice:
+
+- **Delete the values** — they go from every record, from future exports, and
+  from your colleagues' devices once it syncs. This can't be undone.
+- **Keep the data** — the column disappears but the values stay in the
+  workspace. They'll still show up in a JSON backup, and they come back if you
+  add a field with the same name later.
+
+Deleting is the default, because that's usually what removing a column means.
+Pick *Keep* if you're reorganising and expect to put the field back.
 
 ---
 

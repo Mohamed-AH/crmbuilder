@@ -529,6 +529,31 @@
     return $('.modal', root);
   }
 
+  /*
+   * A second layer on top of an open modal, without destroying it.
+   *
+   * openModal() replaces the whole of #modal-root, so using it to ask a
+   * question from inside the module builder would throw the builder away —
+   * and "Cancel" would then lose every unsaved edit rather than returning to
+   * them. This appends instead, and closeNested() takes down only the layer it
+   * added. A global closeModal() still clears both, which is what Escape
+   * should do.
+   */
+  function openNestedModal(html) {
+    const root = $('#modal-root');
+    const layer = document.createElement('div');
+    layer.className = 'modal-backdrop';
+    layer.innerHTML = `<div class="modal" role="dialog" aria-modal="true">${html}</div>`;
+    root.appendChild(layer);
+    const first = $('.modal button, .modal input', layer);
+    if (first) first.focus();
+    return layer;
+  }
+
+  function closeNested(layer) {
+    if (layer && layer.parentNode) layer.parentNode.removeChild(layer);
+  }
+
   function closeModal() {
     const root = $('#modal-root');
     root.innerHTML = '';
@@ -1841,6 +1866,102 @@
     return `<p class="settings-hint record-author">Added by ${esc(name)}</p>`;
   }
 
+  /*
+   * Removing a field used to leave its values behind, invisibly.
+   *
+   * The builder writes `module.fields` and nothing else, so every record kept
+   * its `data` keys. Nothing was destroyed — but the person who removed the
+   * field believed it was, and those values still travelled in every JSON
+   * export, still sat in the admin export, and came back the moment a field
+   * with the same label was recreated (`slug()` produces the same key). That
+   * is the wrong way round for anyone who removed a column *because* it held
+   * something they should not be keeping.
+   *
+   * Purging is the default, because "deleted" should mean deleted. It is not
+   * silent, because a schema change that destroys months of data without
+   * saying so is the shape this codebase has just spent a release removing —
+   * see the restore path in §21. So: say how many records are affected, and
+   * let the answer be no.
+   *
+   * A rename is not a removal. `existingKey` is carried through the save, so a
+   * relabelled field keeps its key and never appears here (§4).
+   */
+  async function askAboutRemovedFields(mod, nextFields) {
+    const keeping = new Set(nextFields.map((f) => f.key));
+    const removed = mod.fields.filter((f) => !keeping.has(f.key));
+    if (!removed.length) return { proceed: true, keys: [] };
+
+    const records = await DB.recordsByModule(mod.id);
+    const holding = removed
+      .map((f) => ({
+        field: f,
+        n: records.filter((r) => {
+          const v = r.data ? r.data[f.key] : undefined;
+          return v !== undefined && v !== null && v !== '';
+        }).length,
+      }))
+      .filter((x) => x.n > 0);
+
+    // Nothing stored under them: no question worth asking.
+    if (!holding.length) return { proceed: true, keys: removed.map((f) => f.key) };
+
+    const names = holding.map((x) => `<li><strong>${esc(x.field.label)}</strong> — ${x.n} record${x.n === 1 ? '' : 's'}</li>`).join('');
+    return new Promise((resolve) => {
+      // Nested, so cancelling returns to the builder with every edit intact.
+      const layer = openNestedModal(`
+        <div class="modal-head"><h2>Delete the data in ${holding.length === 1 ? 'this field' : 'these fields'} too?</h2></div>
+        <div class="modal-body">
+          <p class="settings-hint">You are removing ${holding.length === 1 ? 'a field that holds' : 'fields that hold'} data:</p>
+          <ul class="beta-points">${names}</ul>
+          <p class="settings-hint"><strong>Delete the values</strong> and they are gone from every record, from future exports, and from your team's devices when this syncs. That cannot be undone.</p>
+          <p class="settings-hint"><strong>Keep them</strong> and the column disappears but the data stays in the workspace — it will still appear in a JSON backup, and it comes back if you add a field with the same name later.</p>
+        </div>
+        <div class="modal-foot claim-actions">
+          <button class="btn btn-ghost" data-ghost="cancel">Cancel</button>
+          <button class="btn" data-ghost="keep">Keep the data</button>
+          <button class="btn btn-primary" data-ghost="purge">Delete the values</button>
+        </div>`);
+
+      let answered = false;
+      // Escape clears every layer at once, builder included — a global dismiss
+      // is still a dismissal, and the save must not proceed on one.
+      const onDismiss = () => { if (!answered) { answered = true; resolve({ proceed: false, keys: [] }); } };
+      $('#modal-root').addEventListener('crmb:modal-closed', onDismiss, { once: true });
+      $$('[data-ghost]', layer).forEach((btn) => btn.addEventListener('click', () => {
+        answered = true;
+        $('#modal-root').removeEventListener('crmb:modal-closed', onDismiss);
+        const choice = btn.dataset.ghost;
+        closeNested(layer);
+        // Cancel abandons the save and leaves the builder open, so the schema
+        // is untouched and nothing the user typed is thrown away.
+        if (choice === 'cancel') { resolve({ proceed: false, keys: [] }); return; }
+        resolve({ proceed: true, keys: choice === 'purge' ? removed.map((f) => f.key) : [] });
+      }));
+    });
+  }
+
+  /*
+   * Take the values out of every record that has one.
+   *
+   * Every write is issued in the same tick via Promise.all: an IndexedDB
+   * transaction commits when the microtask queue drains, so awaiting between
+   * puts finds it already closed (§10). Each row is re-stamped, because a row
+   * whose updatedAt did not move is a row the sync engine will never send —
+   * and then the values would be gone here and still present for everyone else.
+   */
+  async function purgeFieldValues(moduleId, keys) {
+    const records = await DB.recordsByModule(moduleId);
+    const now = Date.now();
+    const touched = records.filter((r) => r.data && keys.some((k) => k in r.data));
+    if (!touched.length) return;
+    await Promise.all(touched.map((r) => {
+      const data = { ...r.data };
+      for (const k of keys) delete data[k];
+      return DB.put('records', { ...r, data, updatedAt: now });
+    }));
+    relationNameCache.clear();
+  }
+
   function openBuilder(mod) {
     const isNew = !mod;
     const mayEdit = canEditSchema();
@@ -1967,6 +2088,11 @@
         toast('Add at least one field');
         return;
       }
+      // Decided before the module is written, so cancelling here leaves the
+      // schema exactly as it was rather than half-applied.
+      const purge = mod ? await askAboutRemovedFields(mod, fields) : { proceed: true, keys: [] };
+      if (!purge.proceed) return;
+
       const saved = {
         ...(mod || { id: uid(), createdAt: Date.now(), defaultView: 'table' }),
         name,
@@ -1978,6 +2104,7 @@
         updatedAt: Date.now(),
       };
       await DB.put('modules', saved);
+      if (purge.keys.length) await purgeFieldValues(saved.id, purge.keys);
       await loadModules();
       await persist();
       closeModal();

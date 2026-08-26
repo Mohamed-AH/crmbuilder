@@ -40,7 +40,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 149 Node tests + 61 Playwright tests.
+**All green:** 149 Node tests + 66 Playwright tests.
 
 ```sh
 npm install
@@ -102,7 +102,7 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v15`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v16`).
 
 **Tenancy scoping comes from the session, never a request.** That covers both
 `req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
@@ -852,11 +852,11 @@ later by someone reading the report rather than the source:
   skips any incoming row whose `updatedAt` is not newer than the stored one, so
   a fortnight-old tombstone loses to a colleague's later edit. Rows nobody
   touched *do* go, which is correct and merely surprising.
-- **"Deleting a field wipes its values" — backwards.** The builder writes only
-  `module.fields`; every record keeps its `data` keys. Nothing is destroyed —
-  but a user who "deleted" a field still has that data in the workspace, in
-  every JSON export, and will see it return if a field with the same key is
-  recreated. A disclosure problem, not a loss one, and still open.
+- **"Deleting a field wipes its values" — backwards.** The builder wrote only
+  `module.fields`; every record kept its `data` keys. Nothing was destroyed —
+  but a user who "deleted" a field still had that data in the workspace, in
+  every JSON export, and saw it return if a field with the same key was
+  recreated. A disclosure problem, not a loss one. **Now fixed — see §22.**
 
 ### What changed
 
@@ -919,6 +919,53 @@ it on both counts.
 
 ### Still open, deliberately
 
-Tier 2 and 3 from the audit: no read-only role (every member may delete every
-record); record-level last-write-wins loses a concurrent field edit; changing
-the currency relabels without converting; and the ghost-field data above.
+Tier 2 from the audit: no read-only role (every member may delete every
+record), and record-level last-write-wins loses a concurrent field edit.
+Changing the currency still relabels without converting.
+
+---
+
+## 22. Removing a field, and what happens to what was in it
+
+The builder writes `module.fields` and nothing else, so removing a field left
+every value in place under its key. Nothing was destroyed — but the person who
+removed the column believed it was, and those values still travelled in every
+JSON export, sat in the admin export, and came back the moment a field with the
+same label was recreated (`slug()` produces the same key). That is the wrong way
+round for anyone who removed a column *because* of what it held.
+
+**Purge is the default, and it is not silent.** "Deleted" should mean deleted —
+but a schema change that destroys months of data without saying so is the shape
+§21 has just finished removing from the restore path. So `askAboutRemovedFields`
+names the fields, counts the records holding a value, and offers *Delete the
+values* (primary) · *Keep the data* · *Cancel*.
+
+**Traps:**
+
+- **A rename is not a removal.** `existingKey` is carried through the save, so a
+  relabelled field keeps its key and never reaches this prompt (§4). Guarded by
+  *"renaming a field is not a removal"*.
+- **The question is a NESTED layer, not `openModal`.** `openModal` replaces the
+  whole of `#modal-root`, so asking from inside the builder would destroy the
+  builder — and *Cancel* would then cost the user every unsaved edit rather
+  than returning them to it. `openNestedModal`/`closeNested` append and remove
+  one layer; a global `closeModal` still clears both, which is what Escape
+  should do.
+- **The decision happens before the module is written.** Cancelling has to leave
+  the schema untouched, not half-applied.
+- **Purged rows are re-stamped.** A row whose `updatedAt` did not move is a row
+  the sync engine never sends — the values would be gone here and still present
+  for everyone else. Every write goes out in one tick via `Promise.all`, because
+  an IndexedDB transaction commits when the microtask queue drains (§10).
+- **A new field is not a list column by default.** An E2E test asserting "the
+  column is gone" passes on a column that was never there; the fixture checks
+  `.bf-list` so the assertion means something.
+- **The field id is the slug, and `slug()` uses underscores** — `#f-private_note`,
+  not `#f-private-note`.
+
+**Not retroactive.** This stops new ghost data; workspaces that already removed
+a field still hold the old values. A cleanup pass over existing data was not
+written, because rewriting every record in every workspace on the strength of a
+guess about which keys are orphaned is a bigger and more dangerous act than the
+problem. If it is ever wanted, it belongs in Settings as something a user runs
+against their own workspace, having been shown what it found.

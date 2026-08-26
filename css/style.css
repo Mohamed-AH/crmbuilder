@@ -301,6 +301,8 @@ a.stat-card:hover, .stat-card-add:hover { border-color: var(--border-strong); bo
 .restore-choice p { margin: 0 0 10px; color: var(--text-soft); font-size: 13.5px; }
 .restore-choice p:last-child { margin-bottom: 0; }
 .restore-choice strong { color: var(--text); }
+/* A nested question sits above the modal it was asked from. */
+.modal-backdrop + .modal-backdrop { z-index: 60; }
 
 .template-list { display: flex; flex-direction: column; gap: 8px; }
 .template-line {

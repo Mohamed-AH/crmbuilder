@@ -298,6 +298,125 @@ test.describe('kanban', () => {
   });
 });
 
+/*
+ * Removing a field, and what happens to what was in it.
+ *
+ * The builder only ever wrote module.fields, so every record kept its data
+ * keys: nothing was destroyed, but the person who removed the column believed
+ * it was, and the values still rode along in every JSON export and came back
+ * if a field with the same name was recreated. Wrong way round for anyone who
+ * removed a column *because* of what it held.
+ */
+test.describe('removing a field', () => {
+  // Build a module with a second field and put a value in it.
+  const withExtraField = async (page, value = 'Sensitive note') => {
+    await onboard(page, { templates: ['Contacts'] });
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#edit-module-btn');
+    await page.click('#b-add-field');
+    const row = page.locator('.builder-field').last();
+    await row.locator('.bf-label').fill('Private note');
+    // Shown in the table, so the column assertions below mean something — a
+    // new field is not a list column by default, and without this "the column
+    // is gone" would pass on a column that was never there.
+    await row.locator('.bf-list').check();
+    await page.click('#b-save');
+
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Dana');
+    await page.fill('#f-private_note', value);
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Dana")')).toBeVisible();
+  };
+
+  const removePrivateNote = async (page) => {
+    await page.click('#edit-module-btn');
+    await page.locator('.builder-field:has(.bf-label[value="Private note"]) .bf-remove').click();
+    await page.click('#b-save');
+  };
+
+  test('deleting the values really deletes them, out of the export too', async ({ page }) => {
+    await withExtraField(page);
+    await removePrivateNote(page);
+
+    // The question names the cost before it is paid.
+    await expect(page.locator('.modal-head h2').last()).toContainText('Delete the data');
+    await expect(page.locator('.modal-body').last()).toContainText('1 record');
+    await page.click('[data-ghost="purge"]');
+    await expect(page.locator('.modal-backdrop')).toHaveCount(0, { timeout: 10000 });
+
+    // Gone from the record, and — the part that matters — gone from the file
+    // the user hands to somebody else.
+    await page.goto('/#/settings');
+    const [download] = await Promise.all([page.waitForEvent('download'), page.click('#export-btn')]);
+    const dump = require('node:fs').readFileSync(await download.path(), 'utf8');
+    expect(dump).toContain('Dana');
+    expect(dump).not.toContain('Sensitive note');
+  });
+
+  test('keeping the data is possible, and says what that means', async ({ page }) => {
+    await withExtraField(page);
+    await removePrivateNote(page);
+    await page.click('[data-ghost="keep"]');
+    await expect(page.locator('.modal-backdrop')).toHaveCount(0, { timeout: 10000 });
+
+    // The column is gone from the table either way.
+    await expect(page.locator('th:has-text("Private note")')).toHaveCount(0);
+    // But the value is still there, which is exactly what they were told.
+    await page.goto('/#/settings');
+    const [download] = await Promise.all([page.waitForEvent('download'), page.click('#export-btn')]);
+    expect(require('node:fs').readFileSync(await download.path(), 'utf8')).toContain('Sensitive note');
+  });
+
+  /*
+   * Cancel has to leave the schema alone AND keep the builder open — the
+   * question is nested rather than opened over the top precisely so that an
+   * unsaved edit is not the price of changing your mind.
+   */
+  test('cancelling leaves the field, the data and the builder exactly as they were', async ({ page }) => {
+    await withExtraField(page);
+    await page.click('#edit-module-btn');
+    await page.locator('.builder-field:has(.bf-label[value="Private note"]) .bf-remove').click();
+    await page.click('#b-save');
+    await page.click('[data-ghost="cancel"]');
+
+    // Still in the builder, with the removal still pending rather than lost.
+    await expect(page.locator('#b-save')).toBeVisible();
+    await page.click('[data-close]');
+    // And the module was never written: the column is still there.
+    await expect(page.locator('th:has-text("Private note")')).toBeVisible();
+  });
+
+  test('renaming a field is not a removal', async ({ page }) => {
+    await withExtraField(page);
+    await page.click('#edit-module-btn');
+    await page.locator('.builder-field:has(.bf-label[value="Private note"]) .bf-label').fill('Internal note');
+    await page.click('#b-save');
+
+    // No question at all: the key is carried through a rename, so nothing was
+    // removed and nothing is at risk.
+    await expect(page.locator('.modal-backdrop')).toHaveCount(0, { timeout: 10000 });
+    await expect(page.locator('th:has-text("Internal note")')).toBeVisible();
+    await expect(page.locator('tr:has-text("Sensitive note")')).toBeVisible();
+  });
+
+  test('removing an empty field asks nothing', async ({ page }) => {
+    await onboard(page, { templates: ['Contacts'] });
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#edit-module-btn');
+    await page.click('#b-add-field');
+    await page.locator('.builder-field').last().locator('.bf-label').fill('Never used');
+    await page.click('#b-save');
+
+    await page.click('#edit-module-btn');
+    await page.locator('.builder-field:has(.bf-label[value="Never used"]) .bf-remove').click();
+    await page.click('#b-save');
+    // Nothing was stored under it, so there is no question worth asking.
+    await expect(page.locator('.modal-backdrop')).toHaveCount(0, { timeout: 10000 });
+    await expect(page.locator('th:has-text("Never used")')).toHaveCount(0);
+  });
+});
+
 test.describe('module builder', () => {
   // Dropdown and Link-to-module reveal an extra input on its own line. That
   // used to disturb the row's layout and squash the "Req" label to 16px, so
