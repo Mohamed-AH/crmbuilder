@@ -77,9 +77,11 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
 
 ### Not built yet
 - Email sending, third-party integrations.
-- **Per-module permissions** — everyone on a team sees every module. Considered
-  and set aside: it needs per-module filtering in sync, or a member receives
-  rows they cannot see.
+- **Per-module permissions** — everyone on a team sees every module. Roles
+  govern what you may *do* (§14), not which modules you can see. Considered and
+  set aside: it needs per-module filtering in sync, or a member receives rows
+  they cannot see.
+- **Undoing a delete** — a tombstone discards the body (§26). Costed, not built.
 
 ---
 
@@ -753,8 +755,9 @@ the fetched response back into the cache under `index.html`. So `/privacy` would
 have shown the CRM, and worse, the *next* load of the app would have served the
 privacy page as the app shell — a poisoned cache that survives a reload. Fixed
 with a `STANDALONE_PAGES` list that returns early, straight to the network.
-`CACHE_VERSION` is now `crmbuilder-v14`; anything added to those pages must be
-added to that list too, or it silently becomes the app.
+That shipped in `crmbuilder-v14`; **anything added to those pages must be added
+to that list too**, or it silently becomes the app. (The current
+`CACHE_VERSION` is in §3, which is the one to bump.)
 
 **The notice is recorded, not just displayed.** `POST /api/me/beta-accepted`
 stamps `betaAcceptedAt` on the user, so "they were told the data might go" is
@@ -924,10 +927,11 @@ it on both counts.
 
 ### Still open, deliberately
 
-Tier 2 from the audit: no read-only role (every member may delete every
-record), and record-level last-write-wins loses a concurrent field edit. Held
-deliberately — reopening the permission model before the beta launches is
-complexity small trusted teams do not need.
+Only 2b from the audit remains: a delete cannot be undone, because a tombstone
+discards the body. Costed and deliberately not built — keeping bodies would
+mean a workspace deleting to free space frees none until the retention window
+passes, against the lever §24 added, and a mass delete would temporarily double
+that tenant's footprint. See §26 and `docs/TIER-2.md`.
 
 ---
 
@@ -1012,10 +1016,10 @@ it. Confirmed over four consecutive full runs.
 
 ---
 
-## 24. Operator controls — IN PROGRESS
+## 24. Operator controls — COMPLETE (A, B and C)
 
-**This section is the resume point for this work.** Stage status is kept
-current here; anything marked ☐ has not been built. The reasoning behind the
+**This section is the resume point for this work.** All three stages shipped;
+what follows is what was built and why, not a to-do list. The reasoning behind the
 shape — why Render cannot be read, why orgs need their own gate, the full
 verification list — is in `docs/OPERATOR-CONTROLS.md`. Six asks, and the first
 thing to know is that they are not six pieces of work — two were already done
@@ -1212,21 +1216,14 @@ is for.
 
 ---
 
-## 26. Tier 2 — PLANNED, NOT BUILT
+## 26. Tier 2
 
-**Resume point for this work.** Reasoning is in `docs/TIER-2.md`; status is here.
+**Resume point for this work.** Reasoning is in `docs/TIER-2.md`; status here.
 
-- ✅ **2c — field-level merge.** Shipped — see below.
-- ☐ ~~2c~~ Two people editing *different fields of the
-  same record* lose one edit today, with no bad actor involved. Untested:
-  `two devices editing different records` covers the case per-record sync was
-  built for; the same-record case is silently lossy. **First deliverable is a
-  failing test.**
-- ✅ **2a — roles that cannot delete.** Shipped — see below.
-- ☐ ~~2a~~ `contributor` (no delete) and `viewer`
-  (read only) on the existing ladder. The seam is proven — `applyPush` already
-  refuses a member's module write and hands back the server's copy (§14); this
-  widens it from modules to records.
+- ✅ **2c — field-level merge.** Two people editing different fields of one
+  record both keep their edit. Shipped — see below.
+- ✅ **2a — roles that cannot delete.** `contributor` and `viewer` on the
+  ladder, enforced in the `applyPush` seam. Shipped — see below.
 - ☐ **2b — undoable deletes.** Costed and deliberately not built.
 
 ### The fact that reframes 2a, found while planning
@@ -1320,3 +1317,65 @@ The Team screen's role toggle became a picker: a four-rung ladder does not fit
 a button that flips between two values, and the confirmation says what the rung
 means rather than just naming it. On cancel or failure the control is put back,
 or it sits there lying about the state.
+
+---
+
+## 27. The documentation pass, and where docs go stale
+
+An audit of every document against the shipped code, after Tier 1, the operator
+controls and Tier 2 landed in quick succession. Recorded because **the pattern
+of what was stale is more useful than the list of fixes**, and it will happen
+again.
+
+**The worst drift was not in the working notes — it was in the user-facing
+docs nobody re-reads.** `CLAUDE.md` gets a section per change because that is
+what this file is for. The others are written once and quietly rot:
+
+- `docs/manual.html` still said *"sync is last-write-wins on the whole
+  workspace… if several people need to edit at once, give each of them their
+  own account"*. Untrue since per-record sync, and it had survived teams,
+  invites, roles **and** field-level merge. It had no team section at all.
+- `docs/product-tour.html` told prospects *"shared team workspaces are the next
+  major piece of work"* — a shipped feature described as unbuilt, on the page
+  written to sell it.
+- `docs/ONBOARDING.md` told the person rolling this out to set the expectation
+  that a workspace is **per account**, and to give each colleague their own.
+  That is now the opposite of the advice they need.
+
+**The rule that follows:** a change that alters *what a user can do* has to be
+walked through `USER-GUIDE.md`, `manual.html`, `product-tour.html`,
+`ONBOARDING.md`, `DEMO-SCRIPT.md` and `BETA.md`'s tester note — not just this
+file and the README. `manual.html` and `product-tour.html` are the easiest to
+forget because they are HTML and nothing greps them by habit.
+
+**Two specific traps:**
+
+- **`docs/manual.html` mirrors `USER-GUIDE.md` section for section, and drifts
+  silently.** Both have 14 numbered sections with the same titles, so a
+  matching table of contents reads as "in sync" while a section's *contents*
+  are years apart. Diff the prose, not the headings.
+- **Its CSS defines `.note.tip` and `.note.caution` and nothing else.** A
+  `.note.warn` renders as an unstyled box that still looks plausible in a
+  screenshot. Same for `.muted`, which does not exist there at all.
+
+**Plan documents keep their original numbers.** `docs/TIER-2.md` and
+`docs/OPERATOR-CONTROLS.md` are the reasoning as it stood, not live status —
+their verification sections now say the test counts are the baseline at the
+time of writing and point at §2 for the current figure. Editing a plan's
+premises after the fact loses the reason the plan was shaped that way.
+
+**Two facts that had never reached the user-facing docs at all**, because they
+were consequences of decisions rather than features:
+
+- **A delete cannot be undone**, and on a team it deletes for everybody.
+  Tombstones discard the body (§26), so this is a property of the design, not a
+  gap waiting on a bin. It is now stated where deletes are described, next to
+  the role that prevents them.
+- **Roles govern what you can do, not what you can see.** Every member still
+  sees every module. Stated as an honest limit in the tour, the demo FAQ, the
+  onboarding checklist and the tester note, rather than left to be discovered.
+
+`DEPLOYMENT.md`'s environment matrix had none of the limit and alert variables;
+it now carries them with defaults, and the signup gate's bypass order is
+written out in full, because the *order* is the security property (§16, §20)
+and a list of modes does not convey it.

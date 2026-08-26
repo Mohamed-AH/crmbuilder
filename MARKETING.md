@@ -27,7 +27,8 @@ pipeline board on any dropdown field, in your currency.
 
 - **Deploy it yourself in an afternoon** — free tier hosting, your own database, your data.
 - **Offline-first PWA** — works in the field, in the warehouse, on a plane; syncs when you're back.
-- **Admin dashboard included** — onboard your team or your clients, manage accounts, and watch adoption with built-in analytics.
+- **Shared team workspaces** — invite colleagues with a link, four roles from owner to read-only, and no seats to buy.
+- **Admin dashboard included** — onboard your team or your clients, manage accounts and roles, and watch adoption and per-tenant usage with built-in analytics.
 - **No per-seat pricing. No lock-in.** Export everything to JSON anytime.
 
 *For agencies:* white-label a CRM for each client in an afternoon. You control

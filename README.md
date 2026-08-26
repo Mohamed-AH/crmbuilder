@@ -10,10 +10,12 @@ A **modular CRM builder for small businesses** — an installable, offline-first
 - **Dashboard** — record counts, total tracked value, recent activity, quick add.
 - **Accounts & sync (OAuth)** — sign in with Google and your workspace syncs to MongoDB; use it from any device. Signed out or offline, everything is saved on-device (IndexedDB + a localStorage backup copy) and syncs when you're back. Each account gets its own local store, so a shared computer never mixes two people's data — including edits that hadn't reached the server yet.
 - **Workspace settings** — business name and currency (30 currencies; all money fields format accordingly).
-- **Admin dashboard** — account management (promote, disable, delete) plus business analytics: total/active users, workspaces, records, signups per day, and daily active users.
+- **Admin dashboard** — account management (roles, disable, delete) plus business analytics: total/active users, workspaces, records, signups per day, and daily active users.
+- **Operator controls** — a Deployment card showing what the instance is carrying against its three real limits (Atlas storage, container memory, monthly bandwidth), an Organisations table sorted by who is heaviest with each tenant's share, levers to pause signups or cap new organisations without a redeploy, and reversible read-only suspension for a single workspace. Threshold alerts reach Discord, Slack or Telegram, each level announced once rather than every quarter of an hour.
 - **Spreadsheet import/export** — CSV export of the current view, and CSV import with automatic column matching, a mapping step, on-the-fly field creation, and type coercion for money, dates and yes/no columns.
 - **Sortable columns** — click any header; sorting is type-aware (numbers numerically, dates chronologically, dropdowns in pipeline order).
-- **Team workspaces** — an organisation shares one workspace; owners invite colleagues with a single-use link that expires after a week. Joiners choose whether to bring their own records with them. Owners control the schema and manage the team, members work with records, and records carry who added them. Removing someone from a team is not deleting their account.
+- **Team workspaces** — an organisation shares one workspace; owners invite colleagues with a single-use link that expires after a week. Joiners choose whether to bring their own records with them. Four roles: **owner** (schema, invites, the team), **member** (records, including deleting them), **contributor** (add and edit, but not delete) and **viewer** (read only). Records carry who added them, and removing someone from a team is not deleting their account.
+- **Concurrent editing** — two people editing *different fields of the same record* both keep their edit. Each field carries its own clock and the server merges key by key, so a colleague's phone-number change does not vanish because you saved the email a second later.
 - **Demo data** — one click fills every module with a coherent fictional business (107 records) for evaluations and demos. It is never loaded without asking, never syncs to an account unless you choose to keep it, and **Settings → Remove sample data** takes it back out while keeping anything you added yourself.
 - **Backup & restore** — export/import the whole workspace as JSON.
 - **PWA** — installable on desktop and mobile, fully offline via a service worker, light & dark mode, Inter typography, Lucide icons.
@@ -58,7 +60,7 @@ npm install
 npm run dev        # http://localhost:8321
 ```
 
-No configuration needed locally: storage falls back to a JSON file (`./data/`, git-ignored) and a passwordless dev sign-in is enabled so you can try accounts, sync, and the admin dashboard. The first account to sign in becomes admin.
+No configuration needed locally: storage falls back to a JSON file (`./data/`, git-ignored) and a passwordless dev sign-in is enabled so you can try accounts, sync, and the admin dashboard. With no `ADMIN_EMAILS` set, the first account to sign in becomes the platform admin — locally that is you.
 
 The frontend also runs as a plain static site (`python3 -m http.server`) with sign-in disabled — fully local, per-device data.
 
@@ -96,7 +98,7 @@ MARKETING.md          B2B/B2C copy + launch threads
 
 - **Module**: `{ id, name, icon, color, defaultView, fields[], createdAt }`
 - **Field**: `{ key, label, type, required?, showInList?, options?, relatedModule? }`
-- **Record**: `{ id, moduleId, data: { [fieldKey]: value }, createdAt, updatedAt }`
+- **Record**: `{ id, moduleId, data: { [fieldKey]: value }, fieldsAt?: { [fieldKey]: ts }, createdAt, updatedAt }`
 - **Settings**: `{ businessName, currency }`
 
-Client data lives in the `crmbuilder` IndexedDB database (mirrored to localStorage). When signed in, each module and record syncs individually to the MongoDB collections `modules` and `records`, carrying an `updatedAt` (the edit clock, which resolves conflicts per record) and a `serverAt` (the delta cursor). Deletes are tombstones, so a device that was offline learns about them instead of resurrecting the row. Accounts, orgs, settings and analytics live in `users`, `orgs`, `data` and `events`.
+Client data lives in the `crmbuilder` IndexedDB database (mirrored to localStorage). When signed in, each module and record syncs individually to the MongoDB collections `modules` and `records`, carrying an `updatedAt` (the row's edit clock) and a `serverAt` (the delta cursor). A record also carries `fieldsAt`, a clock per field, so two people editing different fields of one record resolve key by key instead of one overwriting the other; a row without it resolves whole-row exactly as before. Deletes are tombstones, so a device that was offline learns about them instead of resurrecting the row — and a tombstone discards the body, so a delete is not undoable. Accounts, orgs, settings, analytics, beta codes, access requests and platform settings live in `users`, `orgs`, `data`, `events`, `betaCodes`, `accessRequests` and `platform`.

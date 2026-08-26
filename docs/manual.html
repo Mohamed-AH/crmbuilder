@@ -546,7 +546,7 @@
       </div>
 
       <h3>Delete</h3>
-      <p>Open the record and click <strong>Delete</strong>. This can't be undone, so export a backup first if you're unsure.</p>
+      <p>Open the record and click <strong>Delete</strong>. This can't be undone, and on a team it deletes for everyone, so export a backup first if you're unsure. If someone shouldn't be able to delete, the <strong>Contributor</strong> role lets them add and edit without it.</p>
 
       <h3>Search</h3>
       <p>The search box filters as you type, matching against <em>every</em> field in the module — not just the visible columns. Clear the box to see everything again.</p>
@@ -719,10 +719,48 @@
 
       <p><strong>Signing out leaves your data on the device.</strong> It stops syncing; it doesn't erase anything.</p>
 
-      <div class="note caution">
+      <div class="note tip">
         <span class="note-label">How conflicts resolve</span>
-        <p>Sync is last-write-wins on the whole workspace. If the same account edits on two devices while one is offline, the most recent save wins — changes aren't merged record by record. This is a non-issue for one person on a laptop and a phone; if several people need to edit at once, give each of them their own account.</p>
+        <p>Sync works one record at a time, and one <em>field</em> at a time within a record. Edit a contact on your laptop and a different contact on your phone and both survive. Change a contact's phone while a colleague changes their email and both survive too. Only when the same field is edited in two places does anything have to be chosen, and there the most recent edit wins.</p>
       </div>
+
+      <p>Deleting a record deletes it everywhere, including on a device that was offline when you deleted it: the delete is remembered and travels like any other change, rather than the record quietly reappearing on the next sync.</p>
+
+      <p>Sync also sends only what changed, so an edit costs the same whether your workspace has fifty records or fifty thousand.</p>
+
+      <p><strong>Anything you do before signing in stays on the device until you say otherwise.</strong> The first time you sign in, CRM Builder asks once what to do with it — bring it into your account, or leave it where it is. Nothing you typed is ever discarded without being asked.</p>
+
+      <h3>Working as a team</h3>
+      <p>An <strong>organisation</strong> is your team, and everyone on it shares one workspace: the same modules, the same records, kept in step by the same per-record sync that keeps your own laptop and phone together.</p>
+
+      <p><strong>To invite someone</strong> (owners only): Settings → <strong>Invite a colleague</strong>. You get a private link — copy it and send it however you normally reach them. The link works <strong>once</strong> and stops working after a week, so it is safe to send in a message but not to post somewhere public.</p>
+
+      <p><strong>When they open the link</strong>, they sign in and are asked one question: start on the team's workspace, or bring their own records with them. Anything they bring becomes visible to everyone on the team, and the prompt says so. Nothing they decline to bring is deleted — it stays in their own workspace.</p>
+
+      <h3>Who can change what</h3>
+      <p>Four roles, each doing everything the one below it does plus one more thing:</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Role</th><th>Can</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Owner</strong></td><td>Everything: module fields, adding and deleting modules, invites, and managing the team</td></tr>
+            <tr><td><strong>Member</strong></td><td>Create, edit and delete records</td></tr>
+            <tr><td><strong>Contributor</strong></td><td>Create and edit records, but not delete them</td></tr>
+            <tr><td><strong>Viewer</strong></td><td>Read only</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>A field rename changes what every record in the team means, so the schema belongs with whoever is accountable for the workspace. Anyone below owner opening the module builder sees the fields but cannot change them.</p>
+      <p>If someone's role changes while they are offline, work they did in the meantime that they are no longer allowed to do is undone when they reconnect, and the app says which rule stopped it rather than leaving them to guess.</p>
+
+      <p><strong>Managing the team</strong> (Settings → Team, owners only): set anyone's role from the picker beside their name, remove them, and revoke an invite link that has not been used yet.</p>
+
+      <div class="note caution">
+        <span class="note-label">Removing is not deleting</span>
+        <p>Removing someone keeps their sign-in and gives them a fresh, empty workspace of their own; the team's records stay with the team. The next time their device reaches the internet it drops its copy of the team's data by itself — though a device that never comes online again keeps whatever it already had, which is true of anything that works offline.</p>
+      </div>
+
+      <p><strong>Leaving a team</strong> is on the same screen and needs nobody's permission. You get a fresh, empty workspace; the team keeps its records. The one exception: if you are the only owner and other people are on the team, make someone else an owner first — otherwise they would be left with a workspace nobody can administer.</p>
     </section>
 
     <!-- 11 -->
@@ -760,32 +798,65 @@
         <li><strong>Sign in</strong>, so a copy lives in your account rather than only on one device.</li>
       </ul>
       <p>Clearing your browser's site data will erase a signed-out workspace. If that happens after you've signed in, just sign in again and your workspace comes back.</p>
-      <p>To restore: <strong>Settings → Import backup</strong>, choose the JSON file, and confirm. Importing a backup <strong>replaces</strong> the current contents of the workspace.</p>
+      <p>To restore: <strong>Settings → Import backup</strong>, choose the JSON file, and pick what should happen to what is already there:</p>
+      <ul>
+        <li><strong>Merge</strong> (the default) adds everything in the file and leaves the rest of the workspace alone. This is almost always what you want — recovering one deleted module shouldn't touch anything added since.</li>
+        <li><strong>Replace</strong> additionally deletes anything the file doesn't contain. It tells you how many records that is before you confirm.</li>
+      </ul>
+      <div class="note caution">
+        <span class="note-label">On a team</span>
+        <p><strong>Replace's deletions reach everyone</strong>, because they sync like any other change. Merge is the default for exactly that reason.</p>
+      </div>
     </section>
 
     <!-- 13 -->
     <section id="admin">
       <span class="sec-num">13</span>
       <h2>For administrators</h2>
-      <p>If your account has the administrator role, an <strong>Admin</strong> entry appears in the sidebar.</p>
+      <p>If your account has the administrator role, an <strong>Admin</strong> entry appears in the sidebar. Some of what follows is only visible to a <em>platform</em> administrator — the person who runs the deployment, as opposed to the owner of one team.</p>
 
       <h3>Metrics</h3>
       <p>Total accounts, accounts active in the last 7 days, workspaces containing data, and totals for records and modules built. Two charts show signups over the last 30 days and daily active users over the last 14. Hover any bar for the exact figure.</p>
 
+      <h3>Deployment (platform administrators)</h3>
+      <p>Three meters showing what the whole deployment is consuming against its free-tier ceilings:</p>
+      <ul>
+        <li><strong>Database</strong> — what MongoDB actually reports as stored, including indexes and tombstones rather than an estimate from the record count.</li>
+        <li><strong>Memory</strong> — the container's resident memory, plus the peak seen since the last restart. Sampled when the page loads, so it catches a slow leak rather than a sudden spike.</li>
+        <li><strong>Bandwidth</strong> — response bodies sent this month. Headers aren't counted, so the real figure is a little higher.</li>
+      </ul>
+      <p>Below the meters, <strong>New organisations: Allowed / Capped</strong>. Capping stops <em>new</em> tenants without freezing your existing customers: a colleague invited to a team that already exists still signs up and joins. That is why it is a separate switch from pausing signups.</p>
+
+      <h3>Organisations (platform administrators)</h3>
+      <p>Every team, heaviest first, with its people, records, stored bytes, share of the database, and last activity. Each row has one action: <strong>pause</strong> or <strong>resume</strong> writes.</p>
+      <div class="note tip">
+        <span class="note-label">Pausing is not deleting</span>
+        <p>A paused workspace can still be read and its data is untouched — it just can't sync changes up until you resume it. Nothing about it is irreversible.</p>
+      </div>
+
+      <h3>Requests to join</h3>
+      <p>People who signed in without an invite and asked. Approving lets them straight in: they sign in again with the same Google account and it works. Nothing is emailed.</p>
+
+      <h3>Beta access</h3>
+      <p>Whether signups are <em>Invite only</em>, <em>Open</em> or <em>Paused</em>, plus the beta codes and their remaining uses. The mode takes effect immediately with no redeploy, and outlives restarts. <strong>Send a test alert</strong> fires a webhook message and reports what every alert rule currently sees, so silence can be told apart from a broken webhook URL.</p>
+
+      <h3>Problem reports</h3>
+      <p>What testers sent from Settings → Report a problem, each with the app version, screen, browser, sync status, counts and recent console errors.</p>
+
       <h3>Accounts</h3>
       <p>Every account with its role, status, usage, join date and last activity. Search by name or email. For each account you can:</p>
       <ul>
-        <li><strong>Promote / demote</strong> between user and administrator</li>
+        <li><strong>Change the role</strong> — owner, member, contributor or viewer within a team; only a platform administrator can grant that role.</li>
         <li><strong>Disable</strong> — the person is signed out immediately and can't sync until re-enabled. Their data is kept.</li>
         <li><strong>Delete</strong> — removes the account <em>and its synced data</em>. This cannot be undone.</li>
       </ul>
 
       <div class="note tip">
         <span class="note-label">Safeguard</span>
-        <p>You can't disable, demote or delete your own account, so an instance can never be left without an administrator by accident.</p>
+        <p>You can't disable, demote or delete your own account, so an instance can never be left without an administrator by accident. An org owner can't act on a platform administrator at all.</p>
       </div>
 
-      <p>The first person to sign in to a new deployment automatically becomes an administrator. After that, administrators are set by the deployment's <code>ADMIN_EMAILS</code> setting or promoted from this page.</p>
+      <p>If a deployment names nobody in its <code>ADMIN_EMAILS</code> setting, the first person to sign in becomes the platform administrator — that's the bootstrap that stops a fresh deployment from being unusable. Once <code>ADMIN_EMAILS</code> names someone, that list decides, and the first visitor is an ordinary user like anyone else.</p>
     </section>
 
     <!-- 14 -->

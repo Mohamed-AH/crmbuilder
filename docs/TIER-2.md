@@ -147,4 +147,6 @@ traps (§10).
 - **2a:** a viewer's write is refused and reverted with a reason; a
   contributor's delete is refused and the row restored; a refused creation is
   purged rather than tombstoned; the demoted-while-offline case still works.
-- Both: the 8 isolation tests and the current 164/71 stay green.
+- Both: the 8 isolation tests stay green, and the suite does not shrink —
+  164/71 at the time this was written; `CLAUDE.md` §2 carries the current
+  figure.

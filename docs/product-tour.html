@@ -345,7 +345,7 @@
       </div>
       <div class="tile">
         <h3>Admin and analytics</h3>
-        <p>Running it for a team or for clients? Accounts, activity, signups and usage are built in.</p>
+        <p>Running it for a team or for clients? Accounts, roles, activity, signups and per-tenant usage are built in.</p>
       </div>
     </div>
   </div>
@@ -391,10 +391,22 @@
     <details>
       <summary>Can our whole team use it?</summary>
       <p>
-        Today each person has their own account and their own workspace, syncing
-        across their devices. Several people editing one shared workspace at the
-        same time isn't what it does yet — we'd rather say so now than have you
-        discover it later. Shared team workspaces are the next major piece of work.
+        Yes. A team shares one workspace, and an owner invites people with a
+        private link — no per-seat fee, because there are no seats to buy.
+        Sync works one record and one field at a time, so two people editing
+        different records both keep their work, and so do two people editing
+        different fields of the same record.
+      </p>
+      <p>
+        Four roles decide who can do what: owners change the schema and manage
+        the team, members work with records, contributors add and edit but
+        can't delete, and viewers read only. The server enforces it rather than
+        just hiding buttons.
+      </p>
+      <p>
+        The honest limit, so you don't discover it later: everyone on a team
+        sees every module. Roles govern what you can do, not what you can see,
+        and per-module access isn't built.
       </p>
     </details>
     <details>

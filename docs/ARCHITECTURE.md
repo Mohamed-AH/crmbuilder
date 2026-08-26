@@ -99,9 +99,15 @@ edit from another device can discard it entirely.
 Every module and record is its own row, in `modules` and `records`, carrying
 two clocks:
 
-- **`updatedAt`** — the client's edit time. Conflicts resolve by
-  last-write-wins *per record*, so two devices editing different records both
-  keep their work.
+- **`updatedAt`** — the client's edit time, and the row's clock. It decides
+  which whole row wins when neither side carries field clocks, and it drives
+  which rows a device offers on its next push.
+- **`fieldsAt`** — a clock per field, inside a record's `doc`, advanced only
+  for keys whose value actually moved. The server merges key by key on these,
+  so two people editing *different fields of the same record* both keep their
+  edit. A key with no entry counts as clock zero — never the row's clock, or an
+  untouched stale value would beat somebody's real edit. A record with no map
+  at all resolves whole-row exactly as it did before.
 - **`serverAt`** — a monotonic stamp assigned by the server. The delta cursor
   walks this, never `updatedAt`, so a device with a skewed clock cannot push
   the cursor past changes other devices have not seen. It ticks forward on a
@@ -204,7 +210,7 @@ Introduce a tenant that isn't the individual.
 
 ```
 orgs     { id, name, plan, currency, createdAt }
-users    { ..., orgId, role: 'owner' | 'member' | 'platformAdmin' }
+users    { ..., orgId, role: 'platformAdmin' | 'owner' | 'member' | 'contributor' | 'viewer' }
 data     { ..., orgId }
 ```
 
@@ -410,13 +416,16 @@ per org.
      into an existing one. An invitee arriving with a personal workspace needs
      the *same* question the client already asks at sign-in ("bring this with
      you?"), so that prompt is reusable rather than new work.
-   - **A permission model for data.** `owner`/`member` gate admin routes only —
-     a member can edit anything in their workspace because it is theirs.
+   - **A permission model for data.** *(Built.)* A ladder — `viewer` reads,
+     `contributor` adds and edits, `member` deletes, `owner` owns the schema
+     and the team. Enforced in the sync push, which refuses the write and hands
+     back the server's own copy so the edit un-happens.
    - **Attribution** (`createdBy`/`updatedBy`) so a shared workspace can show
      who changed what.
-   - **Operational gaps a shared database needs regardless:** per-org quota and
-     rate limiting so one tenant's 50k-row import cannot degrade others,
-     one-shot org deletion and export, and an audit trail for admin actions.
+   - **Operational gaps a shared database needs regardless:** *(partly built —
+     per-org usage is measured and visible, new organisations can be capped,
+     and a single workspace can be put read-only. Still open: per-tenant rate
+     limiting, one-shot org deletion, and an audit trail for admin actions.)*
 
    None of it risked data loss, which was the point of doing (4) first. The
    re-key turned out to be a rename rather than a merge because org↔user was
@@ -439,7 +448,9 @@ migration to write and no data-loss window to explain.
 
 - *"Can our team all use it?"* — Yes. An organisation shares one workspace; an
   owner invites people with a single-use link. Owners control the schema and
-  the team, members work with records, and per-record sync means two people
+  the team, members work with records — with `contributor` and `viewer` below
+  them for people who should not delete or should not write at all — and
+  per-record sync means two people
   editing different records both keep their work. Everyone on a team sees every
   module — per-module access is not built.
 - *"We share a computer — is that safe?"* — Yes. Each account has its own local

@@ -77,8 +77,10 @@ need and click **Save**.
 > directly on an email address opens your mail app rather than the record.
 > Click anywhere else on the row to open the record.
 
-**Delete** — Open the record and click **Delete**. This can't be undone, so
-export a backup first if you're unsure.
+**Delete** — Open the record and click **Delete**. This can't be undone, and on
+a team it deletes for everyone, so export a backup first if you're unsure. If
+someone shouldn't be able to delete, the **Contributor** role lets them add and
+edit without it — see *Working as a team*.
 
 **Search** — The search box filters as you type, matching against *every* field
 in the module, not just the visible columns. Clear the box to see everything again.
@@ -288,17 +290,29 @@ the team's workspace, or bring their own records with them. Anything they bring
 becomes visible to everyone on the team, and the prompt says so. Nothing they
 decline to bring is deleted — it stays in their own workspace.
 
-**Who can change what.** Everyone on a team can create, edit and delete
-records — that is the day-to-day work. Only an **owner** can change a module's
-fields, add or delete modules, and invite or manage people. A field rename
-changes what every record in the team means, so it belongs with whoever is
-accountable for the workspace. Members opening the module builder see the
-fields but cannot change them.
+**Who can change what.** Four roles, each doing everything the one below it
+does plus one more thing:
+
+| Role | Can |
+|---|---|
+| **Owner** | Everything: module fields, adding and deleting modules, invites, and managing the team |
+| **Member** | Create, edit and delete records |
+| **Contributor** | Create and edit records, but not delete them |
+| **Viewer** | Read only |
+
+A field rename changes what every record in the team means, so the schema
+belongs with whoever is accountable for the workspace. Anyone below owner
+opening the module builder sees the fields but cannot change them.
+
+If someone's role changes while they are offline, work they did in the meantime
+that they are no longer allowed to do is undone when they reconnect, and the
+app says which rule stopped it rather than leaving them to guess.
 
 Records show who added them once there is more than one person on the team.
 
-**Managing the team** (Settings → Team, owners only): make someone an owner or
-a member, remove them, and revoke an invite link that has not been used yet.
+**Managing the team** (Settings → Team, owners only): set anyone's role from
+the picker beside their name, remove them, and revoke an invite link that has
+not been used yet.
 
 **Removing someone is not deleting their account.** They keep their sign-in and
 get a fresh, empty workspace of their own; the team's records stay with the
@@ -311,9 +325,11 @@ a fresh, empty workspace; the team keeps its records. The one exception: if you
 are the only owner and other people are on the team, make someone else an owner
 first — otherwise they would be left with a workspace nobody can administer.
 
-Two people editing different records both keep their work. If two people edit
-*the same* record, the later edit wins, exactly as it does across your own
-devices.
+Two people editing different records both keep their work — and so do two
+people editing **different fields of the same record**. If you change a
+contact's phone while a colleague changes their email, both changes survive;
+each field is tracked separately. Only if you both edit *the same field* does
+the later one win.
 
 ### Sample data
 
@@ -357,35 +373,84 @@ you've signed in. Two habits worth having:
 Clearing your browser's site data will erase a signed-out workspace. If that
 happens after you've signed in, just sign in again and your workspace comes back.
 
-To restore: Settings → **Import backup**, choose the JSON file, and confirm.
-Importing a backup **replaces** the current contents of the workspace.
+To restore: Settings → **Import backup**, choose the JSON file, and pick what
+should happen to what is already there:
+
+- **Merge** (the default) adds everything in the file and leaves the rest of the
+  workspace alone. This is almost always what you want — recovering one deleted
+  module shouldn't touch anything added since.
+- **Replace** additionally deletes anything the file doesn't contain. It tells
+  you how many records that is before you confirm. **On a team, those deletions
+  reach everyone**, because they sync like any other change.
 
 ---
 
 ## 13. For administrators
 
 If your account has the administrator role, an **Admin** entry appears in the
-sidebar.
+sidebar. Some of what follows is only visible to a *platform* administrator —
+the person who runs the deployment, as opposed to the owner of one team.
 
 **Metrics** — total accounts, accounts active in the last 7 days, workspaces
 containing data, and totals for records and modules built. Two charts show
 signups over the last 30 days and daily active users over the last 14. Hover
 any bar for the exact figure.
 
+**Deployment** *(platform administrators)* — three meters showing what the
+whole deployment is consuming against its free-tier ceilings:
+
+- **Database** — what MongoDB actually reports as stored, including indexes and
+  tombstones rather than an estimate from the record count.
+- **Memory** — the container's resident memory, plus the peak seen since the
+  last restart. It's sampled when the page loads, so it catches a slow leak
+  rather than a sudden spike.
+- **Bandwidth** — response bodies sent this month. Headers aren't counted, so
+  the real figure is a little higher.
+
+Below the meters, **New organisations: Allowed / Capped**. Capping stops *new*
+tenants without freezing your existing customers: a colleague invited to a team
+that already exists still signs up and joins. That's why it's a separate switch
+from pausing signups.
+
+**Organisations** *(platform administrators)* — every team, heaviest first,
+with its people, records, stored bytes, share of the database, and last
+activity. Each row has one action: **pause** or **resume** writes. A paused
+workspace can still be read and its data is untouched — it just can't sync
+changes up until you resume it. It is not a deletion and nothing about it is
+irreversible.
+
+**Requests to join** — people who signed in without an invite and asked.
+Approving lets them straight in: they sign in again with the same Google
+account and it works. Nothing is emailed. See `docs/BETA.md` for how declines
+behave.
+
+**Beta access** — whether signups are *Invite only*, *Open* or *Paused*, plus
+the beta codes and their remaining uses. The mode takes effect immediately with
+no redeploy, and outlives restarts. **Send a test alert** fires a webhook
+message and reports what every alert rule currently sees, so silence can be
+told apart from a broken webhook URL.
+
+**Problem reports** — what testers sent from Settings → Report a problem, each
+with the app version, screen, browser, sync status, counts and recent console
+errors.
+
 **Accounts** — every account with its role, status, usage, join date and last
 activity. Search by name or email. For each account you can:
 
-- **Promote / demote** between user and administrator
+- **Change the role** — owner, member, contributor or viewer within a team;
+  only a platform administrator can grant that role.
 - **Disable** — the person is signed out immediately and can't sync until
   re-enabled. Their data is kept.
 - **Delete** — removes the account *and its synced data*. This cannot be undone.
 
 You can't disable, demote or delete your own account, so an instance can never
-be left without an administrator by accident.
+be left without an administrator by accident. An org owner can't act on a
+platform administrator at all.
 
-The first person to sign in to a new deployment automatically becomes an
-administrator. After that, administrators are set by the deployment's
-`ADMIN_EMAILS` setting or promoted from this page.
+If a deployment names nobody in its `ADMIN_EMAILS` setting, the first person to
+sign in becomes the platform administrator — that's the bootstrap that stops a
+fresh deployment from being unusable. Once `ADMIN_EMAILS` names someone, that
+list decides, and the first visitor is an ordinary user like anyone else.
 
 ---
 

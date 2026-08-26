@@ -174,7 +174,8 @@ Each guarantee checked against the state that breaks it, per §9:
   and re-arm after dropping back.
 - **A dead webhook never breaks `/health`** — the same rule as the feedback
   notifier: stored/evaluated first, notification after the response.
-- The 8 isolation tests and the current 149/68 stay green.
+- The 8 isolation tests stay green, and the suite does not shrink — 149/68 at
+  the time this was written; `CLAUDE.md` §2 carries the current figure.
 
 ## Risks
 

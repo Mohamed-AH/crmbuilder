@@ -156,8 +156,17 @@ appears here. Take the moment — it demos well:
 Open **Admin**.
 
 > "If you're running this for a team or for clients: accounts, activity,
-> signups, daily actives, and per-account usage. Promote, disable or remove
+> signups, daily actives, and per-account usage. Change roles, pause or remove
 > people from here."
+
+If you are the platform administrator, scroll to **Deployment** and
+**Organisations**:
+
+> "And if you're hosting it for several businesses: what the whole deployment
+> is consuming against its limits, and every tenant listed heaviest first, so
+> one customer filling the database is visible before it becomes everyone's
+> problem. You can cap new tenants, or pause one workspace's writes, without
+> deleting anything."
 
 ### 9:00 — Land it *(60 seconds)*
 
@@ -186,12 +195,15 @@ app. Narrower on purpose.
 **"Multi-user?"**
 Yes. An organisation shares one workspace, and an owner invites people with a
 private link from Settings. Per-record sync means two colleagues editing
-different records both keep their work.
+different records both keep their work — and field-level merge means two people
+editing *different fields of the same record* both keep theirs too. Only the
+same field edited at the same time is last-write-wins.
 
-Owners control the schema — module fields, adding and deleting modules,
-inviting people. Members work with records. The server enforces it, so a member
-whose client tries anyway has the change quietly undone with an explanation
-rather than a failed sync.
+Four roles. Owners control the schema — module fields, adding and deleting
+modules, inviting people. Members work with records freely. Contributors add
+and edit but cannot delete. Viewers read only. The server enforces it, so
+someone whose client tries anyway has the change quietly undone with an
+explanation rather than a failed sync.
 
 Owners manage the team from Settings — promote, demote, remove, revoke an
 unused invite — and anyone can leave. Removing someone is not deleting their
@@ -202,7 +214,9 @@ The honest edge: everyone on a team sees every module. Per-module access is not
 built.
 
 **"Permissions / field-level security?"**
-Not today. Admins manage accounts, not per-field access.
+Roles decide what someone can *do* — read, edit, delete, change the schema —
+and the server enforces them. What they can *see* is not yet restricted: no
+per-module or per-field access.
 
 **"Why was it slow to load the first time?"**
 Free hosting sleeps when idle. The app is local-first so it paints immediately

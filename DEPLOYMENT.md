@@ -52,6 +52,30 @@ times the work.
 | `HEALTH_DETAIL` | **unset** | `1` | exposes org/user counts on public `/health` — a customer count on a pooled deployment |
 | `EVENT_RETENTION_DAYS` | `90` (default) | as contracted | analytics events TTL |
 | `TOMBSTONE_RETENTION_DAYS` | `180` (default) | as contracted | how long a deleted record's tombstone survives, i.e. how long a device may be offline and still learn about the delete |
+| `FEEDBACK_RETENTION_DAYS` | `90` (default) | `90` | problem reports TTL |
+| `SIGNUP_MODE` | `code` | `open` | the **starting** mode only — see *Who can create an account* |
+
+**Limits and alerting.** These decide what the Deployment card meters against
+and when a webhook fires. Every one has a working default; set them when the
+hosting plan is not the free tier they assume.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `EGRESS_LIMIT_BYTES` | `5 GB` | Render's free monthly bandwidth. **Check this against your actual plan** — a wrongly encoded limit is worse than none |
+| `RAM_LIMIT_BYTES` | `512 MB` | the free instance's memory ceiling; the meter reads container RSS |
+| `SIGNUP_SPIKE_PER_HOUR` | `10` | signups in one hour that count as a spike worth telling you about |
+| `TENANT_SHARE_LIMIT` | `25` | percent of the database one org may hold before it is called out |
+| `ALERT_MIN_GAP_MS` | `300000` (5 min) | floor between alert evaluations, independent of how often `/health` is hit |
+| `ACCESS_APPROVAL_DAYS` | `30` | how long an unused approval stays on the allowlist |
+| `ACCESS_REQUEST_CEILING` | `500` | pending requests beyond which new ones are refused |
+| `PLATFORM_CACHE_MS` | `30000` | TTL on `/api/admin/platform`; the per-org byte totals are an aggregation over every row, so they are cached from the start rather than after it hurts. `?fresh=1` bypasses it |
+| `EGRESS_FLUSH_MS` / `EGRESS_FLUSH_BYTES` | `60000` / `256 KB` | how often the bandwidth counter is written down. It also flushes on SIGTERM, because a free instance spins down constantly and an unflushed counter reads low forever |
+
+The database and bandwidth meters need no configuration to be correct: storage
+is what MongoDB reports as `dataSize + indexSize`, and bandwidth is counted as
+response bodies are written. Neither is a records × constant estimate — indexes
+and tombstones are real storage, and an estimate that ignores them reads fine
+right up until the tier fills.
 
 `ADMIN_EMAILS` grants `platformAdmin`, which crosses orgs. On the pooled
 deployment that means your operators and nobody else — never a customer. On a
@@ -240,6 +264,25 @@ device at the next sync.
 admin: real `dataSize + indexSize` from MongoDB rather than an estimate, and a
 `level` of `ok`, `warn` (60%) or `critical` (85%) against the 512 MB M0 limit.
 
+**Admin → Deployment** is the fuller view, and is platform-admin only. Three
+meters — database, container memory, monthly bandwidth — plus an
+**Organisations** table listing every tenant heaviest first with its share of
+what is actually stored. That is the reading that answers "is one customer
+about to fill the shared database", which the combined figure cannot.
+
+Two levers sit beside it, and both are reversible:
+
+- **New organisations: Allowed / Capped.** Capping stops new *tenants* while
+  still letting a colleague invited to an existing team sign up and join. That
+  is why it is a separate switch from pausing signups — pausing signups would
+  lock out every existing customer's next hire.
+- **Pause an organisation.** Its workspace becomes read-only: sync still pulls,
+  writes are refused with a named reason the client shows, and nothing is
+  deleted. `deleteAccount()` remains the only thing that can remove a workspace.
+
+Alerts fire to `FEEDBACK_WEBHOOK_URL` when a threshold is crossed — see
+`docs/BETA.md` → *Alerts* for the rules and the escalate-only behaviour.
+
 Nothing is enforced. A hard cap firing mid-beta looks like the bug the tester
 was chasing, and you end up debugging your own limiter. The numbers exist to be
 looked at before that becomes a decision.
@@ -257,10 +300,27 @@ and, once used, wins over the variable so a deploy cannot silently undo it:
 | `closed` | No new accounts; everyone who has one still works. |
 
 Mint codes from the admin dashboard (**Beta access → New beta code**), each with
-a use cap and an expiry, and send the link it gives you. Three bypasses exist,
-in this order: an account that already exists, an address in `ADMIN_EMAILS`, and
-the very first account on an empty deployment — without that last one a fresh
-install in `code` mode would have no way in at all.
+a use cap and an expiry, and send the link it gives you.
+
+The gate is checked in a fixed order, and the order is load-bearing:
+
+1. **An account that already exists** — a returning tester is never asked for a
+   code they used weeks ago. The gate is on signup, never on sign-in.
+2. **An address in `ADMIN_EMAILS`** — so you cannot lock yourself out.
+3. **The very first account, but only when `ADMIN_EMAILS` is empty.** Without
+   this a fresh install in `code` mode has no way in at all: minting a code
+   needs a platform admin and becoming one needs a signup. It is conditioned on
+   `ADMIN_EMAILS` because otherwise whoever finds a freshly deployed URL first
+   owns the instance — with operators named, rule 2 already lets them in.
+4. **An approved request to join** — see `docs/BETA.md`.
+5. **The new-organisation cap**, if set to Capped and this signup would mint a
+   brand-new tenant.
+6. **The mode itself** — `open` admits anyone; a still-pending request is told
+   so rather than shown "invite-only" a second time; `closed` refuses.
+7. **The beta code.**
+
+Every refusal except *pending* answers identically, so codes cannot be
+enumerated by the difference between "wrong" and "expired".
 
 ## Local development
 

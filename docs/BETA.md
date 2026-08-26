@@ -218,7 +218,12 @@ beta* button — we work through those by hand.
 
 **Known rough edges right now:**
 
-- Everyone on a team can see every module; there is no per-module access.
+- **Deleting a record cannot be undone.** There is no bin to fish it back out
+  of, and the delete travels to everyone's device. If a colleague shouldn't be
+  able to delete, give them the **Contributor** role — they can add and edit
+  but not delete. **Viewer** is read-only.
+- Everyone on a team can see every module; roles govern what you can *do*, not
+  what you can see, and there is no per-module access.
 - No email notifications of any kind.
 - The guided tour needs sample data, and offers to load it. Settings → Remove
   sample data takes it back out and keeps anything you added.

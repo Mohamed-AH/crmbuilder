@@ -117,16 +117,26 @@ the point of the product — say so, so they don't feel they got it wrong.
 
 ## Rolling out to a team
 
-1. Have each person sign in with their own Google account — one workspace per
-   account, so their data stays their own.
-2. Promote whoever should administer the instance (Admin → promote), or add
-   their address to `ADMIN_EMAILS`.
-3. Point them at [USER-GUIDE.md](USER-GUIDE.md) — it's written for end users.
-4. Set the expectation that the workspace is **per account**: it's built for
-   one person across several devices — where per-record sync means edits on a
-   laptop and a phone merge rather than overwrite — not for several people
-   editing one shared workspace at once.
-5. If they share a computer, tell them signing out is how they hand it over.
+1. Have one person sign in with their own Google account and build the
+   workspace. They own the organisation it creates.
+2. That owner invites everyone else from **Settings → Team**, which produces a
+   private single-use link they send themselves — there is no mail plumbing in
+   this product. The whole team then shares one workspace.
+3. Give each person the role that matches what they do. **Owner** changes the
+   schema and manages the team; **member** works with records; **contributor**
+   can add and edit but not delete; **viewer** reads only. The server enforces
+   it, so a client that tries anyway has the change quietly undone with an
+   explanation rather than a failed sync.
+4. Add the address of whoever should administer the *deployment* (as opposed to
+   one team) to `ADMIN_EMAILS`.
+5. Point them at [USER-GUIDE.md](USER-GUIDE.md) — it's written for end users.
+6. Set the expectation about concurrent edits: two people editing different
+   records both keep their work, and so do two people editing *different fields
+   of the same record*. Two people typing into the **same field** at the same
+   time is still last-write-wins.
+7. The honest limit to state up front: **everyone on a team sees every module.**
+   Roles govern what you can do, not what you can see.
+8. If they share a computer, tell them signing out is how they hand it over.
    Each account's data is stored separately on the device, so nobody sees or
    syncs anyone else's, and signing out never deletes anything — it just puts
    the workspace away until that person signs back in.
