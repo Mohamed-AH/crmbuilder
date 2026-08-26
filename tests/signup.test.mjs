@@ -1231,3 +1231,150 @@ describe('platform usage and quotas', () => {
     assert.equal((await srv.req('/api/admin/platform', { cookies: ordinary })).status, 403);
   });
 });
+
+/*
+ * Capping tenants without freezing your customers.
+ *
+ * Every signup mints an org, so "stop new accounts" and "stop new
+ * organisations" were the same switch — and that meant pausing signups also
+ * locked out every invited colleague of every existing customer, because they
+ * must have an account before /api/org/join can move them.
+ */
+describe('the organisation gate', () => {
+  const setOrgCreation = (srv, cookies, mode) =>
+    srv.req('/api/admin/org-creation', { method: 'PUT', cookies, body: { mode } });
+
+  test('a stranger is refused but an invited colleague still gets in', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'gate-op@operator.test' });
+    const admin = await adminOf(srv, 'gate-op@operator.test');
+
+    // An existing customer with a team and an invite out.
+    const owner = (await srv.signUp('owner@customer.test')).setCookie;
+    const invite = (await srv.req('/api/org/invites', { method: 'POST', body: {}, cookies: owner })).json.invite.code;
+
+    assert.equal((await setOrgCreation(srv, admin, 'closed')).status, 200);
+
+    // No more tenants.
+    const stranger = await srv.signUp('stranger@nowhere.test');
+    assert.equal(stranger.status, 403, `a new tenant should be refused: ${stranger.text}`);
+    assert.equal(stranger.json.reason, 'orgclosed');
+
+    // But the customer's colleague is not their problem. THIS is the case the
+    // separate lever exists for — a version that just refuses every signup
+    // passes the assertion above and fails here.
+    const mate = await srv.req('/auth/dev', {
+      method: 'POST', body: { email: 'colleague@customer.test', invite },
+    });
+    assert.equal(mate.status, 200, `an invited colleague must still register: ${mate.text}`);
+
+    // And the invite was checked, not spent — the join still needs it.
+    const joined = await srv.req('/api/org/join', {
+      method: 'POST', body: { code: invite }, cookies: mate.setCookie,
+    });
+    assert.equal(joined.status, 200, `the invite must survive the signup check: ${joined.text}`);
+  });
+
+  test('a made-up invite does not get past the gate', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'gate-op2@operator.test' });
+    const admin = await adminOf(srv, 'gate-op2@operator.test');
+    await setOrgCreation(srv, admin, 'closed');
+
+    const out = await srv.req('/auth/dev', {
+      method: 'POST', body: { email: 'chancer@nowhere.test', invite: 'not-a-real-invite' },
+    });
+    assert.equal(out.status, 403);
+    assert.equal(out.json.reason, 'orgclosed');
+  });
+
+  test('the gate is stored, survives a restart, and only the operator sets it', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'gate-op3@operator.test' });
+    const admin = await adminOf(srv, 'gate-op3@operator.test');
+    const ordinary = (await srv.signUp('ordinary@tenant.test')).setCookie;
+
+    assert.equal((await setOrgCreation(srv, ordinary, 'closed')).status, 403);
+    assert.equal((await setOrgCreation(srv, admin, 'banana')).status, 400);
+    assert.equal((await setOrgCreation(srv, admin, 'closed')).status, 200);
+
+    await srv.setMode('open'); // restart, same data
+    const after = await srv.signUp('late@nowhere.test');
+    assert.equal(after.status, 403, 'the decision must outlive a redeploy');
+
+    // Reopening lets tenants in again.
+    const admin2 = await adminOf(srv, 'gate-op3@operator.test');
+    await setOrgCreation(srv, admin2, 'open');
+    assert.equal((await srv.signUp('welcome@nowhere.test')).status, 200);
+  });
+});
+
+/*
+ * Pausing an organisation.
+ *
+ * Read-only, reversible, and it destroys nothing. deleteAccount stays the only
+ * thing that can take a workspace with it (§5).
+ */
+describe('suspending an organisation', () => {
+  const setup = async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'susp-op@operator.test' });
+    const admin = await adminOf(srv, 'susp-op@operator.test');
+    const user = await srv.signUp('heavy@tenant.test');
+    const cookies = user.setCookie;
+    await srv.req('/api/sync', {
+      method: 'POST',
+      cookies,
+      body: { records: [{ id: 'r1', updatedAt: Date.now(), doc: { moduleId: 'm', data: { name: 'Before' } } }] },
+    });
+    return { srv, admin, cookies, orgId: user.json.user.orgId };
+  };
+
+  test('a paused workspace stops accepting writes, keeps its data, and says why', async () => {
+    const { srv, admin, cookies, orgId } = await setup();
+
+    const paused = await srv.req(`/api/admin/orgs/${orgId}/suspend`, {
+      method: 'POST', cookies: admin, body: { suspend: true, reason: 'Storage review' },
+    });
+    assert.equal(paused.status, 200, paused.text);
+
+    const push = await srv.req('/api/sync', {
+      method: 'POST',
+      cookies,
+      body: { since: 0, records: [{ id: 'r2', updatedAt: Date.now(), doc: { moduleId: 'm', data: { name: 'During' } } }] },
+    });
+    assert.equal(push.status, 200, 'not an error — a state the client has to render');
+    assert.equal(push.json.readOnly, true);
+    assert.match(push.json.readOnlyReason, /Storage review/);
+
+    // The write did not land...
+    assert.ok(!push.json.records.some((r) => r.id === 'r2'), 'the push must be refused');
+    // ...and nothing they already had was touched. That is the whole promise.
+    const kept = await srv.req('/api/sync?since=0', { cookies });
+    assert.ok(kept.json.records.some((r) => r.id === 'r1'), 'existing records must survive a pause');
+    assert.ok(!kept.json.records.some((r) => r.id === 'r2'));
+
+    // Signing in still works: this is not a lockout.
+    assert.equal((await srv.signUp('heavy@tenant.test')).status, 200);
+  });
+
+  test('resuming restores writes, and the pause was never destructive', async () => {
+    const { srv, admin, cookies, orgId } = await setup();
+    await srv.req(`/api/admin/orgs/${orgId}/suspend`, { method: 'POST', cookies: admin, body: { suspend: true } });
+    await srv.req(`/api/admin/orgs/${orgId}/suspend`, { method: 'POST', cookies: admin, body: { suspend: false } });
+
+    const push = await srv.req('/api/sync', {
+      method: 'POST',
+      cookies,
+      body: { since: 0, records: [{ id: 'r3', updatedAt: Date.now(), doc: { moduleId: 'm', data: { name: 'After' } } }] },
+    });
+    assert.ok(!push.json.readOnly, 'writes must come back');
+    const all = await srv.req('/api/sync?since=0', { cookies });
+    assert.ok(all.json.records.some((r) => r.id === 'r1'), 'the old record is still there');
+    assert.ok(all.json.records.some((r) => r.id === 'r3'), 'and the new one landed');
+  });
+
+  test('pausing an organisation is the operator\'s call alone', async () => {
+    const { srv, cookies, orgId } = await setup();
+    assert.equal((await srv.req(`/api/admin/orgs/${orgId}/suspend`, { method: 'POST', body: { suspend: true } })).status, 401);
+    assert.equal((await srv.req(`/api/admin/orgs/${orgId}/suspend`, {
+      method: 'POST', cookies, body: { suspend: true },
+    })).status, 403, 'a tenant cannot pause anyone, least of all somebody else');
+  });
+});

@@ -40,7 +40,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 153 Node tests + 69 Playwright tests.
+**All green:** 159 Node tests + 70 Playwright tests.
 
 ```sh
 npm install
@@ -102,7 +102,7 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v18`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v19`).
 
 **Tenancy scoping comes from the session, never a request.** That covers both
 `req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
@@ -1022,9 +1022,9 @@ and one cannot be built as worded.
 | Per-org and combined usage | ✅ Stage A — `usageByOrg()`, measured with `$bsonSize` (Mongo) and serialised length (file store), cached 30s |
 | Resource quotas | ✅ Stage A — three meters: Mongo, RSS, monthly egress. Uptime hours dropped — see below |
 | Halt user signups | ✅ Done — the mode switch, §16 |
-| Halt org creation | ☐ Stage B. A **separate** lever, and not a duplicate of the above — see below |
+| Halt org creation | ✅ Stage B — `orgCreation`, with the invited-colleague exemption |
 | Pause/resume a user | ✅ Done — `disabled` + `PATCH /api/admin/users/:id` |
-| Pause/resume an org | ☐ Stage B |
+| Pause/resume an org | ✅ Stage B — read-only sync, reversible, destroys nothing |
 | Telegram alerts | ☐ Stage C. The transport exists (§18); thresholds, state and trigger do not |
 
 ### Three decisions taken before any code
@@ -1071,7 +1071,7 @@ anonymous callers.
   `JSON.stringify` lengths in the file store. **Measured, never
   records × a constant** — §17 records why that estimate reads fine right up
   until the tier fills. Cache with a short TTL from the start; it scans.
-- ☐ **B — the levers.** `orgCreation` beside the signup mode, same `platform`
+- ✅ **B — the levers.** Shipped. `orgCreation` beside the signup mode, same `platform`
   document and the same precedence rule (§16: a panel decision beats the env
   var and survives a redeploy). Org suspend/resume via `suspendedAt` +
   `suspendedReason`: sync refuses writes with a named reason, sign-in still
@@ -1117,3 +1117,40 @@ first with each tenant's share of stored bytes, and the three meters.
 The per-org test asserts that **one large record outweighs six small ones**.
 That is the assertion that fails the moment anybody swaps the measurement back
 for records × a constant, which is the trap §17 already records.
+
+### Stage B as built
+
+`orgCreation: 'open' | 'closed'` in the `platform` document, same precedence as
+the signup mode. Closed refuses a signup that would mint a new org **unless it
+carries a valid team invite** — checked, never consumed, because
+`redeemPendingInvite` spends it a moment later and burning it twice strands the
+joiner in an org of their own. The invite rides the Google round trip in
+`crmb_invite`, beside `crmb_beta` and for the same reason.
+
+Suspension is `suspendedAt` + `suspendedReason` on the org. `/api/sync` still
+**pulls** for a suspended org and refuses only the push, returning
+`readOnly` + `readOnlyReason` — a sync that silently stopped working is
+indistinguishable from the bug the tester was about to report.
+
+**The trap that would have cost real data.** `Cloud.sync()` set the push
+watermark unconditionally. On a refused push that marks the rows as sent, so
+they are never offered again — resuming the organisation would restore writing
+while having quietly lost everything typed during the pause. The watermark now
+moves only when the push was accepted; the cursor still moves either way,
+because the pull did run.
+
+**And the test for it passed on the bug first time.** One record sits exactly
+on the watermark and client selection uses `>=` (§10), so it is re-sent even
+when the watermark wrongly advanced. It takes **two records with distinct
+timestamps** — the earlier one is what falls below the line and disappears.
+
+Other notes: the read-only toast is latched, or the debounced push would fire
+it on every keystroke; `platformCache` is invalidated on suspend, since the
+table it feeds shows exactly that column; and `.mode-switch` now matches two
+rows, so the older E2E test addresses its own by `:has([data-mode])`.
+
+**Still open and worth deciding:** joining a team does not delete the org the
+joiner vacated, so every invited colleague leaves an empty one behind. They are
+visible in the Organisations table as rows with 0 people. Deleting them was not
+done — removing data during a flow nobody asked about is the habit §12 warns
+against — but the org count is inflated by exactly that number.

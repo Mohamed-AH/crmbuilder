@@ -1600,7 +1600,9 @@ test.describe('admin', () => {
     await page.goto('/');
     await signIn(page, 'e2e-admin@example.com');
     await page.goto('/#/admin');
-    await expect(page.locator('.mode-switch')).toBeVisible({ timeout: 20000 });
+    // Two mode-switch rows exist now — signups and org creation — so this one
+    // is addressed by the buttons it owns.
+    await expect(page.locator('.mode-switch:has([data-mode])')).toBeVisible({ timeout: 20000 });
 
     try {
       await page.click('.mode-switch [data-mode="closed"]');
@@ -1632,6 +1634,74 @@ test.describe('admin', () => {
    * here: Render does not publish free-tier consumption and a number nobody
    * can check is worse than none.
    */
+  /*
+   * A paused workspace is recoverable, and that is the whole claim.
+   *
+   * The push is refused while the pull still runs, so the client must NOT
+   * advance its push watermark — otherwise those rows are marked as sent,
+   * never offered again, and resuming the organisation restores writing while
+   * having quietly lost everything typed during the pause. Driven through the
+   * real app because the watermark lives in the browser.
+   */
+  test('work typed while a workspace is paused survives, and lands when it resumes', async ({ page, browser }) => {
+    const email = uniqueEmail('paused');
+    await onboard(page, { templates: ['Contacts'] });
+    await signIn(page, email);
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+    const orgId = (await (await page.request.get('/api/me')).json()).user.orgId;
+
+    // The operator pauses them, from a separate session.
+    const opCtx = await browser.newContext();
+    const op = await opCtx.newPage();
+    await op.goto('/');
+    await signIn(op, 'e2e-admin@example.com');
+    const pause = await op.request.post(`/api/admin/orgs/${orgId}/suspend`, {
+      data: { suspend: true, reason: 'Paused for a storage review' },
+    });
+    expect(pause.ok()).toBeTruthy();
+
+    /*
+     * TWO records, and they must not share a timestamp.
+     *
+     * Client selection uses `>=` on the watermark (§10), so a single row
+     * sitting exactly on the boundary is re-sent even when the watermark
+     * wrongly advanced — the first version of this test passed on the bug for
+     * that reason. The earlier of two records is the one that actually falls
+     * below the line and disappears.
+     */
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    for (const name of ['Typed while paused', 'Typed a moment later']) {
+      await page.click('#add-record-btn');
+      await page.fill('#f-name', name);
+      await page.click('#record-save');
+      await expect(page.locator(`tr:has-text("${name}")`)).toBeVisible();
+      await page.waitForTimeout(1100); // distinct updatedAt, and a sync attempt between them
+    }
+
+    // They are told, rather than left with a sync that silently stopped.
+    await expect(page.locator('.toast').last()).toContainText('storage review', { timeout: 20000 });
+
+    // The server does not have it.
+    await expect(async () => {
+      const data = await (await page.request.get('/api/data')).json();
+      expect(data.records.some((r) => r.data && r.data.name === 'Typed while paused')).toBe(false);
+    }).toPass({ timeout: 15000 });
+
+    // Resume, and the work they did during the pause has to arrive. If the
+    // watermark moved on the refused push, this is where it is lost for good.
+    expect((await op.request.post(`/api/admin/orgs/${orgId}/suspend`, { data: { suspend: false } })).ok()).toBeTruthy();
+    await page.reload();
+    await expect(async () => {
+      const data = await (await page.request.get('/api/data')).json();
+      const names = data.records.map((r) => r.data && r.data.name);
+      // Both, not just the newest. The earlier one is the assertion that
+      // fails if the watermark moved on the refused push.
+      expect(names).toContain('Typed while paused');
+      expect(names).toContain('Typed a moment later');
+    }).toPass({ timeout: 30000 });
+    await opCtx.close();
+  });
+
   test('the deployment card shows the three meters and who is heaviest', async ({ page }) => {
     await page.goto('/');
     await signIn(page, 'e2e-admin@example.com');

@@ -502,8 +502,27 @@
     // edit, and "Sync now" — and a refusal that repainted silently on two of
     // them would be exactly the bug report this is meant to prevent.
     if (undone.length) await reportRejections(undone);
+
+    /*
+     * A paused workspace, said once rather than every sync.
+     *
+     * Every path that syncs comes through here, and the debounced push after
+     * each keystroke comes through here too — so without the latch this would
+     * toast continuously while somebody typed, which is how a clear
+     * explanation turns into noise people click past.
+     */
+    if (remote.readOnly && !readOnlyNotified) {
+      readOnlyNotified = true;
+      toast(remote.readOnlyReason || 'This workspace is paused — your changes are not being saved');
+    } else if (!remote.readOnly && readOnlyNotified) {
+      readOnlyNotified = false;
+      toast('Saving again — your workspace is back');
+    }
     return changed;
   }
+
+  // Latched so the message lands once when it starts and once when it stops.
+  let readOnlyNotified = false;
 
   /*
    * Explain a refusal, after it has landed on screen.
@@ -841,6 +860,17 @@
     }
   }
 
+  // Whatever the signup gate needs to see, in one place so the two entry
+  // points cannot drift apart.
+  function authQuery(overrideCode) {
+    const params = new URLSearchParams();
+    const code = overrideCode === undefined ? betaCode() : overrideCode;
+    if (code) params.set('beta', code);
+    if (pendingInvite()) params.set('invite', pendingInvite());
+    const qs = params.toString();
+    return qs ? `?${qs}` : '';
+  }
+
   function openSignIn({ signUp = false } = {}) {
     const { googleEnabled, devLoginEnabled } = Cloud.me;
     // Only asked for when the deployment actually gates signups.
@@ -864,7 +894,7 @@
     ? 'Your account is created the first time you continue with Google — there is no separate form. It saves this CRM so you can open it on your phone too, and share it with colleagues.'
     : 'Sign in to save your CRM to your account and access it from any device. Your data also always stays available on this device.'}</p>
         ${googleEnabled ? `
-          <a class="btn btn-google btn-block" href="/auth/google${betaCode() ? `?beta=${encodeURIComponent(betaCode())}` : ''}" id="google-signin">
+          <a class="btn btn-google btn-block" href="/auth/google${authQuery()}" id="google-signin">
             <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.6-.4-3.9z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.9 1.2 8 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.6 39.6 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C41 35.4 44 30.2 44 24c0-1.3-.1-2.6-.4-3.9z"/></svg>
             Continue with Google
           </a>` : ''}
@@ -901,7 +931,7 @@
         if (typed) {
           e.preventDefault();
           try { localStorage.setItem(BETA_KEY, typed); } catch { /* private mode */ }
-          location.href = `/auth/google?beta=${encodeURIComponent(typed)}`;
+          location.href = `/auth/google${authQuery(typed)}`;
         }
       });
     }
@@ -910,7 +940,7 @@
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         try {
-          await Cloud.devLogin($('#dev-email', modal).value.trim(), '', codeField ? codeField.value.trim() : betaCode());
+          await Cloud.devLogin($('#dev-email', modal).value.trim(), '', codeField ? codeField.value.trim() : betaCode(), pendingInvite());
           Scope.markSignInPending();
           location.reload(); // boot re-runs and reconciles local vs cloud data
         } catch (err) {
@@ -2825,13 +2855,20 @@
               </div>`).join('')}
           </div>
           <p class="settings-hint">Memory is sampled when this page loads, so it catches a slow leak rather than a sudden spike — the burst that would actually restart the container happens between looks.</p>
+          <div class="mode-switch">
+            <span class="settings-hint" style="margin:0;align-self:center">New organisations:</span>
+            ${[['open', 'Allowed'], ['closed', 'Capped']].map(([value, label]) => `
+              <button class="btn ${platform.orgCreation === value ? 'btn-primary' : ''}" data-orgmode="${value}"
+                      ${platform.orgCreation === value ? 'disabled' : ''}>${esc(label)}</button>`).join('')}
+          </div>
+          <p class="settings-hint">Capping stops <em>new</em> tenants. Colleagues invited to a team that already exists still sign up and join — that is the whole reason this is a separate switch from pausing signups.</p>
         </div>
         <div class="card table-card">
           <div class="card-head"><h2>Organisations</h2></div>
           <p class="settings-hint">Heaviest first. Share is of what is actually stored, so one tenant dominating the database is visible without doing the arithmetic.</p>
           <div class="table-scroll">
             <table class="records-table">
-              <thead><tr><th>Organisation</th><th>People</th><th>Records</th><th>Stored</th><th>Share</th><th>Last active</th></tr></thead>
+              <thead><tr><th>Organisation</th><th>People</th><th>Records</th><th>Stored</th><th>Share</th><th>Last active</th><th>Actions</th></tr></thead>
               <tbody>
                 ${platform.orgs.map((o) => `
                   <tr>
@@ -2841,6 +2878,10 @@
                     <td data-label="Stored" class="td-num">${fmtBytes(o.bytes)}</td>
                     <td data-label="Share" class="td-num">${o.shareOfData}%</td>
                     <td data-label="Last active">${o.lastActiveAt ? fmtWhen(o.lastActiveAt) : '—'}</td>
+                    <td data-label="Actions" class="admin-actions">
+                      <button class="icon-btn" data-org-suspend="${esc(o.id)}" data-on="${o.suspendedAt ? '0' : '1'}"
+                              title="${o.suspendedAt ? 'Let this workspace write again' : 'Pause writes — nothing is deleted'}">${icon(o.suspendedAt ? 'shield-check' : 'ban', 15)}</button>
+                    </td>
                   </tr>`).join('')}
               </tbody>
             </table>
@@ -3002,6 +3043,37 @@
         toast('Signup link copied');
       } catch {
         prompt('Copy this signup link:', url);
+      }
+    }));
+
+    $$('[data-orgmode]').forEach((btn) => btn.addEventListener('click', async () => {
+      const mode = btn.dataset.orgmode;
+      if (mode === 'closed' && !confirm('Stop new organisations signing up?\n\nColleagues invited to teams that already exist can still join. Only brand-new tenants are turned away.')) return;
+      try {
+        await Cloud.admin.setOrgCreation(mode);
+        toast(mode === 'closed' ? 'New organisations capped' : 'New organisations allowed');
+        renderAdmin();
+      } catch (err) {
+        toast(err.message);
+      }
+    }));
+
+    $$('[data-org-suspend]').forEach((btn) => btn.addEventListener('click', async () => {
+      const id = btn.dataset.orgSuspend;
+      const suspend = btn.dataset.on === '1';
+      let reason = '';
+      if (suspend) {
+        // Named, because the workspace's own people see this sentence and
+        // "your account is paused" with no explanation reads as a deletion.
+        reason = prompt('Pause writes for this workspace. Their data is untouched and they can still sign in — they just cannot save until you resume.\n\nWhat should they be told?', 'Paused while we look at storage. Nothing has been deleted.');
+        if (reason === null) return;
+      } else if (!confirm('Let this workspace save again?')) return;
+      try {
+        await Cloud.admin.suspendOrg(id, suspend, reason);
+        toast(suspend ? 'Workspace paused' : 'Workspace resumed');
+        renderAdmin();
+      } catch (err) {
+        toast(err.message);
       }
     }));
 
@@ -3587,6 +3659,13 @@
     // because on a cold start this is gone before sign-in is even possible.
     toast('Beta invite applied');
   }
+
+  // The team invite has to reach the signup gate, not just the join that
+  // follows it: with org creation closed, an invite is what distinguishes a
+  // colleague from a new tenant.
+  const pendingInvite = () => {
+    try { return localStorage.getItem('crmb:pendingInvite') || ''; } catch { return ''; }
+  };
 
   const betaCode = () => {
     try { return localStorage.getItem(BETA_KEY) || ''; } catch { return ''; }

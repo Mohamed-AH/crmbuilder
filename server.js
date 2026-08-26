@@ -37,6 +37,10 @@ const DEV_LOGIN = process.env.ALLOW_DEV_LOGIN === '1' || (!IS_PROD && !GOOGLE_CL
 
 const COOKIE = 'crmb_session';
 const BETA_COOKIE = 'crmb_beta';
+// The team invite has to survive the Google round trip too, for the same
+// reason the beta code does: the callback is where we learn whether this is a
+// signup at all, and the gate needs to know an invite is in hand.
+const INVITE_COOKIE = 'crmb_invite';
 const DAY_MS = 86400000;
 
 /*
@@ -90,6 +94,47 @@ async function signupMode() {
   const value = SIGNUP_MODES.includes(stored) ? stored : SIGNUP_MODE_DEFAULT;
   signupModeCache = { value, at: now };
   return value;
+}
+
+/*
+ * Creating a tenant is a separate act from creating an account.
+ *
+ * They looked like one switch because every signup mints an org — which meant
+ * pausing signups also locked out every *invited teammate* of every existing
+ * customer, since a colleague must have an account before /api/org/join can
+ * move them. That is the wrong blast radius for "we are full".
+ *
+ * So this gate refuses a signup that would add a NEW organisation, while a
+ * signup carrying a valid team invite still goes through. The invite is only
+ * checked here, never consumed: redeemPendingInvite does the actual join a
+ * moment later, and burning it twice would leave the joiner stranded in an org
+ * of their own.
+ */
+const ORG_CREATION_MODES = ['open', 'closed'];
+let orgCreationCache = { value: null, at: 0 };
+
+async function orgCreation() {
+  const now = Date.now();
+  if (orgCreationCache.value && now - orgCreationCache.at < SIGNUP_MODE_TTL_MS) return orgCreationCache.value;
+  let stored = null;
+  try {
+    stored = (await store.getPlatformSettings()).orgCreation;
+  } catch (err) {
+    console.warn('Could not read the org creation gate, allowing:', err.message);
+  }
+  const value = ORG_CREATION_MODES.includes(stored) ? stored : 'open';
+  orgCreationCache = { value, at: now };
+  return value;
+}
+
+async function setOrgCreation(mode, userId) {
+  await store.updatePlatformSettings({
+    orgCreation: mode,
+    orgCreationSetAt: Date.now(),
+    orgCreationSetBy: userId,
+  });
+  orgCreationCache = { value: mode, at: Date.now() };
+  return mode;
 }
 
 async function setSignupMode(mode, userId) {
@@ -333,6 +378,11 @@ class FileStore {
     return org;
   }
   async getOrg(id) { return (this.s.orgs || []).find((o) => o.id === id) || null; }
+  async updateOrg(id, patch) {
+    const o = await this.getOrg(id);
+    if (o) { Object.assign(o, patch); this.save(); }
+    return o;
+  }
   async listOrgs() { return [...(this.s.orgs || [])]; }
   async countOrgs() { return (this.s.orgs || []).length; }
 
@@ -778,6 +828,10 @@ class MongoStore {
 
   // --- organisations
   async createOrg(org) { await this.orgs.insertOne({ ...org }); return org; }
+  async updateOrg(id, patch) {
+    await this.orgs.updateOne({ id }, { $set: patch });
+    return this.orgs.findOne({ id }, { projection: { _id: 0 } });
+  }
   async getOrg(id) { return this.orgs.findOne({ id }, { projection: { _id: 0 } }); }
   async listOrgs() { return this.orgs.find({}, { projection: { _id: 0 } }).toArray(); }
   async countOrgs() { return this.orgs.countDocuments(); }
@@ -1712,6 +1766,12 @@ app.get('/auth/google', (req, res) => {
   } else {
     res.clearCookie(BETA_COOKIE);
   }
+  const invite = String(req.query.invite || '').slice(0, 128);
+  if (invite) {
+    res.cookie(INVITE_COOKIE, invite, { httpOnly: true, sameSite: 'lax', secure: IS_PROD, maxAge: 600000 });
+  } else {
+    res.clearCookie(INVITE_COOKIE);
+  }
   const params = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
     redirect_uri: `${APP_URL}/auth/google/callback`,
@@ -1750,8 +1810,9 @@ app.get('/auth/google/callback', async (req, res) => {
     if (!info.email) throw new Error('no email from Google');
 
     // Authenticated by Google, but not yet allowed to exist here.
-    const gate = await checkSignup(info.email, req.cookies[BETA_COOKIE]);
+    const gate = await checkSignup(info.email, req.cookies[BETA_COOKIE], req.cookies[INVITE_COOKIE]);
     res.clearCookie(BETA_COOKIE);
+    res.clearCookie(INVITE_COOKIE);
     if (!gate.ok) {
       offerToAsk(res, info.email, info.name);
       return res.redirect(`/?auth_error=${gate.reason}`);
@@ -1781,7 +1842,7 @@ app.post('/auth/dev', async (req, res) => {
   // The same gate as the Google path. Correct in its own right, and the reason
   // any of this is testable: the OAuth callback cannot be driven from a test,
   // and this is the seam that can.
-  const gate = await checkSignup(email, req.body.beta);
+  const gate = await checkSignup(email, req.body.beta, req.body.invite);
   if (!gate.ok) {
     // Same seam as the Google path: the refusal is what hands over the right
     // to ask. Without this the request flow would only be reachable through
@@ -1857,6 +1918,28 @@ app.post('/api/sync', requireAuth, async (req, res) => {
     if (Array.isArray(body[kind]) && body[kind].length > MAX_SYNC_ITEMS) {
       return res.status(413).json({ error: `Too many ${kind} in one push (max ${MAX_SYNC_ITEMS})` });
     }
+  }
+
+  /*
+   * A suspended organisation is read-only, not cut off.
+   *
+   * The pull still runs, so everyone keeps the data they already had and picks
+   * up anything a colleague synced before the pause. Only the push is refused,
+   * and it is refused with a reason the client can put on screen — a sync that
+   * silently stopped working would be indistinguishable from the bug the
+   * tester was about to report.
+   *
+   * Nothing is deleted here, ever. deleteAccount stays the only thing that can
+   * remove a workspace (§5), and suspension has to be one undo away.
+   */
+  const org = req.user.orgId ? await store.getOrg(req.user.orgId) : null;
+  if (org && org.suspendedAt) {
+    const out = await pullChanges(req.user, since, { modules: new Set(), records: new Set() });
+    return res.json({
+      ...out,
+      readOnly: true,
+      readOnlyReason: org.suspendedReason || 'This workspace is paused. Nothing has been deleted.',
+    });
   }
 
   const { won, touched, settingsWritten, rejected } = await applyPush(req.user, body);
@@ -1977,7 +2060,7 @@ function publicBetaCode(entry) {
  * runs ONLY once an account has actually been created — a failed token
  * exchange or an already-existing user must not burn a use.
  */
-async function checkSignup(email, code) {
+async function checkSignup(email, code, inviteCode) {
   const existing = await store.getUserByEmail(String(email).toLowerCase());
   // An account that exists is never gated. This is the whole point.
   if (existing) return { ok: true, existing };
@@ -2016,6 +2099,21 @@ async function checkSignup(email, code) {
   const asked = await store.getAccessRequest(String(email).toLowerCase());
   if (asked && asked.status === 'approved') {
     return { ok: true, consume: () => store.updateAccessRequest(asked.email, { usedAt: Date.now() }) };
+  }
+
+  /*
+   * The org gate, ahead of the signup mode because it is a different axis:
+   * `open` signups plus closed org creation has to mean "invited colleagues
+   * only", and an early return on `open` would skip this entirely.
+   *
+   * After the approved-request bypass, though — an approval is a deliberate
+   * decision about one person and outranks the deployment's default posture,
+   * exactly as it does for the mode.
+   */
+  if ((await orgCreation()) === 'closed') {
+    const invite = inviteCode ? await store.getInvite(String(inviteCode)) : null;
+    // Checked, never consumed. /api/org/join spends it a moment later.
+    if (inviteState(invite) !== 'valid') return { ok: false, reason: 'orgclosed' };
   }
 
   // Before the pending check, not after: a request left over from when this
@@ -2604,6 +2702,36 @@ app.put('/api/admin/signup-mode', requireAuth, requirePlatformAdmin, async (req,
   res.json({ ok: true, signupMode: mode });
 });
 
+app.put('/api/admin/org-creation', requireAuth, requirePlatformAdmin, async (req, res) => {
+  const mode = req.body && req.body.mode;
+  if (!ORG_CREATION_MODES.includes(mode)) {
+    return res.status(400).json({ error: `Mode must be one of: ${ORG_CREATION_MODES.join(', ')}` });
+  }
+  await setOrgCreation(mode, req.user.id);
+  console.log(`Org creation set to "${mode}" by ${req.user.email}`);
+  res.json({ ok: true, orgCreation: mode });
+});
+
+/*
+ * Pause an organisation, or let it go again.
+ *
+ * This is a reversible read-only state, and the wording everywhere has to say
+ * so — it sits one word from account deletion and a decade of data apart, the
+ * same care §15 needed for removing a member. Nothing here touches a workspace.
+ */
+app.post('/api/admin/orgs/:id/suspend', requireAuth, requirePlatformAdmin, async (req, res) => {
+  const org = await store.getOrg(req.params.id);
+  if (!org) return res.status(404).json({ error: 'Organisation not found' });
+  const suspend = req.body && req.body.suspend === true;
+  const reason = String((req.body && req.body.reason) || '').trim().slice(0, 200);
+  await store.updateOrg(org.id, suspend
+    ? { suspendedAt: Date.now(), suspendedBy: req.user.id, suspendedReason: reason || 'This workspace is paused while we look at storage. Nothing has been deleted.' }
+    : { suspendedAt: null, suspendedBy: null, suspendedReason: null });
+  platformCache = { at: 0, body: null }; // the table shows this, so do not serve a stale one
+  console.log(`Organisation ${org.id} ${suspend ? 'paused' : 'resumed'} by ${req.user.email}`);
+  res.json({ ok: true, suspended: suspend });
+});
+
 app.post('/api/admin/beta-codes', requireAuth, requirePlatformAdmin, async (req, res) => {
   const maxUses = Math.min(Math.max(Number(req.body && req.body.maxUses) || 10, 1), 1000);
   const days = Math.min(Math.max(Number(req.body && req.body.days) || 30, 1), 365);
@@ -2882,6 +3010,7 @@ app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, re
       egress,
     },
     orgs: rows,
+    orgCreation: await orgCreation(),
     measuredAt: now,
   };
   platformCache = { at: now, body };

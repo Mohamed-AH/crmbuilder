@@ -120,8 +120,8 @@ const Cloud = (() => {
       return me;
     },
 
-    async devLogin(email, name, beta) {
-      const out = await api('/auth/dev', { method: 'POST', body: JSON.stringify({ email, name, beta }) }, TIMEOUT.auth);
+    async devLogin(email, name, beta, invite) {
+      const out = await api('/auth/dev', { method: 'POST', body: JSON.stringify({ email, name, beta, invite }) }, TIMEOUT.auth);
       me.authenticated = true;
       me.user = out.user;
       me.serverAvailable = true;
@@ -198,12 +198,25 @@ const Cloud = (() => {
         }, TIMEOUT.data);
 
         const changed = applyChanges ? await applyChanges(out) : 0;
+        // The cursor moves either way: the pull ran, and what we have seen of
+        // the server's stream is true whether or not our own push landed.
         Scope.set(CURSOR, String(out.cursor || cursor));
-        Scope.set(PUSHED, String(highWater));
+        /*
+         * The push watermark moves ONLY if the push was accepted.
+         *
+         * A suspended workspace gets its pull and has its push refused. Moving
+         * the watermark anyway would mark those rows as sent, and they would
+         * never be offered again — so resuming the organisation would restore
+         * writing while quietly having lost everything typed during the pause.
+         * Staying dirty is what makes the pause recoverable.
+         */
+        if (!out.readOnly) {
+          Scope.set(PUSHED, String(highWater));
+          Scope.remove('dirty');
+        }
         Scope.set('lastSync', String(Date.now()));
-        Scope.remove('dirty');
-        setStatus('synced');
-        return { ok: true, changed };
+        setStatus(out.readOnly ? 'error' : 'synced');
+        return { ok: true, changed, readOnly: !!out.readOnly };
       } catch (err) {
         if (err.status === 404) {
           // An older server that has never heard of /api/sync. Fall back for
@@ -307,6 +320,8 @@ const Cloud = (() => {
       revokeBetaCode: (code) => api(`/api/admin/beta-codes/${encodeURIComponent(code)}`, { method: 'DELETE' }, TIMEOUT.admin),
       setSignupMode: (mode) => api('/api/admin/signup-mode', { method: 'PUT', body: JSON.stringify({ mode }) }, TIMEOUT.admin),
       platform: () => api('/api/admin/platform', {}, TIMEOUT.admin),
+      setOrgCreation: (mode) => api('/api/admin/org-creation', { method: 'PUT', body: JSON.stringify({ mode }) }, TIMEOUT.admin),
+      suspendOrg: (id, suspend, reason) => api(`/api/admin/orgs/${encodeURIComponent(id)}/suspend`, { method: 'POST', body: JSON.stringify({ suspend, reason }) }, TIMEOUT.admin),
       accessRequests: () => api('/api/admin/access-requests', {}, TIMEOUT.admin),
       decideAccessRequest: (email, decision) => api(
         `/api/admin/access-requests/${encodeURIComponent(email)}/decide`,
