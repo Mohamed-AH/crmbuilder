@@ -56,8 +56,9 @@ times the work.
 `ADMIN_EMAILS` grants `platformAdmin`, which crosses orgs. On the pooled
 deployment that means your operators and nobody else — never a customer. On a
 dedicated deployment there is only one customer, so it can be their own IT
-lead; decide which before the first sign-in, because **the first account ever
-to sign in becomes a platform admin regardless**.
+lead; decide which before the first sign-in, because **on a deployment that
+names nobody, the first account to sign in becomes a platform admin**. Setting
+`ADMIN_EMAILS` before anyone signs in removes that entirely.
 
 ### Moving an existing client from pooled to dedicated
 
@@ -124,7 +125,7 @@ and set the env vars above plus `NODE_ENV=production` and a random `SESSION_SECR
 
 - **Cold starts**: free web services spin down after ~15 minutes idle; the first request afterwards takes ~30–60s. The PWA hides this well — the app shell loads instantly from the service worker cache and data loads locally, then syncs when the server wakes.
 - **Disk is ephemeral**: don't rely on the file-store fallback in production — set `MONGODB_URI`. (Without it the server still runs, but synced data would be lost on redeploys.)
-- **Admin role**: the *first account ever to sign in* automatically becomes admin, and so does any email listed in `ADMIN_EMAILS`. Admins get the **Admin** section in the sidebar (accounts, business analytics).
+- **Admin role**: any email listed in `ADMIN_EMAILS` becomes a platform admin. The *first account ever to sign in* also does, **but only when `ADMIN_EMAILS` is empty** — otherwise whoever discovered a freshly deployed URL first would own the instance. Set `ADMIN_EMAILS` before the first sign-in and that window never exists. Admins get the **Admin** section in the sidebar (accounts, business analytics).
 
 ## 4. Verify the deployment
 

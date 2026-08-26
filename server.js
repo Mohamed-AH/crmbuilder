@@ -830,14 +830,32 @@ async function upsertUser({ email, name, picture, provider }) {
   email = String(email).toLowerCase();
   let user = await store.getUserByEmail(email);
   if (!user) {
+    /*
+     * The bootstrap, narrowed.
+     *
+     * "The first account ever becomes platformAdmin" existed so a fresh
+     * deployment is not bricked: minting a beta code needs a platform admin,
+     * and becoming one needs a signup. But unconditionally, it also means that
+     * whoever reaches a newly deployed URL first owns the instance — and a URL
+     * is live the moment the service is, which is before its owner has
+     * necessarily signed in.
+     *
+     * So it now applies only where it is actually needed: a deployment that
+     * named its operators has already answered the question, and a stranger
+     * arriving first gets an ordinary account. A deployment with no
+     * ADMIN_EMAILS still hands the instance to its first visitor, because the
+     * alternative there is nobody being able to administer it at all — that
+     * trade is stated in DEPLOYMENT.md rather than hidden here.
+     */
     const isFirst = (await store.countUsers()) === 0;
+    const bootstrapAdmin = isFirst && ADMIN_EMAILS.length === 0;
     user = {
       id: uid(),
       email,
       name: name || email.split('@')[0],
       picture: picture || '',
       provider,
-      role: isFirst || ADMIN_EMAILS.includes(email) ? 'platformAdmin' : 'owner',
+      role: bootstrapAdmin || ADMIN_EMAILS.includes(email) ? 'platformAdmin' : 'owner',
       disabled: false,
       createdAt: Date.now(),
       lastActiveAt: Date.now(),
@@ -973,14 +991,21 @@ function requirePlatformAdmin(req, res, next) {
  * calls in the wrong order, or one of them forgotten, is exactly the bug.
  */
 async function deleteAccount(user) {
+  // Refuses rather than deletes, and lives in here rather than at the one call
+  // site, for the same reason the rest of this function does: the next caller
+  // — a self-serve "delete my account" in Settings is the obvious one —
+  // inherits the invariant instead of having to remember it.
+  if (await wouldStrandDeployment(user)) {
+    return { ok: false, reason: 'lastPlatformAdmin' };
+  }
   const wsId = workspaceIdFor(user);
   await store.deleteUser(user.id);
   const remaining = user.orgId ? await store.listUsers(user.orgId) : [];
   if (!remaining.length) {
     await store.deleteWorkspace(wsId);
-    return { deletedWorkspace: true };
+    return { ok: true, deletedWorkspace: true };
   }
-  return { deletedWorkspace: false, remaining: remaining.length };
+  return { ok: true, deletedWorkspace: false, remaining: remaining.length };
 }
 
 // Resolve a target account for an admin action, refusing anything outside the
@@ -996,7 +1021,42 @@ async function resolveTarget(req, res) {
     res.status(404).json({ error: 'User not found' });
     return null;
   }
+  /*
+   * An org owner may not act on a platform admin.
+   *
+   * Scoping by org is not enough on its own: a platform admin has an org like
+   * everyone else, and its owner could demote, disable or delete them — which
+   * is an org-level role reaching a deployment-level one. 404 rather than 403,
+   * the same rule as every other cross-boundary answer here: the response must
+   * not confirm that the account exists.
+   */
+  if (!req.isPlatformAdmin && target.role === 'platformAdmin') {
+    res.status(404).json({ error: 'User not found' });
+    return null;
+  }
   return target;
+}
+
+/*
+ * Nobody may remove the deployment's last platform admin.
+ *
+ * Not a permission question — this applies to platform admins too. There is no
+ * route back: administering the instance needs a platform admin and making one
+ * needs a platform admin, and the bootstrap in upsertUser only fires on an
+ * empty deployment, so it cannot rescue this.
+ *
+ * **No current path reaches a `true` here, and that is stated rather than
+ * tested.** Two guards already make stranding impossible: this route refuses
+ * any action on your own account, and an org owner now 404s on a platform
+ * admin — so the actor is always a *different* platform admin, which means
+ * there are at least two. This is the backstop for the next route that is
+ * added, not a live check, and it is written down that way so nobody deletes
+ * it as dead code or writes a test that appears to cover it.
+ */
+async function wouldStrandDeployment(target) {
+  if (target.role !== 'platformAdmin') return false;
+  const admins = (await store.listUsers()).filter((u) => u.role === 'platformAdmin');
+  return admins.length <= 1;
 }
 
 // ------------------------------------------------------------ sync engine
@@ -1751,7 +1811,12 @@ async function checkSignup(email, code) {
    * have no way in at all. This is the same bootstrap upsertUser already
    * applies when it makes that first account a platformAdmin.
    */
-  if ((await store.countUsers()) === 0) return { ok: true };
+  // Narrowed for the same reason as upsertUser's: with ADMIN_EMAILS set, the
+  // bypass above already lets the operator create the first account, so this
+  // one is not needed — and leaving it open let whoever found a newly deployed
+  // URL first sign up past a `code` gate. Without ADMIN_EMAILS it is still the
+  // only way in, so it stays.
+  if ((await store.countUsers()) === 0 && ADMIN_EMAILS.length === 0) return { ok: true };
 
   /*
    * Somebody asked, and the operator said yes.
@@ -2639,6 +2704,15 @@ app.patch('/api/admin/users/:id', requireAuth, requireOrgAdmin, async (req, res)
   if (req.body.role === 'owner' || req.body.role === 'member') patch.role = req.body.role;
   if (req.body.role === 'platformAdmin' && req.isPlatformAdmin) patch.role = 'platformAdmin';
   if (typeof req.body.disabled === 'boolean') patch.disabled = req.body.disabled;
+
+  // Demoting or disabling the last platform admin strands the deployment just
+  // as thoroughly as deleting them, so both go through the same check.
+  const losesTheRole = (patch.role && patch.role !== 'platformAdmin') || patch.disabled === true;
+  if (losesTheRole && await wouldStrandDeployment(target)) {
+    return res.status(409).json({
+      error: 'This is the only platform administrator. Promote someone else first.',
+    });
+  }
   const user = await store.updateUser(id, patch);
   res.json({ user: { ...publicUser(user), disabled: !!user.disabled } });
 });
@@ -2648,8 +2722,13 @@ app.delete('/api/admin/users/:id', requireAuth, requireOrgAdmin, async (req, res
   if (id === req.user.id) return res.status(400).json({ error: 'You cannot delete your own account' });
   const target = await resolveTarget(req, res);
   if (!target) return undefined;
-  const { deletedWorkspace } = await deleteAccount(target);
-  res.json({ ok: true, deletedWorkspace });
+  const out = await deleteAccount(target);
+  if (!out.ok) {
+    return res.status(409).json({
+      error: 'This is the only platform administrator. Promote someone else first.',
+    });
+  }
+  res.json({ ok: true, deletedWorkspace: out.deletedWorkspace });
 });
 
 // ---- static PWA

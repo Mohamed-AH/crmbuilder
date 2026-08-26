@@ -40,7 +40,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 144 Node tests + 59 Playwright tests.
+**All green:** 149 Node tests + 61 Playwright tests.
 
 ```sh
 npm install
@@ -102,7 +102,7 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v14`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v15`).
 
 **Tenancy scoping comes from the session, never a request.** That covers both
 `req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
@@ -839,3 +839,86 @@ is a courtesy, not the mechanism.
   covered in `tests/signup.test.mjs`, which boots a gated server. The E2E tests
   prove the screen, and declare the deliberate 403 via
   `test.info().expectedConsoleErrors`.
+
+---
+
+## 21. The Tier 1 hardening (an outside audit, checked)
+
+Eight edge cases were put to this codebase from outside. **Six held, two did
+not**, and the two that did not are worth recording so they are not "fixed"
+later by someone reading the report rather than the source:
+
+- **"A stale offline delete wipes newer edits" — no.** `server.js` applyPush
+  skips any incoming row whose `updatedAt` is not newer than the stored one, so
+  a fortnight-old tombstone loses to a colleague's later edit. Rows nobody
+  touched *do* go, which is correct and merely surprising.
+- **"Deleting a field wipes its values" — backwards.** The builder writes only
+  `module.fields`; every record keeps its `data` keys. Nothing is destroyed —
+  but a user who "deleted" a field still has that data in the workspace, in
+  every JSON export, and will see it return if a field with the same key is
+  recreated. A disclosure problem, not a loss one, and still open.
+
+### What changed
+
+**The first account is only special on an unnamed deployment.** `isFirst` used
+to mean `platformAdmin` unconditionally, and `checkSignup`'s bypass 3 let that
+account past a shut gate — so whoever found a freshly deployed URL first owned
+the instance. Both now require `ADMIN_EMAILS` to be empty, which is the only
+case the bootstrap exists for (§16); with operators named, bypass 2 already
+lets them in. Guarded by three tests, including *"a deployment that named
+nobody still lets its first visitor in"* — the bricking case the bypass is for.
+
+**An org owner cannot reach a platform admin.** `resolveTarget` scoped by org
+but never compared roles, and a platform admin has an org like anyone else — so
+its owner could demote, disable or delete them. 404, not 403, like every other
+cross-boundary answer here.
+
+`wouldStrandDeployment()` lives inside `deleteAccount()` rather than at the call
+site, for the reason that function already documents. **No current path reaches
+it**: this route refuses any action on your own account, and an owner now 404s
+on a platform admin, so the actor is always a *second* platform admin and there
+are at least two. That is stated in the code and deliberately **not** covered by
+a test, because any test written for it would pass whatever the guard did. It
+is the backstop for the next route added — a self-serve "delete my account" is
+the obvious one.
+
+**Restoring a backup merges by default.** It used to tombstone every local row
+absent from the file, and tombstones sync, so recovering one deleted module
+deleted from *every colleague's device* everything added since. The
+confirmation said "REPLACES everything currently on this device", understating
+it on both counts.
+
+- **`importState` takes a `mode`, and there are three.** `merge` puts the
+  incoming rows and touches nothing else; `replace` tombstones what is missing,
+  so the removal travels; `adopt` hard-clears first, for a store being seeded
+  from scratch. The old pair was a `tombstone` boolean whose *off* branch was a
+  hard `DB.clear` — so "do not broadcast deletions" and "do not delete
+  anything" looked like one option and were not. Naming three is what stops
+  that being rediscovered; I hit it while writing the test.
+- **Replace names its cost first** — the number of rows about to go, and on a
+  team, that they go for everybody.
+- **`closeModal()` now fires `crmb:modal-closed` on `#modal-root`.** A modal
+  that answers a question can be dismissed by Escape or a backdrop click,
+  neither of which goes through its buttons; without a signal, a
+  promise-returning prompt never settles and its caller waits for ever. The
+  older prompts (`askAboutAnonWorkspace`, the beta notice) have the same latent
+  gap and simply offer no close affordance.
+
+**Test traps hit while writing this:**
+
+- **Two armed `page.once('dialog')` handlers both fire on one dialog**, and the
+  second throws *"Cannot accept dialog which is already handled"* — which
+  surfaces several steps later as an unrelated timeout. One handler, on the one
+  click that raises a confirm.
+- **The merge test asserts both halves.** That the restore restored (otherwise
+  a no-op import is indistinguishable from a good merge) *and* that nothing
+  else moved — checked at the server via `/api/sync?since=0`, since that is
+  what propagates. It asserts **no tombstone was created**, not merely that the
+  row survived: an import-time tombstone carries `stamp: true`'s clock, so it
+  would be newer than the colleague's row and would win.
+
+### Still open, deliberately
+
+Tier 2 and 3 from the audit: no read-only role (every member may delete every
+record); record-level last-write-wins loses a concurrent field edit; changing
+the currency relabels without converting; and the ghost-field data above.

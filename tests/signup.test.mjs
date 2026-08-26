@@ -1008,3 +1008,132 @@ describe('signup mode from the admin panel', () => {
     assert.equal((await srv.req('/api/me')).json.signupMode, 'code');
   });
 });
+
+/*
+ * Who ends up administering a new deployment.
+ *
+ * "The first account ever becomes a platform admin" is a bootstrap: minting a
+ * beta code needs a platform admin and becoming one needs a signup, so without
+ * it a fresh gated install has no way in. Unconditionally, though, it also
+ * means whoever reaches a newly deployed URL first owns the instance — and the
+ * URL is live from the moment the service is, which is not necessarily after
+ * its owner has signed in.
+ */
+describe('who gets to administer a new deployment', () => {
+  test('a stranger arriving first does not inherit a named deployment', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'owner@operator.test' });
+
+    // Nobody has signed in yet — the window the hijack lives in.
+    const early = await srv.signUp('passer-by@stranger.test');
+    assert.equal(early.status, 200, 'open signups still work');
+    assert.equal(early.json.user.role, 'owner', 'the instance is not theirs to run');
+
+    // And the named operator is still a platform admin when they arrive.
+    const op = await srv.signUp('owner@operator.test');
+    assert.equal(op.json.user.role, 'platformAdmin');
+
+    // The stranger cannot reach the platform surface.
+    assert.equal((await srv.req('/api/admin/beta-codes', { cookies: early.setCookie })).status, 403);
+  });
+
+  test('a gated deployment refuses the first stranger rather than seating them', async () => {
+    const srv = await boot({ signupMode: 'code', adminEmails: 'gated-op@operator.test' });
+    // Bypass 3 used to let this through on an empty deployment, so a stranger
+    // who found the URL first got an account past a gate that was shut.
+    const early = await srv.signUp('first-through-the-door@stranger.test');
+    assert.equal(early.status, 403, `a shut door is shut: ${early.text}`);
+
+    // The operator is never locked out — that is what makes narrowing it safe.
+    assert.equal((await srv.signUp('gated-op@operator.test')).status, 200);
+  });
+
+  /*
+   * The case the bootstrap exists for, which must keep working: nobody named,
+   * nothing in the database, and a gate that would otherwise refuse everyone.
+   */
+  test('a deployment that named nobody still lets its first visitor in', async () => {
+    const srv = await boot({ signupMode: 'code', adminEmails: '' });
+    const first = await srv.signUp('founder@nowhere.test');
+    assert.equal(first.status, 200, `an unnamed deployment must not be bricked: ${first.text}`);
+    assert.equal(first.json.user.role, 'platformAdmin', 'and they can actually administer it');
+    // Only the first: the door shuts behind them.
+    assert.equal((await srv.signUp('second@nowhere.test')).status, 403);
+  });
+});
+
+/*
+ * An org-level role must not reach a deployment-level one.
+ *
+ * Scoping by org is not enough on its own: a platform admin has an org like
+ * anybody else, so its owner was able to demote, disable or delete them.
+ */
+describe('platform admins are not the org owner\'s to manage', () => {
+  // A platform admin and an ordinary owner inside the SAME org — the shape
+  // where org scoping alone stops helping.
+  const sameOrgTeam = async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'plat@operator.test' });
+    const plat = await srv.signUp('plat@operator.test');
+    assert.equal(plat.json.user.role, 'platformAdmin');
+
+    const mate = await srv.signUp('colleague@team.test');
+    const code = (await srv.req('/api/org/invites', { method: 'POST', body: {}, cookies: plat.setCookie })).json.invite.code;
+    assert.equal((await srv.req('/api/org/join', { method: 'POST', body: { code }, cookies: mate.setCookie })).status, 200);
+    // Promote them so they are a full owner of the platform admin's org.
+    assert.equal((await srv.req(`/api/admin/users/${mate.json.user.id}`, {
+      method: 'PATCH', body: { role: 'owner' }, cookies: plat.setCookie,
+    })).status, 200);
+
+    return { srv, platId: plat.json.user.id, plat: plat.setCookie, owner: mate.setCookie };
+  };
+
+  test('an owner cannot demote, disable or delete a platform admin in their org', async () => {
+    const { srv, platId, owner } = await sameOrgTeam();
+
+    for (const [what, opts] of [
+      ['demote', { method: 'PATCH', body: { role: 'member' } }],
+      ['disable', { method: 'PATCH', body: { disabled: true } }],
+      ['delete', { method: 'DELETE' }],
+    ]) {
+      const out = await srv.req(`/api/admin/users/${platId}`, { ...opts, cookies: owner });
+      // 404, not 403: the answer must not confirm the account is there.
+      assert.equal(out.status, 404, `${what} should not be available: ${out.text}`);
+    }
+
+    // None of it landed.
+    const still = (await srv.req('/api/admin/users', { cookies: owner })).json.users.find((u) => u.id === platId);
+    assert.equal(still.role, 'platformAdmin');
+    assert.equal(still.disabled, false);
+  });
+
+  /*
+   * The paths that ARE reachable, asserted for what they actually are.
+   *
+   * The "last platform admin" backstop in deleteAccount cannot fire through
+   * this route — the self-guard and the owner 404 together mean the actor is
+   * always a second platform admin — so it is documented in the code rather
+   * than covered by a test that would pass whatever the guard did. What is
+   * tested here is what a platform admin genuinely can and cannot do.
+   */
+  test('a platform admin can remove another, but never their own account here', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'first-op@operator.test,second-op@operator.test' });
+    const first = await srv.signUp('first-op@operator.test');
+    const second = await srv.signUp('second-op@operator.test');
+    assert.equal(second.json.user.role, 'platformAdmin');
+
+    // Your own account is not editable from the admin surface, whatever your
+    // role — which is also what stops the deployment being stranded.
+    assert.equal((await srv.req(`/api/admin/users/${first.json.user.id}`, {
+      method: 'DELETE', cookies: first.setCookie,
+    })).status, 400);
+    assert.equal((await srv.req(`/api/admin/users/${first.json.user.id}`, {
+      method: 'PATCH', body: { role: 'member' }, cookies: first.setCookie,
+    })).status, 400);
+
+    // A second platform admin, though, is a peer and can be removed.
+    assert.equal((await srv.req(`/api/admin/users/${second.json.user.id}`, {
+      method: 'DELETE', cookies: first.setCookie,
+    })).status, 200);
+    const left = (await srv.req('/api/admin/users', { cookies: first.setCookie })).json.users;
+    assert.ok(!left.some((u) => u.email === 'second-op@operator.test'));
+  });
+});

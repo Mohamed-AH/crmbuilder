@@ -1616,10 +1616,133 @@ test.describe('settings', () => {
     const [download] = await Promise.all([page.waitForEvent('download'), page.click('#export-btn')]);
     const path = await download.path();
 
-    page.once('dialog', (d) => d.accept());
     await page.setInputFiles('#import-file', path);
+    await page.click('#restore-merge');
     await expect(page.locator('#nav-modules .nav-link').first()).toBeVisible();
     await expect(page.locator('#workspace-name')).toHaveText('Backup Co');
+  });
+
+  /*
+   * Restoring a backup must not delete a colleague's work.
+   *
+   * Import used to tombstone every local row absent from the file, and
+   * tombstones sync — so recovering one deleted module took the whole team
+   * back to the date of the backup, using the feature named recovery. The
+   * confirmation said "REPLACES everything currently on this device", which
+   * undersold it on both counts.
+   *
+   * Two halves have to hold, and both are asserted, because either alone
+   * passes on a broken build: the restore actually restores (otherwise a
+   * no-op import looks identical to a good merge), and nothing else is
+   * touched — checked at the server, since that is what propagates.
+   */
+  test('a merge restore brings back what was lost without deleting a colleague’s work', async ({ page, browser }) => {
+    const email = uniqueEmail('restore-merge');
+    await onboard(page, { name: 'Merge Co', templates: ['Contacts', 'Tasks'] });
+    await signIn(page, email);
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+
+    // The backup captures both modules.
+    await page.goto('/#/settings');
+    const [download] = await Promise.all([page.waitForEvent('download'), page.click('#export-btn')]);
+    const backup = await download.path();
+
+    // Something real to recover: delete Tasks entirely.
+    await page.click('#nav-modules .nav-link:has-text("Tasks")');
+    await page.click('#edit-module-btn');
+    // One handler, on the one click that actually raises a confirm. Two armed
+    // `once` listeners both fire on the same dialog and the second throws
+    // "already handled", which fails the test several steps later.
+    page.once('dialog', (d) => d.accept());
+    await page.click('#b-delete');
+    await expect(page.locator('#nav-modules .nav-link:has-text("Tasks")')).toHaveCount(0);
+
+    // A colleague, on the same workspace, adds something after the backup.
+    const second = await browser.newContext();
+    const page2 = await second.newPage();
+    await page2.goto('/');
+    await signIn(page2, email);
+    await page2.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page2.click('#add-record-btn');
+    await page2.fill('#f-name', 'Added after the backup');
+    await page2.click('#record-save');
+    await expect(page2.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+
+    // Capture its id from the server, so the tombstone check below can name it.
+    let addedId = null;
+    await expect(async () => {
+      const data = await (await page.request.get('/api/data')).json();
+      const row = data.records.find((r) => r.data && r.data.name === 'Added after the backup');
+      expect(row).toBeTruthy();
+      addedId = row.id;
+    }).toPass({ timeout: 20000 });
+
+    // Device one pulls it in, so it is genuinely present before the restore —
+    // otherwise the assertion afterwards could pass without meaning anything.
+    await page.reload();
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(page.locator('tr:has-text("Added after the backup")')).toBeVisible({ timeout: 20000 });
+
+    await page.goto('/#/settings');
+    await page.setInputFiles('#import-file', backup);
+    await page.click('#restore-merge');
+
+    // Half one: the restore restored. Tasks is back.
+    await expect(page.locator('#nav-modules .nav-link:has-text("Tasks")')).toBeVisible({ timeout: 20000 });
+    // Half two: it took nothing with it.
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(page.locator('tr:has-text("Added after the backup")')).toBeVisible();
+
+    // And the half that matters — nothing was broadcast. Not just "the record
+    // survived": a tombstone minted at import time carries `stamp: true`'s
+    // clock, so it would be NEWER than the colleague's row and would win. The
+    // claim is that no tombstone was created at all.
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+    await expect(async () => {
+      const delta = await (await page.request.get('/api/sync?since=0')).json();
+      const row = delta.records.find((r) => r.id === addedId);
+      expect(row, 'the colleague’s record should still be on the server').toBeTruthy();
+      expect(row.deleted, 'a merge restore must not tombstone anything').toBeFalsy();
+    }).toPass({ timeout: 20000 });
+
+    // The colleague's own device never loses it either.
+    await page2.reload();
+    await page2.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(page2.locator('tr:has-text("Added after the backup")')).toBeVisible({ timeout: 20000 });
+    await second.close();
+  });
+
+  /*
+   * And the destructive path stays destructive, deliberately and by name.
+   *
+   * Without this, a build where replace silently merged would pass the test
+   * above — "restore never deletes anything" is not the guarantee, "restore
+   * does not delete anything unless you asked for it, having been told the
+   * count" is.
+   */
+  test('a replace restore says how many rows it will delete, and then does', async ({ page }) => {
+    await onboard(page, { name: 'Replace Co', templates: ['Contacts'] });
+    await page.goto('/#/settings');
+    const [download] = await Promise.all([page.waitForEvent('download'), page.click('#export-btn')]);
+    const backup = await download.path();
+
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Added after the backup');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Added after the backup")')).toBeVisible();
+
+    await page.goto('/#/settings');
+    await page.setInputFiles('#import-file', backup);
+    let warning = '';
+    page.once('dialog', (d) => { warning = d.message(); d.accept(); });
+    await page.click('#restore-replace');
+
+    // The count is the point: "everything not in the file" is abstract until
+    // it is a number.
+    await expect(async () => expect(warning).toMatch(/Delete 1 item/)).toPass({ timeout: 5000 });
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(page.locator('tr:has-text("Added after the backup")')).toHaveCount(0);
   });
 
   test('rejects a file that is not a CRM Builder backup', async ({ page }) => {

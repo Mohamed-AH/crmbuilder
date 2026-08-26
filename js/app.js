@@ -330,17 +330,32 @@
    * act and should win the next sync, even though the backup file's own
    * timestamps are older than what is on the server.
    */
-  async function importState({ modules: mods, records, settings }, { tombstone = false, stamp = false } = {}) {
+  /*
+   * `mode` is what the caller means by "import", and there are three of them.
+   *
+   *   merge    put the incoming rows, touch nothing else
+   *   replace  tombstone whatever is not in the file, so the removal travels
+   *   adopt    hard-clear first, for a local store being seeded from scratch
+   *
+   * They were two before, and the pair did not include a merge: the flag was
+   * `tombstone`, and turning it off took the other branch — a hard `DB.clear`.
+   * So "do not broadcast deletions" and "do not delete anything" looked like
+   * one option and were not; the gentle-sounding one still emptied the device.
+   * Naming the three is what stops that being rediscovered.
+   */
+  async function importState({ modules: mods, records, settings }, { mode = 'merge', stamp = false } = {}) {
     const now = Date.now();
     const incoming = new Set([...(mods || []).map((m) => m && m.id), ...(records || []).map((r) => r && r.id)]);
 
-    if (tombstone) {
+    if (mode === 'replace') {
+      // Tombstones, not a clear: the point of replacing is that the workspace
+      // ends up matching the file everywhere, which means the removals sync.
       for (const kind of ['records', 'modules']) {
         for (const row of await DB.getAll(kind)) {
           if (!incoming.has(row.id)) await DB.delete(kind, row.id, now);
         }
       }
-    } else {
+    } else if (mode === 'adopt') {
       await DB.clear('records');
       await DB.clear('modules');
     }
@@ -515,8 +530,15 @@
   }
 
   function closeModal() {
-    $('#modal-root').innerHTML = '';
+    const root = $('#modal-root');
+    root.innerHTML = '';
     document.body.classList.remove('modal-open');
+    // A modal that answers a question can be dismissed by Escape or a click on
+    // the backdrop, neither of which goes through its buttons. Without this a
+    // promise-returning prompt simply never settles and its caller waits for
+    // ever. Fired on #modal-root because that element is static in index.html
+    // and outlives the modal it just removed.
+    root.dispatchEvent(new CustomEvent('crmb:modal-closed'));
   }
 
   document.addEventListener('keydown', (e) => {
@@ -2383,13 +2405,90 @@
       toast('That does not look like a CRM Builder backup');
       return;
     }
-    if (!confirm(`Import ${payload.modules.length} modules and ${payload.records.length} records? This REPLACES everything currently on this device.`)) return;
-    await importState(payload, { tombstone: true, stamp: true });
+    const choice = await askHowToRestore(payload);
+    if (!choice) return;
+    await importState(payload, { mode: choice, stamp: true });
     await persist();
     renderSidebar();
-    toast('Backup imported');
+    toast(choice === 'replace' ? 'Workspace replaced from backup' : 'Backup merged in');
     location.hash = '#/';
     route();
+  }
+
+  /*
+   * Restoring used to mean replacing, and said so in a way that undersold it.
+   *
+   * "This REPLACES everything currently on this device" was wrong twice. The
+   * removals are tombstones, and tombstones sync — so restoring a month-old
+   * backup deleted, from every colleague's device, everything added since.
+   * Someone recovering one lost module took the whole team back in time, using
+   * the feature named recovery.
+   *
+   * So merging is the default: add and update what is in the file, remove
+   * nothing. That is what recovering a deleted module actually wants, and it
+   * cannot destroy anybody's work. Replacing is still available, because
+   * "put it back exactly as it was" is a real need — it just has to say what
+   * it costs, in rows, before it happens.
+   */
+  async function askHowToRestore(payload) {
+    const counts = `${payload.modules.length} module(s) and ${payload.records.length} record(s)`;
+    const shared = (Cloud.me.org && Cloud.me.org.memberCount > 1);
+    return new Promise((resolve) => {
+      const modal = openModal(`
+        <div class="modal-head">
+          <h2>Restore from backup</h2>
+          <button class="icon-btn" data-close aria-label="Close">${icon('x', 16)}</button>
+        </div>
+        <div class="modal-body">
+          <p class="settings-hint">This file holds ${esc(counts)}.</p>
+          <div class="restore-choice">
+            <p><strong>Merge</strong> — put everything in the file back, and leave anything else alone. Records added since the backup are kept.</p>
+            <p><strong>Replace</strong> — make the workspace match the file exactly. Anything not in it is deleted${shared ? ' <strong>for everyone on your team</strong>' : ''}.</p>
+          </div>
+        </div>
+        <div class="modal-foot claim-actions">
+          <button class="btn" data-close>Cancel</button>
+          <button class="btn" id="restore-replace">Replace everything</button>
+          <button class="btn btn-primary" id="restore-merge">${icon('plus', 15)} Merge</button>
+        </div>`);
+
+      let answered = false;
+      // Escape and a backdrop click are cancellations, not silent merges.
+      const onDismiss = () => { if (!answered) { answered = true; resolve(null); } };
+      $('#modal-root').addEventListener('crmb:modal-closed', onDismiss, { once: true });
+      const done = (value) => {
+        answered = true;
+        $('#modal-root').removeEventListener('crmb:modal-closed', onDismiss);
+        closeModal();
+        resolve(value);
+      };
+      $$('[data-close]', modal).forEach((b) => b.addEventListener('click', () => done(null)));
+      $('#restore-merge', modal).addEventListener('click', () => done('merge'));
+      $('#restore-replace', modal).addEventListener('click', async () => {
+        // The count is the point of this second step: "everything not in the
+        // file" is abstract until it is a number, and on a team it is other
+        // people's work.
+        const doomed = await countRowsAbsentFrom(payload);
+        const warning = doomed
+          ? `Delete ${doomed} item(s) that are not in this backup${shared ? ', for everyone on your team' : ''}? This cannot be undone.`
+          : 'Nothing on this device is missing from the backup, so nothing will be deleted. Continue?';
+        if (!confirm(warning)) return;
+        done('replace');
+      });
+      // Closing by any other route is a cancellation, not a silent merge.
+    });
+  }
+
+  async function countRowsAbsentFrom(payload) {
+    const incoming = new Set([
+      ...(payload.modules || []).map((m) => m && m.id),
+      ...(payload.records || []).map((r) => r && r.id),
+    ]);
+    let n = 0;
+    for (const kind of ['modules', 'records']) {
+      for (const row of await DB.getAll(kind)) if (!incoming.has(row.id)) n += 1;
+    }
+    return n;
   }
 
   // ---------------------------------------------------------------- admin
@@ -3460,7 +3559,9 @@
         try {
           const snap = JSON.parse(Scope.get('snapshot'));
           if (snap && Array.isArray(snap.modules) && snap.modules.length) {
-            await importState(snap);
+            // The store was evicted; this is a fresh seeding, not a merge into
+            // anything, so 'adopt' is both correct and a no-op clear.
+            await importState(snap, { mode: 'adopt' });
             toast('Restored from local backup');
           }
         } catch { /* no snapshot */ }
