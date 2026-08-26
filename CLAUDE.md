@@ -40,7 +40,7 @@ never change, because everything cross-references them.
 | Migrations | §12 |
 | Guided tour | §7 |
 | Deleting a field; currency relabels | §22 · §23 |
-| Security audit and what it changed | §21 |
+| Security audit and what it changed | §21 · §30 (in progress) |
 | Why docs go stale, and which ones | §27 |
 | **How the docs are organised**, and what is frozen | §29 |
 
@@ -1590,3 +1590,68 @@ Recorded so they are not mistaken for oversights:
   suite had grown past 70. It was unindexed, so nothing walked it. It now points
   at §2 for counts rather than carrying its own — a number written in a second
   place is a number that goes stale, which is this section's thesis in one line.
+
+---
+
+## 30. Security audit — IN PROGRESS (resume point)
+
+**This section is the live checklist.** The plan, the reconnaissance and the
+reasoning are in `docs/archive/SECURITY-AUDIT.md`, which is frozen; this is what
+is done and what is not.
+
+A full-application audit against a checklist supplied from outside, **checked
+against the code rather than accepted** — §21's treatment, where six of eight
+claims held and two did not.
+
+### Phases
+
+- ☐ **1 — Auth and session.** `verified_email`, dev-login filter coercion,
+  auth-failure logging.
+- ☐ **2 — Injection and data integrity.** Exhaustive filter-coercion sweep,
+  prototype pollution, mass assignment, confirm no `$where`.
+- ☐ **3 — XSS.** Every interpolation reaching an `innerHTML` sink, then CSP as
+  defence in depth (after the sweep, not instead of it).
+- ☐ **4 — Network hardening.** Security headers, rate limits, per-route payload
+  limits, SSRF bounds, error sanitisation.
+- ☐ **5 — Supply chain and operational.** CI gates, docs as a map.
+
+### The checklist assumed a different stack, and that is load-bearing
+
+Ticking a mitigation that was never applicable is worse than no tick. There is
+no Mongoose, no `axios`, no template engine, no build step and no frontend env
+vars. Four production dependencies: `express`, `cookie-parser`, `jsonwebtoken`,
+`mongodb`.
+
+**"Verify ID tokens with `google-auth-library`" does not apply.** This is the
+authorization-code flow: the server exchanges the code with Google's token
+endpoint and calls `/oauth2/v2/userinfo` **server-to-server over TLS**. No
+client-supplied ID token is ever accepted, so there is no signature to verify.
+Adding the library would add a dependency and change nothing.
+
+### Already correct — do not "fix" these
+
+- **OAuth state**: 128 bits of CSPRNG, httpOnly, 10 minutes, compared and cleared.
+- **Cookie attributes**: all five cookies carry httpOnly + sameSite=lax + secure
+  in production.
+- **`SESSION_SECRET` falls back to `crypto.randomBytes(32)`** — random, not a
+  static default. Restarting without it signs everyone out, which is the right
+  trade and not a vulnerability.
+- **CORS: no middleware is installed**, so no `Access-Control-Allow-Origin` is
+  ever emitted. **Absence is the mitigation** — installing a permissive `cors()`
+  would be the regression.
+- **CSRF**: `sameSite=lax` plus a JSON-only API (no form-encoded parser) covers
+  the state-changing routes; OAuth has its own nonce.
+- **BOLA/tenancy**: already the core invariant (§5) — session-derived scoping,
+  404 not 403, eight isolation tests that assert the attack.
+- **NoSQL on live paths**: `/api/org/join` coerces with `String(...)`, invite
+  preview uses `req.params` (always a string), the access-request listing passes
+  no query parameter into a filter.
+- **Secrets**: `.env` gitignored; a history scan for Google/Mongo/Telegram/OpenAI
+  credential shapes returns only documentation placeholders.
+- **`npm audit`**: zero vulnerabilities, lockfile committed.
+
+### Findings marked *unknown* are unknown on purpose
+
+Prototype pollution, mass assignment and the XSS sweep are not yet assessed.
+Guessing a severity before looking is how an audit ends up reporting its own
+assumptions back to itself.

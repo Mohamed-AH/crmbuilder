@@ -24,6 +24,7 @@ Status belongs somewhere that is maintained. These point at `CLAUDE.md` for it.
 | [SCALING-OPTIONS.md](SCALING-OPTIONS.md) | The multi-tenancy analysis: Options A–E, capacity limits, pooled vs dedicated. Option E was chosen and shipped. | `CLAUDE.md` §5, §10 |
 | [OPERATOR-CONTROLS.md](OPERATOR-CONTROLS.md) | The plan for the admin dashboard's usage, quota, signup and suspension controls. Stages A, B and C all shipped. | `CLAUDE.md` §24, §25 |
 | [TIER-2.md](TIER-2.md) | Field-level merge, roles that cannot delete, and the costing of undoable deletes. 2c and 2a shipped; 2b deliberately not built. | `CLAUDE.md` §26 |
+| [SECURITY-AUDIT.md](SECURITY-AUDIT.md) | The full-application audit plan and its reconnaissance, including which checklist items did not apply to this stack and why. | `CLAUDE.md` §30 |
 
 ## Known-false statements, so nobody is caught by them
 

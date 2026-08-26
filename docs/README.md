@@ -62,6 +62,7 @@ decision was shaped that way, which does not survive in the finished code.
 | [archive/SCALING-OPTIONS.md](archive/SCALING-OPTIONS.md) | `CLAUDE.md` §5, §10 |
 | [archive/OPERATOR-CONTROLS.md](archive/OPERATOR-CONTROLS.md) | `CLAUDE.md` §24, §25 |
 | [archive/TIER-2.md](archive/TIER-2.md) | `CLAUDE.md` §26 |
+| [archive/SECURITY-AUDIT.md](archive/SECURITY-AUDIT.md) | `CLAUDE.md` §30 — **in progress** |
 
 ---
 
