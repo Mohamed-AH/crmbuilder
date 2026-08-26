@@ -1,5 +1,10 @@
 # Operator controls — the plan
 
+> **FROZEN — the plan as it stood before the work began.** Not maintained.
+> Its premise table ("two are already built… three are new") describes the
+> state *then*; stages A, B and C have all since shipped.
+> Live status: `CLAUDE.md` §24 and §25.
+
 Working plan for the admin-dashboard controls: seeing what the deployment is
 carrying, and being able to slow it down before the free tier runs out.
 

@@ -1,5 +1,10 @@
 # Tier 2 — the plan
 
+> **FROZEN — the plan as it stood before the work began.** Not maintained.
+> 2c (field-level merge) and 2a (contributor/viewer) shipped; 2b (undoable
+> deletes) is costed and deliberately not built.
+> Live status: `CLAUDE.md` §26.
+
 The two items held back from the outside audit (`CLAUDE.md` §21), plus a third
 the audit implied but did not name.
 

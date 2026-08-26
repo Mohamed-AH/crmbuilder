@@ -1,5 +1,12 @@
 # Multi-Tenancy & Scaling Options
 
+> **FROZEN — the multi-tenancy analysis as it stood before Option E shipped.**
+> Not maintained. **§1 "Where we are today" is now false on four counts** —
+> see [archive/README.md](README.md) for the list before you rely on anything here.
+> Live status: `CLAUDE.md` §5 (tenancy) and §10 (sync).
+> Previously `docs/ARCHITECTURE.md`; renamed because it is an options analysis,
+> not an architecture reference.
+
 How many customers the current build supports, what stops it going further, and
 the routes to a pooled tier and a dedicated tier from one codebase.
 

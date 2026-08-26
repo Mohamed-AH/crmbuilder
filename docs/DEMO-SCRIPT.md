@@ -1,5 +1,8 @@
 # Demo Script
 
+> **Current reference · presenter.** Verified against the code 2026-08-26.
+> Internal: not served publicly.
+
 A 10-minute walkthrough written for an audience that already knows what a CRM
 is — people who've used Salesforce, HubSpot or Pipedrive and will judge this in
 the first ninety seconds.

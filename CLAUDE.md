@@ -6,6 +6,43 @@ the source, and it is the safe restart point after a context compaction.
 
 **Branch:** `claude/pwa-modular-crm-builder-xcwgzv` — all work goes here.
 **Live:** https://crmbuilder-v1.onrender.com
+**Other docs:** [`docs/README.md`](docs/README.md) is the map. This file is the
+engineering half and is kept current; `docs/archive/` is frozen on purpose.
+
+---
+
+## Find it by topic
+
+Sections are numbered in the order they were written, and several are named for
+the build stage that produced them — "stage C", "beta stage 2" — which means
+nothing if you were not there. **Read down this column instead.** The numbers
+never change, because everything cross-references them.
+
+| Looking for | Go to |
+|---|---|
+| **Start here** — what must not break | §3 invariants · §4 traps · §9 conventions |
+| Where the files are, what loads when | §1 · §3 |
+| What is shipped, and what is deliberately not | §2 |
+| **Sync**: the delta protocol, the two clocks | §10 |
+| Sync: field-level merge (`fieldsAt`) | §26 |
+| Sync: whose data is on this device | §11 storage scopes |
+| **Permissions**: the role ladder, refusals | §14 · §26 (contributor/viewer) |
+| Teams: invites and joining | §13 |
+| Teams: roles, removal, leaving | §15 |
+| Orgs, tenancy, and the 404-not-403 rule | §5 |
+| **Signup**: the gate and its bypass order | §16 · §20 (access requests) |
+| Operator panel: usage, quotas, levers | §24 |
+| Alerts and thresholds | §25 |
+| Backups, export auth, measured usage | §17 |
+| Problem reports and webhook shapes | §18 |
+| Legal pages, service-worker page trap | §19 |
+| **What the server publishes** (allow-list) | §28 |
+| Migrations | §12 |
+| Guided tour | §7 |
+| Deleting a field; currency relabels | §22 · §23 |
+| Security audit and what it changed | §21 |
+| Why docs go stale, and which ones | §27 |
+| **How the docs are organised**, and what is frozen | §29 |
 
 ---
 
@@ -73,7 +110,7 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
   beta notice and runbook (stage 4) — see §16, §17, §18, §19
 - **Access requests**: a stranger who arrives on their own can ask, and an
   approval lets them straight in with nothing to email — see §20
-- Docs: USER-GUIDE, ONBOARDING, DEMO-SCRIPT, ARCHITECTURE, BETA, product-tour.html
+- Docs: see `docs/README.md` — the map, and which are frozen
 
 ### Not built yet
 - Email sending, third-party integrations.
@@ -937,7 +974,7 @@ Only 2b from the audit remains: a delete cannot be undone, because a tombstone
 discards the body. Costed and deliberately not built — keeping bodies would
 mean a workspace deleting to free space frees none until the retention window
 passes, against the lever §24 added, and a mass delete would temporarily double
-that tenant's footprint. See §26 and `docs/TIER-2.md`.
+that tenant's footprint. See §26 and `docs/archive/TIER-2.md`.
 
 ---
 
@@ -1027,7 +1064,7 @@ it. Confirmed over four consecutive full runs.
 **This section is the resume point for this work.** All three stages shipped;
 what follows is what was built and why, not a to-do list. The reasoning behind the
 shape — why Render cannot be read, why orgs need their own gate, the full
-verification list — is in `docs/OPERATOR-CONTROLS.md`. Six asks, and the first
+verification list — is in `docs/archive/OPERATOR-CONTROLS.md`. Six asks, and the first
 thing to know is that they are not six pieces of work — two were already done
 and one cannot be built as worded.
 
@@ -1224,7 +1261,7 @@ is for.
 
 ## 26. Tier 2
 
-**Resume point for this work.** Reasoning is in `docs/TIER-2.md`; status here.
+**Resume point for this work.** Reasoning is in `docs/archive/TIER-2.md`; status here.
 
 - ✅ **2c — field-level merge.** Two people editing different fields of one
   record both keep their edit. Shipped — see below.
@@ -1364,8 +1401,8 @@ forget because they are HTML and nothing greps them by habit.
   `.note.warn` renders as an unstyled box that still looks plausible in a
   screenshot. Same for `.muted`, which does not exist there at all.
 
-**Plan documents keep their original numbers.** `docs/TIER-2.md` and
-`docs/OPERATOR-CONTROLS.md` are the reasoning as it stood, not live status —
+**Plan documents keep their original numbers.** `docs/archive/TIER-2.md` and
+`docs/archive/OPERATOR-CONTROLS.md` are the reasoning as it stood, not live status —
 their verification sections now say the test counts are the baseline at the
 time of writing and point at §2 for the current figure. Editing a plan's
 premises after the fact loses the reason the plan was shaped that way.
@@ -1466,3 +1503,90 @@ bracket protects the pattern from matching itself, but the compound command
 *also* contained `git stash push -q server.js`, so pkill matched the shell
 running it and killed the job mid-way, leaving the stash unpopped. Kill by
 recorded PID when the command has to mention the file.
+
+---
+
+## 29. How the documentation is organised
+
+§27 fixed what the documents *said*. This fixes what a newcomer can *tell about
+them* — which is a different failure, and the one that bites at handover.
+
+**Status is declared, never inferred.** Git dates cannot carry it: §27's pass
+touched every file on one day, so last-modified says nothing. Three places, and
+the difference is the whole scheme:
+
+| Where | Kept true? |
+|---|---|
+| `CLAUDE.md` | yes — a section per change |
+| `docs/` | yes |
+| `docs/archive/` | **no, deliberately** |
+
+Lifecycle lives in the **directory**, so it is visible in a file listing before
+anything is opened; every file also carries a one-line banner, so opening one
+directly says the same thing. `docs/README.md` routes by task and audience.
+
+**The rename is the substance, not tidiness.** `docs/ARCHITECTURE.md` →
+`docs/archive/SCALING-OPTIONS.md`. It was an Options A–E deliberation under a
+name that promises current reference, and it was **actively misinforming**: §1,
+*"Where we are today"* — the first thing a new engineer reads — had rows keyed
+`userId` (they are `wsId`), three roles (there are five), *"workspaces are still
+per-account, deliberately"* (shared workspaces shipped four stages later), and a
+16 MB document ceiling that per-record sync removed.
+
+**The detail worth keeping:** §27's own pass had patched that file's *proposal*
+sections — Option B lists all five roles correctly — while leaving "where we are
+today" untouched. The document ended up describing the future more accurately
+than the present. That is what patching a historical document in place does, and
+it is the argument for freezing rather than maintaining. The known-false list is
+in `docs/archive/README.md` so nobody has to rediscover it.
+
+**Frozen does not mean deletable.** A plan records the options rejected and the
+cost that made something not worth building. None of that survives in the code,
+and it is exactly what is needed before reversing a decision.
+
+### `docs/API.md`
+
+43 routes across six boundaries — the biggest single blocker to anyone extending
+the backend, since the contract existed only in `server.js`.
+
+It **routes rather than restates**. Each section points at the `CLAUDE.md`
+section holding the reasoning instead of re-explaining it, because a second
+copy is what drifted in the `manual.html` case (§27). What it does state
+directly is the wire contract: the two clocks, the wire-item shapes, the
+rejection envelope (`reason` / `absent`), and the bypass order — which is a
+security property and reads as a list of modes if written casually.
+
+### `CLAUDE.md` has a topic index now
+
+Sections are numbered in build order and several are named for the stage that
+produced them — "stage C", "beta stage 2" — which is meaningless to anyone who
+was not there. You could not find "how do permissions work" without knowing it
+was Stage C.
+
+**The numbers do not change.** Renumbering would break every cross-reference in
+this file and in the others. The index maps topic → section and leaves the
+numbering alone.
+
+### Deliberately not written
+
+Recorded so they are not mistaken for oversights:
+
+- **No `SECURITY.md`.** The model is real but lives across §5, §13, §16, §17,
+  §20, §21, §28 and §3's invariants. A consolidated copy becomes a second source
+  that disagrees within a quarter. If it is ever wanted it should be a **map**
+  into those, not a re-explanation.
+- **No changelog** — git history plus these sections carry it.
+- **No architecture document** — §1, §3, §10 and §11 are it. The file that was
+  named `ARCHITECTURE.md` never was one.
+
+### Two things this reorganisation depends on
+
+- **Internal docs are private by construction** (§28), not by obscurity. Only
+  `docs/manual.html` and `docs/product-tour.html` are served, and **their paths
+  are frozen** — they are customer-facing and the URLs may already be in
+  somebody's inbox. Verified: every other file under `docs/`, including the two
+  new ones, returns 404.
+- **`.claude/skills/verify/SKILL.md` said "Playwright, 24 journeys"** while the
+  suite had grown past 70. It was unindexed, so nothing walked it. It now points
+  at §2 for counts rather than carrying its own — a number written in a second
+  place is a number that goes stale, which is this section's thesis in one line.

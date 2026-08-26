@@ -22,17 +22,20 @@ A **modular CRM builder for small businesses** — an installable, offline-first
 
 ## Documentation
 
+**→ [docs/README.md](docs/README.md) is the map.** It routes by what you are
+trying to do, and marks what is current versus frozen. The short version:
+
 | Document | For |
 |---|---|
 | **[User Guide](docs/USER-GUIDE.md)** | End users — every feature, in the order you need it. Also published as a [shareable web manual](docs/manual.html). |
 | **[Onboarding Playbook](docs/ONBOARDING.md)** | Whoever rolls this out to a business: session plans, data migration, week-1 check-in. |
 | **[Demo Script](docs/DEMO-SCRIPT.md)** | A timed 10-minute demo aimed at people who already use professional CRMs. Presenter-facing, deliberately imperative. |
 | **[Product Tour](docs/product-tour.html)** | Customer-facing overview for prospects, leads and recruiters. Third person; pairs with the in-app guided tour. |
-| **[Architecture](docs/ARCHITECTURE.md)** | Capacity limits, multi-tenancy options, and the pooled vs dedicated deployment paths. |
-| **[Deployment](DEPLOYMENT.md)** | Getting it running on Render + MongoDB Atlas + Google OAuth. |
+| **[API reference](docs/API.md)** | The HTTP contract: auth, the delta sync protocol, role enforcement, platform admin, alerts. |
+| **[Working notes](CLAUDE.md)** | **Read this before changing code.** Architecture, invariants, and every trap that has already cost time. Has a topic index at the top. |
+| **[Deployment](DEPLOYMENT.md)** | Getting it running on Render + MongoDB Atlas + Google OAuth, and what the deployment publishes. |
 | **[Running the beta](docs/BETA.md)** | Operator runbook for opening it to testers, plus the tester-facing note to send with the invite. |
-| **[Operator controls](docs/OPERATOR-CONTROLS.md)** | Plan for the admin dashboard's usage, quota, signup and suspension controls. |
-| **[Tier 2 plan](docs/TIER-2.md)** | Field-level merge, roles that cannot delete, and why undoable deletes are costed but not built. |
+| **[Archive](docs/archive/)** | Frozen plans and decision records — kept for the *why*, **not maintained**, and some of it is now false. |
 | **[Marketing](MARKETING.md)** | B2B/B2C copy and launch threads. |
 
 ## Testing

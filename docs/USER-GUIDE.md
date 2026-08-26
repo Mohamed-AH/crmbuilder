@@ -1,5 +1,8 @@
 # CRM Builder — User Guide
 
+> **Current reference · end users.** Verified against the code 2026-08-26.
+> Mirrored by [manual.html](manual.html) — change both, and diff the prose, not the headings.
+
 Everything you can do in CRM Builder, in the order you're likely to need it.
 If you've used Salesforce, HubSpot or Pipedrive, most of this will feel
 familiar — the difference is that you decide what the CRM tracks, not the vendor.

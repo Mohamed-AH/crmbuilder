@@ -1,5 +1,8 @@
 # Running the beta
 
+> **Current reference · operator.** Verified against the code 2026-08-26.
+> Internal: not served publicly. Deployment mechanics live in [DEPLOYMENT.md](../DEPLOYMENT.md).
+
 Two documents in one: the operator runbook, and the note to send testers.
 
 ---

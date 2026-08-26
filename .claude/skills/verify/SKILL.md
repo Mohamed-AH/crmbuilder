@@ -6,7 +6,10 @@ description: How to run and extend the CRM Builder test suite, and how to drive 
 # Verifying CRM Builder
 
 Node/Express server (`server.js`) serving a static PWA plus auth/sync/admin APIs.
-There is a real test suite now — **run it before hand-driving anything.**
+There is a real test suite — **run it before hand-driving anything.**
+Current counts live in `CLAUDE.md` §2, not here: a number written into a second
+place is a number that goes stale, and this one did (it said 24 for months
+while the suite grew past 70).
 
 ## Run the tests
 
@@ -15,7 +18,7 @@ npm install
 npm test              # unit + API + e2e (playwright boots its own server)
 npm run test:unit     # tests/csv.test.mjs      — CSV parse/stringify
 npm run test:api      # tests/api.test.mjs      — spawns a server on a random port
-npm run test:e2e      # tests/e2e.spec.js       — Playwright, 24 journeys
+npm run test:e2e      # tests/e2e.spec.js       — Playwright journeys
 npm run test:smoke    # tests/smoke.mjs         — deployment audit, localhost
 
 BASE_URL=https://your-app.onrender.com npm run test:smoke   # audit a live deploy
@@ -57,6 +60,10 @@ a compound command that mentions `server.js` matches itself and kills the shell.
   against the *old* page. Wait for something identifying, e.g. `h1:has-text("Contacts")`.
 - **Renaming a field keeps its key**, so the default builder field stays `#f-name`.
 - Bump `CACHE_VERSION` in `sw.js` whenever a precached asset changes.
+- **Adding a served file means the server's allow-list too.** `server.js` serves
+  `ASSET_DIRS` / `PUBLIC_ROOT_FILES` / `PUBLIC_DOCS` and nothing else, so a new
+  asset works locally from cache and 404s in production if it is left off
+  (`CLAUDE.md` §28). It also belongs in the smoke test's `ASSETS`.
 - `js/icons.js` is generated from lucide-static: extract the **inner** content of
   `<svg>` (the files open with a license comment; a naive first-`>` regex nests
   svgs and swallows trailing text).
@@ -72,3 +79,12 @@ a compound command that mentions `server.js` matches itself and kills the shell.
   rendered rows can outlive the module definition they were drawn from.
 - Only `http/https/mailto/tel` may reach an `href` (`safeHref`) — record values
   arrive from CSV imports and shared backups.
+- **The server publishes an allow-list, never the repository.** Internal docs
+  must stay unreachable; `tests/smoke.mjs` asserts eight paths return no content.
+
+## Where the docs are
+
+`docs/README.md` is the map. `CLAUDE.md` is the engineering half and is kept
+current — it has a topic index at the top, because its sections are numbered in
+build order and several are named for a stage. `docs/archive/` is frozen and
+some of it is knowingly false.

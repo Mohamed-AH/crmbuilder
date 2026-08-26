@@ -145,7 +145,7 @@ const MUST_NOT_SERVE = [
   ['/CLAUDE.md', 'internal working notes'],
   ['/DEPLOYMENT.md', 'deployment runbook'],
   ['/docs/BETA.md', 'operator runbook'],
-  ['/docs/ARCHITECTURE.md', 'internal design notes'],
+  ['/docs/archive/SCALING-OPTIONS.md', 'archived design notes'],
   ['/package.json', 'dependency list'],
   ['/.git/config', 'repository metadata'],
   ['/.env', 'environment file'],
