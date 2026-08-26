@@ -1004,3 +1004,79 @@ while the modules, written during onboarding and long since committed,
 survived. That asymmetry was the clue. Waiting for the row to render before
 reloading is waiting for `DB.put` to have resolved, since the re-render follows
 it. Confirmed over four consecutive full runs.
+
+---
+
+## 24. Operator controls — IN PROGRESS
+
+**This section is the resume point for this work.** Stage status is kept
+current here; anything marked ☐ has not been built. Six asks, and the first
+thing to know is that they are not six pieces of work — two were already done
+and one cannot be built as worded.
+
+| Ask | Where it stands |
+|---|---|
+| Total users and orgs | ☐ Stage A. `/health` reports both to a platform admin, but `/api/admin/stats` has no org count and there is **no org list at all** — `listOrgs()` is used only by the backup export |
+| Per-org and combined usage | ☐ Stage A. `dataStats(orgId)` counts rows per org; nothing measures **bytes** per org |
+| Render + Mongo quotas | ☐ Stage A. Mongo is measured already (`storageStats`). **Render is not obtainable** — see below |
+| Halt user signups | ✅ Done — the mode switch, §16 |
+| Halt org creation | ☐ Stage B. A **separate** lever, and not a duplicate of the above — see below |
+| Pause/resume a user | ✅ Done — `disabled` + `PATCH /api/admin/users/:id` |
+| Pause/resume an org | ☐ Stage B |
+| Telegram alerts | ☐ Stage C. The transport exists (§18); thresholds, state and trigger do not |
+
+### Three decisions taken before any code
+
+**Render instance-hours cannot be read from Render.** No API exposes free-tier
+consumption, so the panel does not pretend to: it accumulates *our own* uptime
+into the `platform` document (`BOOT_AT` alone resets on restart) and shows
+hours-this-month against 750. It reads slightly low — it cannot see time
+between a crash and the next ping — and is labelled an estimate for exactly
+that reason. Do not "fix" this by inventing a Render endpoint.
+
+**Org creation needs its own gate, and this is not tidiness.** Every signup
+mints an org, so pausing signups today also locks out every *invited teammate*
+of every existing customer: a colleague must create an account (→ an org)
+before `/api/org/join` can move them. So `orgCreation: 'open' | 'closed'`
+refuses a signup that would mint a **new** org while still admitting one
+carrying a pending team invite. A version that simply refuses every signup has
+missed the entire point, and there is a test for that case specifically.
+
+**The alert loop runs on `/health`.** UptimeRobot already hits it every 14
+minutes (§17), so no scheduler is needed. Evaluation happens after the
+response, never blocking it, and behind the same platform-admin/`HEALTH_DETAIL`
+check the counts already sit behind — `/health` is public and must not grow for
+anonymous callers.
+
+### Stages
+
+- ☐ **A — see it.** `GET /api/admin/platform`: combined counts, per-org rows
+  (members, records, modules, **bytes**, last active), and both quotas with the
+  `ok`/`warn`/`critical` levels `usageReport()` already computes. Per-org bytes
+  is the real work: `$bsonSize` in a `$group` by `orgId` on Mongo, summed
+  `JSON.stringify` lengths in the file store. **Measured, never
+  records × a constant** — §17 records why that estimate reads fine right up
+  until the tier fills. Cache with a short TTL from the start; it scans.
+- ☐ **B — the levers.** `orgCreation` beside the signup mode, same `platform`
+  document and the same precedence rule (§16: a panel decision beats the env
+  var and survives a redeploy). Org suspend/resume via `suspendedAt` +
+  `suspendedReason`: sync refuses writes with a named reason, sign-in still
+  works, **nothing is deleted**. `deleteAccount` stays the only thing that can
+  remove a workspace (§5) and nothing here may touch it. The wording is one
+  word from deletion and a decade of data apart — §15's lesson.
+- ☐ **C — alerts.** Rules for storage, projected Render hours, signup spikes,
+  a single heavy org, and the access-request queue. **Escalate-only and never
+  repeated at the same level**: state per rule in the `platform` document, so
+  60% notifies once and stays quiet until 85%, re-arming only after a drop. An
+  alert that fires hourly trains you to ignore it, which is worse than none.
+  Reuses `webhookRequest()` so Telegram gets the shape it reads (§18), plus a
+  test button that proves the wiring without waiting for a threshold.
+
+### Traps expected here
+
+- **`/health` is public.** Anything added must sit behind the existing detail
+  check and must not lengthen the anonymous response.
+- **A dead webhook must never break `/health`** — same rule as the feedback
+  notifier: evaluate and store first, notify after the response.
+- **Suspension is reversible and customer-visible.** It is not deletion, and
+  the screen has to say which.
