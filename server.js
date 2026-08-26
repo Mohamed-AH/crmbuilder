@@ -29,6 +29,21 @@ const APP_URL = (process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+/*
+ * Google's endpoints, overridable so the callback can be tested.
+ *
+ * The OAuth callback is the highest-risk flow in the application and had no
+ * test at all, because it cannot be driven without Google on the other end.
+ * These two overrides let a test stand up a fake Google and exercise the real
+ * handler — the state check, the gate, the upsert and the session — rather
+ * than a unit-tested imitation of it. Same trick the feedback-webhook test
+ * already uses.
+ *
+ * Overriding them requires environment access, which means already owning the
+ * deployment; that is the same bar as GOOGLE_CLIENT_SECRET itself.
+ */
+const GOOGLE_TOKEN_URL = process.env.GOOGLE_TOKEN_URL || 'https://oauth2.googleapis.com/token';
+const GOOGLE_USERINFO_URL = process.env.GOOGLE_USERINFO_URL || 'https://www.googleapis.com/oauth2/v2/userinfo';
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 const IS_PROD = process.env.NODE_ENV === 'production';
 // Dev login (email-only, no password) for local development / demos.
@@ -2101,6 +2116,30 @@ app.post('/api/admin/alerts/test', requireAuth, requirePlatformAdmin, async (req
   });
 });
 
+/*
+ * One line per authentication failure, on stdout where the host collects it.
+ *
+ * There was no record of any of this: a refused signup, a state mismatch and a
+ * disabled account all redirected silently, so a burst of them was invisible
+ * unless somebody happened to be watching the panel. Alerting on a spike (§25)
+ * needs the spike to leave a trace first.
+ *
+ * What is deliberately NOT logged: the beta code, the invite code, the OAuth
+ * state and the session token — all bearer credentials (§13, §16), and a log
+ * line is the wrong place for any of them. The email is included because it is
+ * the only thing that makes a burst diagnosable, and it is already stored on
+ * the account.
+ */
+function authFailure(kind, detail, req) {
+  const parts = [`[auth] ${kind}`];
+  if (detail && detail.email) parts.push(`email=${detail.email}`);
+  if (detail && detail.reason) parts.push(`reason=${detail.reason}`);
+  // Behind a proxy this is Render's address unless trust proxy is set; it is a
+  // coarse signal for "many failures from one place", not an identity.
+  parts.push(`ip=${(req && req.ip) || 'unknown'}`);
+  console.warn(parts.join(' '));
+}
+
 // ---- OAuth (Google)
 app.get('/auth/google', (req, res) => {
   if (!GOOGLE_CLIENT_ID) return res.status(404).send('Google OAuth is not configured');
@@ -2141,10 +2180,11 @@ app.get('/auth/google/callback', async (req, res) => {
   try {
     const { code, state } = req.query;
     if (!code || !state || state !== req.cookies.crmb_oauth_state) {
+      authFailure('oauth_state', { reason: !state ? 'missing' : 'mismatch' }, req);
       return res.redirect('/?auth_error=state');
     }
     res.clearCookie('crmb_oauth_state');
-    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+    const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -2157,24 +2197,55 @@ app.get('/auth/google/callback', async (req, res) => {
     });
     const tokens = await tokenRes.json();
     if (!tokens.access_token) throw new Error('token exchange failed');
-    const infoRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+    const infoRes = await fetch(GOOGLE_USERINFO_URL, {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
     });
     const info = await infoRes.json();
     if (!info.email) throw new Error('no email from Google');
+
+    /*
+     * An unverified address must not reach upsertUser.
+     *
+     * Accounts are matched by email and nothing else, so an address the holder
+     * has not proved they control is an account-takeover vector: sign in with
+     * somebody else's address, get handed their workspace. Google normally
+     * only ever reports verified addresses, which is exactly why this was easy
+     * to leave out.
+     *
+     * Rejects a stated false; does NOT reject absence. Those are different
+     * facts, and the failure modes are asymmetric — a stated false is the
+     * attack, while absence means Google renamed a field, and failing closed
+     * on that would lock every user out of a working CRM for a reason nobody
+     * could diagnose from the outside. Absence is logged loudly instead.
+     */
+    if (info.verified_email === false || info.email_verified === false) {
+      authFailure('oauth_unverified_email', { email: info.email }, req);
+      return res.redirect('/?auth_error=unverified');
+    }
+    if (info.verified_email === undefined && info.email_verified === undefined) {
+      console.warn(
+        '[auth] Google userinfo carried no verified_email field — cannot confirm '
+        + 'the address was verified. If this is not a one-off, the userinfo '
+        + 'contract has changed and this check needs revisiting.'
+      );
+    }
 
     // Authenticated by Google, but not yet allowed to exist here.
     const gate = await checkSignup(info.email, req.cookies[BETA_COOKIE], req.cookies[INVITE_COOKIE]);
     res.clearCookie(BETA_COOKIE);
     res.clearCookie(INVITE_COOKIE);
     if (!gate.ok) {
+      authFailure('signup_refused', { email: info.email, reason: gate.reason }, req);
       offerToAsk(res, info.email, info.name);
       return res.redirect(`/?auth_error=${gate.reason}`);
     }
     clearAskCookie(res);
 
     const user = await upsertUser({ email: info.email, name: info.name, picture: info.picture, provider: 'google' });
-    if (user.disabled) return res.redirect('/?auth_error=disabled');
+    if (user.disabled) {
+      authFailure('disabled_account', { email: info.email }, req);
+      return res.redirect('/?auth_error=disabled');
+    }
     // Only now, with an account that actually exists. A use burnt on a failed
     // token exchange is a tester who cannot get in and a code that says it was
     // redeemed.
@@ -2196,8 +2267,24 @@ app.post('/auth/dev', async (req, res) => {
   // The same gate as the Google path. Correct in its own right, and the reason
   // any of this is testable: the OAuth callback cannot be driven from a test,
   // and this is the seam that can.
-  const gate = await checkSignup(email, req.body.beta, req.body.invite);
+  /*
+   * Coerce before these reach a store lookup.
+   *
+   * checkSignup passes them to getBetaCode / getInvite, which build filters as
+   * { code } shorthand — so an object like {"$ne": null} arriving in the body
+   * would be handed to MongoDB as an operator and could match a code the
+   * caller never had. Route params and cookies are strings already; a JSON
+   * body is the one place a non-string can get in.
+   *
+   * Dev-only route, so this is defence in depth rather than a live hole. It is
+   * also the seam every signup test drives, which is the other reason it has
+   * to behave exactly like the Google path.
+   */
+  const beta = typeof req.body.beta === 'string' ? req.body.beta : '';
+  const invite = typeof req.body.invite === 'string' ? req.body.invite : '';
+  const gate = await checkSignup(email, beta, invite);
   if (!gate.ok) {
+    authFailure('signup_refused', { email, reason: gate.reason }, req);
     // Same seam as the Google path: the refusal is what hands over the right
     // to ask. Without this the request flow would only be reachable through
     // OAuth, which no test can drive.
@@ -2210,7 +2297,10 @@ app.post('/auth/dev', async (req, res) => {
   clearAskCookie(res);
 
   const user = await upsertUser({ email, name: req.body.name || '', provider: 'dev' });
-  if (user.disabled) return res.status(403).json({ error: 'Account disabled' });
+  if (user.disabled) {
+    authFailure('disabled_account', { email }, req);
+    return res.status(403).json({ error: 'Account disabled' });
+  }
   if (gate.consume) await gate.consume();
   setSession(res, user);
   res.json({ user: publicUser(user) });

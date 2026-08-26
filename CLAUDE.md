@@ -77,7 +77,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 173 Node tests + 73 Playwright tests.
+**All green:** 179 Node tests + 73 Playwright tests.
 
 ```sh
 npm install
@@ -1605,8 +1605,7 @@ claims held and two did not.
 
 ### Phases
 
-- ☐ **1 — Auth and session.** `verified_email`, dev-login filter coercion,
-  auth-failure logging.
+- ✅ **1 — Auth and session.** Shipped — see below.
 - ☐ **2 — Injection and data integrity.** Exhaustive filter-coercion sweep,
   prototype pollution, mass assignment, confirm no `$where`.
 - ☐ **3 — XSS.** Every interpolation reaching an `innerHTML` sink, then CSP as
@@ -1655,3 +1654,49 @@ Adding the library would add a dependency and change nothing.
 Prototype pollution, mass assignment and the XSS sweep are not yet assessed.
 Guessing a severity before looking is how an audit ends up reporting its own
 assumptions back to itself.
+
+### Phase 1 as built
+
+**The finding: an unverified Google address could create an account.** Accounts
+are matched by email and nothing else, so an address the holder has not proved
+they control is an account-takeover vector — sign in with somebody else's
+address and be handed their workspace. `/oauth2/v2/userinfo` returns
+`verified_email` and it was read straight past.
+
+**Rejects a stated `false`; does NOT reject absence.** Those are different
+facts and the failure modes are asymmetric. A stated false is the attack.
+Absence means Google renamed a field, and failing closed on that would lock
+every user out of a working CRM for a reason nobody could diagnose from
+outside. Absence is logged loudly instead. This is *not* a contradiction of
+§19's "absence is not an answer" — there, absence was being read as a positive
+signal; here it is read as "Google did not say", with the mitigating fact that
+the whole response arrived server-to-server over TLS.
+
+**The callback had no test at all**, which is why the bug survived: it cannot
+be driven without Google on the other end. `GOOGLE_TOKEN_URL` and
+`GOOGLE_USERINFO_URL` are now overridable, so `tests/oauth.test.mjs` stands up
+a fake Google and exercises the **real handler** — state check, verification,
+gate, upsert, session. Overriding them needs environment access, which is
+already the bar for `GOOGLE_CLIENT_SECRET`.
+
+That seam also bought the first tests for **CSRF on the callback**: a
+mismatched state and a callback presenting no state cookie at all are both
+asserted refused. Neither had coverage before.
+
+Checked against the broken state per §9: removing the verification check makes
+**two tests fail**, and on that server the unverified address really does get
+an account — asserted by listing users as an admin, not merely by the redirect.
+
+**`/auth/dev` passed `req.body.beta` / `req.body.invite` uncoerced** into
+`getBetaCode` / `getInvite`, which build `{ code }` shorthand filters. An object
+like `{"$ne": null}` would reach MongoDB as an operator. Dev-only, so defence in
+depth rather than a live hole — but it is the seam every signup test drives.
+Route params and cookies are strings already; **a JSON body is the one place a
+non-string gets in**, which is the rule Phase 2 sweeps for exhaustively.
+
+**`authFailure()` logs one line per failure.** A refused signup, a state
+mismatch and a disabled account all redirected silently before, so a burst was
+invisible. Deliberately never logged: the beta code, the invite code, the OAuth
+state and the session token — all bearer credentials (§13, §16). The email is
+included because it is what makes a burst diagnosable and it is already stored
+on the account.
