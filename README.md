@@ -30,6 +30,7 @@ A **modular CRM builder for small businesses** — an installable, offline-first
 | **[Deployment](DEPLOYMENT.md)** | Getting it running on Render + MongoDB Atlas + Google OAuth. |
 | **[Running the beta](docs/BETA.md)** | Operator runbook for opening it to testers, plus the tester-facing note to send with the invite. |
 | **[Operator controls](docs/OPERATOR-CONTROLS.md)** | Plan for the admin dashboard's usage, quota, signup and suspension controls. |
+| **[Tier 2 plan](docs/TIER-2.md)** | Field-level merge, roles that cannot delete, and why undoable deletes are costed but not built. |
 | **[Marketing](MARKETING.md)** | B2B/B2C copy and launch threads. |
 
 ## Testing

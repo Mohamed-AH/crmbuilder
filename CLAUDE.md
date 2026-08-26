@@ -1204,3 +1204,49 @@ not behave that way, so the two backends would have disagreed, with the file
 store — the one the tests run on — being the broken half. **Read anything you
 need about the previous state before the write**, which is what `vacatedOrgId`
 is for.
+
+---
+
+## 26. Tier 2 — PLANNED, NOT BUILT
+
+**Resume point for this work.** Reasoning is in `docs/TIER-2.md`; status is here.
+
+- ☐ **2c — field-level merge.** Two people editing *different fields of the
+  same record* lose one edit today, with no bad actor involved. Untested:
+  `two devices editing different records` covers the case per-record sync was
+  built for; the same-record case is silently lossy. **First deliverable is a
+  failing test.**
+- ☐ **2a — roles that cannot delete.** `contributor` (no delete) and `viewer`
+  (read only) on the existing ladder. The seam is proven — `applyPush` already
+  refuses a member's module write and hands back the server's copy (§14); this
+  widens it from modules to records.
+- ☐ **2b — undoable deletes.** Costed and deliberately not built.
+
+### The fact that reframes 2a, found while planning
+
+**A tombstone discards the record body.** `js/db.js` writes
+`{ id, moduleId, deletedAt, updatedAt }`; `server.js` writes `doc: null`. So a
+deleted record is *not* recoverable for 180 days — that window governs how long
+the **gravestone** survives so offline devices learn about the delete, not the
+row. Contents are gone everywhere the moment a delete syncs.
+
+Anyone reading "tombstones are kept for 180 days" and concluding undo is nearly
+free will be wrong. Undo requires **keeping the body**, which on a 512 MB
+shared tier means a workspace deleting to free space would free none until the
+window passed — directly against the lever Stage B just added — and a mass
+delete would temporarily double that tenant's footprint, which is the exact
+shape the Stage C alerting exists to catch.
+
+### The trap 2c will hit
+
+The merge must happen **on the server**, not only the client. `applyPush` skips
+an incoming row that is not newer (`prior.updatedAt >= updatedAt → continue`),
+so a client-side field merge would still be overwritten by whoever pushed last.
+That is a change to the heart of the sync engine, which already carries six
+recorded traps (§10) — and `updatedAt` must keep its existing job of driving
+selection and the cursor, or the delta protocol breaks (§3). Only the contents
+merge per field.
+
+Also: §22's field purge **deletes keys**, and an absent key has no clock — so a
+purge could be silently undone by a stale copy unless it becomes a clocked
+change. The two features fight if that is missed.
