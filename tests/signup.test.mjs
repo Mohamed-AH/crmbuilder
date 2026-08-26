@@ -28,7 +28,7 @@ after(async () => {
 
 let nextPort = 8800 + Math.floor(Math.random() * 400);
 
-async function boot({ signupMode = 'code', adminEmails = '', backupToken = '', webhook = '' } = {}) {
+async function boot({ signupMode = 'code', adminEmails = '', backupToken = '', webhook = '', env: extraEnv = {} } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'crmb-signup-'));
   // Sequential, not random: this file boots a server per mode per test, and a
   // narrow random range collides often enough to hang the whole run.
@@ -50,6 +50,9 @@ async function boot({ signupMode = 'code', adminEmails = '', backupToken = '', w
     BACKUP_TOKEN: backupToken,
     FEEDBACK_WEBHOOK_URL: webhook,
     NODE_ENV: 'test',
+    // Thresholds and intervals a test needs to drive directly, so a rule can
+    // be made to fire without actually filling a quota.
+    ...extraEnv,
   });
 
   const start = async () => {
@@ -1376,5 +1379,140 @@ describe('suspending an organisation', () => {
     assert.equal((await srv.req(`/api/admin/orgs/${orgId}/suspend`, {
       method: 'POST', cookies, body: { suspend: true },
     })).status, 403, 'a tenant cannot pause anyone, least of all somebody else');
+  });
+});
+
+/*
+ * Alerts: told once when it starts, not every fourteen minutes.
+ *
+ * The transport is already proven elsewhere; what is asserted here is the
+ * state machine, because that is what decides whether the channel stays worth
+ * reading. A rule that repeats at the same level trains the operator to ignore
+ * it, and an ignored alert is worse than none.
+ */
+describe('threshold alerts', () => {
+  // Thresholds are driven from the environment so a rule can be made to fire
+  // on a workspace of a few records rather than by filling a real quota.
+  const bootAlerting = (extra = {}) =>
+    boot({ signupMode: 'open', adminEmails: 'alert-op@operator.test', ...extra });
+
+  test('a test alert reports what each rule currently sees', async () => {
+    const srv = await bootAlerting();
+    const admin = await adminOf(srv, 'alert-op@operator.test');
+    const out = await srv.req('/api/admin/alerts/test', { method: 'POST', cookies: admin });
+    assert.equal(out.status, 200, out.text);
+    // Whether a webhook is configured is the difference between "nothing is
+    // wrong" and "this has been broken since the URL was rotated".
+    assert.equal(out.json.webhookConfigured, false);
+    const named = out.json.rules.map((r) => r.rule);
+    for (const rule of ['storage', 'ram', 'egress', 'signups', 'tenant']) {
+      assert.ok(named.includes(rule), `no ${rule} rule: ${named.join(', ')}`);
+    }
+  });
+
+  test('only the operator can send one', async () => {
+    const srv = await bootAlerting();
+    await adminOf(srv, 'alert-op@operator.test');
+    const ordinary = (await srv.signUp('ordinary@tenant.test')).setCookie;
+    assert.equal((await srv.req('/api/admin/alerts/test', { method: 'POST' })).status, 401);
+    assert.equal((await srv.req('/api/admin/alerts/test', { method: 'POST', cookies: ordinary })).status, 403);
+  });
+
+  /*
+   * The state machine, driven through a real threshold.
+   *
+   * RAM is the one that can be forced without filling anything: setting the
+   * limit low enough makes the process's own RSS cross it.
+   */
+  test('a crossed threshold is announced once, and re-arms only after dropping back', async () => {
+    const received = [];
+    const hook = createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => { received.push(body); res.writeHead(204).end(); });
+    });
+    await new Promise((r) => hook.listen(0, '127.0.0.1', r));
+    const hookUrl = `http://127.0.0.1:${hook.address().port}/hook`;
+
+    try {
+      // A limit this process is certainly over, so the RAM rule is critical.
+      const srv = await boot({
+        signupMode: 'open',
+        adminEmails: 'alert-op@operator.test',
+        webhook: hookUrl,
+        env: { RAM_LIMIT_BYTES: '1048576', ALERT_MIN_GAP_MS: '0' },
+      });
+      await adminOf(srv, 'alert-op@operator.test');
+
+      // Several pings, as UptimeRobot would make.
+      for (let i = 0; i < 4; i += 1) await srv.req('/health');
+      const deadline = Date.now() + 5000;
+      while (!received.length && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+
+      assert.ok(received.length >= 1, 'crossing a threshold should say so');
+      assert.match(received[0], /Memory at/);
+      // Four pings, one message. This is the whole point.
+      await new Promise((r) => setTimeout(r, 500));
+      assert.equal(received.length, 1, `announced ${received.length} times for one crossing — escalate-only is not holding`);
+    } finally {
+      await new Promise((r) => hook.close(r));
+    }
+  });
+});
+
+/*
+ * The placeholder organisation a joiner leaves behind.
+ *
+ * Signing up only to accept an invite mints an org that is abandoned a moment
+ * later, and it inflates the tenant count the operator panel exists to make
+ * trustworthy. Removed when it is provably a shell — and kept when it is not.
+ */
+describe('tidying up after a join', () => {
+  const teamWithInvite = async (srv) => {
+    const owner = (await srv.signUp('team-owner@customer.test')).setCookie;
+    const invite = (await srv.req('/api/org/invites', { method: 'POST', body: {}, cookies: owner })).json.invite.code;
+    return { owner, invite };
+  };
+
+  test('an empty placeholder org is removed when its only member joins a team', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'tidy-op@operator.test' });
+    const admin = await adminOf(srv, 'tidy-op@operator.test');
+    const { invite } = await teamWithInvite(srv);
+
+    const before = (await srv.req('/api/admin/platform', { cookies: admin })).json.counts.orgs;
+    const joiner = await srv.signUp('joiner@customer.test');
+    assert.equal((await srv.req('/api/org/join', {
+      method: 'POST', body: { code: invite }, cookies: joiner.setCookie,
+    })).status, 200);
+
+    const after = (await srv.req('/api/admin/platform?fresh=1', { cookies: admin })).json.counts.orgs;
+    assert.equal(after, before, `the shell should be gone, not counted: ${before} → ${after}`);
+  });
+
+  /*
+   * And the case the guard exists for. Somebody who built their own CRM and
+   * then joined a team without bringing it has a workspace, not a placeholder.
+   */
+  test('an org holding work is kept, even with nobody left in it', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'tidy-op2@operator.test' });
+    const admin = await adminOf(srv, 'tidy-op2@operator.test');
+    const { invite } = await teamWithInvite(srv);
+
+    const joiner = await srv.signUp('builder@customer.test');
+    await srv.req('/api/sync', {
+      method: 'POST',
+      cookies: joiner.setCookie,
+      body: { records: [{ id: 'mine', updatedAt: Date.now(), doc: { moduleId: 'm', data: { name: 'My own work' } } }] },
+    });
+
+    const before = (await srv.req('/api/admin/platform', { cookies: admin })).json.counts.orgs;
+    assert.equal((await srv.req('/api/org/join', {
+      method: 'POST', body: { code: invite }, cookies: joiner.setCookie,
+    })).status, 200);
+
+    const view = (await srv.req('/api/admin/platform?fresh=1', { cookies: admin })).json;
+    assert.equal(view.counts.orgs, before, 'their workspace is not a shell and must survive');
+    const orphan = view.orgs.find((o) => o.members === 0 && o.records > 0);
+    assert.ok(orphan, 'and it is visible, with nobody in it, rather than silently deleted');
   });
 });

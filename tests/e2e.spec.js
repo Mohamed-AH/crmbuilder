@@ -1702,6 +1702,17 @@ test.describe('admin', () => {
     await opCtx.close();
   });
 
+  test('a test alert says whether alerts can reach anybody at all', async ({ page }) => {
+    await page.goto('/');
+    await signIn(page, 'e2e-admin@example.com');
+    await page.goto('/#/admin');
+    await page.locator('#test-alert-btn').waitFor({ timeout: 20000 });
+    await page.click('#test-alert-btn');
+    // No webhook is configured in this suite, and saying so is the point:
+    // silence and a broken URL are otherwise the same thing.
+    await expect(page.locator('.toast').last()).toContainText('nowhere to go');
+  });
+
   test('the deployment card shows the three meters and who is heaviest', async ({ page }) => {
     await page.goto('/');
     await signIn(page, 'e2e-admin@example.com');

@@ -383,6 +383,10 @@ class FileStore {
     if (o) { Object.assign(o, patch); this.save(); }
     return o;
   }
+  async deleteOrg(id) {
+    this.s.orgs = (this.s.orgs || []).filter((o) => o.id !== id);
+    this.save();
+  }
   async listOrgs() { return [...(this.s.orgs || [])]; }
   async countOrgs() { return (this.s.orgs || []).length; }
 
@@ -832,6 +836,7 @@ class MongoStore {
     await this.orgs.updateOne({ id }, { $set: patch });
     return this.orgs.findOne({ id }, { projection: { _id: 0 } });
   }
+  async deleteOrg(id) { await this.orgs.deleteOne({ id }); }
   async getOrg(id) { return this.orgs.findOne({ id }, { projection: { _id: 0 } }); }
   async listOrgs() { return this.orgs.find({}, { projection: { _id: 0 } }).toArray(); }
   async countOrgs() { return this.orgs.countDocuments(); }
@@ -1715,6 +1720,148 @@ async function usageReport() {
   };
 }
 
+/*
+ * Alerts — tell the operator before they think to look.
+ *
+ * There is no scheduler in this process and none is needed: UptimeRobot hits
+ * /health every 14 minutes to keep the free tier awake (§17), so the rules are
+ * evaluated off the back of that. **After the response, never blocking it**,
+ * and the response body is not changed at all — an anonymous ping gets exactly
+ * what it got before.
+ *
+ * Note this runs for ANY caller, not only a platform admin. The detail check
+ * on /health is about what the body *discloses*; evaluating is not disclosing,
+ * and gating it behind an authenticated caller would mean the keep-warm ping —
+ * the only regular caller there is — never triggered anything.
+ *
+ * ESCALATE-ONLY. Each rule remembers the level it last fired at, so crossing
+ * 60% notifies once and then stays quiet until 85%. Dropping back below
+ * re-arms it. A rule that fired every fourteen minutes would train the
+ * operator to ignore the channel, and an ignored alert is worse than none.
+ */
+const SIGNUP_SPIKE_PER_HOUR = Number(process.env.SIGNUP_SPIKE_PER_HOUR || 10);
+const TENANT_SHARE_LIMIT = Number(process.env.TENANT_SHARE_LIMIT || 25);
+const ALERT_MIN_GAP_MS = Number(process.env.ALERT_MIN_GAP_MS || 5 * 60 * 1000);
+let lastAlertRun = 0;
+
+// The highest crossed step, or null. Steps are ascending.
+function crossedStep(percent, steps) {
+  if (percent == null) return null;
+  let hit = null;
+  for (const step of steps) if (percent >= step) hit = step;
+  return hit;
+}
+
+async function collectAlerts() {
+  const out = [];
+  const [usage, ram, egress] = await Promise.all([usageReport(), ramReport(), egressReport()]);
+
+  out.push({
+    rule: 'storage',
+    step: crossedStep(usage.percentOfLimit, [60, 85, 95]),
+    say: (step) => `Database at ${usage.percentOfLimit}% of ${fmtSize(usage.limitBytes)} (crossed ${step}%). ${usage.records} records across ${usage.workspaces} workspaces.`,
+  });
+  out.push({
+    rule: 'ram',
+    step: crossedStep(ram.percent, [70, 85]),
+    say: (step) => `Memory at ${ram.percent}% of ${fmtSize(ram.limitBytes)} (crossed ${step}%). Sampled on a health ping, so this is slow growth rather than a spike.`,
+  });
+  out.push({
+    rule: 'egress',
+    step: crossedStep(egress.percent, [60, 85]),
+    say: (step) => `Bandwidth at ${egress.percent}% of ${fmtSize(egress.limitBytes)} for ${egress.month} (crossed ${step}%). Counts response bodies only, so the billed figure is higher.`,
+  });
+
+  // Signups in the last hour. Cheap: the events collection is already indexed
+  // by time and the window is one day.
+  try {
+    const since = Date.now() - 3600000;
+    const recent = (await store.eventsSince(1)).filter((e) => e.type === 'signup' && e.at >= since);
+    out.push({
+      rule: 'signups',
+      step: recent.length >= SIGNUP_SPIKE_PER_HOUR ? SIGNUP_SPIKE_PER_HOUR : null,
+      say: () => `${recent.length} signups in the last hour (threshold ${SIGNUP_SPIKE_PER_HOUR}). Worth a look at Admin → Accounts before it becomes storage.`,
+    });
+  } catch { /* an alert that cannot be computed is not an alert */ }
+
+  // One tenant dominating the shared database.
+  try {
+    const byOrg = await store.usageByOrg();
+    const total = byOrg.reduce((a, o) => a + o.bytes, 0);
+    const top = byOrg.sort((a, b) => b.bytes - a.bytes)[0];
+    const share = total && top ? Math.round((top.bytes / total) * 1000) / 10 : 0;
+    out.push({
+      rule: 'tenant',
+      step: share >= TENANT_SHARE_LIMIT ? TENANT_SHARE_LIMIT : null,
+      say: () => `One organisation holds ${share}% of the database (${fmtSize(top.bytes)}). Pausing it is reversible; deleting is not.`,
+    });
+  } catch { /* same */ }
+
+  return out;
+}
+
+function fmtSize(n) {
+  if (n == null) return '—';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let v = Number(n);
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+  return `${v < 10 && i > 0 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
+}
+
+async function evaluateAlerts({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && now - lastAlertRun < ALERT_MIN_GAP_MS) return [];
+  lastAlertRun = now;
+
+  const settings = await store.getPlatformSettings();
+  const state = { ...(settings.alerts || {}) };
+  const rules = await collectAlerts();
+  const fired = [];
+  let changed = false;
+
+  for (const { rule, step, say } of rules) {
+    const was = state[rule] ? state[rule].step : null;
+    if (step && step > (was || 0)) {
+      // Crossed a step it has not announced. Escalations get through; a
+      // repeat of the same level does not.
+      fired.push({ rule, step, text: say(step) });
+      state[rule] = { step, at: now };
+      changed = true;
+    } else if (!step && was) {
+      // Back under the lowest threshold — re-arm so it can speak again.
+      state[rule] = { step: null, at: now };
+      changed = true;
+    }
+  }
+
+  if (changed) await store.updatePlatformSettings({ alerts: state }).catch(() => {});
+  if (fired.length) notifyAlerts(fired);
+  return fired;
+}
+
+function notifyAlerts(fired) {
+  if (!FEEDBACK_WEBHOOK_URL) return;
+  const head = fired.length === 1 ? 'CRM Builder alert' : `CRM Builder — ${fired.length} alerts`;
+  const lines = fired.map((f) => `• ${f.text}`);
+  const req = webhookRequest(FEEDBACK_WEBHOOK_URL, {
+    rich: [`**${head}**`, ...lines].join('\n'),
+    plain: [head, ...lines].join('\n'),
+  });
+  if (req.error) {
+    console.warn(`Alert not sent: ${req.error}`);
+    return;
+  }
+  fetch(req.url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req.body),
+    signal: AbortSignal.timeout(8000),
+  }).then((r) => {
+    if (!r.ok) console.warn(`Alert webhook rejected the notification: HTTP ${r.status}`);
+  }).catch((err) => console.warn('Alert webhook failed:', err.message));
+}
+
 app.get('/healthz', (req, res) => res.json({ ok: true, storage: store.kind() }));
 
 app.get('/health', async (req, res) => {
@@ -1745,6 +1892,37 @@ app.get('/health', async (req, res) => {
   }
 
   res.status(body.ok ? 200 : 503).json(body);
+
+  /*
+   * After the response, and for every caller.
+   *
+   * The detail check above is about what the body DISCLOSES; evaluating is not
+   * disclosing. Gating this on an authenticated caller would mean the
+   * keep-warm ping — the only regular caller there is — never triggered
+   * anything, which is the entire mechanism.
+   *
+   * Rate-limited in evaluateAlerts, so a burst of pings costs one pass.
+   */
+  evaluateAlerts().catch((err) => console.warn('Alert evaluation failed:', err.message));
+});
+
+/*
+ * Prove the wiring without waiting for a threshold.
+ *
+ * `force` skips the rate limit and reports what each rule currently sees, so
+ * the operator can tell "nothing is wrong" apart from "the webhook has been
+ * broken since I rotated the URL" — which are otherwise the same silence.
+ */
+app.post('/api/admin/alerts/test', requireAuth, requirePlatformAdmin, async (req, res) => {
+  const rules = await collectAlerts();
+  const settings = await store.getPlatformSettings();
+  notifyAlerts([{ rule: 'test', step: 0, text: `Test alert from ${APP_URL}. If you can read this, alerts will reach you.` }]);
+  res.json({
+    ok: true,
+    webhookConfigured: !!FEEDBACK_WEBHOOK_URL,
+    rules: rules.map((r) => ({ rule: r.rule, crossed: r.step, saying: r.step ? r.text || r.say(r.step) : null })),
+    armed: settings.alerts || {},
+  });
 });
 
 // ---- OAuth (Google)
@@ -2255,6 +2433,40 @@ app.get('/api/org/invites/:code/preview', requireAuth, async (req, res) => {
   });
 });
 
+/*
+ * The empty org a joiner leaves behind.
+ *
+ * Every signup mints an organisation, so somebody who created an account only
+ * to accept a team invite leaves a placeholder shell the moment they join. It
+ * is never seen again, and it inflates the tenant count the operator panel is
+ * there to make trustworthy.
+ *
+ * Removed only when it is provably a shell, and the guard is deliberately
+ * stricter than "no records": **no members left, no records AND no modules.**
+ * Modules are the user's work too — somebody who set up their own CRM and then
+ * joined a team without bringing it has a workspace, not a placeholder, and
+ * deleting it would be exactly the silent destruction §12 warns against. In
+ * that case the org stays and shows in the table with nobody in it, which is
+ * the honest outcome.
+ *
+ * Best-effort: a join that succeeded must not fail because the tidy-up did.
+ */
+async function tidyVacatedOrg(orgId, wsId) {
+  if (!orgId) return false;
+  try {
+    if ((await store.listUsers(orgId)).length) return false;      // somebody is still there
+    const { records, modules } = await store.dataStats(orgId);
+    if (records || modules) return false;                          // real work, not a shell
+    await store.deleteWorkspace(wsId);
+    await store.deleteOrg(orgId);
+    platformCache = { at: 0, body: null };
+    return true;
+  } catch (err) {
+    console.warn('Could not tidy up the vacated organisation:', err.message);
+    return false;
+  }
+}
+
 app.post('/api/org/join', requireAuth, async (req, res) => {
   const code = String((req.body && req.body.code) || '');
   const invite = await store.getInvite(code);
@@ -2276,6 +2488,16 @@ app.post('/api/org/join', requireAuth, async (req, res) => {
   }
 
   const fromWs = workspaceIdFor(req.user);
+  /*
+   * Read the org they are LEAVING before anything moves them.
+   *
+   * FileStore.updateUser does Object.assign on the stored object, and
+   * getUserById hands back that same reference — so req.user.orgId silently
+   * becomes the new org the moment the update runs. MongoStore returns copies
+   * and does not, which is worse: the two backends would disagree, and the
+   * file store is what the tests run on.
+   */
+  const vacatedOrgId = req.user.orgId;
   const bringWork = req.body && req.body.bringWork === true;
   let broughtRows = 0;
   if (bringWork && fromWs !== org.id) {
@@ -2286,6 +2508,7 @@ app.post('/api/org/join', requireAuth, async (req, res) => {
   const updated = await store.updateUser(req.user.id, { orgId: org.id, role: invite.role });
   await store.addEvent('join', req.user.id, org.id).catch(() => {});
   if (broughtRows) await refreshCounts(updated);
+  await tidyVacatedOrg(vacatedOrgId, fromWs);
 
   res.json({
     ok: true,

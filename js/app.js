@@ -2944,7 +2944,10 @@
                   </span>
                 </li>`).join('')}
             </ul>` : '<p class="settings-hint">No codes yet.</p>'}
-          <div class="btn-row"><button class="btn btn-primary" id="mint-beta-btn">${icon('plus', 15)} New beta code</button></div>
+          <div class="btn-row">
+            <button class="btn btn-primary" id="mint-beta-btn">${icon('plus', 15)} New beta code</button>
+            <button class="btn" id="test-alert-btn">${icon('triangle-alert', 15)} Send a test alert</button>
+          </div>
         </div>` : ''}
         <div class="card table-card">
           <div class="card-head admin-users-head">
@@ -3045,6 +3048,24 @@
         prompt('Copy this signup link:', url);
       }
     }));
+
+    const testAlertBtn = $('#test-alert-btn');
+    if (testAlertBtn) testAlertBtn.addEventListener('click', async () => {
+      try {
+        const out = await Cloud.admin.testAlert();
+        // Silence and a broken webhook look identical, so say which this is.
+        if (!out.webhookConfigured) {
+          toast('No webhook set — alerts have nowhere to go');
+          return;
+        }
+        const armed = out.rules.filter((r) => r.crossed).map((r) => r.rule);
+        toast(armed.length
+          ? `Sent. Currently over a threshold: ${armed.join(', ')}`
+          : 'Sent. Nothing is over a threshold right now.');
+      } catch (err) {
+        toast(err.message);
+      }
+    });
 
     $$('[data-orgmode]').forEach((btn) => btn.addEventListener('click', async () => {
       const mode = btn.dataset.orgmode;

@@ -320,6 +320,7 @@ const Cloud = (() => {
       revokeBetaCode: (code) => api(`/api/admin/beta-codes/${encodeURIComponent(code)}`, { method: 'DELETE' }, TIMEOUT.admin),
       setSignupMode: (mode) => api('/api/admin/signup-mode', { method: 'PUT', body: JSON.stringify({ mode }) }, TIMEOUT.admin),
       platform: () => api('/api/admin/platform', {}, TIMEOUT.admin),
+      testAlert: () => api('/api/admin/alerts/test', { method: 'POST', body: '{}' }, TIMEOUT.admin),
       setOrgCreation: (mode) => api('/api/admin/org-creation', { method: 'PUT', body: JSON.stringify({ mode }) }, TIMEOUT.admin),
       suspendOrg: (id, suspend, reason) => api(`/api/admin/orgs/${encodeURIComponent(id)}/suspend`, { method: 'POST', body: JSON.stringify({ suspend, reason }) }, TIMEOUT.admin),
       accessRequests: () => api('/api/admin/access-requests', {}, TIMEOUT.admin),

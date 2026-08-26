@@ -40,7 +40,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 159 Node tests + 70 Playwright tests.
+**All green:** 164 Node tests + 71 Playwright tests.
 
 ```sh
 npm install
@@ -102,7 +102,7 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v19`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v20`).
 
 **Tenancy scoping comes from the session, never a request.** That covers both
 `req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
@@ -1025,7 +1025,7 @@ and one cannot be built as worded.
 | Halt org creation | ✅ Stage B — `orgCreation`, with the invited-colleague exemption |
 | Pause/resume a user | ✅ Done — `disabled` + `PATCH /api/admin/users/:id` |
 | Pause/resume an org | ✅ Stage B — read-only sync, reversible, destroys nothing |
-| Telegram alerts | ☐ Stage C. The transport exists (§18); thresholds, state and trigger do not |
+| Telegram alerts | ✅ Stage C — five rules, escalate-only, evaluated off the keep-warm ping |
 
 ### Three decisions taken before any code
 
@@ -1078,7 +1078,7 @@ anonymous callers.
   works, **nothing is deleted**. `deleteAccount` stays the only thing that can
   remove a workspace (§5) and nothing here may touch it. The wording is one
   word from deletion and a decade of data apart — §15's lesson.
-- ☐ **C — alerts.** Mongo storage at 60/85/95%, RSS at 70/85%, egress at
+- ✅ **C — alerts.** Shipped. Mongo storage at 60/85/95%, RSS at 70/85%, egress at
   60/85%, signup spikes, and a single tenant over 25% of the database. **Escalate-only and never
   repeated at the same level**: state per rule in the `platform` document, so
   60% notifies once and stays quiet until 85%, re-arming only after a drop. An
@@ -1149,8 +1149,58 @@ it on every keystroke; `platformCache` is invalidated on suspend, since the
 table it feeds shows exactly that column; and `.mode-switch` now matches two
 rows, so the older E2E test addresses its own by `:has([data-mode])`.
 
-**Still open and worth deciding:** joining a team does not delete the org the
-joiner vacated, so every invited colleague leaves an empty one behind. They are
-visible in the Organisations table as rows with 0 people. Deleting them was not
-done — removing data during a flow nobody asked about is the habit §12 warns
-against — but the org count is inflated by exactly that number.
+**Vacated orgs are tidied now** — see §25.
+
+---
+
+## 25. Stage C: alerts, and the placeholder orgs
+
+### Where the loop runs, and who for
+
+UptimeRobot hits `/health` every 14 minutes to keep the free tier awake (§17),
+so the rules are evaluated off the back of that — after the response, never
+blocking it, and the body is unchanged.
+
+**It runs for every caller, not only a platform admin.** The detail check on
+`/health` governs what the body *discloses*; evaluating is not disclosing. An
+earlier draft of this plan said to gate it behind the same check, which would
+have meant the keep-warm ping — the only regular caller there is — never
+triggered anything. `ALERT_MIN_GAP_MS` (5 min) keeps a burst of pings to one
+pass.
+
+### Escalate-only
+
+Each rule stores the step it last announced in `platform.alerts`. Crossing 60%
+speaks once and then stays quiet until 85%; dropping back under the lowest step
+re-arms it. A rule that fired every fourteen minutes would train the operator
+to ignore the channel, and an ignored alert is worse than none. Guarded by *"a
+crossed threshold is announced once"*, which makes four pings and requires
+exactly one message — it fails the moment the `step > was` comparison becomes a
+bare truthiness check.
+
+Rules: storage 60/85/95, RSS 70/85, egress 60/85, more than
+`SIGNUP_SPIKE_PER_HOUR` signups in an hour, and one tenant over
+`TENANT_SHARE_LIMIT`% of the database. `POST /api/admin/alerts/test` fires a
+message and reports what every rule currently sees, so "nothing is wrong" can
+be told apart from "the webhook has been broken since I rotated the URL".
+
+### Tidying the org a joiner leaves behind
+
+Signing up only to accept an invite mints an org that is abandoned seconds
+later, inflating the tenant count the panel exists to make trustworthy.
+`tidyVacatedOrg` removes it — but the guard is deliberately stricter than the
+"no records" rule it was asked for: **no members left, no records AND no
+modules.** Somebody who built their own CRM and then joined a team without
+bringing it has a workspace, not a placeholder; deleting it would be the silent
+destruction §12 warns against. That org stays and shows in the table with
+nobody in it, which is the honest outcome and has its own test.
+
+**The trap, and it is a nasty one.** `FileStore.updateUser` does
+`Object.assign` on the stored object and `getUserById` hands back that same
+reference, so `req.user.orgId` silently becomes the *new* org the moment the
+join's update runs — and the tidy-up then inspected the org they had just
+joined, found a member, and did nothing. `MongoStore` returns copies and does
+not behave that way, so the two backends would have disagreed, with the file
+store — the one the tests run on — being the broken half. **Read anything you
+need about the previous state before the write**, which is what `vacatedOrgId`
+is for.

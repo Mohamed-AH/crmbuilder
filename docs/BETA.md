@@ -126,6 +126,33 @@ Worth knowing before you work the queue:
   85%, because that is the moment the decision is being made. Nothing is
   enforced.
 
+### Alerts
+
+If `FEEDBACK_WEBHOOK_URL` is set, the deployment tells you before you think to
+look. Rules are evaluated off the UptimeRobot ping, so nothing extra runs.
+
+| Rule | Speaks at |
+|---|---|
+| Database | 60%, 85%, 95% of 512 MB |
+| Memory | 70%, 85% of 512 MB |
+| Bandwidth | 60%, 85% of the monthly allowance |
+| Signup spike | more than `SIGNUP_SPIKE_PER_HOUR` (10) in an hour |
+| Heavy tenant | one org over `TENANT_SHARE_LIMIT` (25%) of the database |
+
+**Each level is announced once.** Crossing 60% messages you and then goes quiet
+until 85%; it only speaks again at that level if usage drops back under and
+climbs again. That is deliberate — an alert that repeats every fourteen minutes
+is one you learn to swipe away.
+
+**Admin → Beta access → Send a test alert** fires a message and reports what
+every rule currently sees, so silence can be told apart from a webhook that has
+been broken since you rotated the URL. Worth pressing once after any change to
+`FEEDBACK_WEBHOOK_URL`.
+
+Thresholds are environment variables (`EGRESS_LIMIT_BYTES`, `RAM_LIMIT_BYTES`,
+`SIGNUP_SPIKE_PER_HOUR`, `TENANT_SHARE_LIMIT`). **Check `EGRESS_LIMIT_BYTES`
+against Render's current plan** — a wrongly encoded limit is worse than none.
+
 ### Keeping it awake
 
 UptimeRobot pings `/health` every 14 minutes, which is inside Render's ~15
