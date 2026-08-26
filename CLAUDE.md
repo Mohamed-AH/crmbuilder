@@ -1010,7 +1010,9 @@ it. Confirmed over four consecutive full runs.
 ## 24. Operator controls — IN PROGRESS
 
 **This section is the resume point for this work.** Stage status is kept
-current here; anything marked ☐ has not been built. Six asks, and the first
+current here; anything marked ☐ has not been built. The reasoning behind the
+shape — why Render cannot be read, why orgs need their own gate, the full
+verification list — is in `docs/OPERATOR-CONTROLS.md`. Six asks, and the first
 thing to know is that they are not six pieces of work — two were already done
 and one cannot be built as worded.
 

@@ -29,6 +29,7 @@ A **modular CRM builder for small businesses** — an installable, offline-first
 | **[Architecture](docs/ARCHITECTURE.md)** | Capacity limits, multi-tenancy options, and the pooled vs dedicated deployment paths. |
 | **[Deployment](DEPLOYMENT.md)** | Getting it running on Render + MongoDB Atlas + Google OAuth. |
 | **[Running the beta](docs/BETA.md)** | Operator runbook for opening it to testers, plus the tester-facing note to send with the invite. |
+| **[Operator controls](docs/OPERATOR-CONTROLS.md)** | Plan for the admin dashboard's usage, quota, signup and suspension controls. |
 | **[Marketing](MARKETING.md)** | B2B/B2C copy and launch threads. |
 
 ## Testing
