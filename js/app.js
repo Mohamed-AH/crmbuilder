@@ -696,7 +696,7 @@
     const nav = $('#nav-modules');
     const current = location.hash;
     nav.innerHTML = modules.map((m) => `
-      <a href="#/m/${m.id}" class="nav-link ${current === `#/m/${m.id}` ? 'active' : ''}">
+      <a href="#/m/${esc(m.id)}" class="nav-link ${current === `#/m/${m.id}` ? 'active' : ''}">
         <span class="nav-icon" style="color:${esc(m.color)};background:${esc(m.color)}1a">${modIcon(m)}</span>
         <span class="nav-label">${esc(m.name)}</span>
       </a>`).join('') || '<p class="nav-empty">No modules yet</p>';
@@ -1074,7 +1074,7 @@
               <ul class="recent-list">
                 ${recent.map(({ mod, r }) => `
                   <li>
-                    <a href="#/m/${mod.id}" class="recent-item">
+                    <a href="#/m/${esc(mod.id)}" class="recent-item">
                       <span class="nav-icon" style="color:${esc(mod.color)};background:${esc(mod.color)}1a">${modIcon(mod)}</span>
                       <span class="recent-name">${esc(recordName(mod, r))}</span>
                       <span class="recent-meta">${esc(mod.name)} · ${new Date(r.updatedAt).toLocaleDateString()}</span>
@@ -1538,7 +1538,7 @@
                 title="Sort by ${esc(f.label)}">${esc(f.label)}${sortIcon(f)}</th>`).join('')}</tr></thead>
           <tbody>
             ${records.map((r) => `
-              <tr data-record="${r.id}" tabindex="0">
+              <tr data-record="${esc(r.id)}" tabindex="0">
                 ${cols.map((f) => `<td data-label="${esc(f.label)}" class="${['currency', 'number'].includes(f.type) ? 'td-num' : ''}">${fmtValue(f, r.data[f.key])}</td>`).join('')}
               </tr>`).join('')}
           </tbody>
@@ -1568,7 +1568,7 @@
               </div>
               <div class="kanban-cards">
                 ${cards.map((r) => `
-                  <div class="kanban-card" draggable="true" data-record="${r.id}">
+                  <div class="kanban-card" draggable="true" data-record="${esc(r.id)}">
                     <span class="kanban-card-title">${esc(recordName(mod, r))}</span>
                     ${valueField && r.data[valueField.key] ? `<span class="kanban-card-value">${esc(fmtCurrency(r.data[valueField.key]))}</span>` : ''}
                   </div>`).join('')}
@@ -1841,37 +1841,37 @@
     const v = value ?? '';
     switch (field.type) {
       case 'textarea':
-        return `<textarea class="input" id="${id}" name="${esc(field.key)}" rows="4" ${req}>${esc(v)}</textarea>`;
+        return `<textarea class="input" id="${esc(id)}" name="${esc(field.key)}" rows="4" ${req}>${esc(v)}</textarea>`;
       case 'select':
-        return `<select class="input" id="${id}" name="${esc(field.key)}" ${req}>
+        return `<select class="input" id="${esc(id)}" name="${esc(field.key)}" ${req}>
           <option value="">—</option>
           ${(field.options || []).map((o) => `<option value="${esc(o)}" ${o === v ? 'selected' : ''}>${esc(o)}</option>`).join('')}
         </select>`;
       case 'checkbox':
-        return `<label class="checkbox-line"><input type="checkbox" id="${id}" name="${esc(field.key)}" ${v ? 'checked' : ''}> ${esc(field.label)}</label>`;
+        return `<label class="checkbox-line"><input type="checkbox" id="${esc(id)}" name="${esc(field.key)}" ${v ? 'checked' : ''}> ${esc(field.label)}</label>`;
       case 'relation': {
         const relMod = getModule(field.relatedModule);
         if (!relMod) return '<p class="muted">Linked module no longer exists.</p>';
         const relRecords = await DB.recordsByModule(relMod.id);
         relRecords.forEach((r) => relationNameCache.set(r.id, recordName(relMod, r)));
-        return `<select class="input" id="${id}" name="${esc(field.key)}" ${req}>
+        return `<select class="input" id="${esc(id)}" name="${esc(field.key)}" ${req}>
           <option value="">—</option>
-          ${relRecords.map((r) => `<option value="${r.id}" ${r.id === v ? 'selected' : ''}>${esc(recordName(relMod, r))}</option>`).join('')}
+          ${relRecords.map((r) => `<option value="${esc(r.id)}" ${r.id === v ? 'selected' : ''}>${esc(recordName(relMod, r))}</option>`).join('')}
         </select>`;
       }
       case 'number':
       case 'currency':
-        return `<input class="input" type="number" step="any" id="${id}" name="${esc(field.key)}" value="${esc(v)}" ${req}>`;
+        return `<input class="input" type="number" step="any" id="${esc(id)}" name="${esc(field.key)}" value="${esc(v)}" ${req}>`;
       case 'date':
-        return `<input class="input" type="date" id="${id}" name="${esc(field.key)}" value="${esc(v)}" ${req}>`;
+        return `<input class="input" type="date" id="${esc(id)}" name="${esc(field.key)}" value="${esc(v)}" ${req}>`;
       case 'email':
-        return `<input class="input" type="email" id="${id}" name="${esc(field.key)}" value="${esc(v)}" ${req}>`;
+        return `<input class="input" type="email" id="${esc(id)}" name="${esc(field.key)}" value="${esc(v)}" ${req}>`;
       case 'phone':
-        return `<input class="input" type="tel" id="${id}" name="${esc(field.key)}" value="${esc(v)}" ${req}>`;
+        return `<input class="input" type="tel" id="${esc(id)}" name="${esc(field.key)}" value="${esc(v)}" ${req}>`;
       case 'url':
-        return `<input class="input" type="url" id="${id}" name="${esc(field.key)}" value="${esc(v)}" placeholder="https://" ${req}>`;
+        return `<input class="input" type="url" id="${esc(id)}" name="${esc(field.key)}" value="${esc(v)}" placeholder="https://" ${req}>`;
       default:
-        return `<input class="input" type="text" id="${id}" name="${esc(field.key)}" value="${esc(v)}" ${req}>`;
+        return `<input class="input" type="text" id="${esc(id)}" name="${esc(field.key)}" value="${esc(v)}" ${req}>`;
     }
   }
 
@@ -1956,7 +1956,7 @@
         <input class="input bf-options ${f.type === 'select' ? '' : 'hidden'}" type="text"
           placeholder="Options, comma separated" value="${esc((f.options || []).join(', '))}">
         <select class="input bf-related ${f.type === 'relation' ? '' : 'hidden'}">
-          ${modules.map((m) => `<option value="${m.id}" ${f.relatedModule === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
+          ${modules.map((m) => `<option value="${esc(m.id)}" ${f.relatedModule === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
         </select>
       </div>`;
   }
@@ -3067,9 +3067,9 @@
                   <td data-label="Last active">${fmtWhen(u.lastActiveAt)}</td>
                   <td data-label="Actions" class="admin-actions">
                     ${u.id === Cloud.user.id ? '<span class="muted">you</span>' : `
-                      <button class="icon-btn" data-act="role" data-id="${u.id}" data-role="${u.role === 'owner' ? 'member' : 'owner'}" title="${u.role === 'owner' ? 'Demote to member' : 'Make an owner'}">${icon(u.role === 'owner' ? 'user' : 'shield-check', 15)}</button>
-                      <button class="icon-btn" data-act="disable" data-id="${u.id}" data-disabled="${u.disabled ? '0' : '1'}" title="${u.disabled ? 'Re-enable account' : 'Disable account'}">${icon('ban', 15)}</button>
-                      <button class="icon-btn" data-act="delete" data-id="${u.id}" title="Remove this account">${icon('trash-2', 15)}</button>`}
+                      <button class="icon-btn" data-act="role" data-id="${esc(u.id)}" data-role="${u.role === 'owner' ? 'member' : 'owner'}" title="${u.role === 'owner' ? 'Demote to member' : 'Make an owner'}">${icon(u.role === 'owner' ? 'user' : 'shield-check', 15)}</button>
+                      <button class="icon-btn" data-act="disable" data-id="${esc(u.id)}" data-disabled="${u.disabled ? '0' : '1'}" title="${u.disabled ? 'Re-enable account' : 'Disable account'}">${icon('ban', 15)}</button>
+                      <button class="icon-btn" data-act="delete" data-id="${esc(u.id)}" title="Remove this account">${icon('trash-2', 15)}</button>`}
                   </td>
                 </tr>`).join('')}
             </tbody>

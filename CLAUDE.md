@@ -77,7 +77,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 180 Node tests + 73 Playwright tests.
+**All green:** 180 Node tests + 76 Playwright tests.
 
 ```sh
 npm install
@@ -142,7 +142,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v22`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v23`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -1608,8 +1608,8 @@ claims held and two did not.
 - ✅ **1 — Auth and session.** Shipped — see below.
 - ✅ **2 — Injection and data integrity.** Shipped — see below. Three of the
   four suspicions were **false**; the fourth is a guard, not a fix.
-- ☐ **3 — XSS.** Every interpolation reaching an `innerHTML` sink, then CSP as
-  defence in depth (after the sweep, not instead of it).
+- ✅ **3 — XSS.** Shipped — a real stored-XSS vector, closed. CSP moved to
+  Phase 4, where the other headers land.
 - ☐ **4 — Network hardening.** Security headers, rate limits, per-route payload
   limits, SSRF bounds, error sanitisation.
 - ☐ **5 — Supply chain and operational.** CI gates, docs as a map.
@@ -1756,3 +1756,58 @@ written against the refactor, not against today's code.
 **One tidy-up:** `req.body.name` reached `upsertUser` uncoerced. Not a filter and
 not injection — but an object stored as an account's name renders as
 `[object Object]` on the admin screen, for a person nobody can then identify.
+
+### Phase 3 as built — the audit's real finding
+
+**Values were escaped from the start. Identifiers were not.** Every record
+value, module name, field label and business name already went through `esc()`
+or `fmtValue`. But ids did not, because they are normally `uid()` output and so
+read as obviously safe:
+
+```
+<tr data-record="${r.id}">            table row
+<div class="kanban-card" data-record="${r.id}">
+<a href="#/m/${m.id}">                sidebar nav, and the dashboard's recents
+<input id="${id}">                    the record form, id = `f-${field.key}`
+<option value="${r.id}">              relation pickers
+<button data-id="${u.id}">            the admin account rows
+```
+
+**An id is not server-generated in every path, and that is the whole finding.**
+`importState` writes whatever ids a backup file carries, and `/api/sync` does
+`String(item.id)` without restricting characters, so a colleague pushing by
+hand chooses their own. That is **exactly the threat model `safeHref` already
+names** — "record values arrive from CSV imports and shared backups" — applied
+to a field nobody had thought of as a value.
+
+Proven, not argued: a record whose id is
+`" onfocus="window.__pwnedById = true" autofocus x="` rendered a row whose
+attribute list came back as
+`["data-record", "onfocus", "autofocus", "x", "tabindex", …]`. Two attributes
+that were never in the template. All three tests fail on the pre-fix code.
+
+**`slug()` is why this stayed theoretical in the UI** — it turns `__proto__`
+into `proto` and would strip a quote too, so no amount of typing in the app
+produces one. Only a restored backup or a hand-written push does. The same
+sentence, almost word for word, as §30's prototype-pollution note: the UI is
+not the boundary, the API is.
+
+**What was checked and was already right:** `toast()` uses `textContent`, not
+`innerHTML`; `confirm()` is native and always plain text; every remaining
+unescaped attribute interpolation is an internal constant (`CURRENCIES`,
+`FIELD_TYPES`, `MODULE_COLORS`, `Cloud.status`) that no user can reach. The
+sweep flagged 267 interpolations and all but these six were either escaped
+already or structurally incapable of carrying markup.
+
+**`CACHE_VERSION` bumped to `crmbuilder-v23`** — `js/app.js` is precached, so
+§3's rule applies.
+
+### CSP is Phase 4, deliberately
+
+It is a header, and it should land with the other headers rather than half in
+each commit. It is also not free here: `script-src 'self'` needs the **two**
+inline `onclick` handlers in `js/app.js` removed and `index.html`'s inline
+`<script>` block either extracted or hashed, and `style-src` would need
+`'unsafe-inline'` for the 14 inline `style=` attributes unless those move too.
+Bounded work, but work — and it is defence in depth, which is worth having
+*after* the escaping is right rather than as a substitute for it.

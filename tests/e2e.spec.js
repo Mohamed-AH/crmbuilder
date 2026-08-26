@@ -2178,3 +2178,105 @@ test('javascript: URLs in link fields are not rendered as executable hrefs', asy
   expect(hrefs.some((h) => (h || '').toLowerCase().startsWith('javascript:'))).toBe(false);
   expect(await page.evaluate(() => window.__pwned)).toBeUndefined();
 });
+
+/*
+ * A record id is attacker-influenceable and lands in an HTML attribute.
+ *
+ * Values were escaped from the start; ids were not, because they are normally
+ * uid() output and "obviously" safe. They are not: importState writes whatever
+ * ids a backup file carries, and /api/sync does String(item.id) without
+ * restricting characters, so a colleague pushing by hand can choose one too.
+ * That is the same threat model safeHref already names — CSV imports and
+ * shared backups.
+ */
+test('a hostile record id cannot break out of the attribute it is rendered into', async ({ page }) => {
+  await onboard(page, { templates: ['Contacts'] });
+  await page.click('#nav-modules .nav-link:has-text("Contacts")');
+  await page.click('#add-record-btn');
+  await page.fill('#f-name', 'Ordinary Person');
+  await page.click('#record-save');
+  await expect(page.locator('.records-table tbody tr:has-text("Ordinary Person")')).toHaveCount(1);
+
+  // Exactly what a tampered backup or a hand-crafted push carries.
+  await page.evaluate(async () => {
+    const all = await DB.getAll('records');
+    const rec = all.find((r) => r.data && r.data.name === 'Ordinary Person');
+    await DB.delete('records', rec.id, Date.now());
+    await DB.put('records', {
+      ...rec,
+      id: '" onfocus="window.__pwnedById = true" autofocus x="',
+      updatedAt: Date.now(),
+    });
+  });
+  await page.reload();
+  await page.click('#nav-modules .nav-link:has-text("Contacts")');
+  await expect(page.locator('.records-table tbody tr:has-text("Ordinary Person")')).toHaveCount(1);
+
+  // The id must arrive as ONE attribute value, not as markup that introduced
+  // attributes of its own.
+  const injected = await page.locator('.records-table tbody tr').evaluateAll(
+    (rows) => rows.flatMap((r) => r.getAttributeNames()),
+  );
+  expect(injected).not.toContain('onfocus');
+  expect(injected).not.toContain('autofocus');
+  expect(await page.evaluate(() => window.__pwnedById)).toBeUndefined();
+});
+
+/*
+ * Same class, different sink: a module id lands in an href, and a field key
+ * lands in an input's id. Both come from the same places a record id does —
+ * a restored backup, or a colleague's hand-written push.
+ */
+test('a hostile module id cannot inject attributes into the nav', async ({ page }) => {
+  await onboard(page, { templates: ['Contacts'] });
+
+  await page.evaluate(async () => {
+    const mods = await DB.getAll('modules');
+    const mod = mods.find((m) => m.name === 'Contacts');
+    await DB.put('modules', {
+      ...mod,
+      id: '" onmouseover="window.__pwnedByModule = true" y="',
+      updatedAt: Date.now(),
+    });
+  });
+  await page.reload();
+  await expect(page.locator('#nav-modules .nav-link').first()).toBeVisible();
+
+  const navAttrs = await page.locator('#nav-modules .nav-link').evaluateAll(
+    (els) => els.flatMap((e) => e.getAttributeNames()),
+  );
+  expect(navAttrs).not.toContain('onmouseover');
+  expect(navAttrs).not.toContain('y');
+  expect(await page.evaluate(() => window.__pwnedByModule)).toBeUndefined();
+});
+
+/*
+ * A field key becomes an element id on the record form. Same origin as the
+ * others: slug() cannot produce this, a restored backup can.
+ */
+test('a hostile field key cannot inject attributes into the record form', async ({ page }) => {
+  await onboard(page, { templates: ['Contacts'] });
+
+  await page.evaluate(async () => {
+    const mods = await DB.getAll('modules');
+    const mod = mods.find((m) => m.name === 'Contacts');
+    await DB.put('modules', {
+      ...mod,
+      fields: [
+        ...(mod.fields || []),
+        { key: '" onclick="window.__pwnedByField = true" z="', label: 'Odd', type: 'text' },
+      ],
+      updatedAt: Date.now(),
+    });
+  });
+  await page.reload();
+  await page.click('#nav-modules .nav-link:has-text("Contacts")');
+  await page.click('#add-record-btn');
+  await expect(page.locator('#modal-root .modal')).toBeVisible();
+
+  const formAttrs = await page.locator('#modal-root input, #modal-root textarea, #modal-root select')
+    .evaluateAll((els) => els.flatMap((e) => e.getAttributeNames()));
+  expect(formAttrs).not.toContain('onclick');
+  expect(formAttrs).not.toContain('z');
+  expect(await page.evaluate(() => window.__pwnedByField)).toBeUndefined();
+});
