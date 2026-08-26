@@ -40,7 +40,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 149 Node tests + 66 Playwright tests.
+**All green:** 149 Node tests + 68 Playwright tests.
 
 ```sh
 npm install
@@ -102,7 +102,7 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v16`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v17`).
 
 **Tenancy scoping comes from the session, never a request.** That covers both
 `req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
@@ -920,8 +920,9 @@ it on both counts.
 ### Still open, deliberately
 
 Tier 2 from the audit: no read-only role (every member may delete every
-record), and record-level last-write-wins loses a concurrent field edit.
-Changing the currency still relabels without converting.
+record), and record-level last-write-wins loses a concurrent field edit. Held
+deliberately — reopening the permission model before the beta launches is
+complexity small trusted teams do not need.
 
 ---
 
@@ -969,3 +970,37 @@ written, because rewriting every record in every workspace on the strength of a
 guess about which keys are orphaned is a bigger and more dangerous act than the
 problem. If it is ever wanted, it belongs in Settings as something a user runs
 against their own workspace, having been shown what it found.
+
+---
+
+## 23. Currency relabels, and now says so
+
+`fmtCurrency` formats the stored number with the workspace's currency code.
+That is right — there are no exchange rates in this app and inventing one would
+be worse than not having it — but it is not what the word leads people to
+expect: switching USD to EUR turns a $10,000 deal into a €10,000 deal and moves
+every pipeline total with it. It used to do that in silence.
+
+`confirmCurrencyChange` names the count of records holding an amount, says
+plainly that nothing is converted, and points at the export/convert/import path
+for anyone who meant the other thing.
+
+**Asked only when there is money on the line.** With nothing stored in a
+currency field there is no misreading to prevent, and a dialog over an empty
+workspace is noise. Same rule as `askAboutRemovedFields` (§22), and both
+directions are tested — one test fails if the prompt never appears, another
+fails if it appears when there is nothing to mislabel.
+
+**A refusal must move nothing**, including the business name typed alongside it
+in the same form, so the check runs before any of the save is applied.
+
+### The reload flake, actually fixed
+
+*"data survives a reload"* failed intermittently under full-suite load and never
+in isolation. The first fix was wrong: it waited for the sidebar **after** the
+reload, which addressed the symptom. The cause was that the test reloaded
+immediately after clicking save, racing the write — so the record was lost
+while the modules, written during onboarding and long since committed,
+survived. That asymmetry was the clue. Waiting for the row to render before
+reloading is waiting for `DB.put` to have resolved, since the re-render follows
+it. Confirmed over four consecutive full runs.

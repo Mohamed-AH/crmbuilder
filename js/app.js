@@ -1949,6 +1949,53 @@
    * whose updatedAt did not move is a row the sync engine will never send —
    * and then the values would be gone here and still present for everyone else.
    */
+  /*
+   * The currency setting relabels; it does not convert.
+   *
+   * That is the right behaviour — this app has no exchange rates and guessing
+   * one would be worse than not having it — but it is not what the word
+   * "currency" leads people to expect. Switching USD to EUR turns a $10,000
+   * deal into a €10,000 deal, and every pipeline total moves with it, silently.
+   *
+   * Asked only when there is money on the line: with nothing stored in a
+   * currency field there is no misreading to prevent, and a dialog over an
+   * empty workspace is just noise. Same rule as askAboutRemovedFields.
+   */
+  async function confirmCurrencyChange(from, to) {
+    let amounts = 0;
+    for (const mod of modules) {
+      const moneyFields = mod.fields.filter((f) => f.type === 'currency');
+      if (!moneyFields.length) continue;
+      for (const r of await DB.recordsByModule(mod.id)) {
+        if (moneyFields.some((f) => Number(r.data && r.data[f.key]))) amounts += 1;
+      }
+    }
+    if (!amounts) return true;
+
+    return new Promise((resolve) => {
+      const modal = openModal(`
+        <div class="modal-head"><h2>Change the currency to ${esc(to)}?</h2></div>
+        <div class="modal-body">
+          <p class="settings-hint">This changes how amounts are <strong>labelled</strong>, not what they are worth. Nothing is converted — no exchange rate is applied.</p>
+          <p class="settings-hint"><strong>${amounts} record${amounts === 1 ? '' : 's'}</strong> hold an amount. A figure showing as 10,000 ${esc(from)} today will show as 10,000 ${esc(to)} afterwards, and your totals will move with it.</p>
+          <p class="settings-hint">If you meant to convert the numbers, export a backup, convert them in a spreadsheet, and import it back.</p>
+        </div>
+        <div class="modal-foot claim-actions">
+          <button class="btn" data-currency="no">Cancel</button>
+          <button class="btn btn-primary" data-currency="yes">Relabel as ${esc(to)}</button>
+        </div>`);
+      let answered = false;
+      const onDismiss = () => { if (!answered) { answered = true; resolve(false); } };
+      $('#modal-root').addEventListener('crmb:modal-closed', onDismiss, { once: true });
+      $$('[data-currency]', modal).forEach((btn) => btn.addEventListener('click', () => {
+        answered = true;
+        $('#modal-root').removeEventListener('crmb:modal-closed', onDismiss);
+        closeModal();
+        resolve(btn.dataset.currency === 'yes');
+      }));
+    });
+  }
+
   async function purgeFieldValues(moduleId, keys) {
     const records = await DB.recordsByModule(moduleId);
     const now = Date.now();
@@ -2286,9 +2333,11 @@
         </div>
       </div>`;
 
-    $('#save-workspace').addEventListener('click', () => {
+    $('#save-workspace').addEventListener('click', async () => {
+      const nextCurrency = $('#set-currency').value;
+      if (nextCurrency !== SETTINGS.currency && !(await confirmCurrencyChange(SETTINGS.currency, nextCurrency))) return;
       SETTINGS.businessName = $('#set-name').value.trim();
-      SETTINGS.currency = $('#set-currency').value;
+      SETTINGS.currency = nextCurrency;
       saveSettings();
       renderSidebar();
       toast('Workspace saved');

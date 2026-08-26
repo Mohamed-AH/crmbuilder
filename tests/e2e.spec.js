@@ -223,11 +223,15 @@ test.describe('records', () => {
     await page.click('#add-record-btn');
     await page.fill('#f-name', 'Persistent Percy');
     await page.click('#record-save');
+    // Reloading straight after the click races the write: the save is async,
+    // and a reload mid-flight loses the record while the modules — written
+    // during onboarding, long since committed — survive. That asymmetry is
+    // what the failure looked like, and it only showed up under full-suite
+    // load. Waiting for the row to render is waiting for DB.put to have
+    // resolved, since that is what the re-render follows.
+    await expect(page.locator('tr:has-text("Persistent Percy")')).toBeVisible();
+
     await page.reload();
-    // Wait for the sidebar to come back before clicking it. Boot paints from
-    // IndexedDB, so under load the nav can still be re-rendering when the click
-    // lands — this failed once in a full run and never in isolation, which is
-    // the signature of that race rather than of anything about reloading.
     const contacts = page.locator('#nav-modules .nav-link:has-text("Contacts")');
     await expect(contacts).toBeVisible({ timeout: 15000 });
     await contacts.click();
@@ -1725,8 +1729,47 @@ test.describe('settings', () => {
     await page.goto('/#/settings');
     await page.selectOption('#set-currency', 'JPY');
     await page.click('#save-workspace');
+    await page.click('[data-currency="yes"]');
     await page.click('#nav-modules .nav-link:has-text("Deals")');
     await expect(page.locator('.kanban-card-value').first()).toContainText('¥');
+  });
+
+  /*
+   * The currency setting relabels; it does not convert.
+   *
+   * Correct — there are no exchange rates here and inventing one would be
+   * worse — but not what the word leads people to expect. Switching USD to EUR
+   * turns a $10,000 deal into a €10,000 deal and moves every pipeline total
+   * with it, and it used to do that in silence.
+   */
+  test('switching currency says it relabels rather than converts, and can be refused', async ({ page }) => {
+    await onboard(page, { currency: 'USD' });
+    await page.goto('/#/settings');
+    await page.selectOption('#set-currency', 'EUR');
+    await page.click('#save-workspace');
+
+    const modal = page.locator('.modal-body').last();
+    await expect(modal).toContainText('not what they are worth');
+    await expect(modal).toContainText('Nothing is converted');
+    // The count is what makes it concrete rather than a general warning.
+    await expect(modal).toContainText(/\d+ records? hold an amount/);
+
+    await page.click('[data-currency="no"]');
+    // Refused means nothing moved — not the currency, and not the rest of the
+    // form that was saved alongside it.
+    await page.reload();
+    await expect(page.locator('#set-currency')).toHaveValue('USD');
+  });
+
+  test('a workspace with no amounts is not asked about currency at all', async ({ page }) => {
+    await onboard(page, { currency: 'USD', templates: ['Contacts'] });
+    await page.goto('/#/settings');
+    await page.selectOption('#set-currency', 'GBP');
+    await page.click('#save-workspace');
+    // Nothing is stored in a currency field, so there is no misreading to
+    // prevent and a dialog would be pure noise.
+    await expect(page.locator('.modal-backdrop')).toHaveCount(0);
+    await expect(page.locator('.toast').last()).toContainText('Workspace saved');
   });
 
   test('exports and re-imports a JSON backup', async ({ page }) => {

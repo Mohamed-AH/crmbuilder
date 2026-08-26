@@ -4,7 +4,7 @@
  * API/auth requests are network-only (never cached).
  * Bump CACHE_VERSION whenever any precached asset changes.
  */
-const CACHE_VERSION = 'crmbuilder-v16';
+const CACHE_VERSION = 'crmbuilder-v17';
 const APP_SHELL = [
   './',
   './index.html',

@@ -217,8 +217,11 @@ Open **Settings** from the bottom of the sidebar.
 
 - **Business name** — shown at the top of the sidebar and on the dashboard.
 - **Currency** — 30 currencies. Changing it reformats every money field
-  everywhere, immediately. It changes *display*, not the stored numbers, so
-  switching currencies doesn't convert amounts.
+  everywhere, immediately. It changes *display*, not the stored numbers: a
+  figure showing as 10,000 USD becomes 10,000 EUR, and your totals move with
+  it. If any records hold an amount you'll be asked to confirm before it
+  applies. To actually convert, export a backup, convert the numbers in a
+  spreadsheet, and import it back.
 
 Click **Save workspace** to apply.
 
