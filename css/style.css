@@ -297,6 +297,7 @@ a.stat-card:hover, .stat-card-add:hover { border-color: var(--border-strong); bo
 }
 .onboard-account .settings-hint { margin: 0; }
 .mode-switch { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+.team-role { padding: 4px 8px; font-size: 12.5px; width: auto; }
 .meter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin: 12px 0; }
 .meter { border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; background: var(--surface-2); }
 .meter-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; font-weight: 600; }

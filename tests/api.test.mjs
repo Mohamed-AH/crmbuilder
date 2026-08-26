@@ -1529,3 +1529,111 @@ describe('a clocked field removal', () => {
       'a clocked removal must beat an unclocked copy, however new that copy claims to be');
   });
 });
+
+/*
+ * A ladder below member: contributor cannot delete, viewer cannot write.
+ *
+ * The audit's concern was that any member can wipe the customer database one
+ * record at a time — and a tombstone discards the body (§26), so there is no
+ * undo to fall back on. That makes this a prevention rather than a
+ * convenience, and it uses the seam already proven for modules (§14): the
+ * refusal comes back carrying the server's own copy, the client overwrites its
+ * local one, and the edit un-happens.
+ */
+describe('record roles', () => {
+  const owner = jar();
+  const hand = jar();
+  let orgId = null;
+  let handId = null;
+
+  const push = (cookies, records) =>
+    req('/api/sync', { method: 'POST', body: { since: 0, records }, cookies });
+  const setRole = (role) =>
+    req(`/api/org/members/${handId}`, { method: 'PATCH', body: { role }, cookies: owner });
+  const serverRow = async (id) => {
+    const { json } = await req('/api/sync?since=0', { cookies: owner });
+    return json.records.find((r) => r.id === id);
+  };
+
+  before(async () => {
+    const o = await req('/auth/dev', { method: 'POST', body: { email: 'role-owner@team.test' }, cookies: owner });
+    orgId = o.json.user.orgId;
+    const h = await req('/auth/dev', { method: 'POST', body: { email: 'role-hand@team.test' }, cookies: hand });
+    handId = h.json.user.id;
+    const code = (await req('/api/org/invites', { method: 'POST', body: {}, cookies: owner })).json.invite.code;
+    await req('/api/org/join', { method: 'POST', body: { code }, cookies: hand });
+    // Something already on the server for them to try to change.
+    await push(owner, [{ id: 'existing', updatedAt: 1000, doc: { id: 'existing', moduleId: 'm1', data: { title: 'Owner wrote this' } } }]);
+  });
+
+  test('a contributor may add and edit, but a delete is refused and the record restored', async () => {
+    await setRole('contributor');
+
+    const edited = await push(hand, [{
+      id: 'existing', updatedAt: 2000, doc: { id: 'existing', moduleId: 'm1', data: { title: 'Contributor edited' } },
+    }]);
+    assert.equal(edited.status, 200);
+    assert.equal((await serverRow('existing')).doc.data.title, 'Contributor edited', 'editing is allowed');
+
+    const removed = await push(hand, [{ id: 'existing', updatedAt: 3000, deleted: true, deletedAt: 3000 }]);
+    const back = removed.json.rejected.records.find((r) => r.id === 'existing');
+    assert.ok(back, 'the refusal has to come back, or the client keeps thinking it deleted the row');
+    assert.ok(!back.deleted, 'and it carries the record, so the client can put it back');
+    assert.equal(back.doc.data.title, 'Contributor edited');
+
+    const still = await serverRow('existing');
+    assert.ok(!still.deleted, 'the record survives');
+  });
+
+  test('a viewer may not write at all, and is handed the server copy back', async () => {
+    await setRole('viewer');
+
+    const out = await push(hand, [{
+      id: 'existing', updatedAt: 4000, doc: { id: 'existing', moduleId: 'm1', data: { title: 'Viewer tried' } },
+    }]);
+    const back = out.json.rejected.records.find((r) => r.id === 'existing');
+    assert.ok(back, 'refused, not silently dropped');
+    assert.equal(back.doc.data.title, 'Contributor edited', 'the server copy comes back so the edit un-happens');
+    assert.equal((await serverRow('existing')).doc.data.title, 'Contributor edited');
+  });
+
+  /*
+   * A refused CREATION is answered as absent, so the client purges it.
+   *
+   * Tombstoning instead would push a gravestone that gets refused and reverted
+   * on every subsequent sync, forever — the trap §14 already records.
+   */
+  test('a refused creation is answered as absent, never as a tombstone', async () => {
+    await setRole('viewer');
+    const out = await push(hand, [{
+      id: 'brand-new', updatedAt: 5000, doc: { id: 'brand-new', moduleId: 'm1', data: { title: 'Never allowed' } },
+    }]);
+    const back = out.json.rejected.records.find((r) => r.id === 'brand-new');
+    assert.ok(back, 'refused');
+    assert.equal(back.absent, true, 'absent is what tells the client to purge rather than tombstone');
+    assert.ok(!(await serverRow('brand-new')), 'and nothing was written');
+  });
+
+  test('promoting them back restores both', async () => {
+    await setRole('member');
+    const ok = await push(hand, [{
+      id: 'theirs', updatedAt: 6000, doc: { id: 'theirs', moduleId: 'm1', data: { title: 'Allowed again' } },
+    }]);
+    // `rejected` is omitted entirely when there is nothing to refuse.
+    assert.equal(((ok.json.rejected || {}).records || []).length, 0, 'no refusals for a member');
+    assert.equal((await serverRow('theirs')).doc.data.title, 'Allowed again');
+
+    const gone = await push(hand, [{ id: 'theirs', updatedAt: 7000, deleted: true, deletedAt: 7000 }]);
+    assert.equal(((gone.json.rejected || {}).records || []).length, 0);
+    assert.ok((await serverRow('theirs')).deleted, 'a member may still delete');
+  });
+
+  test('an owner may hand out any rung of the team ladder, but never platform admin', async () => {
+    for (const role of ['viewer', 'contributor', 'member', 'owner']) {
+      assert.equal((await setRole(role)).status, 200, `${role} should be assignable`);
+    }
+    const escalate = await setRole('platformAdmin');
+    assert.equal(escalate.status, 400, 'an org role must not reach a deployment role');
+    assert.equal((await req('/api/me', { cookies: hand })).json.user.role, 'owner');
+  });
+});

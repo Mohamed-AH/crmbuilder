@@ -1295,6 +1295,63 @@ test.describe('team workspaces', () => {
    * reconnected. Their work legitimately vanishes, and the difference between
    * that being a rule and being a bug report is entirely the message.
    */
+  /*
+   * The same race, one rung lower: demoted to viewer while offline.
+   *
+   * This is the case record roles actually exist for — not a poked-at hidden
+   * button, but somebody who edited a record while their client still believed
+   * it could and reconnects after the server knows better. Their work
+   * legitimately vanishes, and the named toast is the difference between a
+   * rule and a bug report.
+   */
+  test('someone demoted to viewer has their record edit reverted, and is told why', async ({ page, browser }) => {
+    const ownerEmail = uniqueEmail('viewer-owner');
+    await onboard(page, { name: 'Viewer Co', templates: ['Contacts'] });
+    await signIn(page, ownerEmail);
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Shared Contact');
+    await page.click('#record-save');
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+    const url = await inviteLink(page);
+
+    const second = await browser.newContext();
+    const mate = await second.newPage();
+    await mate.goto(new URL(url).pathname + new URL(url).search);
+    const mateEmail = uniqueEmail('viewer-mate');
+    await signIn(mate, mateEmail, { claim: 'none' });
+    await expect(mate.locator('[data-join]').first()).toBeVisible({ timeout: 25000 });
+    await mate.click('[data-join="fresh"]');
+    await expect(mate.locator('#nav-modules .nav-link:has-text("Contacts")')).toBeVisible({ timeout: 25000 });
+
+    // The owner demotes them to viewer, from their own session.
+    const members = await (await page.request.get('/api/org/members')).json();
+    const target = members.members.find((m) => m.email === mateEmail);
+    expect(target).toBeTruthy();
+    const demote = await page.request.patch(`/api/org/members/${target.id}`, { data: { role: 'viewer' } });
+    expect(demote.ok()).toBeTruthy();
+
+    // Their client has not heard yet, and edits a record.
+    await mate.evaluate(async () => {
+      const rows = await DB.getAll('records');
+      const target2 = rows.find((r) => r.data && r.data.name === 'Shared Contact');
+      await DB.put('records', { ...target2, data: { ...target2.data, name: 'Edited While Demoted' }, updatedAt: Date.now() });
+      Scope.set('dirty', '1');
+    });
+    await mate.evaluate(() => Cloud.sync());
+
+    // Undone, and named. .last() because several toasts can be on screen and
+    // strict mode refuses a multi-match.
+    await expect(mate.locator('.toast').last()).toContainText('read-only', { timeout: 25000 });
+
+    // And the team never saw it.
+    const team = await (await page.request.get('/api/data')).json();
+    expect(team.records.map((r) => r.data && r.data.name))
+      .not.toContain('Edited While Demoted');
+    expect(team.records.map((r) => r.data && r.data.name)).toContain('Shared Contact');
+    await second.close();
+  });
+
   test('a demoted member has their module edit reverted, and is told why', async ({ page, browser }) => {
     const ownerEmail = uniqueEmail('demote-owner');
     await onboard(page, { name: 'Demote Co' });

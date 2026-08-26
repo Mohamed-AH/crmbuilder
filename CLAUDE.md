@@ -40,7 +40,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 168 Node tests + 72 Playwright tests.
+**All green:** 173 Node tests + 73 Playwright tests.
 
 ```sh
 npm install
@@ -102,7 +102,7 @@ to render *and still navigate*.
 **Script order in `index.html` matters.** `js/app.js` last; it references
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating both `index.html` *and* `sw.js` APP_SHELL, and
-bumping `CACHE_VERSION` (currently `crmbuilder-v21`).
+bumping `CACHE_VERSION` (currently `crmbuilder-v22`).
 
 **Tenancy scoping comes from the session, never a request.** That covers both
 `req.scopeOrgId` (which org an admin may see) and `workspaceIdFor(user)` (which
@@ -462,11 +462,16 @@ replica away and pulls the new workspace clean.
 
 ## 14. Permissions (stage C)
 
-| | owner / platformAdmin | member |
-|---|---|---|
-| records: create, edit, delete | ✅ | ✅ |
-| module fields, add/delete modules | ✅ | ❌ |
-| invite, roles, remove members | ✅ | ❌ |
+A ladder — each rung does everything below it plus one more thing, so there is
+one ordering to reason about rather than a matrix.
+
+| | owner / platformAdmin | member | contributor | viewer |
+|---|---|---|---|---|
+| read | ✅ | ✅ | ✅ | ✅ |
+| records: create, edit | ✅ | ✅ | ✅ | ❌ |
+| records: delete | ✅ | ✅ | ❌ | ❌ |
+| module fields, add/delete modules | ✅ | ❌ | ❌ | ❌ |
+| invite, roles, remove members | ✅ | ❌ | ❌ | ❌ |
 
 `canEditSchema()` exists twice on purpose: on the server (`server.js`) it
 decides, and on the client (`js/app.js`) it only avoids offering a button whose
@@ -1217,7 +1222,8 @@ is for.
   `two devices editing different records` covers the case per-record sync was
   built for; the same-record case is silently lossy. **First deliverable is a
   failing test.**
-- ☐ **2a — roles that cannot delete.** `contributor` (no delete) and `viewer`
+- ✅ **2a — roles that cannot delete.** Shipped — see below.
+- ☐ ~~2a~~ `contributor` (no delete) and `viewer`
   (read only) on the existing ladder. The seam is proven — `applyPush` already
   refuses a member's module write and hands back the server's copy (§14); this
   widens it from modules to records.
@@ -1288,3 +1294,29 @@ edited, so a colleague still holding the value would win the merge and put it
 back. Its own test fails if the purge forgets.
 
 Tombstones stay whole-row: deleting a record is not a field edit.
+
+### 2a as built
+
+`canEditRecords` and `canDeleteRecords` beside `canEditSchema`, enforced in the
+same `applyPush` seam and refused the same way: the response carries the
+server's own copy, the client overwrites its local row, the edit un-happens.
+
+**The refusal carries WHY, and it has to.** The first version had the client
+choose the wording from `Cloud.user.role` — and it named the wrong rule,
+because this fires precisely when the client's idea of its own role is stale.
+That is the entire scenario. The server knows and the server decides, so the
+server says: `reason: 'readonly' | 'nodelete'` rides along with the rejected
+row. Asking the client to guess produces a confident, wrong explanation.
+
+**A refused creation is answered `absent`**, so `applyRejections` purges it
+rather than tombstoning — a gravestone would be pushed, refused and reverted on
+every subsequent sync, forever (§14's trap, now covered for records too).
+
+`TEAM_ROLES` is what an owner may hand out, and `platformAdmin` is deliberately
+not in it. The self-demotion strand check now fires for **any** step down from
+owner, not just the one rung that used to exist.
+
+The Team screen's role toggle became a picker: a four-rung ladder does not fit
+a button that flips between two values, and the confirmation says what the rung
+means rather than just naming it. On cancel or failure the control is put back,
+or it sits there lying about the state.

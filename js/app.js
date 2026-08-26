@@ -41,7 +41,17 @@
     ['relation', 'Link to module'],
   ];
 
-  const ROLE_LABELS = { platformAdmin: 'platform admin', owner: 'owner', member: 'member' };
+  const ROLE_LABELS = {
+    platformAdmin: 'platform admin', owner: 'owner', member: 'member',
+    contributor: 'contributor', viewer: 'viewer',
+  };
+  // What each rung adds, said in the terms an owner actually decides in.
+  const ROLE_BLURB = {
+    owner: 'Everything, including modules, invites and the team',
+    member: 'Add, edit and delete records',
+    contributor: 'Add and edit records, but not delete them',
+    viewer: 'Read only',
+  };
 
   /*
    * May this person change the shape of the workspace?
@@ -55,6 +65,12 @@
     || !Cloud.user
     || Cloud.user.role === 'owner'
     || Cloud.user.role === 'platformAdmin';
+
+  // Same rule, one rung lower each time. Signed out is always allowed: the
+  // anonymous scope has no team to protect.
+  const myRole = () => (Cloud.isAuthed && Cloud.user ? Cloud.user.role : null);
+  const canEditRecords = () => myRole() !== 'viewer';
+  const canDeleteRecords = () => myRole() !== 'viewer' && myRole() !== 'contributor';
 
   const MODULE_COLORS = ['#1570ef', '#0e9384', '#099250', '#dc6803', '#c11574', '#6938ef', '#d92d20', '#475467'];
   const MODULE_ICONS = ['package', 'users', 'building-2', 'handshake', 'square-check-big', 'target', 'sticky-note', 'calendar', 'receipt', 'briefcase', 'wrench', 'truck', 'star', 'tag', 'clipboard-list', 'folder', 'map-pin', 'globe', 'phone', 'mail', 'heart', 'database'];
@@ -477,7 +493,13 @@
         } else {
           await DB.put(kind, { ...item.doc, id: item.id, updatedAt: item.updatedAt, createdBy: item.createdBy || null });
         }
-        undone.push({ kind, id: item.id, name: (item.doc && item.doc.name) || (local && local.name) || null });
+        undone.push({
+          kind, id: item.id,
+          name: (item.doc && item.doc.name) || (local && local.name) || null,
+          // Why the server said no. It knows; this client's own role may be
+          // stale, which is exactly when this fires.
+          reason: item.reason || null,
+        });
       }
     }
     if (undone.length) relationNameCache.clear();
@@ -563,10 +585,30 @@
   async function reportRejections(undone) {
     await loadModules();
     if (!$('#modal-root').firstChild) route();
-    const named = undone.find((r) => r.kind === 'modules' && r.name);
-    toast(named
-      ? `Only an owner can change module fields — ${named.name} was restored`
-      : 'Only an owner can change modules — your change was undone');
+
+    /*
+     * Say which rule stopped it, not just that something was undone.
+     *
+     * The case this exists for is someone who made the change offline while
+     * they still could and was demoted before reconnecting: their work
+     * legitimately vanishes, and a named reason is the difference between a
+     * rule and a bug report. Modules are named first because losing a schema
+     * change is the more startling of the two.
+     */
+    const mod = undone.find((r) => r.kind === 'modules');
+    if (mod) {
+      toast(mod.name
+        ? `Only an owner can change module fields — ${mod.name} was restored`
+        : 'Only an owner can change modules — your change was undone');
+      return;
+    }
+    const records = undone.filter((r) => r.kind === 'records');
+    const n = records.length;
+    const what = n === 1 ? 'change' : `${n} changes`;
+    const readOnly = records.some((r) => r.reason === 'readonly');
+    toast(readOnly
+      ? `Your account is read-only here — your ${what} to the records was undone`
+      : `Only a member can delete records — your ${what} was undone`);
   }
 
   // ---------------------------------------------------------------- modal
@@ -1434,7 +1476,7 @@
             <button class="icon-btn" id="import-csv-btn" title="Import from CSV">${icon('upload', 15)}</button>
             <input type="file" id="import-csv-file" accept=".csv,text/csv" class="hidden">
             <button class="icon-btn" id="edit-module-btn" title="Edit module">${icon('pencil', 15)}</button>
-            <button class="btn btn-primary" id="add-record-btn">${icon('plus', 15)} Add</button>
+            ${canEditRecords() ? `<button class="btn btn-primary" id="add-record-btn">${icon('plus', 15)} Add</button>` : ''}
           </div>
         </div>
         <div id="module-body">
@@ -1451,7 +1493,8 @@
       st.view = b.dataset.view;
       renderModule(id);
     }));
-    $('#add-record-btn').addEventListener('click', () => openRecord(mod, null));
+    const addBtn = $('#add-record-btn');
+    if (addBtn) addBtn.addEventListener('click', () => openRecord(mod, null));
     $('#edit-module-btn').addEventListener('click', () => openBuilder(mod));
     $('#export-csv-btn').addEventListener('click', () => exportModuleCSV(mod));
     $('#import-csv-btn').addEventListener('click', () => $('#import-csv-file').click());
@@ -1852,15 +1895,16 @@
       </div>
       <form id="record-form" class="modal-body">${fieldsHTML}${authorHTML(record)}</form>
       <div class="modal-foot">
-        ${!isNew ? `<button class="btn btn-danger-ghost" id="record-delete">${icon('trash-2', 15)} Delete</button>` : '<span></span>'}
+        ${!isNew && canDeleteRecords() ? `<button class="btn btn-danger-ghost" id="record-delete">${icon('trash-2', 15)} Delete</button>` : '<span></span>'}
         <div class="modal-foot-right">
-          <button class="btn btn-ghost" data-close>Cancel</button>
-          <button class="btn btn-primary" id="record-save">Save</button>
+          <button class="btn btn-ghost" data-close>${canEditRecords() ? 'Cancel' : 'Close'}</button>
+          ${canEditRecords() ? '<button class="btn btn-primary" id="record-save">Save</button>' : ''}
         </div>
       </div>`);
 
     $$('[data-close]', modal).forEach((b) => b.addEventListener('click', closeModal));
-    $('#record-save', modal).addEventListener('click', async () => {
+    const saveBtn = $('#record-save', modal);
+    if (saveBtn) saveBtn.addEventListener('click', async () => {
       const form = $('#record-form', modal);
       if (!form.reportValidity()) return;
       const newData = {};
@@ -2355,8 +2399,10 @@
                   <span class="pill ${m.role === 'owner' || m.role === 'platformAdmin' ? 'pill-accent' : ''}">${esc(ROLE_LABELS[m.role] || m.role)}</span>
                   ${org.canManage && !m.isYou ? `
                     <span class="team-actions">
-                      <button class="icon-btn" data-member="${esc(m.id)}" data-act="role" data-role="${m.role === 'owner' ? 'member' : 'owner'}"
-                        title="${m.role === 'owner' ? 'Make a member' : 'Make an owner'}">${icon(m.role === 'owner' ? 'user' : 'shield-check', 15)}</button>
+                      <select class="input team-role" data-member="${esc(m.id)}" aria-label="Role for ${esc(m.name || m.email)}">
+                        ${['owner', 'member', 'contributor', 'viewer'].map((r) => `
+                          <option value="${r}" ${m.role === r ? 'selected' : ''} title="${esc(ROLE_BLURB[r])}">${esc(ROLE_LABELS[r])}</option>`).join('')}
+                      </select>
                       <button class="icon-btn" data-member="${esc(m.id)}" data-act="remove" title="Remove from this team">${icon('trash-2', 15)}</button>
                     </span>` : '<span class="team-actions"></span>'}
                 </li>`).join('')}
@@ -2492,23 +2538,39 @@
    * a decade of data apart.
    */
   function bindTeamActions() {
-    $$('[data-member]').forEach((btn) => btn.addEventListener('click', async () => {
-      const id = btn.dataset.member;
-      const row = btn.closest('li');
-      const who = row ? $('.team-who', row).textContent.replace(/\(you\)$/, '').trim() : 'this person';
-      try {
-        if (btn.dataset.act === 'role') {
-          const role = btn.dataset.role;
-          if (!confirm(role === 'owner'
-            ? `Make ${who} an owner? Owners can change modules, invite people and manage the team.`
-            : `Make ${who} a member? They will keep full access to records but can no longer change modules or manage the team.`)) return;
-          await Cloud.org.setRole(id, role);
-          toast(role === 'owner' ? `${who} is now an owner` : `${who} is now a member`);
-        } else {
-          if (!confirm(`Remove ${who} from this team?\n\nThey keep their account and get a fresh, empty workspace. The team's records are not affected.`)) return;
-          await Cloud.org.remove(id);
-          toast(`${who} was removed from the team`);
+    const nameIn = (el) => {
+      const row = el.closest('li');
+      return row ? $('.team-who', row).textContent.replace(/\(you\)$/, '').trim() : 'this person';
+    };
+
+    // A four-rung ladder does not fit a toggle, so the role is a picker and
+    // the confirmation says what the rung actually means.
+    $$('select.team-role').forEach((sel) => {
+      const was = sel.value;
+      sel.addEventListener('change', async () => {
+        const who = nameIn(sel);
+        const role = sel.value;
+        if (!confirm(`Make ${who} a ${ROLE_LABELS[role]}?\n\n${ROLE_BLURB[role]}.`)) {
+          sel.value = was; // put the control back, or it lies about the state
+          return;
         }
+        try {
+          await Cloud.org.setRole(sel.dataset.member, role);
+          toast(`${who} is now a ${ROLE_LABELS[role]}`);
+          await renderSettings();
+        } catch (err) {
+          sel.value = was;
+          toast(err.message);
+        }
+      });
+    });
+
+    $$('button[data-member]').forEach((btn) => btn.addEventListener('click', async () => {
+      const who = nameIn(btn);
+      if (!confirm(`Remove ${who} from this team?\n\nThey keep their account and get a fresh, empty workspace. The team's records are not affected.`)) return;
+      try {
+        await Cloud.org.remove(btn.dataset.member);
+        toast(`${who} was removed from the team`);
         await renderSettings();
       } catch (err) {
         toast(err.message);

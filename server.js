@@ -922,7 +922,22 @@ function setSession(res, user) {
  * Every user belongs to exactly one org. A new signup gets a fresh org and
  * owns it; joining an existing org is a future invite flow.
  */
-const ROLES = ['platformAdmin', 'owner', 'member'];
+/*
+ * A ladder, not a set of independent switches.
+ *
+ * Each step can do everything the one below it can, plus one more thing, so
+ * there is a single ordering to reason about rather than a matrix.
+ *
+ *   viewer       read
+ *   contributor  + create and edit records
+ *   member       + delete records
+ *   owner        + the schema, the invites and the team
+ *   platformAdmin  + the deployment
+ */
+const ROLES = ['platformAdmin', 'owner', 'member', 'contributor', 'viewer'];
+// Roles an org owner may hand out. platformAdmin is deliberately absent — an
+// org-level role must not be able to grant a deployment-level one (§5).
+const TEAM_ROLES = ['owner', 'member', 'contributor', 'viewer'];
 
 function orgNameFor(user) {
   const domain = user.email.split('@')[1] || '';
@@ -1085,6 +1100,22 @@ function workspaceIdFor(user) {
  */
 function canEditSchema(user) {
   return user.role === 'owner' || user.role === 'platformAdmin';
+}
+
+// A viewer may read and nothing else.
+function canEditRecords(user) {
+  return user.role !== 'viewer';
+}
+
+/*
+ * Deleting is the step a contributor does not have.
+ *
+ * The audit's concern was that any member can wipe the customer database one
+ * record at a time, and a tombstone discards the body (§26) — so this is a
+ * prevention, because there is no undo to fall back on.
+ */
+function canDeleteRecords(user) {
+  return user.role !== 'viewer' && user.role !== 'contributor';
 }
 
 function requirePlatformAdmin(req, res, next) {
@@ -1302,6 +1333,8 @@ async function applyPush(user, body) {
   const won = { modules: new Set(), records: new Set() };
   const rejected = { modules: [], records: [] };
   const mayEditSchema = canEditSchema(user);
+  const mayEditRecords = canEditRecords(user);
+  const mayDeleteRecords = canDeleteRecords(user);
   let touched = 0;
 
   // Modules first, so a module deletion that gets refused is known about
@@ -1373,6 +1406,35 @@ async function applyPush(user, body) {
           rejected.modules.push({ id, updatedAt: now, deleted: true, deletedAt: now, absent: true });
           absentModuleIds.add(id);
         }
+        continue;
+      }
+
+      /*
+       * A viewer may not write, and a contributor may not delete.
+       *
+       * The same shape as the module refusal above and for the same reason:
+       * the response carries the server's own copy back, the client overwrites
+       * its local one, and the edit un-happens. The case this exists for is
+       * not a poked-at hidden button — it is somebody who was a member when
+       * they made the edit offline and was demoted before reconnecting.
+       *
+       * A refused CREATION has nothing to restore, so it is answered as absent
+       * and the client purges it. Tombstoning instead would push a gravestone
+       * that gets refused and reverted on every subsequent sync, forever —
+       * the trap §14 already records for modules.
+       */
+      if (kind === 'records' && ((item.deleted && !mayDeleteRecords) || (!item.deleted && !mayEditRecords))) {
+        /*
+         * The refusal carries WHY.
+         *
+         * The client cannot work it out: this fires precisely when its idea of
+         * its own role is stale — that is the whole scenario — so asking it to
+         * guess produces a confident, wrong explanation. The server knows, and
+         * it is the server's decision, so it says.
+         */
+        const reason = mayEditRecords ? 'nodelete' : 'readonly';
+        if (prior) rejected.records.push({ ...wireItem(prior), reason });
+        else rejected.records.push({ id, updatedAt: now, deleted: true, deletedAt: now, absent: true, reason });
         continue;
       }
 
@@ -2697,11 +2759,15 @@ app.patch('/api/org/members/:id', requireAuth, requireTeamOwner, async (req, res
   const target = await resolveMember(req, res);
   if (!target) return undefined;
   const role = req.body && req.body.role;
-  // owner and member only. Platform admin crosses organisations and is not an
-  // org owner's to hand out — the same rule the admin surface enforces.
-  if (role !== 'owner' && role !== 'member') return res.status(400).json({ error: 'Role must be owner or member' });
+  // Any rung of the team ladder. platformAdmin crosses organisations and is
+  // not an org owner's to hand out — the same rule the admin surface enforces.
+  if (!TEAM_ROLES.includes(role)) {
+    return res.status(400).json({ error: `Role must be one of: ${TEAM_ROLES.join(', ')}` });
+  }
 
-  if (target.id === req.user.id && role === 'member' && await wouldStrandTeam(req.user)) {
+  // Stepping DOWN from owner is what can strand a team, whichever rung you
+  // step to — not just the one that used to be the only option.
+  if (target.id === req.user.id && role !== 'owner' && await wouldStrandTeam(req.user)) {
     return res.status(409).json({ error: 'You are the only owner. Make someone else an owner first.' });
   }
   const updated = await store.updateUser(target.id, { role });
@@ -3425,7 +3491,7 @@ app.patch('/api/admin/users/:id', requireAuth, requireOrgAdmin, async (req, res)
   const patch = {};
   // Only a platform admin may grant platform admin — an org owner promoting
   // someone must not be able to hand out cross-org access.
-  if (req.body.role === 'owner' || req.body.role === 'member') patch.role = req.body.role;
+  if (TEAM_ROLES.includes(req.body.role)) patch.role = req.body.role;
   if (req.body.role === 'platformAdmin' && req.isPlatformAdmin) patch.role = 'platformAdmin';
   if (typeof req.body.disabled === 'boolean') patch.disabled = req.body.disabled;
 
