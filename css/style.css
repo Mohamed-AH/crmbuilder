@@ -196,6 +196,10 @@ svg.lucide { vertical-align: -2px; flex-shrink: 0; }
 .card-head h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 .empty-hint { color: var(--text-soft); margin: 8px 0; }
 .settings-hint { color: var(--text-soft); margin: 0 0 14px; max-width: 62ch; font-size: 13px; }
+/* A qualifier under a table figure — "50% reclaimable" beneath a byte count.
+   Its own class rather than an inline style: the CSP keeps 'unsafe-inline' on
+   style-src only for genuinely dynamic values like a meter width (§30). */
+.cell-sub { color: var(--text-soft); font-size: 11px; font-weight: 400; margin-top: 2px; white-space: nowrap; }
 .danger-zone { border-color: #d92d2040; }
 .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
 .settings-grid { display: grid; grid-template-columns: 1fr 220px; gap: 16px; max-width: 640px; }

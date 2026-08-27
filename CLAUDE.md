@@ -81,7 +81,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 182 Node tests + 77 Playwright tests, 41 smoke checks.
+**All green:** 183 Node tests + 78 Playwright tests, 41 smoke checks.
 
 ```sh
 npm install
@@ -146,7 +146,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v26`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v27`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -2189,7 +2189,36 @@ after that and every live record reports as tombstone-sized and the whole split
 becomes meaningless. Sizes are taken before the strip; the fixture proves it,
 with live rows at ~454 B against tombstones at ~338 B.
 
-Surfacing reclaimable bytes in the Organisations table itself is queued, not
-built. Shortening the 180-day window was considered and **rejected**: it is the
-time an offline device has to learn about a delete, and cutting it resurrects
-rows on anyone who syncs rarely.
+Shortening the 180-day window was considered and **rejected**: it is the time an
+offline device has to learn about a delete, and cutting it resurrects rows on
+anyone who syncs rarely.
+
+### The Organisations table now says which kind of large a tenant is
+
+`usageByOrg()` returns `deadBytes` and `oldestDeletedAt` beside `bytes`, and
+the panel renders a `78% reclaimable` qualifier under the size. `tombstoneDays`
+rides on the body once rather than on every row — it is a deployment constant.
+
+**Measured, never `deadRows / totalRows`.** That ratio is the same trap as
+records × a constant (§17) in a new hat, and here it is wrong in the direction
+that hurts: a tombstone is ~346 bytes and a live record several times that, so
+a workspace that deleted half its rows is *not* half gravestones by size. The
+test seeds four fat records against four stubs and asserts the byte share lands
+**under 25%** — a count-derived figure reports 50% and fails.
+
+**A qualifier on the number, not a column.** The table is already seven columns
+wide, and the figure is meaningless without the total it qualifies.
+
+**Silent below 10%.** Every workspace that has ever deleted anything carries
+some; a `2% reclaimable` on every row is noise that teaches the eye to skip the
+cell, which costs the reading the 50% case exists for.
+
+**The tooltip says what it is, not only how much.** "Reclaimable" alone reads
+as waste somebody should go and clear up, and there is no such button — the
+rows are not recoverable and the space returns on its own (§26).
+
+**Trap in the E2E test:** `/api/admin/platform` is cached 30s and **nothing
+invalidates it on sync**, so a panel rendered straight after seeding can
+legitimately show a table from before the tenant existed. The test requests
+`?fresh=1` first — which rewrites the cache, not merely bypasses it — and only
+then loads the screen.

@@ -220,6 +220,36 @@
     return `${v < 10 && i > 0 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
   }
 
+  /*
+   * How much of an organisation's stored bytes are tombstones.
+   *
+   * The size column alone cannot tell a heavy tenant from a scarred one, and
+   * the two want opposite responses: one is a customer worth talking to about
+   * their plan, the other is a workspace that has loaded and cleared the demo
+   * data a few times and will shrink on its own. The storage alerts (§25) fire
+   * on the figure that conflates them, so the split belongs beside the total.
+   *
+   * Rendered as a qualifier on the number rather than a column of its own: it
+   * is meaningless without the total it qualifies, and the table is already
+   * seven columns wide.
+   *
+   * Silent below 10%. Every workspace that has ever deleted anything carries
+   * some, and a "2% reclaimable" on every row is noise that trains the eye to
+   * skip the cell — which costs the reading the 50% case exists for.
+   */
+  function reclaimable(o, days) {
+    if (!o || !o.bytes || !o.deadBytes) return '';
+    const pct = Math.round((o.deadBytes / o.bytes) * 100);
+    if (pct < 10) return '';
+    const expires = o.oldestDeletedAt ? fmtWhen(Number(o.oldestDeletedAt) + days * 86400000) : null;
+    // Says what it is, not only how much. "Reclaimable" alone reads as waste
+    // somebody should go and clear up, and there is no such button (§26).
+    const why = `${fmtBytes(o.deadBytes)} of this is deleted rows, kept so devices that were offline learn about the delete.`
+      + ` Not recoverable, and it frees itself after ${days} days.`
+      + (expires ? ` The oldest expires ${expires}.` : '');
+    return `<div class="cell-sub" title="${esc(why)}">${pct}% reclaimable</div>`;
+  }
+
   function fmtCurrency(v) {
     const n = Number(v);
     if (Number.isNaN(n)) return String(v);
@@ -2992,7 +3022,7 @@
         </div>
         <div class="card table-card">
           <div class="card-head"><h2>Organisations</h2></div>
-          <p class="settings-hint">Heaviest first. Share is of what is actually stored, so one tenant dominating the database is visible without doing the arithmetic.</p>
+          <p class="settings-hint">Heaviest first. Share is of what is actually stored, so one tenant dominating the database is visible without doing the arithmetic. <strong>Reclaimable</strong> is the part that is deleted rows waiting out the ${esc(String(platform.tombstoneDays || 180))}-day retention window — a workspace that is mostly that will shrink on its own, and is not the same problem as one that is genuinely large.</p>
           <div class="table-scroll">
             <table class="records-table">
               <thead><tr><th>Organisation</th><th>People</th><th>Records</th><th>Stored</th><th>Share</th><th>Last active</th><th>Actions</th></tr></thead>
@@ -3002,7 +3032,7 @@
                     <td data-label="Organisation"><strong>${esc(o.name || '—')}</strong>${o.suspendedAt ? ' <span class="pill pill-danger">paused</span>' : ''}</td>
                     <td data-label="People" class="td-num">${o.members}</td>
                     <td data-label="Records" class="td-num">${o.records.toLocaleString()}</td>
-                    <td data-label="Stored" class="td-num">${fmtBytes(o.bytes)}</td>
+                    <td data-label="Stored" class="td-num">${fmtBytes(o.bytes)}${reclaimable(o, platform.tombstoneDays || 180)}</td>
                     <td data-label="Share" class="td-num">${o.shareOfData}%</td>
                     <td data-label="Last active">${o.lastActiveAt ? fmtWhen(o.lastActiveAt) : '—'}</td>
                     <td data-label="Actions" class="admin-actions">

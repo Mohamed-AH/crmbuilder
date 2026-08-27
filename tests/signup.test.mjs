@@ -1584,4 +1584,59 @@ describe('tidying up after a join', () => {
       'deleting rows must not make the size column pretend the storage was freed',
     );
   });
+
+  /*
+   * The split behind the "N% reclaimable" line in the Organisations table.
+   *
+   * The size column cannot tell a heavy tenant from one that is mostly
+   * gravestones, and the storage alerts (§25) fire on the figure that
+   * conflates them — so the panel has to be handed both halves rather than
+   * left to infer one.
+   */
+  test('an organisation reports how much of its storage is tombstones', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'tidy-op5@operator.test' });
+    const admin = await adminOf(srv, 'tidy-op5@operator.test');
+    const user = await srv.signUp('reclaim@customer.test');
+    const cookies = user.setCookie;
+
+    const now = Date.now();
+    const body = { moduleId: 'm1', data: { name: 'x'.repeat(400), notes: 'y'.repeat(400) } };
+    const rows = [...Array(8)].map((_, i) => ({ id: `r${i}`, updatedAt: now, doc: body }));
+    await srv.req('/api/sync', { method: 'POST', cookies, body: { since: 0, records: rows } });
+
+    const clean = (await srv.req('/api/admin/platform?fresh=1', { cookies: admin })).json
+      .orgs.find((o) => o.records === 8);
+    assert.ok(clean, 'eight live records');
+    assert.equal(clean.deadBytes, 0, 'a workspace that has deleted nothing has nothing reclaimable');
+
+    // Delete half. The bodies are discarded, so each row shrinks to a stub.
+    await srv.req('/api/sync', {
+      method: 'POST',
+      cookies,
+      body: {
+        since: 0,
+        records: [0, 1, 2, 3].map((i) => ({ id: `r${i}`, updatedAt: now + 1000, deleted: true, deletedAt: now + 1000 })),
+      },
+    });
+
+    const view = (await srv.req('/api/admin/platform?fresh=1', { cookies: admin })).json;
+    const org = view.orgs.find((o) => o.id === clean.id);
+    assert.ok(org.deadBytes > 0, 'the tombstones are measured');
+    assert.ok(org.deadBytes < org.bytes, 'and they are a PART of the total, not a second total');
+
+    /*
+     * The assertion that matters: measured, not derived from the counts.
+     *
+     * Half the ROWS are tombstones here, but they hold none of the bodies, so
+     * they must be a small minority of the BYTES. Anything computing this as
+     * deadRows/totalRows would report ~50% and fail — which is the trap §17
+     * records, wearing a different hat.
+     */
+    const pct = (org.deadBytes / org.bytes) * 100;
+    assert.ok(pct > 0 && pct < 25, `four stub rows against four full ones should be a small byte share, got ${pct.toFixed(1)}%`);
+
+    assert.ok(org.oldestDeletedAt >= now, 'the oldest tombstone is dated, so the panel can say when it expires');
+    assert.equal(typeof view.tombstoneDays, 'number', 'and the retention window is sent once, not per row');
+    assert.equal(view.counts.reclaimableBytes >= org.deadBytes, true, 'the deployment total includes it');
+  });
 });

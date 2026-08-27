@@ -385,17 +385,23 @@ class FileStore {
    */
   async usageByOrg() {
     const totals = new Map();
-    const add = (orgId, bytes, kind, live) => {
+    const add = (orgId, bytes, kind, deletedAt) => {
       const key = orgId || '(none)';
-      const t = totals.get(key) || { orgId: key, bytes: 0, records: 0, modules: 0 };
+      const t = totals.get(key) || { orgId: key, bytes: 0, deadBytes: 0, records: 0, modules: 0, oldestDeletedAt: null };
       t.bytes += bytes;
-      if (live) t[kind] += 1;
+      if (deletedAt) {
+        // What of `bytes` is gravestone, and how long until the oldest of it
+        // expires. Measured per row for the reason the Mongo half records.
+        t.deadBytes += bytes;
+        const at = Number(deletedAt);
+        if (Number.isFinite(at) && at > 0) t.oldestDeletedAt = t.oldestDeletedAt ? Math.min(t.oldestDeletedAt, at) : at;
+      } else t[kind] += 1;
       totals.set(key, t);
     };
     for (const kind of SYNC_KINDS) {
       for (const bucket of Object.values(this.s.items[kind] || {})) {
         for (const row of Object.values(bucket)) {
-          add(row.orgId, Buffer.byteLength(JSON.stringify(row), 'utf8'), kind, !row.deletedAt);
+          add(row.orgId, Buffer.byteLength(JSON.stringify(row), 'utf8'), kind, row.deletedAt);
         }
       }
     }
@@ -865,14 +871,34 @@ class MongoStore {
              */
             bytes: { $sum: { $bsonSize: '$$ROOT' } },
             n: { $sum: { $cond: [{ $in: [{ $type: '$deletedAt' }, ['missing', 'null']] }, 1, 0] } },
+            /*
+             * And how much of `bytes` is gravestones.
+             *
+             * Measured, not derived from the counts: a tombstone is ~346 bytes
+             * and a live record several times that, so tombstones × an average
+             * is the same estimate §17 warns about, wearing a different hat.
+             * $min on deletedAt dates the oldest, which is what says WHEN the
+             * space comes back rather than merely that it will.
+             */
+            deadBytes: {
+              $sum: {
+                $cond: [{ $in: [{ $type: '$deletedAt' }, ['missing', 'null']] }, 0, { $bsonSize: '$$ROOT' }],
+              },
+            },
+            oldestDeletedAt: { $min: '$deletedAt' },
           },
         },
       ]).toArray();
       for (const r of rows) {
         const key = r._id || '(none)';
-        const t = totals.get(key) || { orgId: key, bytes: 0, records: 0, modules: 0 };
+        const t = totals.get(key) || { orgId: key, bytes: 0, deadBytes: 0, records: 0, modules: 0, oldestDeletedAt: null };
         t.bytes += r.bytes || 0;
+        t.deadBytes += r.deadBytes || 0;
         t[kind] += r.n || 0;
+        const oldest = Number(r.oldestDeletedAt);
+        if (Number.isFinite(oldest) && oldest > 0) {
+          t.oldestDeletedAt = t.oldestDeletedAt ? Math.min(t.oldestDeletedAt, oldest) : oldest;
+        }
         totals.set(key, t);
       }
     }
@@ -3696,7 +3722,7 @@ app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, re
   const totalBytes = byOrg.reduce((a, o) => a + o.bytes, 0);
   const rows = orgs.map((o) => {
     const members = users.filter((u) => u.orgId === o.id);
-    const measured = bytesFor.get(o.id) || { bytes: 0, records: 0, modules: 0 };
+    const measured = bytesFor.get(o.id) || { bytes: 0, deadBytes: 0, records: 0, modules: 0, oldestDeletedAt: null };
     return {
       id: o.id,
       name: o.name,
@@ -3707,6 +3733,18 @@ app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, re
       records: measured.records,
       modules: measured.modules,
       bytes: measured.bytes,
+      /*
+       * How much of `bytes` is tombstones, and when the oldest expires.
+       *
+       * The size column alone cannot tell a heavy tenant from a scarred one —
+       * a workspace that has loaded and cleared the demo data a few times can
+       * be half gravestones — and the storage alerts (§25) fire on the number
+       * that conflates them. The two want opposite responses from an operator,
+       * so the split has to be visible beside the total rather than derivable
+       * from it. See §33.
+       */
+      deadBytes: measured.deadBytes || 0,
+      oldestDeletedAt: measured.oldestDeletedAt || null,
       // Share of what is actually stored, so one tenant dominating is visible
       // without doing arithmetic.
       shareOfData: totalBytes ? Math.round((measured.bytes / totalBytes) * 1000) / 10 : 0,
@@ -3724,6 +3762,10 @@ app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, re
       workspaces: usage.workspaces,
       records: usage.records,
       modules: usage.modules,
+      // Deployment-wide, from the same measurement as the rows: what share of
+      // the tenant data is waiting on the retention window rather than in use.
+      tenantBytes: totalBytes,
+      reclaimableBytes: byOrg.reduce((a, o) => a + (o.deadBytes || 0), 0),
     },
     meters: {
       storage: { ...meter(usage.bytes, usage.limitBytes, 60, 85), measured: usage.measured },
@@ -3732,6 +3774,9 @@ app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, re
     },
     orgs: rows,
     orgCreation: await orgCreation(),
+    // A deployment constant, so it is sent once rather than on every row. The
+    // panel needs it to say when reclaimable bytes actually come back.
+    tombstoneDays: TOMBSTONE_DAYS,
     measuredAt: now,
   };
   platformCache = { at: now, body };

@@ -1884,6 +1884,55 @@ test.describe('admin', () => {
     await expect(firstRow).toContainText('%');
   });
 
+  /*
+   * A workspace that is mostly gravestones has to say so on the row.
+   *
+   * "278 KB" alone cannot tell a heavy tenant from one that has loaded and
+   * cleared the demo data a few times, and the storage alerts fire on the
+   * figure that conflates them — the two want opposite responses. See §33.
+   */
+  test('a tenant that is mostly tombstones says so on its row', async ({ page, browser }) => {
+    // A tenant that deletes most of what it created.
+    const ctx = await browser.newContext();
+    const tenant = await ctx.newPage();
+    await tenant.goto('/');
+    await signIn(tenant, uniqueEmail('reclaim'));
+    const now = Date.now();
+    const rows = [...Array(12)].map((_, i) => ({
+      id: `reclaim-${i}`, updatedAt: now, doc: { moduleId: 'm1', data: { name: `row ${i}` } },
+    }));
+    await tenant.request.post('/api/sync', { data: { since: 0, records: rows } });
+    await tenant.request.post('/api/sync', {
+      data: {
+        since: 0,
+        records: rows.slice(0, 10).map((r) => ({ id: r.id, updatedAt: now + 1000, deleted: true, deletedAt: now + 1000 })),
+      },
+    });
+    await ctx.close();
+
+    await page.goto('/');
+    await signIn(page, 'e2e-admin@example.com');
+
+    /*
+     * Ask for a fresh measurement BEFORE rendering the panel.
+     *
+     * /api/admin/platform is cached 30s because usageByOrg() scans, and
+     * nothing invalidates it on sync — so a page drawn straight after seeding
+     * can legitimately show a table from before this tenant existed. ?fresh=1
+     * rewrites the cache, so the reload below sees the new rows.
+     */
+    const view = await (await page.request.get('/api/admin/platform?fresh=1')).json();
+    const scarred = view.orgs.find((o) => o.deadBytes > 0 && o.deadBytes / o.bytes >= 0.1);
+    expect(scarred, 'ten stub tombstones against two live rows should be a visible share').toBeTruthy();
+
+    await page.goto('/#/admin');
+    await expect(page.locator('h2:has-text("Organisations")')).toBeVisible({ timeout: 20000 });
+    const row = page.locator('.card:has(h2:has-text("Organisations")) tbody tr', { hasText: scarred.name });
+    await expect(row).toContainText('reclaimable');
+    // The qualifier belongs to the size, not to the record count beside it.
+    await expect(row.locator('td[data-label="Stored"]')).toContainText('% reclaimable');
+  });
+
   test('shows metrics and manages accounts', async ({ page, browser }) => {
     // ADMIN_EMAILS in playwright.config.js guarantees this address is an admin
     // regardless of which test created the first account.

@@ -330,8 +330,10 @@ scans; `?fresh=1` bypasses.
 
 ```jsonc
 {
-  "counts": { "users": 12, "orgs": 5, "records": 1840, "disabled": 0 },
+  "counts": { "users": 12, "orgs": 5, "records": 1840, "disabled": 0,
+              "tenantBytes": 284672, "reclaimableBytes": 142336 },
   "orgs": [ { "id","name","members","records","modules","bytes",
+              "deadBytes","oldestDeletedAt",
               "shareOfData","lastActiveAt","suspendedAt" } ],
   "meters": {
     "storage": { "bytes","limitBytes","percent","level" },
@@ -339,9 +341,26 @@ scans; `?fresh=1` bypasses.
     "egress":  { …, "month" }
   },
   "orgCreation": "open",
+  "tombstoneDays": 180,
   "cached": true
 }
 ```
+
+**`records` and `bytes` count different populations, deliberately.** `records`
+is live rows only — an operator reading a number the customer's own screen
+contradicts is being told something false. `bytes` counts everything, because a
+tombstone occupies real storage and a size meter that ignores it under-reports
+exactly what it exists to catch. Do not reconcile them.
+
+**`deadBytes` is how much of `bytes` is tombstones**, and `oldestDeletedAt`
+plus `tombstoneDays` is when the first of it comes back. Both are **measured**
+— `$bsonSize` on Mongo, serialised length on the file store — never
+`deadRows × an average`: a tombstone is ~346 bytes against a live record
+several times that, so a count-derived figure is wrong in the direction that
+matters. A workspace can be half gravestones (`CLAUDE.md` §33), and the storage
+alerts fire on the total that conflates the two.
+
+`tombstoneDays` is a deployment constant, sent once rather than per row.
 
 `level` is `ok` | `warn` | `critical`.
 
