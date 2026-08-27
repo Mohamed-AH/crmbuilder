@@ -2280,3 +2280,53 @@ test('a hostile field key cannot inject attributes into the record form', async 
   expect(formAttrs).not.toContain('z');
   expect(await page.evaluate(() => window.__pwnedByField)).toBeUndefined();
 });
+
+/*
+ * A record stamped in the past never reaches the server, and the app says
+ * "Synced" anyway.
+ *
+ * localChanges() selects rows with `rowClock(r) >= since`, where `since` is the
+ * push watermark — and the watermark only ever moves FORWARD. So any row
+ * written with an updatedAt older than the last successful push is invisible to
+ * every push that follows, permanently. The sync request still succeeds, so the
+ * chip reads Synced and nothing looks wrong.
+ *
+ * Demo data hits this by design: it backdates records (`now - i * 60000`) so
+ * "recent activity" has a believable order. Load it after any earlier sync and
+ * the rows are already below the watermark.
+ */
+test('records stamped before the last push still reach the server', async ({ page }) => {
+  await onboard(page, { templates: ['Contacts'] });
+  await signIn(page, uniqueEmail('backdated'));
+
+  // An ordinary edit first: this is what pushes the watermark up to "now".
+  await page.click('#nav-modules .nav-link:has-text("Contacts")');
+  await page.click('#add-record-btn');
+  await page.fill('#f-name', 'Pushes The Watermark');
+  await page.click('#record-save');
+  await expect(page.locator('.records-table tbody tr:has-text("Pushes The Watermark")')).toHaveCount(1);
+  await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 15000 });
+
+  // Now a record stamped in the past — exactly what loadDemoData writes.
+  const backdatedId = await page.evaluate(async () => {
+    const mods = await DB.getAll('modules');
+    const mod = mods.find((m) => m.name === 'Contacts');
+    const id = `backdated-${Date.now()}`;
+    await DB.put('records', {
+      id,
+      moduleId: mod.id,
+      data: { name: 'Stamped In The Past' },
+      createdAt: Date.now() - 40 * 60000,
+      updatedAt: Date.now() - 40 * 60000,
+    });
+    await Cloud.sync();
+    return id;
+  });
+
+  await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 15000 });
+
+  // The app says Synced. Does the server actually have it?
+  const delta = await (await page.request.get('/api/sync?since=0')).json();
+  const onServer = (delta.records || []).some((r) => r.id === backdatedId && !r.deleted);
+  expect(onServer, 'a backdated record must not be silently stranded on the device').toBe(true);
+});

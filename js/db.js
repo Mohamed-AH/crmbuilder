@@ -108,6 +108,40 @@ const DB = (() => {
   // was off for less than that still learns about the delete.
   const TOMBSTONE_MS = 180 * 86400000;
 
+  /*
+   * A row written with a clock OLDER than the push watermark is stranded.
+   *
+   * The client selects what to push with `rowClock(r) >= pushedThrough`, and
+   * that watermark only ever moves FORWARD (js/cloud.js). So a row saved with
+   * an updatedAt earlier than the last successful push is invisible to every
+   * push that follows — permanently — while the sync itself still succeeds and
+   * the chip reads "Synced". Silent, and indistinguishable from working.
+   *
+   * Demo data walks straight into it: it backdates records so "recent
+   * activity" has a believable order. The localStorage snapshot recovery in
+   * app.js does too, restoring rows with their original clocks — on the one
+   * path whose whole job is recovering from data loss.
+   *
+   * Lowering the watermark to the row's own clock lets it out on the next
+   * push. Re-sending the rows above that point costs nothing: the server's
+   * tie-break skips anything it already has, which is the same reason client
+   * selection uses `>=` rather than `>` (CLAUDE.md §10).
+   *
+   * This lives in DB.put because that is the one place every write passes
+   * through. Putting it at the call sites means the next path that backdates a
+   * row re-opens the bug, and there have already been two.
+   */
+  function releaseBackdated(value) {
+    if (!value || typeof Scope === 'undefined') return;
+    const clock = Math.max(Number(value.updatedAt) || 0, Number(value.deletedAt) || 0);
+    if (!clock) return;
+    const pushed = Number(Scope.get('pushedThrough')) || 0;
+    if (pushed && clock < pushed) {
+      Scope.set('pushedThrough', String(clock));
+      Scope.set('dirty', '1');
+    }
+  }
+
   const api = {
     // Point at another scope's database. The next call opens it; anything
     // already in flight against the old one is closed behind us.
@@ -217,6 +251,7 @@ const DB = (() => {
       return reqToPromise((await store(name, 'readonly')).get(key));
     },
     async put(name, value) {
+      releaseBackdated(value);
       return reqToPromise((await store(name, 'readwrite')).put(value));
     },
     // Soft delete. Keeps the id and the sync clocks, drops the payload —

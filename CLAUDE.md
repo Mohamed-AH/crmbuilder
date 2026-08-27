@@ -42,6 +42,7 @@ never change, because everything cross-references them.
 | Deleting a field; currency relabels | §22 · §23 |
 | Security audit and what it changed | §21 · §30 (findings, incl. the false ones) |
 | Why docs go stale, and which ones | §27 |
+| **"Synced" that is not synced** — backdated rows | §31 |
 | **How the docs are organised**, and what is frozen | §29 |
 
 ---
@@ -78,7 +79,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 180 Node tests + 76 Playwright tests, 41 smoke checks.
+**All green:** 180 Node tests + 77 Playwright tests, 41 smoke checks.
 
 ```sh
 npm install
@@ -143,7 +144,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v24`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v25`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -2027,3 +2028,75 @@ for reading the source rather than working the list.
   **The recurring mistake was mine, twice:** Playwright wipes `test-results/`
   at the start of every run, so re-running to "check if it reproduces" destroys
   the trace of the failure you wanted to read. Read the trace **first**.
+
+
+---
+
+## 31. A row stamped in the past never syncs, and the app says "Synced"
+
+Found from a live deployment, not from the tests: the admin dashboard said
+**12 records** while the device showed **214**, and both were telling the truth.
+
+**The two counts were never the disagreement.** `scripts/inspect.mjs` (added for
+this) showed `orgId` and `wsId` agreeing on every row, and the server holding
+**12 live records and 214 tombstones**. The client had 214 live rows the server
+had never received. My first hypothesis — a `wsId`/`orgId` divergence from a
+refused `migrateToOrgWorkspaces()` — was wrong, and the data disproved it.
+
+### The mechanism
+
+`localChanges(since)` selects rows with `rowClock(r) >= since`, where `since` is
+the push watermark. And the watermark **only ever moves forward**:
+
+```js
+const highWater = local.highWater || Date.now();   // seeded from `since`, only grows
+if (!out.readOnly) Scope.set(PUSHED, String(highWater));
+```
+
+So a row written with an `updatedAt` **older than the last successful push** is
+invisible to every push that follows, permanently. The sync request still
+succeeds, so the status chip reads *Synced*. Silent, and indistinguishable from
+working — which is why it survived: nothing errors, nothing retries, and the
+count that would have exposed it lives on a screen nobody cross-checks.
+
+**Demo data walks straight into it** (`js/app.js`): records are stamped
+`now - i * 60000` so "recent activity" has a believable order. Load it after any
+earlier sync and every row is already below the watermark.
+
+### The other path, which matters more
+
+`js/app.js`'s eviction recovery calls `importState(snap, { mode: 'adopt' })`,
+and `stamp` defaults to **false** — so rows recovered from the localStorage
+snapshot keep their original clocks. Same bug, on the one path whose whole job
+is recovering from data loss.
+
+**Swept every other write.** The record form, kanban drag, CSV import, field
+purge and currency relabel all stamp `now`. The user-facing backup restore
+passes `stamp: true` and re-dates deliberately — somebody had already understood
+this hazard there and fixed it locally rather than generally.
+
+### The fix, and why it lives in `DB.put`
+
+Lower the watermark to the row's own clock when a backdated row is written. The
+next push then includes it, and re-sending the rows above that point costs
+nothing: the server's tie-break skips what it already has, which is the same
+reason client selection uses `>=` rather than `>` (§10).
+
+`DB.put` is the one place every write passes through. Putting the guard at the
+call sites instead means the next path that backdates a row re-opens the
+bug — and there had already been two.
+
+**Trap hit while fixing it:** the first attempt spliced the helper into the
+middle of `adoptLegacy`'s object literal. `node --check` passed — it was still
+valid JavaScript — and the app broke at runtime instead, with onboarding
+failing to create modules. A syntax check is not a placement check.
+
+Guarded by *"records stamped before the last push still reach the server"*,
+which fails on the unfixed code. `CACHE_VERSION` bumped to `crmbuilder-v25`.
+
+### What this does not fix
+
+Rows already stranded on a device stay stranded until something rewrites them —
+the watermark is only lowered when a write happens. For the deployment that
+surfaced this, the stranded rows were demo data and the real records were safe
+on the server, but that was luck rather than design.
