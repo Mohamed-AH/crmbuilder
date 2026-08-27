@@ -44,6 +44,7 @@ never change, because everything cross-references them.
 | Why docs go stale, and which ones | §27 |
 | **"Synced" that is not synced** — backdated rows | §31 |
 | E2E suite slow or "flaky" | §32 |
+| **What tombstones cost**, and reading storage figures | §33 · §26 |
 | **How the docs are organised**, and what is frozen | §29 |
 
 ---
@@ -145,7 +146,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v25`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v26`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -2125,3 +2126,70 @@ passes in isolation" reads as flakiness and sounds like something to tolerate.
 It was a resource leak with a monotonic cost, and the giveaway was in the
 timings I kept printing and not reading: 4.4, 4.3, 4.5, 5.3, 4.8, 6.8, 6.5.
 A suite that is getting *slower* is not flaky, it is accumulating something.
+
+
+---
+
+## 33. Two numbers that were both right, and what tombstones actually cost
+
+Reported from the live deployment: Settings said **214 records** and the button
+below it said **Remove sample data (220)**. Nothing was wrong with the data.
+
+`demoCount` totals demo records **and** demo modules — 214 + 6 — because that is
+what pressing the button removes. The subtitle two lines above counts records
+only. Both correct, adjacent, and unlabelled, so they read as a discrepancy;
+after §31 had produced a real one, that is exactly how it was reported.
+
+**Not fixed by counting records only.** That understates what a destructive
+control does, which is the worse error. The button now names its parts:
+*Remove sample data (214 records, 6 modules)*. Both halves are conditional,
+because a demo module the user has added their own record to is **promoted**
+rather than deleted (§11) — so a workspace can hold demo records whose modules
+are no longer samples, and the label has to survive that.
+
+Guarded by an assertion inside *"the demo can be kept on purpose, and removed
+later"* that reads the two numbers out of the subtitle and requires the button
+to name both. It fails on the old label, whose bare total is neither of them.
+
+**A trap while writing it, and it is §4's.** `.page-head .subtitle` exists on
+every screen, so reading it straight after `page.goto('/#/settings')` sampled
+the *previous* page and the regex matched nothing. The test failed on the
+broken code for a reason that had nothing to do with the label — which would
+have passed as verification and proved nothing. Wait on the rendered text
+first.
+
+### What a tombstone costs, measured
+
+The same report asked whether tombstones are recoverable and whether they take
+space. **No, and yes** — and the second answer was bigger than expected.
+
+A tombstone is 346 bytes: ids, both clocks, `deletedOn`, and `doc: null`. On
+that deployment, 428 record tombstones and 18 module tombstones came to
+**151 KB of the workspace's 278 KB — 54%.** The counts say why: 428 = 4 × 107
+and 18 = 3 × 6, so four demo-data cycles and three module wipes. Each
+load-then-delete round leaves 107 permanent rows for 180 days, and the next
+load mints fresh ids rather than reviving them, so the cost compounds.
+
+Nothing is broken. The rows are doing the job tombstones exist to do (§26), and
+the space returns when the window passes. But **the storage meter cannot tell a
+heavy tenant from a scarred one**, and the §25 alerts fire on the number that
+conflates them — the two want opposite responses from an operator.
+
+So `scripts/inspect.mjs` now reports storage composition: live bytes against
+tombstone bytes per organisation, the oldest tombstone, and the date the first
+of it expires. Measured with `$bsonSize` on the same grouping key the
+Organisations table uses, so the two are comparable rather than merely similar.
+It also prints each org's `createdAt`, which is what dates an empty org against
+the fix that should have tidied it — an orphan predating `tidyVacatedOrg` (§25)
+is history, not a live bug, and there was no way to tell them apart.
+
+**The trap in the file-store half:** the loader strips `doc` from every row,
+which is what keeps this script from ever holding record contents. Measure
+after that and every live record reports as tombstone-sized and the whole split
+becomes meaningless. Sizes are taken before the strip; the fixture proves it,
+with live rows at ~454 B against tombstones at ~338 B.
+
+Surfacing reclaimable bytes in the Organisations table itself is queued, not
+built. Shortening the 180-day window was considered and **rejected**: it is the
+time an offline device has to learn about a delete, and cutting it resurrects
+rows on anyone who syncs rarely.

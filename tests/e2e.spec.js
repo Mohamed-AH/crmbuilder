@@ -1045,6 +1045,32 @@ test.describe('sample data', () => {
 
     // One click, from any device, for as long as any sample row survives.
     await page.goto('/#/settings');
+
+    /*
+     * The button must name what its number counts.
+     *
+     * It read "(220)" while the header two lines above read "214 records" —
+     * both correct, because the button totals records AND modules, and read
+     * side by side as a discrepancy in the data. It was reported as one.
+     *
+     * Asserted against the header rather than a literal, so it holds whatever
+     * the demo dataset grows to, and it fails on the old bare total: 220 is
+     * neither of the two numbers the header shows.
+     *
+     * Waits on the rendered subtitle before reading it. `.page-head .subtitle`
+     * exists on every screen, so reading it straight after the navigation
+     * samples the PREVIOUS page and the match comes back null — §4's re-render
+     * race, which made the first version of this fail for a reason that had
+     * nothing to do with the label.
+     */
+    const subtitle = page.locator('.page-head .subtitle');
+    await expect(subtitle).toHaveText(/\d+ modules? · \d+ records?/, { timeout: 20000 });
+    const summary = await subtitle.innerText();
+    const modules = Number(summary.match(/(\d+)\s+modules?/)[1]);
+    const records = Number(summary.match(/(\d+)\s+records?/)[1]);
+    await expect(page.locator('#remove-demo-btn')).toContainText(`${records} records`);
+    await expect(page.locator('#remove-demo-btn')).toContainText(`${modules} modules`);
+
     page.once('dialog', (d) => d.accept());
     await page.click('#remove-demo-btn');
     await expect(page.locator('#nav-modules .nav-link')).toHaveCount(0, { timeout: 20000 });

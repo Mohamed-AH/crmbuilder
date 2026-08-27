@@ -173,7 +173,8 @@ minutes against a 15-minute timeout is one missed check away from a cold start.
 | A tester sees "private beta" | Their code is spent, expired or revoked. Mint another. |
 | Everything is slow on first load | Cold start. Check UptimeRobot is actually running. |
 | Data looks wrong for one person | Ask them to check Settings → the sync chip, and to export a backup before you touch anything. |
-| Storage warning at 85% | Export a backup, then look at which workspaces are large. Nothing is enforced, so you have time. |
+| Storage warning at 85% | Export a backup, then look at which workspaces are large. Nothing is enforced, so you have time. Run `node scripts/inspect.mjs` first — the panel's size column cannot tell a heavy tenant from one that is mostly tombstones, and the answer changes what you do. |
+| A workspace looks far bigger than its record count | Probably tombstones. Every delete leaves a small permanent row for 180 days, so a tester who loads and clears the demo data repeatedly builds them up faster than real records. `scripts/inspect.mjs` prints the live-versus-tombstone split and the date the first ones expire. Nothing to fix; deleted rows are not recoverable and the space comes back on its own. |
 
 ### Closing the beta
 

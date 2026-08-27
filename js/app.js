@@ -2320,7 +2320,30 @@
     // Offered for as long as any seeded row survives, in any scope — including
     // an account the samples were deliberately brought into. "Easy to discard"
     // has to keep being true after sign-in, not only before it.
-    const demoCount = allRecords.filter((r) => r._demo).length + allModules.filter((m) => m._demo).length;
+    const demoRecords = allRecords.filter((r) => r._demo).length;
+    const demoModules = allModules.filter((m) => m._demo).length;
+    const demoCount = demoRecords + demoModules;
+    /*
+     * Say what the number counts, because it is not the number above it.
+     *
+     * The header on this screen reads "6 modules · 214 records" and this
+     * button read "(220)". Both were right — the button totals everything it
+     * will remove, records AND modules — and side by side they read as a
+     * discrepancy in the data. It was reported as one.
+     *
+     * Not solved by counting records only: that understates what pressing it
+     * does, which is the worse error on a destructive control.
+     *
+     * Both parts are conditional because either can legitimately be zero.
+     * A demo module the user has since added their own record to is PROMOTED
+     * rather than deleted (§11), so a workspace can hold demo records whose
+     * modules are no longer sample data.
+     */
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    const demoBreakdown = [
+      demoRecords ? plural(demoRecords, 'record') : '',
+      demoModules ? plural(demoModules, 'module') : '',
+    ].filter(Boolean).join(', ');
     // Membership and whether this person may invite. Cheap enough to re-ask,
     // and /api/me's copy goes stale the moment anyone joins or leaves.
     let org = null;
@@ -2448,7 +2471,7 @@
             <button class="btn" id="add-template-btn">${icon('plus', 15)} Add module from template</button>
             <button class="btn" id="load-demo-btn">${icon('database', 15)} Load demo data</button>
             <button class="btn" id="replay-tour-btn">${icon('map-pin', 15)} Replay the tour</button>
-            ${demoCount ? `<button class="btn" id="remove-demo-btn">${icon('trash-2', 15)} Remove sample data (${demoCount})</button>` : ''}
+            ${demoCount ? `<button class="btn" id="remove-demo-btn">${icon('trash-2', 15)} Remove sample data (${esc(demoBreakdown)})</button>` : ''}
           </div>
           <p class="settings-hint" style="margin:12px 0 0">Demo data fills every module with a sample business so you can explore or present without entering records first. It is added alongside anything you already have.</p>
         </div>

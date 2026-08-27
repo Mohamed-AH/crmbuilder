@@ -19,9 +19,18 @@
  * `countItems` filters by `wsId`; `usageByOrg` groups by `orgId`. If a row
  * carries one and not the other, the two numbers diverge and both look
  * plausible. See CLAUDE.md §5 for why wsId and orgId are separate fields.
+ *
+ * It also reports STORAGE COMPOSITION — live bytes against tombstone bytes,
+ * per organisation. The panel's size column cannot tell a heavy tenant from a
+ * scarred one, and the storage alerts fire on the number that conflates them.
+ * A workspace can be mostly gravestones: on the deployment this was written
+ * for, 54% of one org's bytes were tombstones from four demo-data cycles.
  */
 const SYNC_KINDS = ['modules', 'records'];
 const SHOW_EMAILS = process.argv.includes('--emails');
+// Matches server.js. A tombstone's TTL keys on `deletedOn`, so the oldest
+// tombstone plus this window is when storage first starts coming back.
+const TOMBSTONE_DAYS = Number(process.env.TOMBSTONE_RETENTION_DAYS || 180);
 
 /*
  * Load .env if there is one, so `node scripts/inspect.mjs` just works.
@@ -83,6 +92,35 @@ function when(ts) {
   return new Date(n).toISOString().slice(0, 16).replace('T', ' ');
 }
 
+const day = (ts) => (ts ? new Date(Number(ts)).toISOString().slice(0, 10) : '—');
+
+function fmtBytes(n) {
+  if (!Number.isFinite(n)) return '—';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/*
+ * One line of storage composition, live against dead.
+ *
+ * The reason this is worth printing: a tombstone keeps its ids and clocks and
+ * throws the body away, so it is small — but there is one per deleted row and
+ * they outlive the data by the retention window. A workspace can therefore be
+ * mostly gravestones while its record count looks modest, and the storage
+ * alerts fire on a number that cannot tell the two apart. See CLAUDE.md §26.
+ */
+function storageLine(b) {
+  if (!b || !b.measured) return null;
+  const total = b.live + b.dead;
+  if (!total) return null;
+  const share = Math.round((b.dead / total) * 100);
+  const parts = [`${fmtBytes(total)} total`, `${fmtBytes(b.live)} live`, `${fmtBytes(b.dead)} tombstones`];
+  let line = `stored: ${parts.join(' · ')}`;
+  if (b.dead) line += ` (${share}% reclaimable)`;
+  return { line, share, oldest: b.oldestDead };
+}
+
 /* ------------------------------------------------------------------ load */
 async function loadMongo(uri) {
   const { MongoClient } = await import('mongodb');
@@ -107,12 +145,45 @@ async function loadMongo(uri) {
     orgs: await db.collection('orgs').find({}, { projection: { _id: 0 } }).toArray(),
     data: await db.collection('data').find({}, { projection: { _id: 0 } }).toArray(),
     rows: {},
+    bytes: {},
+    // BSON on the wire here; the file store measures JSON. Stated rather than
+    // blurred, because the server's two backends differ the same way.
+    byteUnit: 'BSON',
   };
   for (const kind of SYNC_KINDS) {
     // Only the keys. Never doc contents.
     out.rows[kind] = await db.collection(kind)
       .find({}, { projection: { _id: 0, id: 1, wsId: 1, orgId: 1, userId: 1, deletedAt: 1, updatedAt: 1 } })
       .toArray();
+    /*
+     * Bytes measured the same way the Organisations table measures them —
+     * $bsonSize over the same grouping key — so the two are comparable rather
+     * than merely similar. Sizes only: the aggregation returns no contents.
+     *
+     * Split live from dead here rather than deriving it, because a tombstone
+     * and a live row are nothing like the same size and multiplying a count by
+     * an average is the estimate CLAUDE.md §17 exists to warn about.
+     *
+     * Degrades rather than dies. $bsonSize needs MongoDB 4.4, and a missing
+     * optional metric must not cost you the rest of a diagnostic run.
+     */
+    try {
+      out.bytes[kind] = await db.collection(kind).aggregate([
+        {
+          $group: {
+            _id: {
+              orgId: '$orgId',
+              dead: { $not: [{ $in: [{ $type: '$deletedAt' }, ['missing', 'null']] }] },
+            },
+            bytes: { $sum: { $bsonSize: '$$ROOT' } },
+            n: { $sum: 1 },
+            oldest: { $min: '$deletedAt' },
+          },
+        },
+      ]).toArray();
+    } catch (err) {
+      out.bytesError = String(err.message || err);
+    }
   }
   await client.close();
   return out;
@@ -128,6 +199,8 @@ async function loadFile(dir) {
     orgs: raw.orgs || [],
     data: Object.values(raw.data || {}),
     rows: {},
+    bytes: {},
+    byteUnit: 'JSON',
   };
   for (const kind of SYNC_KINDS) {
     /*
@@ -138,8 +211,24 @@ async function loadFile(dir) {
      * sort. A diagnostic that invents a disaster is worse than none.
      */
     const bucket = (raw.items || {})[kind] || {};
+    const sized = new Map();
     out.rows[kind] = Object.entries(bucket).flatMap(([wsId, byId]) => Object.values(byId || {})
-      .map((e) => ({ ...e, wsId: e.wsId || wsId, doc: undefined })));
+      .map((e) => {
+        /*
+         * Measure BEFORE dropping `doc`. The strip below is what keeps this
+         * script from ever holding record contents, but it also removes almost
+         * all of a live row's weight — measuring afterwards would report every
+         * record as tombstone-sized and make the live/dead split meaningless.
+         */
+        const key = `${e.orgId || '(none)'} ${e.deletedAt ? 'dead' : 'live'}`;
+        const t = sized.get(key) || { orgId: e.orgId || null, dead: !!e.deletedAt, bytes: 0, n: 0, oldest: null };
+        t.bytes += Buffer.byteLength(JSON.stringify(e), 'utf8');
+        t.n += 1;
+        if (e.deletedAt) t.oldest = Math.min(t.oldest || Infinity, Number(e.deletedAt));
+        sized.set(key, t);
+        return { ...e, wsId: e.wsId || wsId, doc: undefined };
+      }));
+    out.bytes[kind] = [...sized.values()].map((t) => ({ _id: { orgId: t.orgId, dead: t.dead }, bytes: t.bytes, n: t.n, oldest: t.oldest }));
   }
   return out;
 }
@@ -195,6 +284,32 @@ for (const kind of SYNC_KINDS) {
   tally[kind] = { byWs, byOrg, noWs, noOrg, total: store.rows[kind].length };
 }
 
+/*
+ * Storage composition, folded per organisation and in total.
+ *
+ * `bytes` arrives grouped by { orgId, dead } from whichever backend loaded it,
+ * so both shapes reduce identically here.
+ */
+const bytesByOrg = new Map();
+const bytesAll = { live: 0, dead: 0, oldestDead: null, measured: !store.bytesError };
+for (const kind of SYNC_KINDS) {
+  for (const g of store.bytes[kind] || []) {
+    const key = g._id.orgId || '(none)';
+    const t = bytesByOrg.get(key) || { live: 0, dead: 0, oldestDead: null, measured: true };
+    const side = g._id.dead ? 'dead' : 'live';
+    t[side] += g.bytes;
+    bytesAll[side] += g.bytes;
+    if (g._id.dead && g.oldest) {
+      const o = Number(g.oldest);
+      if (Number.isFinite(o)) {
+        t.oldestDead = Math.min(t.oldestDead || Infinity, o);
+        bytesAll.oldestDead = Math.min(bytesAll.oldestDead || Infinity, o);
+      }
+    }
+    bytesByOrg.set(key, t);
+  }
+}
+
 console.log(`\n${bold('Rows, counted both ways')}`);
 for (const kind of SYNC_KINDS) {
   const t = tally[kind];
@@ -203,13 +318,29 @@ for (const kind of SYNC_KINDS) {
   if (t.noWs) console.log(red(`         ${t.noWs} row(s) have NO wsId — countItems() cannot see these`));
   if (t.noOrg) console.log(red(`         ${t.noOrg} row(s) have NO orgId — usageByOrg() cannot see these`));
 }
+if (store.bytesError) {
+  console.log(dim(`  storage not measured: ${store.bytesError}`));
+} else {
+  const s = storageLine(bytesAll);
+  if (s) {
+    console.log(`  ${s.line} ${dim(`[${store.byteUnit}, documents only — no index bytes]`)}`);
+    if (s.oldest) {
+      const first = new Date(s.oldest + TOMBSTONE_DAYS * 86400000);
+      console.log(dim(`         oldest tombstone ${day(s.oldest)} — nothing expires before ${day(first.getTime())}`
+        + ` (${TOMBSTONE_DAYS}-day window)`));
+    }
+  }
+}
 
 console.log(`\n${bold('Per organisation')}`);
 for (const org of store.orgs) {
   const members = usersByOrg.get(org.id) || [];
   const meta = store.data.filter((d) => d.orgId === org.id || d.wsId === org.id);
   console.log(`\n  ${bold(org.name || '(unnamed)')}  ${dim(org.id)}`);
-  console.log(`    members: ${members.length}${members.length ? `  (${members.map((u) => `${redact(u.email)} ${dim(u.role)}`).join(', ')})` : ''}`);
+  // created is what dates an empty org against the fix that should have tidied
+  // it — an orphan predating tidyVacatedOrg (§25) is history, not a live bug.
+  console.log(`    created ${when(org.createdAt)}   members: ${members.length}`
+    + `${members.length ? `  (${members.map((u) => `${redact(u.email)} ${dim(u.role)}`).join(', ')})` : ''}`);
   if (org.suspendedAt) console.log(`    ${red('suspended')} ${when(org.suspendedAt)}`);
 
   for (const kind of SYNC_KINDS) {
@@ -218,6 +349,15 @@ for (const org of store.orgs) {
     const same = byOrg.live === byWs.live && byOrg.dead === byWs.dead;
     const line = `    ${kind}: orgId→ ${byOrg.live} live / ${byOrg.dead} dead    wsId→ ${byWs.live} live / ${byWs.dead} dead`;
     console.log(same ? line : red(`${line}   ← DISAGREE`));
+  }
+
+  const s = storageLine(bytesByOrg.get(org.id));
+  if (s) {
+    console.log(`    ${s.share >= 50 ? red(s.line) : s.line}`);
+    if (s.oldest) {
+      const first = new Date(s.oldest + TOMBSTONE_DAYS * 86400000);
+      console.log(dim(`            oldest tombstone ${day(s.oldest)} — first expiry ${day(first.getTime())}`));
+    }
   }
 
   for (const d of meta) {
@@ -296,8 +436,32 @@ for (const d of store.data) {
 for (const org of store.orgs) {
   const members = (usersByOrg.get(org.id) || []).length;
   const rows = SYNC_KINDS.reduce((n, k) => n + ((tally[k].byOrg.get(org.id) || { live: 0 }).live), 0);
-  if (!members && !rows) problems.push(`org "${org.name}" (${org.id}) has no members and no data — an orphan row in the Organisations table.`);
+  if (!members && !rows) {
+    problems.push(`org "${org.name}" (${org.id}) has no members and no data — an orphan row in the Organisations table.`
+      + ` Created ${when(org.createdAt)}.`);
+  }
+}
+
+/*
+ * Mostly-gravestones is a finding, not an error.
+ *
+ * Reported because the storage meter and its alerts cannot distinguish a heavy
+ * tenant from a scarred one, and the two want opposite responses. Deliberately
+ * not called a problem: nothing is wrong, the rows are doing the job tombstones
+ * exist to do (CLAUDE.md §26). It is worth knowing before reading a bytes
+ * figure, which is why it prints even when everything else is clean.
+ */
+const notes = [];
+for (const org of store.orgs) {
+  const b = bytesByOrg.get(org.id);
+  if (!b || !b.dead) continue;
+  const share = Math.round((b.dead / (b.live + b.dead)) * 100);
+  if (share < 50) continue;
+  notes.push(`org "${org.name}": ${share}% of its ${fmtBytes(b.live + b.dead)} is tombstones`
+    + `${b.oldestDead ? `, none expiring before ${day(b.oldestDead + TOMBSTONE_DAYS * 86400000)}` : ''}`
+    + '. Deleted rows are not recoverable; this is retention, not waste.');
 }
 if (!problems.length) console.log(green('  Nothing inconsistent found.'));
 else problems.forEach((p) => console.log(red(`  • ${p}`)));
+notes.forEach((n) => console.log(dim(`  · ${n}`)));
 console.log('');
