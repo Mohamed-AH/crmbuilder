@@ -176,6 +176,21 @@ minutes against a 15-minute timeout is one missed check away from a cold start.
 | Storage warning at 85% | Export a backup, then look at the Organisations table. Check the **reclaimable** line under each size before you act: a tenant that is mostly tombstones will shrink on its own and is not the same problem as one that is genuinely large. |
 | A workspace looks far bigger than its record count | Probably tombstones — the row will say `N% reclaimable`. Every delete leaves a small permanent row for 180 days, so a tester who loads and clears the demo data repeatedly builds them up faster than real records. Nothing to fix; deleted rows are not recoverable and the space comes back on its own. `node scripts/inspect.mjs` prints the same split per organisation, plus the date the first ones expire. |
 
+### Standing up a demo deployment
+
+`node scripts/seed-fixture.mjs --yes` fills the **file store** with four
+organisations, a team covering every role, tombstones aged across the retention
+window, and meta counters that match — enough to show the operator panel doing
+its job without waiting for real usage. `--clean --yes` takes it back out.
+
+It writes `DATA_DIR/store.json` and has **no MongoDB path at all**, deliberately
+(`CLAUDE.md` §34), so it cannot reach a real tenant. A server started with
+`MONGODB_URI` set will not see anything it seeds — the script warns about that,
+because it is the obvious way to lose an afternoon.
+
+Not to be confused with **Load demo data** inside the app, which is a user
+loading samples into their own workspace on their own device.
+
 ### Closing the beta
 
 Admin → Beta access → **Paused**. Existing accounts keep working; no new ones

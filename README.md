@@ -100,6 +100,7 @@ js/demo-data.js       fictional business used by "Load demo data"
 js/app.js             router, views, module builder, kanban, admin dashboard
 scripts/inspect.mjs   read-only database inspection — what is actually stored, and what disagrees
 scripts/gen-demo-data.mjs  regenerates js/demo-data.js (seeded, so a re-run is byte-identical)
+scripts/seed-fixture.mjs   seeds a team, roles, tombstones and meta counters into the file store
 tests/                smoke, API, CSV unit and Playwright end-to-end tests
 docs/                 user guide, onboarding playbook, demo script, beta runbook, web manual
 sw.js                 offline-first service worker (bump CACHE_VERSION on asset changes)

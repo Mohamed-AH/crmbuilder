@@ -45,6 +45,7 @@ never change, because everything cross-references them.
 | Why docs go stale, and which ones | §27 |
 | **"Synced" that is not synced** — backdated rows | §31 |
 | **Which tests to run** — and who runs the rest | §9 |
+| **Demo data vs the seed fixture** — which is which | §34 |
 | E2E suite slow or "flaky" | §32 |
 | **What tombstones cost**, and reading storage figures | §33 · §26 |
 | **How the docs are organised**, and what is frozen | §29 |
@@ -83,7 +84,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 191 Node tests + 80 Playwright tests, 41 smoke checks. On
+**All green:** 201 Node tests + 80 Playwright tests, 41 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -2322,3 +2323,90 @@ invalidates it on sync**, so a panel rendered straight after seeding can
 legitimately show a table from before the tenant existed. The test requests
 `?fresh=1` first — which rewrites the cache, not merely bypasses it — and only
 then loads the screen.
+
+
+---
+
+## 34. The demo dataset, and the fixture that is not it
+
+Two artifacts, and confusing them is the whole trap. The requirement arrived as
+"expand the demo data to cover teams, roles, tombstones and meta counters", and
+**three of those four cannot live in `js/demo-data.js`** — it is a client file
+that seeds IndexedDB, and users, orgs, `doc: null` tombstones and the meta doc
+are all server collections.
+
+Worse, seeding tombstones client-side would make them **real**: demo rows go
+through `DB.put` in the current scope, and a `u:<id>` scope syncs. §33 measured
+what that costs — 428 tombstones from four demo cycles, 54% of a live
+workspace's bytes.
+
+| Artifact | Ships? | Carries |
+|---|---|---|
+| `js/demo-data.js` | yes, to every user | modules, records, relations |
+| `scripts/seed-fixture.mjs` | no, developer/operator only | users, orgs, roles, tombstones, meta counters |
+
+### The dataset (`js/demo-data.js`)
+
+144 records across 8 modules — the six templates plus **Projects** and
+**Invoices**, which exist because the old dataset could not show a custom
+module at all (`loadDemoData` walked `TEMPLATES` and nothing else) and had no
+relations.
+
+**`scripts/gen-demo-data.mjs` is committed now.** §6 claimed a Python generator
+that was never in the repo, so the one file nobody could hand-edit was also the
+one nobody could regenerate. Seeded, so a re-run is byte-identical.
+
+**Relations resolve in one forward pass**, keyed on `{ __ref: "key:name" }`,
+because `relatedModule` and a relation's value are both runtime ids. A ref may
+only point at a module seeded **earlier**; a forward reference resolves to
+nothing, renders a blank cell, and throws nothing at all.
+
+**Traps:**
+
+- **`defaultView: 'board'` is silently wrong.** The token `app.js` checks is
+  `kanban`. `board` reads correctly to a human, is accepted, and falls back to
+  a table. It shipped that way in the first draft.
+- **Weighted-random leaves board columns empty**, which reads as a broken board
+  rather than a quiet week. Distributions are exact counts, shuffled.
+- **Three hardcoded `6`s in `e2e.spec.js`** all meant "the demo seeded its
+  modules" and broke the moment the dataset grew one. They read the count from
+  the dataset now. The literal `6` for `.template-card` is correct and stays.
+- **Do not pre-seed a record without `_demo` to stage a promotion demo.** It
+  would claim the user typed something they never did, and "`_demo` is on rows
+  we seeded and never on rows the user typed" is what the whole discard
+  algorithm rests on (§11).
+
+### The fixture (`scripts/seed-fixture.mjs`)
+
+Four orgs, six accounts covering every rung of the ladder, tombstones aged
+2–176 days across the retention window, a second tenant so no org reads as
+100%, and a deliberately empty placeholder org.
+
+**File store only, and not behind a flag.** There is no MongoDB code path at
+all. A script that creates users and orgs is one mistyped argument from writing
+into a real tenant's database, and the cheapest way to make that impossible is
+not to implement it. `inspect.mjs` may read Atlas because reading destroys
+nothing; this may not write to it.
+
+**Nothing asserts against the file.** `tests/fixture.test.mjs` boots a real
+server against the fixture and asks the API. Hand-built shapes drift, and a
+drifted one does not throw — it loads and is quietly wrong.
+
+**Traps, and two of these were my own tests passing on bugs:**
+
+- **A push heals a wrong meta counter.** `/api/sync` calls `refreshCounts()`,
+  so a single accepted write rewrites the meta doc with the true figure. The
+  counter test placed *after* the contributor test passed against a fixture
+  seeded with a deliberately wrong count. It runs first now, and the ordering
+  is the assertion. Same shape as §26's stamp trap.
+- **Checking a pulled tombstone has no `doc` tests `wireItem()`, not the
+  fixture.** The server strips the body from every deleted row on the way out,
+  so that assertion passed against a fixture writing full bodies into its
+  tombstones. Measured per-tombstone bytes instead.
+- **`--clean` matched orgs by NAME, and deleted a real customer's workspace.**
+  "Lumen Studio" is a plausible thing for a customer to call their own
+  workspace; driven with a real owner in an org of that name, `--clean` removed
+  the org and its 174 rows and reported success — leaving the account intact,
+  which made it read as if nothing had happened. **A surviving member now
+  vetoes removal**, whatever the org is called. Guarded by a test that fails on
+  the name-only version.
