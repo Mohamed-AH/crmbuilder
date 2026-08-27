@@ -59,6 +59,58 @@ jobs:
           path: playwright-report/
           retention-days: 7
 
+  security:
+    name: Dependency and secret scan
+    # Scheduled runs only check the live deployment.
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # gitleaks scans git history. A shallow clone would scan one commit,
+          # find nothing, and report clean — a false pass, which is worse than
+          # no scan at all because it looks like coverage.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The gate. Production dependencies only: a Playwright advisory should
+      # not block a deploy of the server, and there are four production deps to
+      # keep clean. High and critical fail; anything lower is reported below.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      # Everything, including dev, for the record. Never fails the build.
+      - name: Full dependency report
+        if: always()
+        run: npm audit || true
+
+      # Pinned binary rather than gitleaks/gitleaks-action, which wants a
+      # GITLEAKS_LICENSE for organisation-owned repositories. Pinning the
+      # version and checking the digest means CI runs exactly what was
+      # reviewed here.
+      #
+      # --redact is not optional: without it a finding prints the secret into
+      # the build log, and on a public repository that log is public. A scanner
+      # that publishes what it found is worse than no scanner.
+      - name: Secret scan (gitleaks)
+        continue-on-error: true
+        env:
+          GITLEAKS_VERSION: 8.21.2
+          GITLEAKS_SHA256: 5bc41815076e6ed6ef8fbecc9d9b75bcae31f39029ceb55da08086315316e3ba
+        run: |
+          set -euo pipefail
+          curl -sSL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          ./gitleaks detect --source . --redact --no-banner --exit-code 1
+
   live:
     name: Live deployment health
     # Runs on schedule, on manual dispatch, and after a push to the default branch.

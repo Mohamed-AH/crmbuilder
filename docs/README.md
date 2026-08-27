@@ -62,7 +62,7 @@ decision was shaped that way, which does not survive in the finished code.
 | [archive/SCALING-OPTIONS.md](archive/SCALING-OPTIONS.md) | `CLAUDE.md` §5, §10 |
 | [archive/OPERATOR-CONTROLS.md](archive/OPERATOR-CONTROLS.md) | `CLAUDE.md` §24, §25 |
 | [archive/TIER-2.md](archive/TIER-2.md) | `CLAUDE.md` §26 |
-| [archive/SECURITY-AUDIT.md](archive/SECURITY-AUDIT.md) | `CLAUDE.md` §30 — **in progress** |
+| [archive/SECURITY-AUDIT.md](archive/SECURITY-AUDIT.md) | `CLAUDE.md` §30 — complete |
 
 ---
 
@@ -85,9 +85,11 @@ on purpose.
 Not gaps to fill without deciding they are worth it:
 
 - **No `SECURITY.md`.** The model is real but lives across `CLAUDE.md` §5, §13,
-  §16, §17, §20, §21 and §28, plus §3's invariants. A consolidated copy would be
-  a second source that disagrees within a quarter — the exact failure above. If
-  it is ever written it should be a **map** into those, not a re-explanation.
+  §16, §17, §20, §21, §28 and §30, plus §3's invariants. A consolidated copy
+  would be a second source that disagrees within a quarter — the exact failure
+  above. If it is ever written it should be a **map** into those, not a
+  re-explanation. §30 is the closest thing: the audit's findings, including the
+  ones that were **false**, which is what stops someone "fixing" them later.
 - **No changelog.** Git history and `CLAUDE.md`'s sections carry it.
 - **No architecture document.** `CLAUDE.md` §1, §3, §10 and §11 are it.
   `archive/SCALING-OPTIONS.md` was named `ARCHITECTURE.md` and was never one.

@@ -40,7 +40,7 @@ never change, because everything cross-references them.
 | Migrations | §12 |
 | Guided tour | §7 |
 | Deleting a field; currency relabels | §22 · §23 |
-| Security audit and what it changed | §21 · §30 (in progress) |
+| Security audit and what it changed | §21 · §30 (findings, incl. the false ones) |
 | Why docs go stale, and which ones | §27 |
 | **How the docs are organised**, and what is frozen | §29 |
 
@@ -60,6 +60,7 @@ privacy.html          privacy policy | terms.html  terms of use  (see §19)
 legal.css             styling for those two — they load no app JS at all
 css/style.css         Inter + blue/slate palette, light/dark, desktop-first
 js/icons.js           inline Lucide SVGs (generated — see §6)
+js/boot-icons.js      fills static icon placeholders — a file, not inline (§30 CSP)
 js/scope.js           whose data is this — storage scopes (see §11)
 js/db.js              IndexedDB wrapper, one database per scope
 js/csv.js             RFC 4180 CSV reader/writer
@@ -1593,11 +1594,16 @@ Recorded so they are not mistaken for oversights:
 
 ---
 
-## 30. Security audit — IN PROGRESS (resume point)
+## 30. Security audit — COMPLETE (phases 1–5)
 
-**This section is the live checklist.** The plan, the reconnaissance and the
-reasoning are in `docs/archive/SECURITY-AUDIT.md`, which is frozen; this is what
-is done and what is not.
+**This section is the record of what the audit found and changed.** The plan
+and the reconnaissance are in `docs/archive/SECURITY-AUDIT.md`, which is frozen.
+All five phases shipped; the per-phase findings are below.
+
+**Read the *false* findings as carefully as the real ones.** Four things the
+checklist asked for were already correct or did not apply here, and a later
+reader working from a generic checklist rather than this source would "fix"
+them and make the code worse. They are marked throughout.
 
 A full-application audit against a checklist supplied from outside, **checked
 against the code rather than accepted** — §21's treatment, where six of eight
@@ -1612,7 +1618,7 @@ claims held and two did not.
   Phase 4, where the other headers land.
 - ✅ **4 — Network hardening.** Shipped — see below. The SSRF finding was
   **false**; the rate-limit design changed once the tests disproved it.
-- ☐ **5 — Supply chain and operational.** CI gates, docs as a map.
+- ✅ **5 — Supply chain and operational.** Shipped — see below.
 
 ### The checklist assumed a different stack, and that is load-bearing
 
@@ -1925,3 +1931,86 @@ leaves the previous copy intact. **The temp file must sit beside the target** �
 a rename across filesystems is a copy, and a copy is not atomic. Eight
 consecutive migration runs clean afterwards, against four failures in six
 before.
+
+### Phase 5 as built — CI gates
+
+Two jobs, both in `.github/workflows/test.yml` under `security`.
+
+**`npm audit --omit=dev --audit-level=high` is the blocking gate.** Production
+dependencies only, and high or critical only. A Playwright advisory should not
+block a deploy of the server, and there are exactly four production
+dependencies to keep clean. A second, never-failing `npm audit` prints
+everything for the record.
+
+**gitleaks runs from a pinned, checksummed binary — not the action.**
+`gitleaks/gitleaks-action@v2` wants a `GITLEAKS_LICENSE` for organisation-owned
+repositories, which is a future outage on somebody else's terms. Pinning the
+version *and* verifying the SHA-256 means CI runs exactly what was reviewed
+here; both directions were tested, including that a wrong digest stops the job.
+
+**Three details that would each have made the scan worthless:**
+
+- **`--redact` is not optional.** Without it a finding prints the secret into
+  the build log, and on a public repository that log is public. A scanner that
+  publishes what it found is worse than no scanner.
+- **`fetch-depth: 0`.** gitleaks scans git *history*; the default shallow clone
+  would scan one commit, find nothing, and report clean. That is a false pass,
+  which is worse than no scan because it looks like coverage.
+- **Non-blocking (`continue-on-error`).** A scanner outage should not stop a
+  deploy — but the result is still on the run, so it cannot be missed.
+
+**Result on this repository:** 47 commits scanned, no leaks. That is an
+independent confirmation of the hand-rolled credential-shape grep used during
+reconnaissance, which is the point of running a real tool rather than trusting
+my own regex.
+
+### What the audit found, in one place
+
+| # | Claim | Verdict |
+|---|---|---|
+| 1 | Unverified Google address could create an account | **REAL** — fixed, Phase 1 |
+| 2 | Identifiers unescaped into HTML attributes | **REAL** — stored XSS, fixed, Phase 3 |
+| 3 | No security headers | **REAL** — fixed, Phase 4 |
+| 4 | Global 8 MB body limit on every route | **REAL** — fixed, Phase 4 |
+| 5 | No rate limiting | **PARTLY** — added where it earns its place, Phase 4 |
+| 6 | `/auth/dev` passed a body value into a Mongo filter | **REAL** (dev-only) — fixed, Phase 1 |
+| 7 | Auth failures left no trace | **REAL** — fixed, Phase 1 |
+| 8 | `FileStore.save()` could truncate the store | **REAL, and not on the checklist** — found while verifying Phase 4 |
+| 9 | NoSQL injection | **FALSE** — swept every call site, Phase 2 |
+| 10 | Mass assignment | **FALSE** — both PATCH routes build explicit patches |
+| 11 | Prototype pollution | **FALSE** — probed, not exploitable; guard added anyway |
+| 12 | SSRF via the feedback webhook | **FALSE** — env-only, no runtime setter |
+| 13 | Verify Google ID tokens | **DOES NOT APPLY** — authorization-code flow, no client-supplied token |
+| 14 | Permissive CORS | **FALSE** — no CORS middleware exists; absence is the mitigation |
+| 15 | Static fallback session secret | **FALSE** — falls back to `crypto.randomBytes(32)` |
+
+Eight real, five false, one inapplicable, one partial — and the one that would
+have cost the most (#8) was not on the checklist at all. That is the argument
+for reading the source rather than working the list.
+
+### Left deliberately undone
+
+- **`style-src 'unsafe-inline'`** stays, for 14 dynamic `style=` attributes.
+  Inline style cannot execute script. Closing it means CSS custom properties
+  throughout, and it is not worth doing today (Phase 4).
+- **No `SECURITY.md`.** The model spans §5, §13, §16, §17, §20, §21, §28 and
+  §3's invariants; a consolidated copy becomes a second source that disagrees
+  within a quarter. `docs/README.md` records this decision.
+- **The rate limiter is per instance.** A shared counter needs a Mongo round
+  trip per request, which costs more than the attack it prevents at this size.
+- **The E2E suite is load-sensitive, and it is a suite problem rather than one
+  bad test.** Across the audit's full runs, **three different tests** failed
+  once each and then passed in isolation: the guided tour, the team-workspace
+  join, and the JSON backup round-trip. Only the tour one is diagnosed —
+  *step 3 card covers its own highlight*, a real cosmetic bug where the popover
+  is placed before the step's async re-render settles.
+
+  None is security-related and all predate this work. Two things make it
+  tolerable rather than urgent: `playwright.config.js` already sets
+  `retries: 1` **in CI only** (locally 0, so a flake stays visible), and the
+  failures are spread across unrelated tests rather than concentrated, which
+  points at shared-server timing rather than a defect in any one journey.
+
+  **The recurring mistake was mine, twice:** Playwright wipes `test-results/`
+  at the start of every run, so re-running to "check if it reproduces" destroys
+  the trace of the failure you wanted to read. Read the trace **first**.

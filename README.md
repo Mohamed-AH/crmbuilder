@@ -56,6 +56,14 @@ CI (`.github/workflows/test.yml`) runs the full suite on every push and smoke-te
 the live deployment daily. Set a repository variable `LIVE_URL` to enable the
 scheduled live check.
 
+A `security` job runs alongside: `npm audit` gates on high/critical in
+**production** dependencies (a dev-only advisory should not block a server
+deploy), and **gitleaks** scans the full git history for secrets from a pinned,
+checksum-verified binary. The secret scan is non-blocking — a scanner outage
+should not stop a deploy — but it is redacted and it scans history rather than
+the tip, both of which are the difference between a real scan and a false pass.
+See `CLAUDE.md` §30.
+
 ## Quick start (local)
 
 ```sh
@@ -82,6 +90,7 @@ terms.html            terms of use
 css/style.css         styles (Inter, light/dark, desktop-first)
 legal.css             standalone styling for the two pages above (they load no app JS)
 js/icons.js           inline Lucide SVG icons
+js/boot-icons.js      fills static icon placeholders (a file, not inline — CSP script-src)
 js/db.js              promise-based IndexedDB wrapper
 js/cloud.js           account + sync layer (server ⇄ local fallback)
 js/csv.js             RFC 4180 CSV reader/writer

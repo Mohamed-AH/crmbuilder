@@ -1,7 +1,9 @@
 # Security audit — the plan
 
 > **FROZEN — the plan and its reconnaissance as they stood at the start.**
-> Not maintained. **Live status is `CLAUDE.md` §30**, which is the checklist.
+> Not maintained. All five phases have since shipped; several of the
+> preliminary findings below turned out to be **false**, and the verdicts are
+> in **`CLAUDE.md` §30**, which is the record.
 
 A full-application audit: auth boundaries, parameter tampering, injection,
 XSS/CSRF, rate limiting and workspace isolation. Scoped against a checklist
