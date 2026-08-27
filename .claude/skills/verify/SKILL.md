@@ -6,23 +6,44 @@ description: How to run and extend the CRM Builder test suite, and how to drive 
 # Verifying CRM Builder
 
 Node/Express server (`server.js`) serving a static PWA plus auth/sync/admin APIs.
-There is a real test suite — **run it before hand-driving anything.**
+There is a real test suite — **check the relevant part of it before
+hand-driving anything.**
 Current counts live in `CLAUDE.md` §2, not here: a number written into a second
 place is a number that goes stale, and this one did (it said 24 for months
 while the suite grew past 70).
 
 ## Run the tests
 
+**Target, do not sweep.** `CLAUDE.md` §9 is the protocol and it is the rule
+here: the full suite runs on CI for every push to every branch, so re-running
+it in the development loop buys nothing and costs minutes an iteration.
+
 ```sh
 npm install
+
+# The development loop — targeted, plus smoke.
+node --test tests/signup.test.mjs                        # one file
+node --test --test-name-pattern "a crossed threshold" …  # one test
+npx playwright test -g "the demo can be kept on purpose" # one journey
+npm run test:smoke    # tests/smoke.mjs — 41 checks, seconds. Keep this one.
+
+# Whole suites — for CI, or when an edit's blast radius earns it (§9).
 npm test              # unit + API + e2e (playwright boots its own server)
 npm run test:unit     # tests/csv.test.mjs      — CSV parse/stringify
 npm run test:api      # tests/api.test.mjs      — spawns a server on a random port
 npm run test:e2e      # tests/e2e.spec.js       — Playwright journeys
-npm run test:smoke    # tests/smoke.mjs         — deployment audit, localhost
 
 BASE_URL=https://your-app.onrender.com npm run test:smoke   # audit a live deploy
 ```
+
+`test:smoke` stays in the loop despite not being targeted: it is the only thing
+that catches a file missing from the server's allow-list, which works locally
+from cache and 404s in production (§28). Nothing else can see that failure.
+
+**Never re-run a failing Playwright test to check whether it reproduces.** The
+runner wipes `test-results/` on start, destroying the trace and
+`error-context.md` you needed. Read the artifacts first — `CLAUDE.md` §30
+records that mistake being made twice.
 
 - `npm run test:api` and `test:e2e` each boot their own server with `DATA_DIR`
   pointed at a throwaway directory — no cleanup needed, nothing shared with dev data.

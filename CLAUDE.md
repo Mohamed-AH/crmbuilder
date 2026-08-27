@@ -44,6 +44,7 @@ never change, because everything cross-references them.
 | Security audit and what it changed | §21 · §30 (findings, incl. the false ones) |
 | Why docs go stale, and which ones | §27 |
 | **"Synced" that is not synced** — backdated rows | §31 |
+| **Which tests to run** — and who runs the rest | §9 |
 | E2E suite slow or "flaky" | §32 |
 | **What tombstones cost**, and reading storage figures | §33 · §26 |
 | **How the docs are organised**, and what is frozen | §29 |
@@ -337,6 +338,71 @@ rather than assuming inherited view state.
   broken state — a test that passes on the bug is worthless.
 - Prefer measuring over asserting: sizes, timings and layout are checked by
   driving the real app, not by reasoning about the code.
+
+### Who runs which tests
+
+Three tiers, and the split is deliberate: **the full suite already runs on CI
+for every push to every branch** (`push: branches: ['**']`), on ubuntu, for
+free. Re-running it in the development loop buys nothing and costs minutes per
+iteration — three full runs in one session where one would have done is what
+prompted writing this down.
+
+| | Runs | When |
+|---|---|---|
+| **Development loop** | targeted tests + `npm run test:smoke` | every change |
+| **CI** | everything | automatically, on push — the default gate |
+| **The user, locally** | whatever the failure needs | triaging a CI failure, or a Windows-only symptom |
+
+**Targeted means targeted:**
+
+```sh
+node --test tests/signup.test.mjs                       # one file
+node --test --test-name-pattern "egress is counted" …   # one test
+npx playwright test -g "the demo can be kept on purpose"
+npm run test:smoke                                      # 41 checks, seconds
+```
+
+**Smoke stays in the loop even though it is not targeted**, because it is the
+only thing that catches a file missing from the server's allow-list (§28) —
+which works locally from cache and 404s in production. Unit and E2E tests
+cannot see that failure. Run it whenever a served file is added or renamed.
+
+**State what was actually run.** Commit messages record real coverage —
+*"signup.test.mjs 63/63; full suite not run"* — never a total that was not
+observed. A commit log that overstates its verification is worse than one that
+admits the gap, and CI is about to produce the real number anyway.
+
+**Say when a change wants a full run before it is trusted.** Some edits have
+blast radius well past the file being changed, and all four of these happened
+in one session:
+
+| Edit | What broke, elsewhere |
+|---|---|
+| `deleteAccount` → `tidyVacatedOrg` | a team-workspace test that was not being targeted |
+| the rate limiter | the entire Node suite |
+| `playwright.config.js` cleanup | 47 E2E tests, `ERR_CONNECTION_REFUSED` |
+| adding a JS file | production 404s unless four places agree (§3) |
+
+The pattern to watch: **shared server helpers, `js/db.js` / `js/cloud.js` /
+`js/scope.js`, `playwright.config.js`, and anything touching the asset
+allow-list or `CACHE_VERSION`.** Flag those explicitly rather than skipping the
+full run silently.
+
+### When a test fails on the user's machine
+
+**Send the artifacts; do not re-run.** Playwright wipes `test-results/` at the
+start of every run, so re-running to see whether a failure reproduces destroys
+the evidence needed to diagnose it. That mistake is recorded in §30 as one made
+twice. What is wanted is `test-results/<test-name>/error-context.md` and the
+assertion text.
+
+**Triage platform against product before changing code.** The development
+machine is Windows; CI and production are Linux, and the difference is real —
+§4's SIGTERM note is the standing example. The egress case is the precedent
+worth remembering: the failure was a Windows artifact, the correct fix was a
+skip with the reason recorded, and reading it as "this telemetry is not worth
+keeping" would have cost a working alert
+([`docs/archive/TELEMETRY.md`](docs/archive/TELEMETRY.md)).
 
 ---
 
