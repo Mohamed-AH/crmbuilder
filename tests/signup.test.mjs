@@ -1515,4 +1515,73 @@ describe('tidying up after a join', () => {
     const orphan = view.orgs.find((o) => o.members === 0 && o.records > 0);
     assert.ok(orphan, 'and it is visible, with nobody in it, rather than silently deleted');
   });
+
+  /*
+   * Deleting the last member reaches the same state as a vacated join, by a
+   * different door. It used to leave the org row behind: 0 people, 0 records,
+   * 0 B, inflating the tenant count the panel exists to make trustworthy.
+   */
+  test('deleting the last account takes its organisation with it', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'tidy-op3@operator.test' });
+    const admin = await adminOf(srv, 'tidy-op3@operator.test');
+
+    const before = (await srv.req('/api/admin/platform?fresh=1', { cookies: admin })).json.counts.orgs;
+    const leaver = await srv.signUp('leaver@customer.test');
+    const mid = (await srv.req('/api/admin/platform?fresh=1', { cookies: admin })).json.counts.orgs;
+    assert.equal(mid, before + 1, 'the signup minted an org');
+
+    const gone = await srv.req(`/api/admin/users/${leaver.json.user.id}`, { method: 'DELETE', cookies: admin });
+    assert.equal(gone.status, 200);
+
+    const after = (await srv.req('/api/admin/platform?fresh=1', { cookies: admin })).json;
+    assert.equal(after.counts.orgs, before, 'and deleting the account took the org with it');
+    assert.equal(
+      after.orgs.filter((o) => o.members === 0 && o.records === 0 && o.bytes === 0).length, 0,
+      'no orphan row is left in the Organisations table',
+    );
+  });
+
+  /*
+   * The Organisations table counts rows, and a tombstone is not a record.
+   *
+   * Bytes are the other way round on purpose: a tombstone occupies real
+   * storage, so the size column must keep counting it (§17). Only the count
+   * excludes them.
+   */
+  test('the Organisations table counts live records, not tombstones', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'tidy-op4@operator.test' });
+    const admin = await adminOf(srv, 'tidy-op4@operator.test');
+    const user = await srv.signUp('counts@customer.test');
+    const cookies = user.setCookie;
+
+    const now = Date.now();
+    const records = [...Array(10)].map((_, i) => ({
+      id: `r${i}`, updatedAt: now, doc: { moduleId: 'm1', data: { name: `row ${i}` } },
+    }));
+    await srv.req('/api/sync', { method: 'POST', cookies, body: { since: 0, records } });
+
+    const full = (await srv.req('/api/admin/platform?fresh=1', { cookies: admin })).json
+      .orgs.find((o) => o.records === 10);
+    assert.ok(full, 'ten live records are reported as ten');
+    const bytesWithAllLive = full.bytes;
+
+    // Delete four. They become tombstones: still stored, no longer records.
+    await srv.req('/api/sync', {
+      method: 'POST',
+      cookies,
+      body: {
+        since: 0,
+        records: [0, 1, 2, 3].map((i) => ({ id: `r${i}`, updatedAt: now + 1000, deleted: true, deletedAt: now + 1000 })),
+      },
+    });
+
+    const after = (await srv.req('/api/admin/platform?fresh=1', { cookies: admin })).json
+      .orgs.find((o) => o.id === full.id);
+    assert.equal(after.records, 6, 'four deleted rows must not still be counted as records');
+    assert.ok(after.bytes > 0, 'but the tombstones are still real storage and still measured');
+    assert.ok(
+      after.bytes >= bytesWithAllLive * 0.5,
+      'deleting rows must not make the size column pretend the storage was freed',
+    );
+  });
 });

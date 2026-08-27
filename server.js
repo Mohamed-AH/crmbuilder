@@ -385,17 +385,17 @@ class FileStore {
    */
   async usageByOrg() {
     const totals = new Map();
-    const add = (orgId, bytes, kind) => {
+    const add = (orgId, bytes, kind, live) => {
       const key = orgId || '(none)';
       const t = totals.get(key) || { orgId: key, bytes: 0, records: 0, modules: 0 };
       t.bytes += bytes;
-      t[kind] += 1;
+      if (live) t[kind] += 1;
       totals.set(key, t);
     };
     for (const kind of SYNC_KINDS) {
       for (const bucket of Object.values(this.s.items[kind] || {})) {
         for (const row of Object.values(bucket)) {
-          add(row.orgId, Buffer.byteLength(JSON.stringify(row), 'utf8'), kind);
+          add(row.orgId, Buffer.byteLength(JSON.stringify(row), 'utf8'), kind, !row.deletedAt);
         }
       }
     }
@@ -849,7 +849,24 @@ class MongoStore {
     const totals = new Map();
     for (const kind of SYNC_KINDS) {
       const rows = await this.cols[kind].aggregate([
-        { $group: { _id: '$orgId', bytes: { $sum: { $bsonSize: '$$ROOT' } }, n: { $sum: 1 } } },
+        {
+          $group: {
+            _id: '$orgId',
+            /*
+             * Bytes count EVERYTHING, rows count only the live ones — and the
+             * asymmetry is deliberate.
+             *
+             * A tombstone occupies real storage, so leaving it out of `bytes`
+             * would under-report exactly the thing the meter exists to catch
+             * (§17). But an operator reading "226 records" for a workspace the
+             * customer sees as 214 is being told something false, and after a
+             * mass delete the column would stay high while the customer's
+             * screen showed nothing. Do not "fix" the bytes to match.
+             */
+            bytes: { $sum: { $bsonSize: '$$ROOT' } },
+            n: { $sum: { $cond: [{ $in: [{ $type: '$deletedAt' }, ['missing', 'null']] }, 1, 0] } },
+          },
+        },
       ]).toArray();
       for (const r of rows) {
         const key = r._id || '(none)';
@@ -1180,6 +1197,19 @@ async function deleteAccount(user) {
   const remaining = user.orgId ? await store.listUsers(user.orgId) : [];
   if (!remaining.length) {
     await store.deleteWorkspace(wsId);
+    /*
+     * And the organisation row itself, or it lingers in the Organisations
+     * table as 0 people / 0 records / 0 B — inflating the tenant count the
+     * panel exists to make trustworthy. §25 built tidyVacatedOrg for exactly
+     * this on the JOIN path; deleting the last member reaches the same state
+     * by a different door and was missed.
+     *
+     * Reused rather than calling deleteOrg here, because that helper carries
+     * the guard: it refuses while anybody is still a member or any work
+     * remains. deleteAccount is the one function that can destroy a team's
+     * data (§5), and it should not grow a second, unguarded deletion path.
+     */
+    await tidyVacatedOrg(user.orgId, wsId);
     return { ok: true, deletedWorkspace: true };
   }
   return { ok: true, deletedWorkspace: false, remaining: remaining.length };
@@ -2907,6 +2937,20 @@ async function tidyVacatedOrg(orgId, wsId) {
     if ((await store.listUsers(orgId)).length) return false;      // somebody is still there
     const { records, modules } = await store.dataStats(orgId);
     if (records || modules) return false;                          // real work, not a shell
+    /*
+     * An unused invite can still bring an empty org back to life.
+     *
+     * A link minted while there was an owner outlives them: somebody holding
+     * it joins the empty org and revives it, which is deliberate and is what
+     * "removing the last member takes the workspace with them" asserts. Delete
+     * the org and that link 404s instead — a credential already sent to
+     * somebody, silently broken.
+     *
+     * So the rule is not "empty", it is "empty and nothing outstanding can
+     * bring it back". A spent, revoked or expired invite is not outstanding.
+     */
+    const live = (await store.listInvites(orgId)).filter((i) => inviteState(i) === 'valid');
+    if (live.length) return false;
     await store.deleteWorkspace(wsId);
     await store.deleteOrg(orgId);
     platformCache = { at: 0, body: null };

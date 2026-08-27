@@ -43,6 +43,7 @@ never change, because everything cross-references them.
 | Security audit and what it changed | §21 · §30 (findings, incl. the false ones) |
 | Why docs go stale, and which ones | §27 |
 | **"Synced" that is not synced** — backdated rows | §31 |
+| E2E suite slow or "flaky" | §32 |
 | **How the docs are organised**, and what is frozen | §29 |
 
 ---
@@ -79,7 +80,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 180 Node tests + 77 Playwright tests, 41 smoke checks.
+**All green:** 182 Node tests + 77 Playwright tests, 41 smoke checks.
 
 ```sh
 npm install
@@ -2012,18 +2013,9 @@ for reading the source rather than working the list.
   within a quarter. `docs/README.md` records this decision.
 - **The rate limiter is per instance.** A shared counter needs a Mongo round
   trip per request, which costs more than the attack it prevents at this size.
-- **The E2E suite is load-sensitive, and it is a suite problem rather than one
-  bad test.** Across the audit's full runs, **three different tests** failed
-  once each and then passed in isolation: the guided tour, the team-workspace
-  join, and the JSON backup round-trip. Only the tour one is diagnosed —
-  *step 3 card covers its own highlight*, a real cosmetic bug where the popover
-  is placed before the step's async re-render settles.
-
-  None is security-related and all predate this work. Two things make it
-  tolerable rather than urgent: `playwright.config.js` already sets
-  `retries: 1` **in CI only** (locally 0, so a flake stays visible), and the
-  failures are spread across unrelated tests rather than concentrated, which
-  points at shared-server timing rather than a defect in any one journey.
+- **The E2E "flakiness" was not flakiness — see §32.** It was the E2E store
+  growing across runs, and it is fixed. The guided tour's *step 3 card covers
+  its own highlight* is a separate, real, cosmetic bug and is still open.
 
   **The recurring mistake was mine, twice:** Playwright wipes `test-results/`
   at the start of every run, so re-running to "check if it reproduces" destroys
@@ -2100,3 +2092,36 @@ Rows already stranded on a device stay stranded until something rewrites them �
 the watermark is only lowered when a write happens. For the deployment that
 surfaced this, the stranded rows were demo data and the real records were safe
 on the server, but that was luck rather than design.
+
+
+---
+
+## 32. The E2E suite was not flaky. Its store was growing.
+
+Across §30's phases, **five different tests** failed once each and then passed
+in isolation: the guided tour, both team-workspace journeys, the JSON backup
+round-trip, and the sign-in upload. I called it load-sensitive timing and
+moved on. That was wrong, and the pattern — a *different* test each run, all
+passing alone — was the clue I misread.
+
+`playwright.config.js` pointed `DATA_DIR` at a fixed `./data/e2e` and never
+cleared it. The API and signup suites each `mkdtemp` a throwaway directory;
+only this one persisted, so it accumulated every account and record from every
+run that had ever happened. By the time I looked: **9.7 MB, 1,972 users, 1,965
+orgs, 11,720 rows.**
+
+And `FileStore.save()` rewrites the **whole file on every write** (§30). So
+every `DB.put` in every test was serialising and rewriting all 9.7 MB. The
+suite had drifted from 4.0 minutes to 6.5, and whichever test happened to sit
+closest to its timeout lost.
+
+**Clearing the directory took a full run from 6.5 minutes back to 4.0, and
+77/77 green.** `playwright.config.js` now removes it before each run — except
+when `BASE_URL` is set, because then the data belongs to a deployment and is
+not ours to delete.
+
+**The lesson is about the diagnosis, not the fix.** "Different test each time,
+passes in isolation" reads as flakiness and sounds like something to tolerate.
+It was a resource leak with a monotonic cost, and the giveaway was in the
+timings I kept printing and not reading: 4.4, 4.3, 4.5, 5.3, 4.8, 6.8, 6.5.
+A suite that is getting *slower* is not flaky, it is accumulating something.
