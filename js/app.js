@@ -1290,25 +1290,81 @@
     }
     await loadModules();
 
-    for (const template of TEMPLATES) {
+    /*
+     * TEMPLATES first, then whatever modules the demo brings of its own.
+     *
+     * The dataset used to be limited to the six prebuilt templates, because
+     * this loop walked TEMPLATES and nothing else — so the demo could never
+     * show a custom module, which is half of what the product does. A demo
+     * module is shaped exactly like a template, so createFromTemplate takes
+     * it unchanged.
+     */
+    const defs = [...TEMPLATES, ...(demo.modules || [])];
+
+    /*
+     * Relations are resolved as we go, in one forward pass.
+     *
+     * `relatedModule` and a relation's value are both runtime ids, which a
+     * static file cannot know — so demo-data.js names its targets instead
+     * (`{ __ref: "companies:Bright Bakery" }`) and they are looked up here.
+     * A ref may only point at a module seeded EARLIER; the generator writes
+     * them that way and tests/demo.test.mjs asserts every one resolves.
+     *
+     * Resolving in the same pass rather than patching afterwards matters:
+     * a second write would re-stamp updatedAt on every related row, and
+     * `handles` is keyed on the record's first field, which is what
+     * recordName() displays.
+     */
+    const handles = new Map();
+    const resolveRefs = (data) => {
+      const out = { ...data };
+      for (const [k, v] of Object.entries(out)) {
+        if (v && typeof v === 'object' && typeof v.__ref === 'string') {
+          // An unresolved ref becomes '' rather than a dangling id: an empty
+          // cell reads as "not linked", a bad id renders "(linked record)"
+          // and looks like breakage on a row the user is about to inherit.
+          out[k] = handles.get(v.__ref) || '';
+        }
+      }
+      return out;
+    };
+
+    for (const template of defs) {
       const rows = demo.records[template.key];
       if (!rows || !rows.length) continue;
       // Reuse a module of the same name if the user already has one.
       let mod = modules.find((m) => m.name.toLowerCase() === template.name.toLowerCase());
+      let created = false;
       if (!mod) {
         mod = await createFromTemplate(template, false);
         // Created solely to hold the demo business, so it is demo too — unlike
         // a module the user picked at onboarding, which stays theirs.
         mod._demo = true;
         mod.updatedAt = Date.now();
-        await DB.put('modules', mod);
+        created = true;
       }
+      // Point relation fields at the module they name. Done every time rather
+      // than only on creation, because a reused module of the same name still
+      // needs its targets bound to THIS workspace's ids.
+      let rebound = false;
+      for (const f of mod.fields) {
+        if (f.type !== 'relation' || !f.relatedModuleName) continue;
+        const target = modules.find((m) => m.name.toLowerCase() === f.relatedModuleName.toLowerCase());
+        if (target && f.relatedModule !== target.id) { f.relatedModule = target.id; rebound = true; }
+      }
+      if (created || rebound) await DB.put('modules', mod);
+      await loadModules(); // so the next module's relation can find this one
+
       const now = Date.now();
+      const nameKey = (mod.fields[0] || {}).key;
       let i = 0;
       for (const data of rows) {
         i += 1;
+        const id = uid();
+        const resolved = resolveRefs(data);
+        if (nameKey && resolved[nameKey]) handles.set(`${template.key}:${resolved[nameKey]}`, id);
         // Stagger updatedAt so "recent activity" has a believable order.
-        await DB.put('records', { id: uid(), moduleId: mod.id, data: { ...data }, createdAt: now - i * 60000, updatedAt: now - i * 60000, _demo: true });
+        await DB.put('records', { id, moduleId: mod.id, data: resolved, createdAt: now - i * 60000, updatedAt: now - i * 60000, _demo: true });
       }
     }
 

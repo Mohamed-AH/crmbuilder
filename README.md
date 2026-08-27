@@ -16,7 +16,7 @@ A **modular CRM builder for small businesses** — an installable, offline-first
 - **Sortable columns** — click any header; sorting is type-aware (numbers numerically, dates chronologically, dropdowns in pipeline order).
 - **Team workspaces** — an organisation shares one workspace; owners invite colleagues with a single-use link that expires after a week. Joiners choose whether to bring their own records with them. Four roles: **owner** (schema, invites, the team), **member** (records, including deleting them), **contributor** (add and edit, but not delete) and **viewer** (read only). Records carry who added them, and removing someone from a team is not deleting their account.
 - **Concurrent editing** — two people editing *different fields of the same record* both keep their edit. Each field carries its own clock and the server merges key by key, so a colleague's phone-number change does not vanish because you saved the email a second later.
-- **Demo data** — one click fills every module with a coherent fictional business (107 records) for evaluations and demos. It is never loaded without asking, never syncs to an account unless you choose to keep it, and **Settings → Remove sample data** takes it back out while keeping anything you added yourself.
+- **Demo data** — one click fills every module with a coherent fictional business (144 records across 8 modules, two of them beyond the prebuilt templates, with projects linked to the companies paying for them) for evaluations and demos. It is never loaded without asking, never syncs to an account unless you choose to keep it, and **Settings → Remove sample data** takes it back out while keeping anything you added yourself.
 - **Backup & restore** — export/import the whole workspace as JSON.
 - **PWA** — installable on desktop and mobile, fully offline via a service worker, light & dark mode, Inter typography, Lucide icons.
 
@@ -99,6 +99,7 @@ js/scope.js           storage scopes — which account local data belongs to
 js/demo-data.js       fictional business used by "Load demo data"
 js/app.js             router, views, module builder, kanban, admin dashboard
 scripts/inspect.mjs   read-only database inspection — what is actually stored, and what disagrees
+scripts/gen-demo-data.mjs  regenerates js/demo-data.js (seeded, so a re-run is byte-identical)
 tests/                smoke, API, CSV unit and Playwright end-to-end tests
 docs/                 user guide, onboarding playbook, demo script, beta runbook, web manual
 sw.js                 offline-first service worker (bump CACHE_VERSION on asset changes)

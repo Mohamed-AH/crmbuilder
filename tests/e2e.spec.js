@@ -8,6 +8,29 @@
  * the server, so each test that signs in uses its own email.
  */
 const { test, expect } = require('@playwright/test');
+const fs = require('fs');
+const path = require('path');
+
+/*
+ * How many modules "Load demo data" produces — read from the dataset, not
+ * pinned here.
+ *
+ * This was the literal 6 in three separate places, and all three failed the
+ * moment the dataset grew a module. The assertion those tests were making is
+ * "the demo seeded its modules", which is what this expresses; the exact
+ * number is the dataset's business, and tests/demo.test.mjs guards its shape.
+ */
+const DEMO = (() => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'js', 'demo-data.js'), 'utf8');
+  // eslint-disable-next-line no-new-func
+  const { DEMO_DATA } = new Function(`${src}; return { DEMO_DATA };`)();
+  return {
+    moduleCount: Object.keys(DEMO_DATA.records).length,
+    recordCount: Object.values(DEMO_DATA.records).reduce((n, rows) => n + rows.length, 0),
+    // A module the six TEMPLATES do not provide — the demo's own.
+    customModule: (DEMO_DATA.modules || [])[0],
+  };
+})();
 
 // --- helpers ---------------------------------------------------------------
 
@@ -574,7 +597,7 @@ test.describe('demo data', () => {
     await page.click('#onboard-demo');
 
     await expect(page.locator('#workspace-name')).toHaveText('Lumen Studio', { timeout: 20000 });
-    await expect(page.locator('#nav-modules .nav-link')).toHaveCount(6);
+    await expect(page.locator('#nav-modules .nav-link')).toHaveCount(DEMO.moduleCount);
     await expect(page.locator('.stat-tile-value')).toBeVisible();
 
     // Deals populate several pipeline columns, which is the point of the demo.
@@ -617,7 +640,7 @@ test.describe('guided tour', () => {
 
     await expect(page.locator('.tour-pop')).toHaveCount(0);
     // It landed on a populated workspace rather than an empty one.
-    await expect(page.locator('#nav-modules .nav-link')).toHaveCount(6);
+    await expect(page.locator('#nav-modules .nav-link')).toHaveCount(DEMO.moduleCount);
   });
 
   test('sets up each screen it describes, and never stalls', async ({ page }) => {
@@ -1016,7 +1039,7 @@ test.describe('sample data', () => {
     await startTour(page);
     await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
     await page.click('[data-tour-skip]');
-    await expect(page.locator('#nav-modules .nav-link')).toHaveCount(6);
+    await expect(page.locator('#nav-modules .nav-link')).toHaveCount(DEMO.moduleCount);
 
     // The demo-only prompt offers "Start fresh" first.
     await signIn(page, uniqueEmail('demo-fresh'), { claim: 'none' });
@@ -1103,6 +1126,94 @@ test.describe('sample data', () => {
     await page.click('#nav-modules .nav-link:has-text("Contacts")');
     await expect(page.locator('tr:has-text("My Own Contact")')).toBeVisible();
     await expect(page.locator('.count-badge')).toHaveText('1');
+  });
+
+  /*
+   * Promotion, on a module the six TEMPLATES do not provide.
+   *
+   * The test above covers a template module, which is the easy half: that
+   * module also exists in onboarding, so a bug that spared template-named
+   * modules and destroyed custom ones would pass it. The demo's own modules
+   * exist ONLY because the demo created them, which is exactly the case where
+   * deleting rather than promoting would take the user's work with it.
+   */
+  test('a custom demo module the user has added to is kept, not deleted', async ({ page }) => {
+    const custom = DEMO.customModule;
+    test.skip(!custom, 'the dataset carries no custom modules');
+
+    await page.goto('/');
+    await page.click('#onboard-demo');
+    await expect(page.locator(`#nav-modules .nav-link:has-text("${custom.name}")`)).toBeVisible({ timeout: 25000 });
+
+    await page.click(`#nav-modules .nav-link:has-text("${custom.name}")`);
+    await expect(page.locator('h1')).toContainText(custom.name);
+    await page.click('#add-record-btn');
+    await page.fill(`#f-${custom.fields[0].key}`, 'Mine, not a sample');
+    await page.click('#record-save');
+    await expect(page.locator('.kanban-card:has-text("Mine, not a sample"), tr:has-text("Mine, not a sample")').first())
+      .toBeVisible({ timeout: 15000 });
+
+    await page.goto('/#/settings');
+    page.once('dialog', (d) => d.accept());
+    await page.click('#remove-demo-btn');
+
+    // The module is promoted — it survives with only the user's row in it.
+    await expect(page.locator(`#nav-modules .nav-link:has-text("${custom.name}")`)).toBeVisible({ timeout: 25000 });
+    await page.click(`#nav-modules .nav-link:has-text("${custom.name}")`);
+    await expect(page.locator('.count-badge')).toHaveText('1', { timeout: 15000 });
+  });
+
+  /*
+   * Relations only work if the loader resolved them, and an unresolved one is
+   * silent: the cell renders empty and everything else looks fine. Asserting
+   * the linked NAME is what proves an id was resolved to a real record —
+   * "(linked record)" is what a dangling id renders as.
+   */
+  test('demo relations resolve to the records they name', async ({ page }) => {
+    const custom = DEMO.customModule;
+    const relation = custom && custom.fields.find((f) => f.type === 'relation');
+    test.skip(!relation, 'the dataset carries no relations');
+
+    await page.goto('/');
+    await page.click('#onboard-demo');
+    await expect(page.locator(`#nav-modules .nav-link:has-text("${custom.name}")`)).toBeVisible({ timeout: 25000 });
+    await page.click(`#nav-modules .nav-link:has-text("${custom.name}")`);
+    await expect(page.locator('h1')).toContainText(custom.name);
+
+    /*
+     * Table view, and assert on the relation's own CELL.
+     *
+     * Two ways the first version of this test fooled itself, both worth
+     * naming: the module defaults to kanban, and a kanban card does not render
+     * the relation column at all — so there was nothing to be wrong. And a
+     * project is titled "Brand refresh — Bright Bakery", so a check against the
+     * page text matched the company name inside the TITLE whether or not the
+     * link resolved. It passed against a loader with ref resolution removed.
+     */
+    const table = page.locator('[data-view="table"], .view-toggle button').first();
+    if (await table.isVisible().catch(() => false)) await table.click();
+    await expect(page.locator('table.records-table tbody tr').first()).toBeVisible({ timeout: 15000 });
+
+    const cells = page.locator(`td[data-label="${relation.label}"]`);
+    await expect(cells.first()).toBeVisible({ timeout: 15000 });
+
+    // A dangling id renders as "(linked record)"; an unresolved ref or a blank
+    // renders as nothing. Both are failures, and neither throws.
+    await expect(cells.first()).not.toHaveText('');
+    await expect(cells.first()).not.toContainText('(linked record)');
+
+    // And the text in the cell is a real record in the module it points at.
+    const names = await page.evaluate(async (targetName) => {
+      const db = await new Promise((res) => { const r = indexedDB.open('crmbuilder'); r.onsuccess = () => res(r.result); });
+      const all = (s) => new Promise((res) => { const q = db.transaction(s).objectStore(s).getAll(); q.onsuccess = () => res(q.result); });
+      const mods = await all('modules');
+      const target = mods.find((m) => m.name.toLowerCase() === targetName.toLowerCase());
+      const recs = await all('records');
+      return recs.filter((r) => r.moduleId === target.id && !r.deletedAt).map((r) => r.data[target.fields[0].key]);
+    }, relation.relatedModuleName);
+
+    const shown = (await cells.first().innerText()).trim();
+    expect(names, `"${shown}" is not a record in ${relation.relatedModuleName}`).toContain(shown);
   });
 });
 

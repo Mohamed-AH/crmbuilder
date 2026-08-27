@@ -83,7 +83,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 183 Node tests + 78 Playwright tests, 41 smoke checks. On
+**All green:** 191 Node tests + 80 Playwright tests, 41 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -112,7 +112,8 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
 - Admin dashboard with analytics; **organisations with per-tenant scoping**
 - **Pooled and dedicated deployment blueprints** (`render.yaml`,
   `render.dedicated.yaml`) and a `/health` endpoint
-- One-click demo business (107 records) and a 6-step guided tour
+- One-click demo business (144 records across 8 modules, including two the
+  templates do not provide, with resolved relations) and a 6-step guided tour
 - **Self-serve beta signup**, complete: the code gate (stage 1), backups and
   measured usage (stage 2), problem reports (stage 3), and the legal pages,
   beta notice and runbook (stage 4) — see §16, §17, §18, §19
@@ -150,7 +151,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v27`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v28`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -294,8 +295,21 @@ member management.
 - **`js/icons.js`** — from the `lucide-static` npm package. Extract the **inner**
   content of each `<svg>`; the files open with a license comment, and a naive
   first-`>` regex nests svgs and swallows trailing button text.
-- **`js/demo-data.js`** — from a Python generator. Dates are stored as
-  `{ __rel: days }` and resolved at load time so the data never looks stale.
+- **`js/demo-data.js`** — from **`scripts/gen-demo-data.mjs`**, which is now in
+  the repo. It used to say "from a Python generator", and that generator was
+  never committed — so the one file nobody was allowed to hand-edit was also
+  the one nobody could regenerate. Run `node scripts/gen-demo-data.mjs`.
+
+  **Seeded PRNG, so a re-run is byte-identical.** An unseeded `Math.random()`
+  would make every regeneration a few hundred lines of noise and the diff
+  useless for review.
+
+  Two placeholders, resolved by `loadDemoData` at load time:
+  `{ __rel: days }` → a date that many days from today, so the business never
+  looks stale; `{ __ref: "<moduleKey>:<name>" }` → a relation, to the seeded
+  record's real id. **A `__ref` may only point at a module seeded earlier** —
+  resolution is a single forward pass, so a forward reference silently becomes
+  a blank cell. `tests/demo.test.mjs` asserts every one resolves.
 
 ---
 
