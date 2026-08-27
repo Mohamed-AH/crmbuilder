@@ -26,7 +26,9 @@ after(async () => {
   for (const s of servers) await s.stop();
 });
 
-let nextPort = 8800 + Math.floor(Math.random() * 400);
+// 8700-9199: 61 servers boot here, so the block is wide and nextPort++ walks
+// it without wrapping into anybody else's. Disjoint per file — CLAUDE.md §9.
+let nextPort = 8700 + Math.floor(Math.random() * 200);
 
 async function boot({ signupMode = 'code', adminEmails = '', backupToken = '', webhook = '', env: extraEnv = {} } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'crmb-signup-'));

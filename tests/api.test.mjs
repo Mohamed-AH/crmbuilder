@@ -94,7 +94,28 @@ async function waitForServer(url, timeoutMs = 20000) {
 const TEST_SECRET = 'test-secret-not-for-production';
 let PORT_IN_USE = 0;
 
+/*
+ * A FRESH PORT ON EVERY BOOT, not one port reused for the whole file.
+ *
+ * expireInvite() stops the server, edits store.json and starts it again — and
+ * rebinding a port that was listening a millisecond ago is not reliable. On
+ * Windows the closed listener lingers and the new one loses the race, so the
+ * next request gets ECONNRESET and every test after it ECONNREFUSED. That is
+ * what "a joiner can bring their own work with them" reported, and the invite
+ * tests that restart the server run immediately before it.
+ *
+ * Linux is forgiving here, which is why it survived this long — the same
+ * platform split as §4's SIGTERM note. Taking a new port costs nothing and
+ * removes the race rather than widening a timeout around it.
+ */
+const PORT_BASE = 8300;
+const PORT_SPAN = 150;   // api.test.mjs's block; the ranges are disjoint (§9)
+let portOffset = Math.floor(Math.random() * PORT_SPAN);
+const nextPort = () => PORT_BASE + (portOffset++ % PORT_SPAN);
+
 function startServer() {
+  PORT_IN_USE = nextPort();
+  BASE = `http://127.0.0.1:${PORT_IN_USE}`;
   child = spawn(process.execPath, ['server.js'], {
     cwd: ROOT,
     env: {
@@ -128,8 +149,6 @@ async function stopServer() {
 before(async () => {
   if (EXTERNAL) return;
   dataDir = await mkdtemp(join(tmpdir(), 'crmb-test-'));
-  PORT_IN_USE = 8300 + Math.floor(Math.random() * 600);
-  BASE = `http://127.0.0.1:${PORT_IN_USE}`;
   await startServer();
 });
 

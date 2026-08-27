@@ -36,7 +36,7 @@ async function bootWith(store, { reuseDir } = {}) {
   await mkdir(dir, { recursive: true });
   if (store) await writeFile(join(dir, 'store.json'), JSON.stringify(store));
 
-  const port = 8700 + Math.floor(Math.random() * 250);
+  const port = 8500 + Math.floor(Math.random() * 200);   // 8500-8699, disjoint (§9)
   const base = `http://127.0.0.1:${port}`;
   let log = '';
   const child = spawn(process.execPath, ['server.js'], {

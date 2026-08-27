@@ -229,6 +229,14 @@ must not be `waitForSelector`ed.
 **Killing the dev server:** `pkill -f "[s]erver\.js"` in a **separate** Bash
 call. A compound command mentioning `server.js` matches itself.
 
+**Restarting a test server on the same port is not reliable.** `expireInvite()`
+in `api.test.mjs` stops the server, edits `store.json` and starts it again;
+rebinding a port that was listening a millisecond ago races, and on Windows the
+closed listener lingers long enough that the new one loses — the next request
+gets `ECONNRESET` and everything after it `ECONNREFUSED`, several tests away
+from the restart that caused it. Every boot takes a **fresh** port now.
+Port blocks are disjoint per file (§9) so parallel files cannot collide either.
+
 **Windows cannot deliver SIGTERM to a child process.** libuv maps
 `child.kill()` to `TerminateProcess()`, so the child dies without running its
 JS signal listeners. Anything guarded by a graceful-shutdown handler therefore
@@ -376,6 +384,20 @@ node --test --test-name-pattern "egress is counted" …   # one test
 npx playwright test -g "the demo can be kept on purpose"
 npm run test:smoke                                      # 41 checks, seconds
 ```
+
+**Port blocks are disjoint per file**, because `node --test` runs files in
+parallel and they each spawn real servers:
+
+| File | Block | Servers |
+|---|---|---|
+| `api.test.mjs` | 8300–8449 | 3 |
+| `fixture.test.mjs` | 8450–8499 | 1 |
+| `migration.test.mjs` | 8500–8699 | 6 |
+| `signup.test.mjs` | 8700–8960 | 61 |
+| `oauth.test.mjs` | 9300–9405 | 6 |
+
+They used to overlap badly — `api.test.mjs` alone spanned 8300–8899, across
+three other files' ranges. Widen a block and check the neighbours.
 
 **Smoke stays in the loop even though it is not targeted**, because it is the
 only thing that catches a file missing from the server's allow-list (§28) —
@@ -2368,9 +2390,12 @@ nothing, renders a blank cell, and throws nothing at all.
   a table. It shipped that way in the first draft.
 - **Weighted-random leaves board columns empty**, which reads as a broken board
   rather than a quiet week. Distributions are exact counts, shuffled.
-- **Three hardcoded `6`s in `e2e.spec.js`** all meant "the demo seeded its
-  modules" and broke the moment the dataset grew one. They read the count from
-  the dataset now. The literal `6` for `.template-card` is correct and stays.
+- **Every count in `e2e.spec.js` that was really "what the demo seeded" broke
+  when the dataset grew.** Three `6`s, an `18` (kanban cards) and a `40`
+  (contacts) — and CI only ever reports the first, so they surface one at a
+  time. They all read from the dataset now via a `DEMO` helper. The literal `6`
+  for `.template-card` is correct and stays: that one really is about
+  `TEMPLATES`.
 - **Do not pre-seed a record without `_demo` to stage a promotion demo.** It
   would claim the user typed something they never did, and "`_demo` is on rows
   we seeded and never on rows the user typed" is what the whole discard

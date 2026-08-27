@@ -51,7 +51,7 @@ async function fakeGoogle(profile) {
   };
 }
 
-let nextPort = 9300 + Math.floor(Math.random() * 200);
+let nextPort = 9300 + Math.floor(Math.random() * 100);  // 9300-9399, disjoint (§9)
 
 async function boot(google, { adminEmails = '' } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'crmb-oauth-'));

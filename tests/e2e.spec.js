@@ -27,6 +27,10 @@ const DEMO = (() => {
   return {
     moduleCount: Object.keys(DEMO_DATA.records).length,
     recordCount: Object.values(DEMO_DATA.records).reduce((n, rows) => n + rows.length, 0),
+    // How many rows land in one module. Every count in these journeys comes
+    // from here: three literal 6s, an 18 and a 40 were all really saying "what
+    // the demo seeded", and every one of them broke when the dataset grew.
+    countFor: (key) => (DEMO_DATA.records[key] || []).length,
     // A module the six TEMPLATES do not provide — the demo's own.
     customModule: (DEMO_DATA.modules || [])[0],
   };
@@ -602,12 +606,14 @@ test.describe('demo data', () => {
 
     // Deals populate several pipeline columns, which is the point of the demo.
     await page.click('#nav-modules .nav-link:has-text("Deals")');
-    await expect(page.locator('.kanban-card')).toHaveCount(18);
+    await expect(page.locator('.kanban-card')).toHaveCount(DEMO.countFor('deals'));
+    // Every stage carries at least one card — the generator spreads an exact
+    // count for that reason, so an empty column here is a real regression.
     const filled = await page.locator('.kanban-col:has(.kanban-card)').count();
     expect(filled).toBeGreaterThanOrEqual(4);
 
     await page.click('#nav-modules .nav-link:has-text("Contacts")');
-    await expect(page.locator('.count-badge')).toHaveText('40');
+    await expect(page.locator('.count-badge')).toHaveText(String(DEMO.countFor('contacts')));
   });
 });
 

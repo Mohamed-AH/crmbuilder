@@ -20,7 +20,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const PORT = 8500 + Math.floor(Math.random() * 400);
+// 8450-8499. Blocks are disjoint per file — see the table in CLAUDE.md §9.
+const PORT = 8450 + Math.floor(Math.random() * 50);
 const BASE = `http://127.0.0.1:${PORT}`;
 
 let dir;
