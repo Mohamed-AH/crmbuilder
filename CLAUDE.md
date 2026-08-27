@@ -33,6 +33,7 @@ never change, because everything cross-references them.
 | **Signup**: the gate and its bypass order | §16 · §20 (access requests) |
 | Operator panel: usage, quotas, levers | §24 |
 | Alerts and thresholds | §25 |
+| **Before removing a meter** — what it costs | [`docs/archive/TELEMETRY.md`](docs/archive/TELEMETRY.md) |
 | Backups, export auth, measured usage | §17 |
 | Problem reports and webhook shapes | §18 |
 | Legal pages, service-worker page trap | §19 |
@@ -232,6 +233,7 @@ fails on Windows **while the server is behaving correctly** — the egress
 persistence test is skipped there for exactly this reason, and it says so.
 Before treating a shutdown-path failure as a bug, check the platform: the
 symptom is a persisted value that is short by whatever was still buffered.
+Full write-up in [`docs/archive/TELEMETRY.md`](docs/archive/TELEMETRY.md) §1.
 
 ---
 
@@ -1094,6 +1096,14 @@ and one cannot be built as worded.
 | Telegram alerts | ✅ Stage C — five rules, escalate-only, evaluated off the keep-warm ping |
 
 ### Three decisions taken before any code
+
+> **Before removing or trimming any of this, read
+> [`docs/archive/TELEMETRY.md`](docs/archive/TELEMETRY.md).** It records why the
+> egress counter exists given that Render's own dashboard reports bandwidth
+> (the counter's job is the *alert* — Render's dashboard is pull, not push),
+> why RSS is the weaker meter of the two if one has to go, and the inventory of
+> all eight files a removal touches. Written when that removal was proposed
+> and declined, so the argument does not have to be reconstructed.
 
 **Three meters, and uptime hours are deliberately not one of them.** Render
 does not publish free-tier consumption and a number we cannot check is worse
