@@ -1392,6 +1392,14 @@ walked through `USER-GUIDE.md`, `manual.html`, `product-tour.html`,
 file and the README. `manual.html` and `product-tour.html` are the easiest to
 forget because they are HTML and nothing greps them by habit.
 
+**And the same rule for the wire contract: `docs/API.md`.** This was proved the
+hard way almost immediately. API.md was written in §29's reorganisation and was
+stale **one commit later** — §30's Phase 4 added per-route body limits, rate
+limits and a non-leaking error handler, every one of which changes a status code
+a caller sees, and none of which reached the document until it was audited
+again. A doc describing a contract goes stale the moment the contract moves,
+which is more often than a doc describing a feature.
+
 **Two specific traps:**
 
 - **`docs/manual.html` mirrors `USER-GUIDE.md` section for section, and drifts
@@ -1963,6 +1971,11 @@ here; both directions were tested, including that a wrong digest stops the job.
 independent confirmation of the hand-rolled credential-shape grep used during
 reconnaissance, which is the point of running a real tool rather than trusting
 my own regex.
+
+**Confirmed on GitHub Actions**, not only locally: run #53 on `f51656d` is green
+across all three jobs, with *Dependency and secret scan* finishing in 7s. The
+pinned-binary approach costs nothing in wall time, which was the other reason to
+prefer it over an action that needs a licence check.
 
 ### What the audit found, in one place
 

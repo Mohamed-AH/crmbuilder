@@ -1,6 +1,6 @@
 # API reference
 
-> **Current reference · developers.** Verified against `server.js` 2026-08-26.
+> **Current reference · developers.** Verified against `server.js` 2026-08-27.
 > Internal: not served publicly.
 >
 > This is the contract. The *reasoning* behind each boundary is in `CLAUDE.md`,
@@ -40,8 +40,39 @@ A failed sync would leave the two sides disagreeing forever. See §2.
 | 403 | Authenticated but not permitted (role gate on the *route*) |
 | 404 | Not found, **or** found but not yours |
 | 409 | Conflicting state (e.g. joining would strand a team) |
-| 413 | Push exceeds `MAX_SYNC_ITEMS` (20,000 per kind) |
-| 429 | Rate limited (feedback: 10/hour/user) |
+| 413 | Body over the route's limit (64 KB, or 8 MB on `/api/sync` and `/api/data`), or a push over `MAX_SYNC_ITEMS` (20,000 per kind) |
+| 429 | Rate limited — see *Limits and headers* below |
+| 500 | Something threw. The body is `{ "error": "Something went wrong." }` and **never** a stack trace |
+
+### Limits and headers
+
+Every response carries a fixed set of security headers, including a CSP with
+`script-src 'self'` and `frame-ancestors 'none'`. Nothing here is meant to be
+framed or to run inline script. `style-src` keeps `'unsafe-inline'` for dynamic
+`style=` attributes — inline style cannot execute script. `CLAUDE.md` §30.
+
+**Body limits are per route.** 64 KB by default; `/api/sync` and `/api/data`
+opt into 8 MB (`SYNC_BODY_LIMIT`) because a push legitimately carries a
+workspace. Over the limit is a **413**, not a truncated read.
+
+**Rate limits are narrow on purpose**, and where they are *absent* matters as
+much as where they apply:
+
+| Route | Limit | Why |
+|---|---|---|
+| `POST /api/access-request` | 5/min per IP | The queue an operator works by hand is otherwise trivially floodable |
+| `GET /auth/google/callback` | 60/min per IP | Each call makes the server exchange a token with Google — outbound work an anonymous caller can trigger. **Not** brute-force protection; there is nothing to guess |
+| `POST /api/feedback` | 10/hour per user | Bounded because it writes to the same 512 MB the customers use |
+| `POST /api/sync` | **none** | A large workspace, or a week offline, legitimately pushes hard. Throttling it turns a slow sync into lost work |
+| `POST /auth/dev` | **none** | 404s in production, so a limit protects nothing real |
+
+Sign-in generally is not limited **because there is no password here** — Google
+owns authentication, and trying a beta or invite code costs a full OAuth round
+trip, so the flow is already its own rate limiter.
+
+Counting is in memory and therefore **per instance**. On a single free-tier
+service that is the whole deployment; on a multi-instance one the effective
+limit multiplies by the instance count.
 
 ---
 
@@ -433,3 +464,5 @@ non-pending row and answers *received* without writing.
    the un-fixed code** (`CLAUDE.md` §9). The 8 isolation tests assert the
    attack, not the happy path — keep that style.
 5. Serving a new *file* means the allow-list too — `CLAUDE.md` §28.
+6. A route that legitimately takes a large body must opt in, like `/api/sync`
+   does; the default is 64 KB and silence is a 413.

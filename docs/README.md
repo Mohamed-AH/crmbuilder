@@ -1,6 +1,6 @@
 # Documentation map
 
-> **Current reference.** Verified 2026-08-26. Start here.
+> **Current reference.** Verified 2026-08-27. Start here.
 
 Three places, and the difference is the whole point of this page:
 
@@ -11,7 +11,10 @@ Three places, and the difference is the whole point of this page:
 | **`docs/archive/`** | Plans and decisions, frozen at the moment they were written | **No, deliberately** |
 
 Every file carries a status banner in its first lines, so opening one directly
-tells you the same thing this table does.
+tells you the same thing this table does. **The dates differ between files, and
+that is the point** — each says when *that* document was last checked against
+the code, so a doc nothing has invalidated keeps its older date rather than
+being re-stamped for tidiness.
 
 **Git dates will not help you.** A documentation pass touched every file on the
 same day; last-modified says nothing about whether a document is current. That
@@ -73,6 +76,12 @@ decision was shaped that way, which does not survive in the finished code.
 `DEMO-SCRIPT.md` and `BETA.md`'s tester note — not just `CLAUDE.md` and the
 README. The HTML two are the easiest to forget because nothing greps them by
 habit, and they drifted for months as a result. `CLAUDE.md` §27.
+
+**A change to the wire contract has to be walked through [API.md](API.md).**
+It went stale one commit after it was written: the security audit's network
+hardening added per-route body limits, rate limits and a non-leaking error
+handler, all of which change a status code a caller sees. A contract document
+rots faster than a feature document, because the contract moves more often.
 
 **Route, don't restate.** `manual.html` mirrors `USER-GUIDE.md` section for
 section and drifted silently behind a matching table of contents — the headings
