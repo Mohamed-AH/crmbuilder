@@ -107,6 +107,7 @@ const ASSETS = [
   ['/js/cloud.js', 'javascript'],
   ['/js/db.js', 'javascript'],
   ['/js/icons.js', 'javascript'],
+  ['/js/boot-icons.js', 'javascript'],
   ['/js/templates.js', 'javascript'],
   ['/js/csv.js', 'javascript'],
   ['/js/demo-data.js', 'javascript'],
@@ -166,6 +167,58 @@ for (const [path, what] of MUST_NOT_SERVE) {
     throw new Error(`HTTP ${res.status} exposed ${what} (${body.length}b)`);
   });
 }
+
+/*
+ * Security headers. Asserted on the app shell and on a legal page, because the
+ * legal pages are served by a different branch of the allow-list (§28) and it
+ * would be easy to harden one and not the other.
+ */
+for (const path of ['/', '/privacy']) {
+  await check(`security headers on ${path}`, async () => {
+    const { res, err } = await get(path);
+    if (err) throw new Error(err.message);
+    const missing = [];
+    const csp = res.headers.get('content-security-policy') || '';
+    if (!csp) missing.push('Content-Security-Policy');
+    // The two that carry the weight: no inline script, and not framable.
+    else {
+      if (!/script-src[^;]*'self'/.test(csp) || /script-src[^;]*'unsafe-inline'/.test(csp)) {
+        missing.push("CSP script-src 'self' without 'unsafe-inline'");
+      }
+      if (!/frame-ancestors[^;]*'none'/.test(csp)) missing.push('CSP frame-ancestors');
+    }
+    if ((res.headers.get('x-content-type-options') || '') !== 'nosniff') missing.push('X-Content-Type-Options');
+    if (!(res.headers.get('x-frame-options') || '')) missing.push('X-Frame-Options');
+    if (!(res.headers.get('referrer-policy') || '')) missing.push('Referrer-Policy');
+    if (missing.length) throw new Error(`missing: ${missing.join(', ')}`);
+    return 'CSP + nosniff + frame-options + referrer-policy';
+  });
+}
+
+await check('HSTS in production', async () => {
+  const { res, err } = await get('/');
+  if (err) throw new Error(err.message);
+  const hsts = res.headers.get('strict-transport-security');
+  if (hsts) return hsts;
+  // isLocal is declared further down; derive it here rather than reorder the file.
+  return /localhost|127\.0\.0\.1/.test(BASE)
+    ? { status: 'INFO', detail: 'not set — correct off HTTPS' }
+    : { status: 'WARN', detail: 'not set; is NODE_ENV=production?' };
+});
+
+await check('an oversized body is refused, not absorbed', async () => {
+  // Everything but /api/sync takes a small object. 8 MB used to be the limit
+  // on every route, which handed an anonymous caller a cheap allocation.
+  const { res, err } = await get('/api/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: 'x'.repeat(200000) }),
+  });
+  if (err) throw new Error(err.message);
+  // 401 is fine too — auth runs first. What must not happen is a 200.
+  if (res.status === 413 || res.status === 401) return `HTTP ${res.status}`;
+  throw new Error(`HTTP ${res.status} — a 200 KB body was not refused`);
+});
 
 await check('manifest is valid and installable', async () => {
   const { res, err } = await get('/manifest.webmanifest');

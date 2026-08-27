@@ -275,7 +275,7 @@
 
   function linkHTML(href, text) {
     if (!href) return esc(text);
-    return `<a href="${href}" ${href.startsWith('http') ? 'target="_blank" rel="noopener"' : ''} onclick="event.stopPropagation()">${esc(text)}</a>`;
+    return `<a href="${href}" ${href.startsWith('http') ? 'target="_blank" rel="noopener"' : ''}>${esc(text)}</a>`;
   }
 
   function fmtValue(field, value) {
@@ -1596,7 +1596,11 @@
     });
 
     $$('#module-body [data-record]').forEach((node) => {
-      node.addEventListener('click', async () => {
+      node.addEventListener('click', async (e) => {
+        // Email/phone/URL cells are real links. They used to carry an inline
+        // onclick="event.stopPropagation()", which CSP's script-src forbids;
+        // the row ignoring clicks that landed on a link does the same job.
+        if (e.target.closest('a')) return;
         const record = await DB.get('records', node.dataset.record);
         if (record) openRecord(mod, record);
       });
@@ -4025,8 +4029,10 @@
         <div class="page"><div class="card">
           <h2>Something went wrong starting the app</h2>
           <p class="empty-hint">Reload the page to try again. Your data is stored on this device and has not been lost.</p>
-          <button class="btn btn-primary" onclick="location.reload()">Reload</button>
+          <button class="btn btn-primary" id="startup-reload">Reload</button>
         </div></div>`;
+      const again = document.getElementById('startup-reload');
+      if (again) again.addEventListener('click', () => location.reload());
     }
   });
 })();

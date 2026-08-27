@@ -219,8 +219,25 @@ class FileStore {
     this.s.accessRequests = this.s.accessRequests || [];
     this.s.platform = this.s.platform || {};
   }
+  /*
+   * Write to a temp file, then rename over the real one.
+   *
+   * `writeFileSync` truncates the target and then fills it, which leaves two
+   * windows. A reader during the write sees a torn file — that is what made
+   * the migration tests fail one run in three, on a JSON.parse of a truncated
+   * store. Worse, a crash during the write leaves it truncated **permanently**,
+   * and this is the store a deployment falls back to when MONGODB_URI is
+   * unset, so that is every customer's data.
+   *
+   * rename(2) is atomic within a filesystem, so a reader gets either the whole
+   * old file or the whole new one, and an interrupted save leaves the previous
+   * copy intact. The temp file must sit beside the target for that to hold —
+   * a rename across filesystems is a copy, and copies are not atomic.
+   */
   save() {
-    fs.writeFileSync(this.file, JSON.stringify(this.s));
+    const tmp = `${this.file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(this.s));
+    fs.renameSync(tmp, this.file);
   }
   async init() { this.pruneTombstones(); }
   kind() { return 'file'; }
@@ -1841,8 +1858,148 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
   });
 }
 
-app.use(express.json({ limit: '8mb' }));
+/*
+ * Security headers.
+ *
+ * Hand-rolled rather than `helmet`, for the reason the whole audit keeps
+ * returning to: four production dependencies is an asset on a shared free tier,
+ * and this is a dozen lines that do not need a supply chain behind them.
+ *
+ * CSP is the one with teeth. `script-src 'self'` is only possible because
+ * Phase 4 removed the two inline `onclick` handlers and moved index.html's
+ * inline <script> into js/boot-icons.js — with either still present, every
+ * page would break the moment this shipped.
+ *
+ * `style-src` keeps 'unsafe-inline' and that is a deliberate compromise, not
+ * an oversight: 14 inline `style=` attributes carry genuinely dynamic values
+ * (a module's colour, a meter's width). Inline *style* cannot execute script,
+ * so the trade buys most of the protection for none of the churn. Moving them
+ * to CSS custom properties would close it, and is not worth doing today.
+ *
+ * The legal pages get the same headers — they are the ones a stranger reaches
+ * first, and they load no app JS at all (§19).
+ */
+const CSP = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  // Nothing here is meant to be framed, and this is the modern half of the
+  // X-Frame-Options pair below.
+  "frame-ancestors 'none'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "script-src 'self'",
+  // The app only ever talks to its own origin: Google is contacted
+  // server-to-server, never from the page.
+  "connect-src 'self'",
+  "form-action 'self'",
+].join('; ');
+
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy', CSP);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  // Redundant with frame-ancestors for modern browsers, and the only thing
+  // older ones understand.
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // Deny the powerful features outright — none are used, and a stolen script
+  // should not be able to reach for them.
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+  // Only meaningful over TLS, and only true once the deployment is HTTPS-only.
+  if (IS_PROD) res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+  next();
+});
+
+/*
+ * Body limits, per route rather than one global maximum.
+ *
+ * A sync push legitimately carries a whole workspace, so it needs room. Every
+ * other endpoint takes a short JSON object, and letting all of them accept 8 MB
+ * hands an unauthenticated caller a cheap way to make the process allocate.
+ * The small limit is the default; the two sync routes opt into the large one.
+ */
+const SYNC_BODY_LIMIT = process.env.SYNC_BODY_LIMIT || '8mb';
+const bigJson = express.json({ limit: SYNC_BODY_LIMIT });
+app.use('/api/sync', bigJson);
+app.use('/api/data', bigJson);
+app.use(express.json({ limit: '64kb' }));
 app.use(cookieParser());
+
+/*
+ * Rate limiting, in memory and deliberately narrow.
+ *
+ * In memory means per instance. On a single free-tier service that is the
+ * whole deployment, so it is honest; on a multi-instance one the effective
+ * limit multiplies by the instance count. Say that rather than implying a
+ * global guarantee — a shared counter needs a round trip to Mongo on every
+ * request, which costs more than the attack it prevents at this size.
+ *
+ * WHERE IT IS NOT APPLIED MATTERS MORE THAN WHERE IT IS. /api/sync is left
+ * alone on purpose: a client with a large workspace, or one coming back from
+ * a week offline, legitimately pushes hard, and a limiter there turns a slow
+ * sync into lost work. The endpoints below are the ones an anonymous or
+ * barely-authenticated caller can hammer for free.
+ */
+const RATE_WINDOW_MS = Number(process.env.RATE_WINDOW_MS || 60000);
+const rateBuckets = new Map();
+
+setInterval(() => {
+  const cutoff = Date.now() - RATE_WINDOW_MS;
+  for (const [key, hits] of rateBuckets) {
+    const live = hits.filter((t) => t > cutoff);
+    if (live.length) rateBuckets.set(key, live);
+    else rateBuckets.delete(key);
+  }
+}, RATE_WINDOW_MS).unref();
+
+function rateLimit(name, max) {
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = `${name}:${req.ip || 'unknown'}`;
+    const hits = (rateBuckets.get(key) || []).filter((t) => t > now - RATE_WINDOW_MS);
+    if (hits.length >= max) {
+      authFailure('rate_limited', { reason: name }, req);
+      res.setHeader('Retry-After', Math.ceil(RATE_WINDOW_MS / 1000));
+      return res.status(429).json({ error: 'Too many requests. Give it a minute.' });
+    }
+    hits.push(now);
+    rateBuckets.set(key, hits);
+    return next();
+  };
+}
+
+/*
+ * Where this is applied, and — more importantly — where it is NOT.
+ *
+ * `/api/access-request` is the one that earns it: anyone who has just been
+ * refused can post one, and without a per-caller bound the queue an operator
+ * works by hand is trivially floodable. The 500-row ceiling is a backstop, not
+ * a rate.
+ *
+ * `/auth/google/callback` gets a generous bound, and for one specific reason:
+ * every call makes the server perform a token exchange with Google. That is
+ * outbound work an anonymous caller can trigger, so it is worth capping — but
+ * it is NOT brute-force protection, because there is nothing to guess. A
+ * caller without a valid Google `code` and a matching state cookie fails at
+ * the first check, for free.
+ *
+ * NOT applied to `/auth/dev`. It 404s in production, so limiting it protects
+ * nothing real and throttles the seam every test drives — the tests hammer it
+ * far harder than any human, and a limit tuned to let them through would be
+ * too loose to matter anyway.
+ *
+ * NOT applied to sign-in generally, because THERE IS NO PASSWORD HERE. Google
+ * owns authentication. The beta and invite codes are the only guessable
+ * secrets, and trying one costs a full OAuth round trip (§20) — the flow is
+ * its own rate limiter.
+ *
+ * NOT applied to `/api/sync`: a client with a large workspace, or one back
+ * from a week offline, legitimately pushes hard, and throttling that turns a
+ * slow sync into lost work.
+ */
+app.use('/auth/google/callback', rateLimit('auth', Number(process.env.RATE_AUTH_MAX || 60)));
+app.use('/api/access-request', rateLimit('ask', Number(process.env.RATE_ASK_MAX || 5)));
 
 /*
  * Health.
@@ -2157,8 +2314,8 @@ function authFailure(kind, detail, req) {
   const parts = [`[auth] ${kind}`];
   if (detail && detail.email) parts.push(`email=${detail.email}`);
   if (detail && detail.reason) parts.push(`reason=${detail.reason}`);
-  // Behind a proxy this is Render's address unless trust proxy is set; it is a
-  // coarse signal for "many failures from one place", not an identity.
+  // `trust proxy` is 1, so this is the real client address rather than Render's
+  // edge. A coarse signal for "many failures from one place", not an identity.
   parts.push(`ip=${(req && req.ip) || 'unknown'}`);
   console.warn(parts.join(' '));
 }
@@ -3711,6 +3868,32 @@ app.get('*', (req, res) => {
   if (namesAFile) return res.status(404).type('txt').send('Not found');
 
   res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+/*
+ * The last word on any unhandled throw.
+ *
+ * Without this, Express's default handler answers — and it puts the stack
+ * trace in the response body whenever NODE_ENV is not exactly "production".
+ * That is one environment variable away from publishing absolute file paths
+ * and internal structure to anybody who can provoke a 500, and the deployment
+ * that most needs the guard is the one that got its env wrong.
+ *
+ * The client is told nothing but the status. The detail goes to the log, where
+ * the operator can already read it.
+ */
+app.use((err, req, res, _next) => {
+  console.error(`Unhandled error on ${req.method} ${req.path}:`, err && err.stack ? err.stack : err);
+  if (res.headersSent) return;
+  // A body that overran the limit is the caller's problem, not a server fault,
+  // and saying so is more useful than a blanket 500.
+  if (err && (err.type === 'entity.too.large' || err.status === 413)) {
+    return res.status(413).json({ error: 'That request was too large.' });
+  }
+  if (err && err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'That request body was not valid JSON.' });
+  }
+  res.status(500).json({ error: 'Something went wrong.' });
 });
 
 // ------------------------------------------------------------------ boot

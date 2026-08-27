@@ -77,7 +77,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 180 Node tests + 76 Playwright tests.
+**All green:** 180 Node tests + 76 Playwright tests, 41 smoke checks.
 
 ```sh
 npm install
@@ -142,7 +142,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v23`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v24`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -1610,8 +1610,8 @@ claims held and two did not.
   four suspicions were **false**; the fourth is a guard, not a fix.
 - ✅ **3 — XSS.** Shipped — a real stored-XSS vector, closed. CSP moved to
   Phase 4, where the other headers land.
-- ☐ **4 — Network hardening.** Security headers, rate limits, per-route payload
-  limits, SSRF bounds, error sanitisation.
+- ✅ **4 — Network hardening.** Shipped — see below. The SSRF finding was
+  **false**; the rate-limit design changed once the tests disproved it.
 - ☐ **5 — Supply chain and operational.** CI gates, docs as a map.
 
 ### The checklist assumed a different stack, and that is load-bearing
@@ -1811,3 +1811,117 @@ inline `onclick` handlers in `js/app.js` removed and `index.html`'s inline
 `'unsafe-inline'` for the 14 inline `style=` attributes unless those move too.
 Bounded work, but work — and it is defence in depth, which is worth having
 *after* the escaping is right rather than as a substitute for it.
+
+### Phase 4 as built
+
+**Headers are hand-rolled, not `helmet`.** Four production dependencies is an
+asset on a shared free tier, and this is a dozen lines that need no supply
+chain behind them. CSP, `X-Content-Type-Options`, `X-Frame-Options`,
+`Referrer-Policy`, `Permissions-Policy`, and HSTS in production only.
+
+**`script-src 'self'` cost three changes before it could ship**, and with any
+of them missed every page would have broken on deploy:
+
+- the inline `onclick="event.stopPropagation()"` on link cells — replaced by
+  the row handler ignoring clicks that land on an `<a>` (§4's rule, same
+  behaviour, no inline script);
+- `onclick="location.reload()"` on the startup-failure button;
+- `index.html`'s inline `<script>` → **`js/boot-icons.js`**. A file rather than
+  a CSP hash on purpose: a hash breaks silently on a whitespace change, and the
+  symptom is icons quietly not appearing.
+
+**`style-src` keeps `'unsafe-inline'`, deliberately.** 14 inline `style=`
+attributes carry genuinely dynamic values — a module's colour, a meter's width.
+Inline *style* cannot execute script, so this buys most of the protection for
+none of the churn. Moving them to CSS custom properties would close it and is
+not worth doing today. Say that rather than implying the CSP is airtight.
+
+**Body limits are per route now.** 64 KB by default; `/api/sync` and
+`/api/data` opt into 8 MB because a push legitimately carries a workspace.
+The old single global 8 MB handed an anonymous caller a cheap way to make the
+process allocate on *any* endpoint.
+
+**The rate limiter got narrower after the tests disproved the first design.**
+It started on `/auth/dev` and the callback at 20/min, and **the Node suite
+failed** — which was the limiter working, and the design being wrong:
+
+- **`/auth/dev` is not limited.** It 404s in production, so a limit there
+  protects nothing real while throttling the seam every test drives. A limit
+  loose enough for the suite would be too loose to matter anyway.
+- **Sign-in generally is not limited, because there is no password to guess.**
+  Google owns authentication. The beta and invite codes are the only guessable
+  secrets and trying one costs a full OAuth round trip (§20) — the flow is
+  already its own rate limiter.
+- **The callback keeps a generous 60/min** for a different reason: each call
+  makes the server perform a token exchange with Google, which is outbound work
+  an anonymous caller can trigger.
+- **`/api/access-request` at 5/min is the one that earns it** — the queue an
+  operator works by hand is otherwise trivially floodable, and the 500-row
+  ceiling is a backstop, not a rate.
+- **`/api/sync` is never limited.** A client with a large workspace or a week
+  offline legitimately pushes hard, and throttling that turns a slow sync into
+  lost work.
+
+**`trust proxy` was already 1, and that is load-bearing.** Without it `req.ip`
+is Render's edge address, every client shares one bucket, and the limiter
+becomes a self-inflicted outage rather than a defence. Checked before writing
+the limiter, not after.
+
+**In memory means per instance.** On a single free-tier service that is the
+whole deployment. On a multi-instance one the effective limit multiplies by the
+instance count — a shared counter needs a Mongo round trip per request, which
+costs more than the attack it prevents at this size.
+
+**An error handler that cannot leak.** Express's default puts the stack trace
+in the response body whenever `NODE_ENV` is not exactly `production` — one
+environment variable away from publishing absolute paths to anyone who can
+provoke a 500, and the deployment that most needs the guard is the one that got
+its env wrong. The client now gets a status and nothing else; the detail goes
+to the log.
+
+### The SSRF finding was false
+
+`FEEDBACK_WEBHOOK_URL` is read from `process.env` and has **no runtime setter** —
+there is no admin route that writes it. So no user input reaches an outbound
+request, and changing it requires environment access, which is already the bar
+for `GOOGLE_CLIENT_SECRET`. Recorded as false rather than "mitigated", and
+deliberately *not* bounded to non-private addresses: the webhook capture test
+points at `127.0.0.1`, so a block would need a bypass that weakens it to
+nothing.
+
+### A tour flake, finally diagnosed
+
+Recorded because it was mysterious for three phases and is now not. The
+intermittent failure in *"runs all six steps"* is
+**`step 3 card covers its own highlight`** — `coversTarget` true when it must be
+false. The tour positions its popover relative to the step target, and step 3's
+`before` hook forces a sorted table (§7); when that async re-render lands after
+the card is placed, the card can end up over the ring it points at.
+
+It is a real product bug, not a test artifact — a user can see the card cover
+the thing it is describing — and it is **cosmetic, unrelated to security, and
+predates all of this work**. The earlier guesses about it (shared-server state,
+CPU load) were wrong and are retracted. Not fixed here, because Phase 4 is
+network hardening and mixing the two would muddle the commit.
+
+### A data-loss window found while verifying this phase
+
+Not network hardening, and recorded separately for that reason — but it was
+destroying test runs, and it would have destroyed a workspace.
+
+`FileStore.save()` did `fs.writeFileSync(file, JSON.stringify(store))`, which
+**truncates the target and then fills it**. Two windows follow. A reader during
+the write sees a torn file: that is what made `tests/migration.test.mjs` fail
+**four runs in six** on a `JSON.parse` of a truncated store, and it was
+pre-existing — verified by stashing this phase and reproducing on the old code.
+The second window is the one that matters: a crash *during* the write leaves the
+file truncated **permanently**, and this is the store a deployment falls back to
+when `MONGODB_URI` is unset. That is every customer's data on that deployment,
+and Render's free tier sends SIGTERM to spin the service down regularly.
+
+Now a temp file plus `renameSync`. rename(2) is atomic within a filesystem, so a
+reader gets the whole old file or the whole new one, and an interrupted save
+leaves the previous copy intact. **The temp file must sit beside the target** —
+a rename across filesystems is a copy, and a copy is not atomic. Eight
+consecutive migration runs clean afterwards, against four failures in six
+before.

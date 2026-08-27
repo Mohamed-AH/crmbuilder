@@ -70,6 +70,20 @@ hosting plan is not the free tier they assume.
 | `ACCESS_REQUEST_CEILING` | `500` | pending requests beyond which new ones are refused |
 | `PLATFORM_CACHE_MS` | `30000` | TTL on `/api/admin/platform`; the per-org byte totals are an aggregation over every row, so they are cached from the start rather than after it hurts. `?fresh=1` bypasses it |
 | `EGRESS_FLUSH_MS` / `EGRESS_FLUSH_BYTES` | `60000` / `256 KB` | how often the bandwidth counter is written down. It also flushes on SIGTERM, because a free instance spins down constantly and an unflushed counter reads low forever |
+| `RATE_WINDOW_MS` | `60000` | the rate limiter's window |
+| `RATE_AUTH_MAX` | `60` | OAuth callbacks per window per IP. Each one makes the server exchange a token with Google, so this bounds outbound work — it is **not** brute-force protection, because there is no password to guess |
+| `RATE_ASK_MAX` | `5` | access requests per window per IP. The queue an operator works by hand is otherwise trivially floodable |
+| `SYNC_BODY_LIMIT` | `8mb` | body limit for `/api/sync` and `/api/data` only. Every other route is capped at 64 KB |
+
+**The rate limiter counts per instance, in memory.** On a single free-tier
+service that is the whole deployment. On a multi-instance one the effective
+limit multiplies by the instance count — a shared counter would need a Mongo
+round trip per request, which costs more than the attack it prevents at this
+size.
+
+**It also depends on `trust proxy` being set**, which it is (`1`, for Render's
+edge). Without it every client would share one bucket and the limiter would be
+a self-inflicted outage rather than a defence.
 
 The database and bandwidth meters need no configuration to be correct: storage
 is what MongoDB reports as `dataSize + indexSize`, and bandwidth is counted as

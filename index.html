@@ -45,14 +45,7 @@
   <div id="modal-root"></div>
   <div id="toast-root" aria-live="polite"></div>
   <script src="js/icons.js"></script>
-  <script>
-    // Fill static data-lucide placeholders before app boot paints.
-    document.addEventListener('DOMContentLoaded', () => {
-      document.querySelectorAll('[data-lucide]').forEach((el) => {
-        el.innerHTML = icon(el.dataset.lucide, el.classList.contains('icon-btn') ? 17 : 16);
-      });
-    });
-  </script>
+  <script src="js/boot-icons.js"></script>
   <script src="js/scope.js"></script>
   <script src="js/db.js"></script>
   <script src="js/csv.js"></script>
