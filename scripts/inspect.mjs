@@ -1,7 +1,9 @@
 /*
  * inspect.mjs — read what is actually in the database, and say what disagrees.
  *
+ *   node scripts/inspect.mjs                 # reads MONGODB_URI from .env
  *   MONGODB_URI="mongodb+srv://…" node scripts/inspect.mjs
+ *   ENV_FILE=/path/to/other.env node scripts/inspect.mjs
  *
  * Or against the JSON file store, by leaving MONGODB_URI unset:
  *
@@ -20,6 +22,46 @@
  */
 const SYNC_KINDS = ['modules', 'records'];
 const SHOW_EMAILS = process.argv.includes('--emails');
+
+/*
+ * Load .env if there is one, so `node scripts/inspect.mjs` just works.
+ *
+ * Hand-rolled rather than `dotenv`: four production dependencies is an asset
+ * on a shared free tier (CLAUDE.md §30), and a diagnostic script is the last
+ * place to spend a fifth. Real environment variables win over the file, which
+ * is the precedence people expect — exporting a URI for one run must override
+ * whatever .env says.
+ *
+ * The value is a credential and is never printed. Only the host is, and only
+ * to confirm which database was read.
+ */
+async function loadDotEnv() {
+  const { readFile } = await import('node:fs/promises');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+  for (const file of [process.env.ENV_FILE, path.join(root, '.env'), path.join(process.cwd(), '.env')]) {
+    if (!file) continue;
+    let text;
+    try { text = await readFile(file, 'utf8'); } catch { continue; }
+    for (const raw of text.split('\n')) {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) continue;
+      const m = line.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+      if (!m) continue;
+      let value = m[2].trim();
+      // Strip one layer of matching quotes; leave the contents alone.
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      if (process.env[m[1]] === undefined) process.env[m[1]] = value;
+    }
+    return file;
+  }
+  return null;
+}
+
+const envFile = await loadDotEnv();
 
 function redact(email) {
   if (SHOW_EMAILS) return email;
@@ -44,8 +86,20 @@ function when(ts) {
 /* ------------------------------------------------------------------ load */
 async function loadMongo(uri) {
   const { MongoClient } = await import('mongodb');
-  const client = new MongoClient(uri);
-  await client.connect();
+  const client = new MongoClient(uri, { serverSelectionTimeoutMS: 15000 });
+  try {
+    await client.connect();
+  } catch (err) {
+    /*
+     * A clear sentence beats a DNS stack trace. The message is printed but the
+     * URI never is — driver errors can carry the connection string, so only
+     * err.message is shown and it is scrubbed of anything before an @.
+     */
+    const safe = String(err.message || err).replace(/mongodb(\+srv)?:\/\/[^\s]*/g, 'mongodb://<uri>');
+    console.error(`\nCould not connect to MongoDB: ${safe}`);
+    console.error('Check the URI, and that this machine\'s IP is allowed in Atlas → Network Access.\n');
+    process.exit(1);
+  }
   const db = client.db();
   const out = {
     backend: 'mongodb',
@@ -91,13 +145,22 @@ async function loadFile(dir) {
 }
 
 const uri = process.env.MONGODB_URI;
+const dataDir = process.env.DATA_DIR || './data';
+if (!uri) {
+  console.log(`\n${dim(envFile ? `read ${envFile}` : 'no .env found')}`);
+  console.log(`${red('No MONGODB_URI — falling back to the file store at')} ${dataDir}`);
+  console.log(dim('If you meant to inspect the live database, put MONGODB_URI in .env or export it.\n'));
+}
 const store = uri
   ? await loadMongo(uri)
-  : await loadFile(process.env.DATA_DIR || './data');
+  : await loadFile(dataDir);
 
 /* --------------------------------------------------------------- report */
 console.log(`\n${bold('CRM Builder — database inspection')}`);
-console.log(dim(`backend: ${store.backend}${SHOW_EMAILS ? '' : ' · emails redacted (pass --emails to show)'}\n`));
+const source = uri
+  ? `mongodb → ${String(uri).replace(/^.*@/, '').replace(/[/?].*$/, '')}${envFile ? ` ${dim('(from .env)')}` : ''}`
+  : `file store → ${dataDir}`;
+console.log(dim(`source: ${source}${SHOW_EMAILS ? '' : ' · emails redacted (pass --emails to show)'}\n`));
 
 console.log(bold('Accounts and organisations'));
 console.log(`  users: ${store.users.length}   orgs: ${store.orgs.length}   workspace meta docs: ${store.data.length}`);
