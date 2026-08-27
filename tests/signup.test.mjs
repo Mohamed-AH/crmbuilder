@@ -1208,8 +1208,28 @@ describe('platform usage and quotas', () => {
   /*
    * The egress counter has to survive a restart, because a monthly allowance
    * that resets whenever the free tier spins down measures nothing.
+   *
+   * SKIPPED ON WINDOWS, and the reason is the platform, not the product.
+   *
+   * The tail is written by the server's SIGTERM handler (§24). Windows has no
+   * POSIX signals: libuv maps `child.kill()` to TerminateProcess(), which ends
+   * the child unconditionally without running its JS signal listeners. So the
+   * pending bytes are lost and the assertion fails — on a server that is
+   * behaving correctly. Observed as `297 < 2829`: 297 had already reached
+   * disk, 2,532 were still in memory when the process was killed.
+   *
+   * Not deleted, because this is the only guard on that handler and the
+   * handler exists for a measured reason — without it a free-tier spin-down
+   * loses most of a quiet month's count. It stays checked on Linux, which is
+   * what CI runs and what Render runs. Do not "fix" it by flushing through an
+   * endpoint before the kill: that would pass on a server with no SIGTERM
+   * handler at all, which is a test worth nothing (§9).
    */
-  test('egress is counted, persisted, and still there after a restart', async () => {
+  test('egress is counted, persisted, and still there after a restart', {
+    skip: process.platform === 'win32'
+      ? 'Windows cannot deliver SIGTERM to a child, so the shutdown flush never runs'
+      : false,
+  }, async () => {
     const srv = await boot({ signupMode: 'open', adminEmails: 'egress-admin@operator.test' });
     const admin = await adminOf(srv, 'egress-admin@operator.test');
 

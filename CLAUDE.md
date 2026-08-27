@@ -81,7 +81,9 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 183 Node tests + 78 Playwright tests, 41 smoke checks.
+**All green:** 183 Node tests + 78 Playwright tests, 41 smoke checks. On
+Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
+limit, not a failure.
 
 ```sh
 npm install
@@ -222,6 +224,14 @@ must not be `waitForSelector`ed.
 
 **Killing the dev server:** `pkill -f "[s]erver\.js"` in a **separate** Bash
 call. A compound command mentioning `server.js` matches itself.
+
+**Windows cannot deliver SIGTERM to a child process.** libuv maps
+`child.kill()` to `TerminateProcess()`, so the child dies without running its
+JS signal listeners. Anything guarded by a graceful-shutdown handler therefore
+fails on Windows **while the server is behaving correctly** — the egress
+persistence test is skipped there for exactly this reason, and it says so.
+Before treating a shutdown-path failure as a bug, check the platform: the
+symptom is a persisted value that is short by whatever was still buffered.
 
 ---
 
