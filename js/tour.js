@@ -88,6 +88,34 @@ const Tour = (() => {
       window.removeEventListener('resize', onResize);
       window.removeEventListener('scroll', onResize, true);
     });
+    cleanupFns.push(() => { if (sizeWatch) { sizeWatch.disconnect(); sizeWatch = null; } });
+  }
+
+  /*
+   * Reposition when the TARGET changes size, not only when the window does.
+   *
+   * position() ran once, at the end of render(). Several steps force their own
+   * screen in a `before` hook (§7) — a sorted table, a kanban board — and those
+   * re-renders are async: when one lands after the card has been placed, the
+   * target grows underneath it and the card ends up sitting on the ring it is
+   * pointing at. That is the "step N card covers its own highlight" failure,
+   * and it moved between steps depending on which re-render won the race, which
+   * is exactly what made it read as flakiness rather than a bug.
+   *
+   * The pop is watched too: its height depends on the copy, and a taller card
+   * changes which side it can fit on.
+   *
+   * No feedback loop — position() sets left/top, which a ResizeObserver does
+   * not fire on.
+   */
+  let sizeWatch = null;
+  function watchGeometry() {
+    if (typeof ResizeObserver === 'undefined' || !root) return; // degrade, never throw
+    if (!sizeWatch) sizeWatch = new ResizeObserver(() => position());
+    sizeWatch.disconnect();
+    if (currentTarget) sizeWatch.observe(currentTarget);
+    const pop = root.querySelector('.tour-pop');
+    if (pop) sizeWatch.observe(pop);
   }
 
   let currentTarget = null;
@@ -119,29 +147,68 @@ const Tour = (() => {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const M = 12;
-
     const clamp = (v, min, max) => Math.max(min, Math.min(v, max));
-    const candidates = {
-      below: { left: r.left + r.width / 2 - pw / 2, top: r.bottom + gap },
-      above: { left: r.left + r.width / 2 - pw / 2, top: r.top - ph - gap },
-      right: { left: r.right + gap, top: r.top + r.height / 2 - ph / 2 },
-      left: { left: r.left - pw - gap, top: r.top + r.height / 2 - ph / 2 },
+
+    /*
+     * Place against the RING, not the target.
+     *
+     * The ring is drawn at r ± PAD, so a card measured clear of the target
+     * could still sit on the highlight by up to PAD a side. That is what a
+     * user sees, and what the E2E check measures.
+     */
+    const ringBox = { left: r.left - PAD, top: r.top - PAD, right: r.right + PAD, bottom: r.bottom + PAD };
+
+    /*
+     * One axis is FIXED per side, and only the cross axis is clamped.
+     *
+     * The previous version chose a candidate and then clamped both axes into
+     * the viewport, which could slide the card straight back over the ring it
+     * had just been placed clear of. Here "below" pins top to the ring's
+     * bottom edge and only slides horizontally, so it cannot overlap whatever
+     * the clamp does. Same for the other three.
+     */
+    const room = {
+      below: vh - M - (ringBox.bottom + gap),
+      above: (ringBox.top - gap) - M,
+      right: vw - M - (ringBox.right + gap),
+      left: (ringBox.left - gap) - M,
+    };
+    const acrossX = clamp(r.left + r.width / 2 - pw / 2, M, Math.max(M, vw - pw - M));
+    const acrossY = clamp(r.top + r.height / 2 - ph / 2, M, Math.max(M, vh - ph - M));
+    const slots = {
+      below: { left: acrossX, top: ringBox.bottom + gap, ok: room.below >= ph },
+      above: { left: acrossX, top: ringBox.top - gap - ph, ok: room.above >= ph },
+      right: { left: ringBox.right + gap, top: acrossY, ok: room.right >= pw },
+      left: { left: ringBox.left - gap - pw, top: acrossY, ok: room.left >= pw },
     };
 
     // Preference order: the step's hint first, then the rest.
-    const order = [step.place, 'below', 'above', 'right', 'left'].filter((p, i, a) => p && p !== 'auto' && a.indexOf(p) === i);
+    const order = [step.place, 'below', 'above', 'right', 'left']
+      .filter((p, i, a) => p && p !== 'auto' && a.indexOf(p) === i);
 
-    // A card sitting on top of the thing it is describing is the failure mode
-    // worth avoiding — a large target (a whole board) makes it easy to hit.
-    const fits = (c) => c.left >= M && c.top >= M && c.left + pw <= vw - M && c.top + ph <= vh - M;
-    const clear = (c) => c.left + pw < r.left || c.left > r.right || c.top + ph < r.top || c.top > r.bottom;
+    /*
+     * If ANY side has room, the card goes there and cannot cover the ring.
+     *
+     * The old fallback was `find(fits)` — a placement that fits on screen
+     * whether or not it overlaps — so a target tall enough to leave no room
+     * above or below got a card laid over it. That is a real bug a user sees,
+     * and it fired more often once the demo dataset grew: more rows means a
+     * taller table means less room above and below it.
+     */
+    let chosen = order.map((p) => slots[p]).find((s) => s.ok);
 
-    let chosen = order.map((p) => candidates[p]).find((c) => fits(c) && clear(c));
-    if (!chosen) chosen = order.map((p) => candidates[p]).find((c) => fits(c));
-    if (!chosen) chosen = candidates.below;
+    if (!chosen) {
+      // Nothing has room for the whole card. Take the roomiest side and sit at
+      // the far edge of it — still the least-bad answer, and deterministic.
+      const best = Object.keys(room).reduce((a, b) => (room[b] > room[a] ? b : a));
+      chosen = best === 'below' ? { left: acrossX, top: Math.max(M, vh - ph - M) }
+        : best === 'above' ? { left: acrossX, top: M }
+          : best === 'right' ? { left: Math.max(M, vw - pw - M), top: acrossY }
+            : { left: M, top: acrossY };
+    }
 
-    pop.style.left = `${clamp(chosen.left, M, vw - pw - M)}px`;
-    pop.style.top = `${clamp(chosen.top, M, vh - ph - M)}px`;
+    pop.style.left = `${clamp(chosen.left, M, Math.max(M, vw - pw - M))}px`;
+    pop.style.top = `${clamp(chosen.top, M, Math.max(M, vh - ph - M))}px`;
   }
 
   async function render() {
@@ -193,6 +260,7 @@ const Tour = (() => {
     root.querySelector('[data-tour-next]').textContent = index === steps.length - 1 ? 'Finish' : 'Next';
     pop.classList.remove('is-loading');
     position();
+    watchGeometry();
   }
 
   async function go(next) {

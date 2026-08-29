@@ -46,6 +46,7 @@ never change, because everything cross-references them.
 | **"Synced" that is not synced** — backdated rows | §31 |
 | **Which tests to run** — and who runs the rest | §9 |
 | **Demo data vs the seed fixture** — which is which | §34 |
+| Guided tour: card covering its own highlight | §35 |
 | E2E suite slow or "flaky" | §32 |
 | **What tombstones cost**, and reading storage figures | §33 · §26 |
 | **How the docs are organised**, and what is frozen | §29 |
@@ -152,7 +153,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v28`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v29`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -2039,10 +2040,15 @@ false. The tour positions its popover relative to the step target, and step 3's
 the card is placed, the card can end up over the ring it points at.
 
 It is a real product bug, not a test artifact — a user can see the card cover
-the thing it is describing — and it is **cosmetic, unrelated to security, and
-predates all of this work**. The earlier guesses about it (shared-server state,
-CPU load) were wrong and are retracted. Not fixed here, because Phase 4 is
-network hardening and mixing the two would muddle the commit.
+the thing it is describing — and it is **unrelated to security and predates all
+of this work**. The earlier guesses about it (shared-server state, CPU load)
+were wrong and are retracted. Not fixed here, because Phase 4 is network
+hardening and mixing the two would muddle the commit.
+
+**Superseded by §35, which found this description wrong in two ways.** It was
+not intermittent — step 3 overlapped on 20 runs out of 20 when measured at the
+moment the card is declared ready. And "cosmetic" undersold it: the card
+covered the row the step was describing, every time, for every user.
 
 ### A data-loss window found while verifying this phase
 
@@ -2138,8 +2144,11 @@ for reading the source rather than working the list.
 - **The rate limiter is per instance.** A shared counter needs a Mongo round
   trip per request, which costs more than the attack it prevents at this size.
 - **The E2E "flakiness" was not flakiness — see §32.** It was the E2E store
-  growing across runs, and it is fixed. The guided tour's *step 3 card covers
-  its own highlight* is a separate, real, cosmetic bug and is still open.
+  growing across runs, and it is fixed. The guided tour's *card covers its own
+  highlight* was a separate, real bug and is **also fixed now** — §35.
+
+  The guided tour's *card covers its own highlight* is **fixed** — see §35,
+  which also corrects the "intermittent" and "cosmetic" framing above.
 
   **The recurring mistake was mine, twice:** Playwright wipes `test-results/`
   at the start of every run, so re-running to "check if it reproduces" destroys
@@ -2435,3 +2444,61 @@ drifted one does not throw — it loads and is quietly wrong.
   which made it read as if nothing had happened. **A surviving member now
   vetoes removal**, whatever the org is called. Guarded by a test that fails on
   the name-only version.
+
+
+---
+
+## 35. The tour card was not intermittently wrong. It was always wrong.
+
+`step N card covers its own highlight` had been open since §30, filed as an
+intermittent cosmetic flake. Both halves of that were wrong, and the measurement
+is what showed it: driving the tour at the test's own viewport and reading the
+geometry the instant the card is declared ready, the old code overlapped at
+**step 3 on 20 runs out of 20.** The new code: 0 out of 20.
+
+**What was intermittent was the observation, not the bug.** The card was always
+placed over the ring; whether the E2E assertion caught it depended on whether
+some later reflow nudged it clear before the test looked. That is also why it
+appeared to "move between steps" — a report of step 5 and a local reproduction
+of step 3 are the same defect seen through different timing.
+
+Three separate faults, all in `position()`:
+
+**It measured against the target, not the ring.** The ring is drawn at
+`r ± PAD`, so a card computed clear of the target could still sit on the
+highlight by up to `PAD` a side — which is what the user sees and what the test
+measures.
+
+**The fallback accepted an overlap.** When no candidate both fitted on screen
+and cleared the target, the code took `find(fits)` — any placement that fits,
+overlapping or not. A tall target has no room above or below it, so that branch
+fired and laid the card over the thing it was pointing at. Growing the demo
+dataset from 18 deals to 22 made the table taller and the branch more likely,
+which is why it surfaced now.
+
+**The final clamp could undo the choice.** Both axes were clamped into the
+viewport after a placement was picked, which can slide a card back across the
+ring it had just been placed clear of. Now one axis is *fixed* per side —
+"below" pins the top to the ring's bottom edge and only slides horizontally —
+so a clamp cannot reintroduce an overlap.
+
+### And the placement was recomputed too early
+
+`position()` ran once, at the end of `render()`. Steps 2 and 3 force their own
+screen in a `before` hook (§7), and those re-renders are async: when one lands
+after the card is placed, the target grows underneath it. A `ResizeObserver` on
+the target and on the card now repositions on any geometry change. No feedback
+loop — `position()` writes `left`/`top`, which a ResizeObserver does not fire on.
+
+**A short viewport still overlaps at step 2, and that is correct.** Step 2's
+target is the whole kanban board; in a 520px-tall window there is nowhere to put
+a 223px card. The fallback picks the roomiest side and sits at its far edge,
+which is the least-bad answer rather than a bug. Do not "fix" that by shrinking
+the card — measure at a real viewport first, which is what the 1440×900 probe
+exists for.
+
+**The lesson is the one §32 already taught, in a new place.** "Fails sometimes,
+passes in isolation" reads as flakiness and invites a retry. Measuring the thing
+directly — 20 rounds, geometry printed — turned a three-phase mystery into a
+one-line answer in minutes. A test that fails 1 run in 15 is still describing a
+defect that is present 15 times out of 15.
