@@ -452,242 +452,220 @@ const DEMO_DATA = {
         "title": "Bright Bakery — campaign artwork",
         "value": "45000",
         "stage": "Lead",
-        "company": "Bright Bakery",
-        "contact": "Amira Hassan",
-        "close": {
+        "closeDate": {
           "__rel": 2
         },
+        "contact": "Amira Hassan",
         "notes": ""
       },
       {
         "title": "Okafor Supplies — website rebuild",
         "value": "11000",
         "stage": "Won",
-        "company": "Okafor Supplies",
-        "contact": "Tom Okafor",
-        "close": {
+        "closeDate": {
           "__rel": 11
         },
+        "contact": "Tom Okafor",
         "notes": ""
       },
       {
         "title": "Vesta Interiors — trade stand",
         "value": "14500",
         "stage": "Proposal",
-        "company": "Vesta Interiors",
-        "contact": "Sofia Ramirez",
-        "close": {
+        "closeDate": {
           "__rel": 6
         },
+        "contact": "Sofia Ramirez",
         "notes": ""
       },
       {
         "title": "Northgate Dental — annual report",
         "value": "46500",
         "stage": "Negotiation",
-        "company": "Northgate Dental",
-        "contact": "Marcus Bell",
-        "close": {
+        "closeDate": {
           "__rel": 68
         },
+        "contact": "Marcus Bell",
         "notes": ""
       },
       {
         "title": "Rivera Landscaping — brand guidelines",
         "value": "41000",
         "stage": "Negotiation",
-        "company": "Rivera Landscaping",
-        "contact": "Yuki Tanaka",
-        "close": {
+        "closeDate": {
           "__rel": 19
         },
+        "contact": "Yuki Tanaka",
         "notes": ""
       },
       {
         "title": "Perch Coffee — brand refresh",
         "value": "31500",
         "stage": "Won",
-        "company": "Perch Coffee",
-        "contact": "Priya Nair",
-        "close": {
+        "closeDate": {
           "__rel": -31
         },
+        "contact": "Priya Nair",
         "notes": ""
       },
       {
         "title": "Aldridge Legal — annual report",
         "value": "35500",
         "stage": "Proposal",
-        "company": "Aldridge Legal",
-        "contact": "Daniel Adeyemi",
-        "close": {
+        "closeDate": {
           "__rel": 12
         },
+        "contact": "Daniel Adeyemi",
         "notes": ""
       },
       {
         "title": "Kestrel Fitness — website rebuild",
         "value": "2000",
         "stage": "Negotiation",
-        "company": "Kestrel Fitness",
-        "contact": "Elena Petrova",
-        "close": {
+        "closeDate": {
           "__rel": 28
         },
+        "contact": "Elena Petrova",
         "notes": ""
       },
       {
         "title": "Marlow Bookshop — annual report",
         "value": "25500",
         "stage": "Lost",
-        "company": "Marlow Bookshop",
-        "contact": "Josh Lindqvist",
-        "close": {
+        "closeDate": {
           "__rel": -33
         },
+        "contact": "Josh Lindqvist",
         "notes": ""
       },
       {
         "title": "Tidewater Plumbing — product photography",
         "value": "25500",
         "stage": "Qualified",
-        "company": "Tidewater Plumbing",
-        "contact": "Fatima Zahra",
-        "close": {
+        "closeDate": {
           "__rel": 52
         },
+        "contact": "Fatima Zahra",
         "notes": ""
       },
       {
         "title": "Sunbelt Roofing — wayfinding system",
         "value": "15500",
         "stage": "Qualified",
-        "company": "Sunbelt Roofing",
-        "contact": "Owen Brennan",
-        "close": {
+        "closeDate": {
           "__rel": 22
         },
+        "contact": "Owen Brennan",
         "notes": ""
       },
       {
         "title": "Clearwater Optics — campaign artwork",
         "value": "26500",
         "stage": "Qualified",
-        "company": "Clearwater Optics",
-        "contact": "Mei Lin",
-        "close": {
+        "closeDate": {
           "__rel": -16
         },
+        "contact": "Mei Lin",
         "notes": ""
       },
       {
         "title": "Bright Bakery — trade stand",
         "value": "3500",
         "stage": "Lead",
-        "company": "Bright Bakery",
-        "contact": "Carlos Duarte",
-        "close": {
+        "closeDate": {
           "__rel": -34
         },
+        "contact": "Carlos Duarte",
         "notes": ""
       },
       {
         "title": "Okafor Supplies — brand refresh",
         "value": "39500",
         "stage": "Proposal",
-        "company": "Okafor Supplies",
-        "contact": "Hannah Weiss",
-        "close": {
+        "closeDate": {
           "__rel": 15
         },
+        "contact": "Hannah Weiss",
         "notes": ""
       },
       {
         "title": "Vesta Interiors — app icon set",
         "value": "2500",
         "stage": "Proposal",
-        "company": "Vesta Interiors",
-        "contact": "Ibrahim Diallo",
-        "close": {
+        "closeDate": {
           "__rel": 67
         },
+        "contact": "Ibrahim Diallo",
         "notes": ""
       },
       {
         "title": "Northgate Dental — brand guidelines",
         "value": "17000",
         "stage": "Lead",
-        "company": "Northgate Dental",
-        "contact": "Grace Mwangi",
-        "close": {
+        "closeDate": {
           "__rel": 62
         },
+        "contact": "Grace Mwangi",
         "notes": ""
       },
       {
         "title": "Rivera Landscaping — brand refresh",
         "value": "12000",
         "stage": "Qualified",
-        "company": "Rivera Landscaping",
-        "contact": "Victor Ilunga",
-        "close": {
+        "closeDate": {
           "__rel": 10
         },
+        "contact": "Victor Ilunga",
         "notes": ""
       },
       {
         "title": "Perch Coffee — product photography",
         "value": "15000",
         "stage": "Lead",
-        "company": "Perch Coffee",
-        "contact": "Noor Al-Amin",
-        "close": {
+        "closeDate": {
           "__rel": -40
         },
+        "contact": "Noor Al-Amin",
         "notes": ""
       },
       {
         "title": "Aldridge Legal — packaging design",
         "value": "13000",
         "stage": "Proposal",
-        "company": "Aldridge Legal",
-        "contact": "Peter Novak",
-        "close": {
+        "closeDate": {
           "__rel": -4
         },
+        "contact": "Peter Novak",
         "notes": ""
       },
       {
         "title": "Kestrel Fitness — trade stand",
         "value": "4500",
         "stage": "Won",
-        "company": "Kestrel Fitness",
-        "contact": "Rosa Delgado",
-        "close": {
+        "closeDate": {
           "__rel": -18
         },
+        "contact": "Rosa Delgado",
         "notes": ""
       },
       {
         "title": "Marlow Bookshop — annual report",
         "value": "41000",
         "stage": "Lost",
-        "company": "Marlow Bookshop",
-        "contact": "Simon Achterberg",
-        "close": {
+        "closeDate": {
           "__rel": 21
         },
+        "contact": "Simon Achterberg",
         "notes": ""
       },
       {
         "title": "Tidewater Plumbing — trade stand",
         "value": "46500",
         "stage": "Qualified",
-        "company": "Tidewater Plumbing",
-        "contact": "Leila Farouk",
-        "close": {
+        "closeDate": {
           "__rel": 5
         },
+        "contact": "Leila Farouk",
         "notes": ""
       }
     ],
@@ -697,129 +675,8 @@ const DEMO_DATA = {
         "due": {
           "__rel": -11
         },
-        "priority": "High",
-        "status": "Done",
-        "assignee": "Daniel",
-        "notes": ""
-      },
-      {
-        "title": "Update the portfolio page — Okafor Supplies",
-        "due": {
-          "__rel": 29
-        },
-        "priority": "Low",
-        "status": "To do",
-        "assignee": "Priya",
-        "notes": ""
-      },
-      {
-        "title": "Write handover notes — Vesta Interiors",
-        "due": {
-          "__rel": 13
-        },
-        "priority": "High",
-        "status": "In progress",
-        "assignee": "Maya",
-        "notes": ""
-      },
-      {
-        "title": "Order print proofs — Northgate Dental",
-        "due": {
-          "__rel": 21
-        },
         "priority": "Medium",
-        "status": "Done",
-        "assignee": "Sam",
-        "notes": ""
-      },
-      {
-        "title": "Review supplier quote — Rivera Landscaping",
-        "due": {
-          "__rel": -1
-        },
-        "priority": "Urgent",
-        "status": "In progress",
-        "assignee": "Sam",
-        "notes": ""
-      },
-      {
-        "title": "Schedule photography — Perch Coffee",
-        "due": {
-          "__rel": 30
-        },
-        "priority": "Urgent",
-        "status": "In progress",
-        "assignee": "Priya",
-        "notes": ""
-      },
-      {
-        "title": "Draft scope for phase 2 — Aldridge Legal",
-        "due": {
-          "__rel": 15
-        },
-        "priority": "Low",
-        "status": "In progress",
-        "assignee": "Priya",
-        "notes": ""
-      },
-      {
-        "title": "Send revised quote — Kestrel Fitness",
-        "due": {
-          "__rel": 22
-        },
-        "priority": "Low",
-        "status": "To do",
-        "assignee": "Priya",
-        "notes": ""
-      },
-      {
-        "title": "Review supplier quote — Marlow Bookshop",
-        "due": {
-          "__rel": 8
-        },
-        "priority": "Medium",
-        "status": "To do",
-        "assignee": "Maya",
-        "notes": ""
-      },
-      {
-        "title": "Order print proofs — Tidewater Plumbing",
-        "due": {
-          "__rel": 12
-        },
-        "priority": "Medium",
-        "status": "Done",
-        "assignee": "Sam",
-        "notes": ""
-      },
-      {
-        "title": "Prepare moodboard — Sunbelt Roofing",
-        "due": {
-          "__rel": 18
-        },
-        "priority": "High",
-        "status": "Done",
-        "assignee": "Priya",
-        "notes": ""
-      },
-      {
-        "title": "Export final assets — Clearwater Optics",
-        "due": {
-          "__rel": 3
-        },
-        "priority": "Medium",
-        "status": "To do",
-        "assignee": "Priya",
-        "notes": ""
-      },
-      {
-        "title": "Write handover notes — Bright Bakery",
-        "due": {
-          "__rel": 10
-        },
-        "priority": "Medium",
-        "status": "To do",
-        "assignee": "Maya",
+        "done": false,
         "notes": ""
       },
       {
@@ -827,239 +684,336 @@ const DEMO_DATA = {
         "due": {
           "__rel": 30
         },
-        "priority": "High",
-        "status": "To do",
-        "assignee": "Daniel",
-        "notes": ""
-      },
-      {
-        "title": "Invoice for milestone 2 — Vesta Interiors",
-        "due": {
-          "__rel": 9
-        },
         "priority": "Low",
-        "status": "Done",
-        "assignee": "Daniel",
+        "done": false,
         "notes": ""
       },
       {
-        "title": "Schedule photography — Northgate Dental",
+        "title": "Update the portfolio page — Vesta Interiors",
         "due": {
-          "__rel": 7
-        },
-        "priority": "Urgent",
-        "status": "To do",
-        "assignee": "Maya",
-        "notes": ""
-      },
-      {
-        "title": "Schedule photography — Rivera Landscaping",
-        "due": {
-          "__rel": 26
+          "__rel": 13
         },
         "priority": "High",
-        "status": "In progress",
-        "assignee": "Maya",
+        "done": false,
         "notes": ""
       },
       {
-        "title": "Write handover notes — Perch Coffee",
+        "title": "Write handover notes — Northgate Dental",
         "due": {
-          "__rel": 1
+          "__rel": 13
         },
         "priority": "Medium",
-        "status": "To do",
-        "assignee": "Priya",
+        "done": false,
+        "notes": ""
+      },
+      {
+        "title": "Chase signed proposal — Rivera Landscaping",
+        "due": {
+          "__rel": 11
+        },
+        "priority": "High",
+        "done": false,
+        "notes": ""
+      },
+      {
+        "title": "Draft scope for phase 2 — Perch Coffee",
+        "due": {
+          "__rel": 28
+        },
+        "priority": "High",
+        "done": false,
         "notes": ""
       },
       {
         "title": "Review supplier quote — Aldridge Legal",
         "due": {
-          "__rel": -3
-        },
-        "priority": "Medium",
-        "status": "In progress",
-        "assignee": "Maya",
-        "notes": ""
-      },
-      {
-        "title": "Book kickoff call — Kestrel Fitness",
-        "due": {
-          "__rel": 4
+          "__rel": -1
         },
         "priority": "Low",
-        "status": "To do",
-        "assignee": "Daniel",
+        "done": false,
         "notes": ""
       },
       {
-        "title": "Chase signed proposal — Marlow Bookshop",
+        "title": "Review supplier quote — Kestrel Fitness",
         "due": {
-          "__rel": 28
+          "__rel": 21
+        },
+        "priority": "Low",
+        "done": true,
+        "notes": ""
+      },
+      {
+        "title": "Update the portfolio page — Marlow Bookshop",
+        "due": {
+          "__rel": 10
+        },
+        "priority": "Medium",
+        "done": true,
+        "notes": ""
+      },
+      {
+        "title": "Draft scope for phase 2 — Tidewater Plumbing",
+        "due": {
+          "__rel": 15
+        },
+        "priority": "Low",
+        "done": false,
+        "notes": ""
+      },
+      {
+        "title": "Write handover notes — Sunbelt Roofing",
+        "due": {
+          "__rel": -10
         },
         "priority": "High",
-        "status": "In progress",
-        "assignee": "Sam",
+        "done": false,
         "notes": ""
       },
       {
-        "title": "Check print colour proof — Tidewater Plumbing",
+        "title": "Draft scope for phase 2 — Clearwater Optics",
         "due": {
-          "__rel": 19
+          "__rel": 11
         },
         "priority": "Medium",
-        "status": "Done",
-        "assignee": "Sam",
+        "done": true,
         "notes": ""
       },
       {
-        "title": "Draft scope for phase 2 — Sunbelt Roofing",
+        "title": "Review supplier quote — Bright Bakery",
         "due": {
-          "__rel": 29
+          "__rel": 8
         },
         "priority": "Medium",
-        "status": "In progress",
-        "assignee": "Daniel",
+        "done": true,
         "notes": ""
       },
       {
-        "title": "Chase signed proposal — Clearwater Optics",
+        "title": "Chase signed proposal — Okafor Supplies",
+        "due": {
+          "__rel": 12
+        },
+        "priority": "Medium",
+        "done": true,
+        "notes": ""
+      },
+      {
+        "title": "Order print proofs — Vesta Interiors",
+        "due": {
+          "__rel": 30
+        },
+        "priority": "Low",
+        "done": false,
+        "notes": ""
+      },
+      {
+        "title": "Prepare moodboard — Northgate Dental",
+        "due": {
+          "__rel": 18
+        },
+        "priority": "High",
+        "done": false,
+        "notes": ""
+      },
+      {
+        "title": "Check print colour proof — Rivera Landscaping",
+        "due": {
+          "__rel": 3
+        },
+        "priority": "High",
+        "done": false,
+        "notes": ""
+      },
+      {
+        "title": "Second round of edits — Perch Coffee",
+        "due": {
+          "__rel": 10
+        },
+        "priority": "Low",
+        "done": false,
+        "notes": ""
+      },
+      {
+        "title": "Write handover notes — Aldridge Legal",
+        "due": {
+          "__rel": 10
+        },
+        "priority": "Medium",
+        "done": false,
+        "notes": ""
+      },
+      {
+        "title": "Send revised quote — Kestrel Fitness",
+        "due": {
+          "__rel": 1
+        },
+        "priority": "Low",
+        "done": true,
+        "notes": ""
+      },
+      {
+        "title": "Update the portfolio page — Marlow Bookshop",
         "due": {
           "__rel": 2
         },
+        "priority": "Medium",
+        "done": false,
+        "notes": ""
+      },
+      {
+        "title": "Invoice for milestone 2 — Tidewater Plumbing",
+        "due": {
+          "__rel": 9
+        },
+        "priority": "Medium",
+        "done": false,
+        "notes": ""
+      },
+      {
+        "title": "Second round of edits — Sunbelt Roofing",
+        "due": {
+          "__rel": 21
+        },
+        "priority": "Medium",
+        "done": false,
+        "notes": ""
+      },
+      {
+        "title": "Invoice for milestone 2 — Clearwater Optics",
+        "due": {
+          "__rel": -11
+        },
         "priority": "High",
-        "status": "To do",
-        "assignee": "Sam",
+        "done": true,
         "notes": ""
       }
     ],
     "leads": [
       {
         "name": "Amira Hassan",
-        "company": "Bright Bakery",
+        "status": "Not a fit",
+        "source": "Referral",
         "email": "amira@brightbakery.example",
-        "source": "Social",
-        "status": "Contacted",
+        "phone": "+1 555 0795",
         "notes": ""
       },
       {
         "name": "Marcus Bell",
-        "company": "Perch Coffee",
-        "email": "marcus@perchcoffee.example",
+        "status": "New",
         "source": "Website",
-        "status": "Contacted",
+        "email": "marcus@perchcoffee.example",
+        "phone": "+1 555 0336",
         "notes": ""
       },
       {
         "name": "Daniel Adeyemi",
-        "company": "Sunbelt Roofing",
+        "status": "Contacted",
+        "source": "Referral",
         "email": "daniel@sunbeltroofing.example",
-        "source": "Website",
-        "status": "New",
+        "phone": "+1 555 0136",
         "notes": ""
       },
       {
         "name": "Fatima Zahra",
-        "company": "Northgate Dental",
-        "email": "fatima@northgatedental.example",
-        "source": "Cold outreach",
         "status": "New",
+        "source": "Referral",
+        "email": "fatima@northgatedental.example",
+        "phone": "+1 555 0699",
         "notes": ""
       },
       {
         "name": "Carlos Duarte",
-        "company": "Marlow Bookshop",
-        "email": "carlos@marlowbookshop.example",
-        "source": "Referral",
         "status": "Contacted",
+        "source": "Social media",
+        "email": "carlos@marlowbookshop.example",
+        "phone": "+1 555 0457",
         "notes": ""
       },
       {
         "name": "Grace Mwangi",
-        "company": "Okafor Supplies",
-        "email": "grace@okaforsupplies.example",
+        "status": "Not a fit",
         "source": "Website",
-        "status": "Contacted",
+        "email": "grace@okaforsupplies.example",
+        "phone": "+1 555 0463",
         "notes": ""
       },
       {
         "name": "Peter Novak",
-        "company": "Aldridge Legal",
-        "email": "peter@aldridgelegal.example",
+        "status": "Contacted",
         "source": "Website",
-        "status": "Qualified",
+        "email": "peter@aldridgelegal.example",
+        "phone": "+1 555 0558",
         "notes": ""
       },
       {
         "name": "Leila Farouk",
-        "company": "Clearwater Optics",
-        "email": "leila@clearwateroptics.example",
-        "source": "Social",
         "status": "Contacted",
+        "source": "Website",
+        "email": "leila@clearwateroptics.example",
+        "phone": "+1 555 0711",
         "notes": ""
       },
       {
         "name": "Nathan Cole",
-        "company": "Rivera Landscaping",
+        "status": "New",
+        "source": "Referral",
         "email": "nathan@riveralandscaping.example",
-        "source": "Event",
-        "status": "Contacted",
+        "phone": "+1 555 0903",
         "notes": ""
       },
       {
         "name": "Tom Okafor",
-        "company": "Tidewater Plumbing",
+        "status": "Contacted",
+        "source": "Referral",
         "email": "tom@tidewaterplumbing.example",
-        "source": "Social",
-        "status": "New",
+        "phone": "+1 555 0575",
         "notes": ""
       },
       {
         "name": "Yuki Tanaka",
-        "company": "Vesta Interiors",
-        "email": "yuki@vestainteriors.example",
-        "source": "Referral",
         "status": "Qualified",
+        "source": "Referral",
+        "email": "yuki@vestainteriors.example",
+        "phone": "+1 555 0658",
         "notes": ""
       },
       {
         "name": "Elena Petrova",
-        "company": "Kestrel Fitness",
-        "email": "elena@kestrelfitness.example",
-        "source": "Event",
         "status": "New",
+        "source": "Walk-in",
+        "email": "elena@kestrelfitness.example",
+        "phone": "+1 555 0619",
         "notes": ""
       },
       {
         "name": "Owen Brennan",
-        "company": "Bright Bakery",
+        "status": "Contacted",
+        "source": "Walk-in",
         "email": "owen@brightbakery.example",
-        "source": "Referral",
-        "status": "New",
+        "phone": "+1 555 0964",
         "notes": ""
       },
       {
         "name": "Hannah Weiss",
-        "company": "Perch Coffee",
-        "email": "hannah@perchcoffee.example",
+        "status": "New",
         "source": "Website",
-        "status": "Qualified",
+        "email": "hannah@perchcoffee.example",
+        "phone": "+1 555 0120",
         "notes": ""
       },
       {
         "name": "Victor Ilunga",
-        "company": "Sunbelt Roofing",
+        "status": "Qualified",
+        "source": "Other",
         "email": "victor@sunbeltroofing.example",
-        "source": "Website",
-        "status": "Contacted",
+        "phone": "+1 555 0101",
         "notes": ""
       },
       {
         "name": "Rosa Delgado",
-        "company": "Northgate Dental",
+        "status": "Qualified",
+        "source": "Social media",
         "email": "rosa@northgatedental.example",
-        "source": "Cold outreach",
-        "status": "Unqualified",
+        "phone": "+1 555 0840",
         "notes": ""
       }
     ],
@@ -1067,70 +1021,70 @@ const DEMO_DATA = {
       {
         "title": "Studio is at capacity until the middle of next m",
         "date": {
-          "__rel": -19
+          "__rel": -31
         },
         "content": "Studio is at capacity until the middle of next month — quote accordingly."
       },
       {
         "title": "Print supplier put prices up 8%",
         "date": {
-          "__rel": -10
+          "__rel": -4
         },
         "content": "Print supplier put prices up 8%. Update the standard quote template."
       },
       {
         "title": "Three referrals came from Bright Bakery this qua",
         "date": {
-          "__rel": -4
+          "__rel": -13
         },
         "content": "Three referrals came from Bright Bakery this quarter. Send a thank-you."
       },
       {
         "title": "Retainer clients now cover fixed costs",
         "date": {
-          "__rel": -32
+          "__rel": -3
         },
         "content": "Retainer clients now cover fixed costs. Anything project-based is margin."
       },
       {
         "title": "Stop quoting fixed-price on anything with more t",
         "date": {
-          "__rel": -23
+          "__rel": -22
         },
         "content": "Stop quoting fixed-price on anything with more than two rounds of revision."
       },
       {
         "title": "New camera paid for itself on the Perch Coffee s",
         "date": {
-          "__rel": -6
+          "__rel": -32
         },
         "content": "New camera paid for itself on the Perch Coffee shoot."
       },
       {
         "title": "Two invoices past 30 days",
         "date": {
-          "__rel": -39
+          "__rel": -18
         },
         "content": "Two invoices past 30 days. Call before sending another reminder."
       },
       {
         "title": "Move the portfolio off the old host before renew",
         "date": {
-          "__rel": -33
+          "__rel": -19
         },
         "content": "Move the portfolio off the old host before renewal."
       },
       {
         "title": "Kestrel wants a retainer from the new year",
         "date": {
-          "__rel": -7
+          "__rel": -38
         },
         "content": "Kestrel wants a retainer from the new year — draft terms."
       },
       {
         "title": "Hire question deferred to Q3",
         "date": {
-          "__rel": -15
+          "__rel": -42
         },
         "content": "Hire question deferred to Q3. Revisit once the pipeline clears."
       }
@@ -1142,11 +1096,11 @@ const DEMO_DATA = {
           "__ref": "companies:Bright Bakery"
         },
         "status": "In progress",
-        "budget": "20500",
+        "budget": "34500",
         "due": {
-          "__rel": 87
+          "__rel": 51
         },
-        "lead": "Daniel",
+        "lead": "Priya",
         "notes": ""
       },
       {
@@ -1155,11 +1109,11 @@ const DEMO_DATA = {
           "__ref": "companies:Okafor Supplies"
         },
         "status": "In progress",
-        "budget": "35500",
+        "budget": "42000",
         "due": {
-          "__rel": 88
+          "__rel": 71
         },
-        "lead": "Daniel",
+        "lead": "Maya",
         "notes": ""
       },
       {
@@ -1167,12 +1121,12 @@ const DEMO_DATA = {
         "company": {
           "__ref": "companies:Vesta Interiors"
         },
-        "status": "Review",
-        "budget": "6500",
+        "status": "Delivered",
+        "budget": "20000",
         "due": {
-          "__rel": 51
+          "__rel": 13
         },
-        "lead": "Priya",
+        "lead": "Maya",
         "notes": ""
       },
       {
@@ -1180,12 +1134,12 @@ const DEMO_DATA = {
         "company": {
           "__ref": "companies:Northgate Dental"
         },
-        "status": "Delivered",
-        "budget": "24000",
+        "status": "Discovery",
+        "budget": "4500",
         "due": {
-          "__rel": -1
+          "__rel": 29
         },
-        "lead": "Daniel",
+        "lead": "Priya",
         "notes": ""
       },
       {
@@ -1193,10 +1147,10 @@ const DEMO_DATA = {
         "company": {
           "__ref": "companies:Rivera Landscaping"
         },
-        "status": "Discovery",
-        "budget": "12000",
+        "status": "Delivered",
+        "budget": "20000",
         "due": {
-          "__rel": 68
+          "__rel": 71
         },
         "lead": "Priya",
         "notes": ""
@@ -1206,12 +1160,12 @@ const DEMO_DATA = {
         "company": {
           "__ref": "companies:Perch Coffee"
         },
-        "status": "Delivered",
-        "budget": "9500",
+        "status": "On hold",
+        "budget": "17500",
         "due": {
-          "__rel": 63
+          "__rel": -9
         },
-        "lead": "Maya",
+        "lead": "Daniel",
         "notes": ""
       },
       {
@@ -1219,12 +1173,12 @@ const DEMO_DATA = {
         "company": {
           "__ref": "companies:Aldridge Legal"
         },
-        "status": "In progress",
-        "budget": "31000",
+        "status": "Discovery",
+        "budget": "33000",
         "due": {
-          "__rel": 74
+          "__rel": 40
         },
-        "lead": "Daniel",
+        "lead": "Maya",
         "notes": ""
       },
       {
@@ -1232,12 +1186,12 @@ const DEMO_DATA = {
         "company": {
           "__ref": "companies:Kestrel Fitness"
         },
-        "status": "Delivered",
-        "budget": "13500",
+        "status": "Review",
+        "budget": "23500",
         "due": {
-          "__rel": 53
+          "__rel": 5
         },
-        "lead": "Maya",
+        "lead": "Priya",
         "notes": ""
       },
       {
@@ -1245,12 +1199,12 @@ const DEMO_DATA = {
         "company": {
           "__ref": "companies:Marlow Bookshop"
         },
-        "status": "Review",
-        "budget": "16000",
+        "status": "On hold",
+        "budget": "31500",
         "due": {
-          "__rel": 68
+          "__rel": -2
         },
-        "lead": "Daniel",
+        "lead": "Priya",
         "notes": ""
       },
       {
@@ -1258,10 +1212,10 @@ const DEMO_DATA = {
         "company": {
           "__ref": "companies:Tidewater Plumbing"
         },
-        "status": "In progress",
-        "budget": "4000",
+        "status": "Review",
+        "budget": "11000",
         "due": {
-          "__rel": 64
+          "__rel": 59
         },
         "lead": "Priya",
         "notes": ""
@@ -1271,12 +1225,12 @@ const DEMO_DATA = {
         "company": {
           "__ref": "companies:Sunbelt Roofing"
         },
-        "status": "On hold",
-        "budget": "27500",
+        "status": "Delivered",
+        "budget": "16000",
         "due": {
-          "__rel": 24
+          "__rel": 9
         },
-        "lead": "Maya",
+        "lead": "Daniel",
         "notes": ""
       },
       {
@@ -1284,12 +1238,12 @@ const DEMO_DATA = {
         "company": {
           "__ref": "companies:Clearwater Optics"
         },
-        "status": "On hold",
-        "budget": "37500",
+        "status": "In progress",
+        "budget": "3500",
         "due": {
-          "__rel": 88
+          "__rel": 17
         },
-        "lead": "Maya",
+        "lead": "Priya",
         "notes": ""
       },
       {
@@ -1297,12 +1251,12 @@ const DEMO_DATA = {
         "company": {
           "__ref": "companies:Bright Bakery"
         },
-        "status": "Discovery",
-        "budget": "40500",
+        "status": "Review",
+        "budget": "26000",
         "due": {
-          "__rel": 12
+          "__rel": -17
         },
-        "lead": "Maya",
+        "lead": "Priya",
         "notes": ""
       },
       {
@@ -1311,11 +1265,11 @@ const DEMO_DATA = {
           "__ref": "companies:Okafor Supplies"
         },
         "status": "Discovery",
-        "budget": "4500",
+        "budget": "30500",
         "due": {
-          "__rel": 17
+          "__rel": 49
         },
-        "lead": "Priya",
+        "lead": "Daniel",
         "notes": ""
       },
       {
@@ -1324,11 +1278,11 @@ const DEMO_DATA = {
           "__ref": "companies:Vesta Interiors"
         },
         "status": "In progress",
-        "budget": "15500",
+        "budget": "9000",
         "due": {
-          "__rel": 35
+          "__rel": 77
         },
-        "lead": "Daniel",
+        "lead": "Priya",
         "notes": ""
       },
       {
@@ -1336,12 +1290,12 @@ const DEMO_DATA = {
         "company": {
           "__ref": "companies:Northgate Dental"
         },
-        "status": "Review",
-        "budget": "36000",
+        "status": "In progress",
+        "budget": "11500",
         "due": {
-          "__rel": 41
+          "__rel": 86
         },
-        "lead": "Daniel",
+        "lead": "Maya",
         "notes": ""
       }
     ],
@@ -1351,8 +1305,83 @@ const DEMO_DATA = {
         "project": {
           "__ref": "projects:Brand refresh — Bright Bakery"
         },
+        "amount": "6800",
+        "status": "Draft",
+        "issued": {
+          "__rel": -35
+        },
+        "due": {
+          "__rel": -5
+        },
+        "notes": ""
+      },
+      {
+        "number": "LS-2026102",
+        "project": {
+          "__ref": "projects:Website rebuild — Okafor Supplies"
+        },
+        "amount": "9700",
+        "status": "Paid",
+        "issued": {
+          "__rel": -50
+        },
+        "due": {
+          "__rel": -20
+        },
+        "notes": ""
+      },
+      {
+        "number": "LS-2026103",
+        "project": {
+          "__ref": "projects:Packaging system — Vesta Interiors"
+        },
+        "amount": "800",
+        "status": "Paid",
+        "issued": {
+          "__rel": -38
+        },
+        "due": {
+          "__rel": -8
+        },
+        "notes": ""
+      },
+      {
+        "number": "LS-2026104",
+        "project": {
+          "__ref": "projects:Signage package — Northgate Dental"
+        },
+        "amount": "2800",
+        "status": "Paid",
+        "issued": {
+          "__rel": -68
+        },
+        "due": {
+          "__rel": -38
+        },
+        "notes": ""
+      },
+      {
+        "number": "LS-2026105",
+        "project": {
+          "__ref": "projects:Menu redesign — Rivera Landscaping"
+        },
+        "amount": "10800",
+        "status": "Overdue",
+        "issued": {
+          "__rel": -50
+        },
+        "due": {
+          "__rel": -20
+        },
+        "notes": "Second reminder sent."
+      },
+      {
+        "number": "LS-2026106",
+        "project": {
+          "__ref": "projects:Campaign artwork — Perch Coffee"
+        },
         "amount": "5800",
-        "status": "Sent",
+        "status": "Paid",
         "issued": {
           "__rel": -52
         },
@@ -1362,42 +1391,42 @@ const DEMO_DATA = {
         "notes": ""
       },
       {
-        "number": "LS-2026102",
+        "number": "LS-2026107",
         "project": {
-          "__ref": "projects:Website rebuild — Okafor Supplies"
+          "__ref": "projects:Brand guidelines — Aldridge Legal"
         },
         "amount": "12000",
-        "status": "Overdue",
+        "status": "Sent",
         "issued": {
           "__rel": -57
         },
         "due": {
           "__rel": -27
         },
-        "notes": "Second reminder sent."
+        "notes": ""
       },
       {
-        "number": "LS-2026103",
+        "number": "LS-2026108",
         "project": {
-          "__ref": "projects:Packaging system — Vesta Interiors"
+          "__ref": "projects:Annual report — Kestrel Fitness"
         },
         "amount": "12300",
-        "status": "Draft",
+        "status": "Overdue",
         "issued": {
           "__rel": -51
         },
         "due": {
           "__rel": -21
         },
-        "notes": ""
+        "notes": "Second reminder sent."
       },
       {
-        "number": "LS-2026104",
+        "number": "LS-2026109",
         "project": {
-          "__ref": "projects:Signage package — Northgate Dental"
+          "__ref": "projects:Wayfinding — Marlow Bookshop"
         },
         "amount": "1400",
-        "status": "Paid",
+        "status": "Sent",
         "issued": {
           "__rel": -6
         },
@@ -1407,12 +1436,12 @@ const DEMO_DATA = {
         "notes": ""
       },
       {
-        "number": "LS-2026105",
+        "number": "LS-2026110",
         "project": {
-          "__ref": "projects:Menu redesign — Rivera Landscaping"
+          "__ref": "projects:Product photography — Tidewater Plumbing"
         },
         "amount": "1500",
-        "status": "Sent",
+        "status": "Paid",
         "issued": {
           "__rel": -64
         },
@@ -1422,12 +1451,12 @@ const DEMO_DATA = {
         "notes": ""
       },
       {
-        "number": "LS-2026106",
+        "number": "LS-2026111",
         "project": {
-          "__ref": "projects:Campaign artwork — Perch Coffee"
+          "__ref": "projects:Trade stand — Sunbelt Roofing"
         },
         "amount": "16700",
-        "status": "Draft",
+        "status": "Paid",
         "issued": {
           "__rel": -5
         },
@@ -1437,92 +1466,17 @@ const DEMO_DATA = {
         "notes": ""
       },
       {
-        "number": "LS-2026107",
+        "number": "LS-2026112",
         "project": {
-          "__ref": "projects:Brand guidelines — Aldridge Legal"
+          "__ref": "projects:Icon set — Clearwater Optics"
         },
         "amount": "3000",
-        "status": "Paid",
+        "status": "Overdue",
         "issued": {
           "__rel": -9
         },
         "due": {
           "__rel": 21
-        },
-        "notes": ""
-      },
-      {
-        "number": "LS-2026108",
-        "project": {
-          "__ref": "projects:Annual report — Kestrel Fitness"
-        },
-        "amount": "17200",
-        "status": "Paid",
-        "issued": {
-          "__rel": -39
-        },
-        "due": {
-          "__rel": -9
-        },
-        "notes": ""
-      },
-      {
-        "number": "LS-2026109",
-        "project": {
-          "__ref": "projects:Wayfinding — Marlow Bookshop"
-        },
-        "amount": "16200",
-        "status": "Paid",
-        "issued": {
-          "__rel": -63
-        },
-        "due": {
-          "__rel": -33
-        },
-        "notes": ""
-      },
-      {
-        "number": "LS-2026110",
-        "project": {
-          "__ref": "projects:Product photography — Tidewater Plumbing"
-        },
-        "amount": "12100",
-        "status": "Sent",
-        "issued": {
-          "__rel": -54
-        },
-        "due": {
-          "__rel": -24
-        },
-        "notes": ""
-      },
-      {
-        "number": "LS-2026111",
-        "project": {
-          "__ref": "projects:Trade stand — Sunbelt Roofing"
-        },
-        "amount": "3600",
-        "status": "Sent",
-        "issued": {
-          "__rel": -49
-        },
-        "due": {
-          "__rel": -19
-        },
-        "notes": ""
-      },
-      {
-        "number": "LS-2026112",
-        "project": {
-          "__ref": "projects:Icon set — Clearwater Optics"
-        },
-        "amount": "8600",
-        "status": "Overdue",
-        "issued": {
-          "__rel": -40
-        },
-        "due": {
-          "__rel": -10
         },
         "notes": "Second reminder sent."
       },
@@ -1531,8 +1485,8 @@ const DEMO_DATA = {
         "project": {
           "__ref": "projects:Email templates — Bright Bakery"
         },
-        "amount": "4500",
-        "status": "Paid",
+        "amount": "17200",
+        "status": "Sent",
         "issued": {
           "__rel": -39
         },
@@ -1546,13 +1500,13 @@ const DEMO_DATA = {
         "project": {
           "__ref": "projects:Print collateral — Okafor Supplies"
         },
-        "amount": "14600",
-        "status": "Paid",
+        "amount": "16200",
+        "status": "Sent",
         "issued": {
-          "__rel": -29
+          "__rel": -63
         },
         "due": {
-          "__rel": 1
+          "__rel": -33
         },
         "notes": ""
       },
@@ -1561,13 +1515,13 @@ const DEMO_DATA = {
         "project": {
           "__ref": "projects:Social kit — Vesta Interiors"
         },
-        "amount": "10100",
-        "status": "Draft",
+        "amount": "12100",
+        "status": "Paid",
         "issued": {
-          "__rel": -59
+          "__rel": -54
         },
         "due": {
-          "__rel": -29
+          "__rel": -24
         },
         "notes": ""
       },
@@ -1576,13 +1530,13 @@ const DEMO_DATA = {
         "project": {
           "__ref": "projects:Style guide — Northgate Dental"
         },
-        "amount": "13400",
-        "status": "Paid",
+        "amount": "3600",
+        "status": "Sent",
         "issued": {
-          "__rel": -15
+          "__rel": -49
         },
         "due": {
-          "__rel": 15
+          "__rel": -19
         },
         "notes": ""
       },
@@ -1591,28 +1545,28 @@ const DEMO_DATA = {
         "project": {
           "__ref": "projects:Brand refresh — Bright Bakery"
         },
-        "amount": "8900",
-        "status": "Overdue",
+        "amount": "8600",
+        "status": "Draft",
         "issued": {
-          "__rel": -48
+          "__rel": -40
         },
         "due": {
-          "__rel": -18
+          "__rel": -10
         },
-        "notes": "Second reminder sent."
+        "notes": ""
       },
       {
         "number": "LS-2026118",
         "project": {
           "__ref": "projects:Website rebuild — Okafor Supplies"
         },
-        "amount": "6300",
-        "status": "Sent",
+        "amount": "4500",
+        "status": "Draft",
         "issued": {
-          "__rel": -70
+          "__rel": -39
         },
         "due": {
-          "__rel": -40
+          "__rel": -9
         },
         "notes": ""
       }

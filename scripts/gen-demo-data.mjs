@@ -147,9 +147,11 @@ records.deals = Array.from({ length: 22 }, (_, i) => {
     title: `${company} — ${pick(DEAL_WORK)}`,
     value: money(2000, 48000),
     stage,
-    company,
+    // `closeDate`, not `close`, and no `company`: the Deals template has neither
+    // a company field nor a field called `close`. A key no field uses is ghost
+    // data (§22) and renders as an empty column. The company is in the title.
+    closeDate: rel(int(-40, 75)),
     contact: PEOPLE[i % PEOPLE.length],
-    close: rel(int(-40, 75)),
     notes: '',
   };
 });
@@ -160,28 +162,37 @@ const TASK_WORK = [
   'Write handover notes', 'Check print colour proof', 'Schedule photography',
   'Draft scope for phase 2', 'Review supplier quote', 'Update the portfolio page',
 ];
-// Mostly still to do, some in flight, some closed — a task list that is 46%
-// "Done" reads as an archive rather than a workload.
-const TASK_SPREAD = spread({ 'To do': 10, 'In progress': 8, Done: 6 });
-const TASK_PRIORITY = spread({ Low: 5, Medium: 9, High: 7, Urgent: 3 });
+/*
+ * The Tasks template has `done` (a checkbox) — not a status select, and no
+ * assignee. Writing those invented a column that does not exist and left the
+ * real one empty. Priority offers Low/Medium/High and nothing else: a select
+ * value outside its own options renders a pill the dropdown cannot produce.
+ *
+ * Mostly still open: a task list that is half ticked reads as an archive.
+ */
+const TASK_DONE = spread({ yes: 7, no: 17 });
+const TASK_PRIORITY = spread({ Low: 7, Medium: 10, High: 7 });
 records.tasks = Array.from({ length: 24 }, (_, i) => ({
   title: `${pick(TASK_WORK)} — ${COMPANIES[i % COMPANIES.length][0]}`,
   due: rel(int(-12, 30)),
   priority: TASK_PRIORITY[i],
-  status: TASK_SPREAD[i],
-  assignee: pick(['Maya', 'Daniel', 'Priya', 'Sam']),
+  done: TASK_DONE[i] === 'yes',
   notes: '',
 }));
 
+// Every value here comes from the template's own options list. "Event",
+// "Cold outreach", "Social" and "Unqualified" were none of them.
+const LEAD_STATUS = spread({ New: 5, Contacted: 6, Qualified: 3, 'Not a fit': 2 });
+const LEAD_SOURCE = spread({ Referral: 6, Website: 5, 'Social media': 2, 'Walk-in': 2, Other: 1 });
 records.leads = Array.from({ length: 16 }, (_, i) => {
   const person = PEOPLE[(i * 3) % PEOPLE.length];
   const [company] = COMPANIES[(i * 5) % COMPANIES.length];
   return {
     name: person,
-    company,
+    status: LEAD_STATUS[i],
+    source: LEAD_SOURCE[i],
     email: emailFor(person, company),
-    source: pick(['Referral', 'Referral', 'Website', 'Website', 'Event', 'Cold outreach', 'Social']),
-    status: pick(['New', 'New', 'Contacted', 'Contacted', 'Qualified', 'Unqualified']),
+    phone: phone(),
     notes: '',
   };
 });

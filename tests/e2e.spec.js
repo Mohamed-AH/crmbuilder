@@ -1495,6 +1495,67 @@ test.describe('team workspaces', () => {
     await second.close();
   });
 
+  /*
+   * What a view-only account SEES, not just what the server refuses.
+   *
+   * The complaint that started this: a viewer opened a record and got six
+   * editable fields, a required-field asterisk and a lone Close button — a form
+   * whose Save had apparently failed to render. It read as unfinished software
+   * rather than a deliberate read-only view, which matters because a view-only
+   * account may belong to an intern, an investor or an external auditor.
+   *
+   * Values, not disabled inputs: a greyed-out form still looks like one that
+   * broke.
+   */
+  test('a viewer opens a record as values, not as a form that cannot be saved', async ({ page, browser }) => {
+    const ownerEmail = uniqueEmail('ro-owner');
+    await onboard(page, { name: 'Read Only Co', templates: ['Contacts'] });
+    await signIn(page, ownerEmail);
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Visible Contact');
+    await page.fill('#f-email', 'visible@example.test');
+    await page.click('#record-save');
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+    const url = await inviteLink(page);
+
+    const second = await browser.newContext();
+    const mate = await second.newPage();
+    await mate.goto(new URL(url).pathname + new URL(url).search);
+    const mateEmail = uniqueEmail('ro-mate');
+    await signIn(mate, mateEmail, { claim: 'none' });
+    await expect(mate.locator('[data-join]').first()).toBeVisible({ timeout: 25000 });
+    await mate.click('[data-join="fresh"]');
+    await expect(mate.locator('#nav-modules .nav-link:has-text("Contacts")')).toBeVisible({ timeout: 25000 });
+
+    const members = await (await page.request.get('/api/org/members')).json();
+    const target = members.members.find((m) => m.email === mateEmail);
+    expect((await page.request.patch(`/api/org/members/${target.id}`, { data: { role: 'viewer' } })).ok()).toBeTruthy();
+
+    // Their client learns its new role the ordinary way.
+    await mate.reload();
+    await expect(mate.locator('#nav-modules .nav-link:has-text("Contacts")')).toBeVisible({ timeout: 25000 });
+    await mate.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(mate.locator('tr:has-text("Visible Contact")')).toBeVisible({ timeout: 20000 });
+    await mate.click('tr:has-text("Visible Contact") td:first-child');
+
+    const modal = mate.locator('#modal-root');
+    await expect(modal.locator('.record-read')).toBeVisible({ timeout: 15000 });
+
+    // The record is READABLE — this is not an empty shell.
+    await expect(modal).toContainText('Visible Contact');
+    await expect(modal).toContainText('visible@example.test');
+
+    // And there is nothing to type into, nothing to submit, and no asterisk
+    // instructing them to fill in a field they cannot fill in.
+    expect(await modal.locator('input, select, textarea').count()).toBe(0);
+    expect(await modal.locator('#record-form').count()).toBe(0);
+    expect(await modal.locator('.req').count()).toBe(0);
+    expect(await modal.locator('#record-save, #record-delete').count()).toBe(0);
+    await expect(modal.locator('[data-close]').last()).toHaveText(/Close/);
+    await second.close();
+  });
+
   test('a demoted member has their module edit reverted, and is told why', async ({ page, browser }) => {
     const ownerEmail = uniqueEmail('demote-owner');
     await onboard(page, { name: 'Demote Co' });

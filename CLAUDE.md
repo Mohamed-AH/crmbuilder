@@ -47,6 +47,7 @@ never change, because everything cross-references them.
 | **Which tests to run** — and who runs the rest | §9 |
 | **Demo data vs the seed fixture** — which is which | §34 |
 | Guided tour: card covering its own highlight | §35 |
+| **View-only**: what it must look like, and the hole | §36 · §14 |
 | E2E suite slow or "flaky" | §32 |
 | **What tombstones cost**, and reading storage figures | §33 · §26 |
 | **How the docs are organised**, and what is frozen | §29 |
@@ -85,7 +86,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 204 Node tests + 80 Playwright tests, 41 smoke checks. On
+**All green:** 205 Node tests + 81 Playwright tests, 41 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -153,7 +154,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v29`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v30`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -2431,6 +2432,18 @@ nothing, renders a blank cell, and throws nothing at all.
   time. They all read from the dataset now via a `DEMO` helper. The literal `6`
   for `.template-card` is correct and stays: that one really is about
   `TEMPLATES`.
+- **Write the template's field keys, not invented ones.** The generator wrote
+  `close` where Deals says `closeDate`, `status`/`assignee` on Tasks (which has
+  a `done` checkbox and neither), and `company` on two modules that have no such
+  field — plus select values outside their own options (`Urgent`, `Event`,
+  `Cold outreach`, `Social`, `Unqualified`). Nothing throws: a key no field uses
+  is ghost data (§22) that travels in every export and renders nowhere, an
+  unfilled field is an empty column, and an out-of-range select value is a pill
+  the dropdown cannot produce. The dataset before the rewrite was clean on every
+  module, so this was a regression, and it was invisible until a record was
+  rendered as VALUES rather than inputs (§36). `tests/demo.test.mjs` now asserts
+  data keys against field keys in both directions, and every select value
+  against its options.
 - **Do not pre-seed a record without `_demo` to stage a promotion demo.** It
   would claim the user typed something they never did, and "`_demo` is on rows
   we seeded and never on rows the user typed" is what the whole discard
@@ -2528,3 +2541,63 @@ passes in isolation" reads as flakiness and invites a retry. Measuring the thing
 directly — 20 rounds, geometry printed — turned a three-phase mystery into a
 one-line answer in minutes. A test that fails 1 run in 15 is still describing a
 defect that is present 15 times out of 15.
+
+
+---
+
+## 36. View-only had to look deliberate, and the audit found a hole
+
+Reported as polish: a view-only account could still type into a record's fields,
+the Save button was simply absent, and it "feels like unfinished software rather
+than an intentional feature". Auditing it by **driving the app as a real viewer
+against the seeded fixture** (§34) turned up something else first.
+
+### The hole
+
+`applyPush` gated records and modules by role and wrote settings from anybody, so
+a viewer could rename the team's workspace and change its currency — and the
+owner saw both. §23: a currency change **relabels** every stored amount rather
+than converting, for everybody. An external auditor holding read-only access
+could turn every dollar figure into yen. Fixed in §14; `canEditSettings()` is
+owner-only and deliberately separate from `canEditSchema()`.
+
+**It survived §26's role work and the whole security audit** because both read
+the code. Driving the product as each role is a different instrument, and it is
+the one that found this.
+
+### The principle, so the rest is not a dozen judgement calls
+
+**A restricted account should feel like it is using a finished product for
+reading, not a broken product for writing.**
+
+1. **Creating something → hide it.** A missing Add button explains itself.
+2. **Editing something visible → render it as a value, not a disabled input.**
+   A greyed-out form still looks like a form that failed.
+3. **Say the state once, calmly, where identity lives** — not a banner on every
+   screen, which nags and reads as an error state.
+
+Tone: never *denied*, *forbidden*, *not permitted*. Those are words for an
+attacker, and a viewer may be an intern, an investor or an auditor. Frame it as
+what they *can* do.
+
+### The record read view
+
+`fieldReadHTML` renders values through the same `fmtValue` the table uses, so a
+field looks identical to the row it was opened from. Two departures: a textarea
+shows in full (`fmtValue` truncates at 70 for a cell, and a detail view is where
+you go to read the whole note), and a checkbox reads Yes/No because there is no
+label beside it here to give a bare tick meaning.
+
+A `<div>`, not a `<form>`: there is nothing to submit, and required markers go
+too — a `*` is an instruction, and there is nothing here to instruct.
+
+### What the read view exposed
+
+Rendering values instead of inputs made an empty "Expected close" obvious on
+every demo deal. The generator (§34) had invented field keys, and a sweep found
+three modules wrong and five invalid select values. **Nothing about it threw**,
+and an empty date cell in a table reads as "no date set" — which is why it
+survived a full suite, a screenshot review and a live deployment.
+
+The lesson is the one this file keeps relearning: a defect that renders as
+*plausible* is invisible until something forces it to render differently.

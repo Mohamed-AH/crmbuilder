@@ -196,6 +196,19 @@ svg.lucide { vertical-align: -2px; flex-shrink: 0; }
 .card-head h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 .empty-hint { color: var(--text-soft); margin: 8px 0; }
 .settings-hint { color: var(--text-soft); margin: 0 0 14px; max-width: 62ch; font-size: 13px; }
+/* A record shown to somebody who cannot edit it.
+   Values on a page, not a form with its inputs turned off — a greyed-out form
+   still reads as one that failed. The label is quiet and the value carries the
+   weight, which is the opposite emphasis to the edit form and is what makes
+   this legible as a different thing rather than a broken version of it. */
+.record-read .read-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.record-read .read-row:last-of-type { border-bottom: 0; }
+.read-label { font-size: 12px; color: var(--text-soft); margin-bottom: 3px; }
+.read-value { font-size: 14px; color: var(--text); line-height: 1.45; }
+/* The whole note, wrapped as written. fmtValue truncates for a table cell; a
+   detail view is where somebody goes to read all of it. */
+.read-note { margin: 0; white-space: pre-wrap; }
+
 /* A qualifier under a table figure — "50% reclaimable" beneath a byte count.
    Its own class rather than an inline style: the CSP keeps 'unsafe-inline' on
    style-src only for genuinely dynamic values like a meter width (§30). */

@@ -35,6 +35,15 @@ const TEMPLATE_KEYS = ['contacts', 'companies', 'deals', 'tasks', 'leads', 'note
 // The loader's real order: TEMPLATES first, then the demo's own modules.
 const SEED_ORDER = [...TEMPLATE_KEYS, ...DEMO.modules.map((m) => m.key)];
 
+// Module definitions by key: the six templates plus the demo's own. The demo
+// seeds into whichever it finds, so both have to be checked against the data.
+const { TEMPLATES } = (() => {
+  const src = readFileSync(path.join(ROOT, 'js', 'templates.js'), 'utf8');
+  // eslint-disable-next-line no-new-func
+  return new Function(`${src}; return { TEMPLATES };`)();
+})();
+const MODULE_BY_KEY = new Map([...TEMPLATES, ...DEMO.modules].map((m) => [m.key, m]));
+
 describe('the shipped demo dataset', () => {
   test('carries a business, a currency and records for every module', () => {
     assert.ok(DEMO.businessName, 'a demo with no business name has nothing to put in the sidebar');
@@ -82,6 +91,49 @@ describe('the shipped demo dataset', () => {
     }
 
     assert.ok(refs > 0, 'a dataset with no relations does not exercise relations at all');
+  });
+
+  /*
+   * Every key a record carries must be a field of its module, and every select
+   * value must be one of that field's own options.
+   *
+   * This is the assertion that was missing, and three modules shipped wrong
+   * without it: the generator invented `close` where the template says
+   * `closeDate`, invented `status`/`assignee` on Tasks (which has a `done`
+   * checkbox and neither of those), and emitted `Urgent`, `Event`,
+   * `Cold outreach`, `Social` and `Unqualified` — none of which appear in the
+   * options they were written into.
+   *
+   * None of it throws. A key no field uses is ghost data (§22) that travels in
+   * every export and renders nowhere; an unfilled field is an empty column; a
+   * select value outside its options is a pill the dropdown cannot produce and
+   * a kanban column that cannot be reached. It took rendering a record as
+   * VALUES rather than inputs for any of it to become visible.
+   */
+  test('record data matches the module schema it is seeded into', () => {
+    const problems = [];
+    for (const key of SEED_ORDER) {
+      const mod = MODULE_BY_KEY.get(key);
+      const rows = DEMO.records[key] || [];
+      if (!mod || !rows.length) continue;
+
+      const fields = new Map(mod.fields.map((f) => [f.key, f]));
+      const used = new Set(rows.flatMap((r) => Object.keys(r)));
+
+      for (const k of used) {
+        if (!fields.has(k)) problems.push(`${key}: data key "${k}" is not a field — ghost data, and it renders nowhere`);
+      }
+      for (const k of fields.keys()) {
+        if (!used.has(k)) problems.push(`${key}: field "${k}" is never filled — an empty column in the demo`);
+      }
+      for (const f of mod.fields) {
+        if (f.type !== 'select' || !f.options) continue;
+        for (const v of new Set(rows.map((r) => r[f.key]).filter(Boolean))) {
+          if (!f.options.includes(v)) problems.push(`${key}.${f.key}: "${v}" is not one of its options`);
+        }
+      }
+    }
+    assert.deepEqual(problems, [], `\n  ${problems.join('\n  ')}\n`);
   });
 
   test('the custom modules are shaped like templates, so createFromTemplate takes them', () => {

@@ -1988,6 +1988,44 @@
     }
   }
 
+  /*
+   * One field of a record, rendered as a value rather than a control.
+   *
+   * Deliberately NOT the same form with its inputs disabled. A greyed-out form
+   * still looks like a form that failed, and that is precisely the complaint
+   * this exists to answer: six editable fields and no Save button read as
+   * unfinished software rather than as a deliberate read-only view. Values on
+   * a page read as a finished thing to read.
+   *
+   * Reuses fmtValue so a field looks the same here as in the table it was
+   * opened from — one currency format, one date format, one relation name.
+   * Two deliberate departures: fmtValue truncates a textarea at 70 characters
+   * because it is writing a table cell, and a detail view is exactly where
+   * somebody goes to read the whole note; and a checkbox reads "Yes"/"No"
+   * rather than a tick, because there is no label beside it here to give a
+   * bare tick its meaning.
+   */
+  function fieldReadHTML(field, value) {
+    let body;
+    if (field.type === 'checkbox') {
+      // Before the empty check: an unticked box is "No", not "not filled in".
+      body = value ? 'Yes' : 'No';
+    } else if (value === undefined || value === null || value === '') {
+      // The same em dash the table uses, so an empty field reads as "nothing
+      // here" rather than as something that failed to load.
+      body = '<span class="muted">—</span>';
+    } else if (field.type === 'textarea') {
+      body = `<p class="read-note">${esc(String(value))}</p>`;
+    } else {
+      body = fmtValue(field, value);
+    }
+    return `
+      <div class="read-row">
+        <div class="read-label">${esc(field.label)}</div>
+        <div class="read-value">${body}</div>
+      </div>`;
+  }
+
   async function openRecord(staleMod, record) {
     // Rows can outlive the module definition they were rendered from (a CSV
     // import adds fields, the builder edits them), so always open the form
@@ -1995,18 +2033,35 @@
     const mod = getModule(staleMod.id) || staleMod;
     const isNew = !record;
     const data = record ? record.data : {};
-    const fieldsHTML = (await Promise.all(mod.fields.map(async (f) => `
-      <div class="form-row">
-        ${f.type !== 'checkbox' ? `<label for="f-${esc(f.key)}">${esc(f.label)}${f.required ? ' <span class="req">*</span>' : ''}</label>` : ''}
-        ${await fieldInputHTML(mod, f, data[f.key])}
-      </div>`))).join('');
+    const readOnly = !canEditRecords();
+
+    let fieldsHTML;
+    if (readOnly) {
+      // Relations render as the linked record's NAME, so the cache has to be
+      // warm before the values are formatted — an unwarmed one falls back to
+      // "(linked record)", which reads as breakage on a row that is fine.
+      await primeRelationCache(mod, record ? [record] : []);
+      fieldsHTML = mod.fields.map((f) => fieldReadHTML(f, data[f.key])).join('');
+    } else {
+      fieldsHTML = (await Promise.all(mod.fields.map(async (f) => `
+        <div class="form-row">
+          ${f.type !== 'checkbox' ? `<label for="f-${esc(f.key)}">${esc(f.label)}${f.required ? ' <span class="req">*</span>' : ''}</label>` : ''}
+          ${await fieldInputHTML(mod, f, data[f.key])}
+        </div>`))).join('');
+    }
 
     const modal = openModal(`
       <div class="modal-head">
         <h2>${isNew ? `New ${esc(singular(mod.name).toLowerCase())}` : esc(recordName(mod, record))}</h2>
         <button class="icon-btn" data-close aria-label="Close">${icon('x', 16)}</button>
       </div>
-      <form id="record-form" class="modal-body">${fieldsHTML}${authorHTML(record)}</form>
+      ${readOnly
+    // A div, not a form: there is nothing to submit, and a <form> with no
+    // submit control is the shape a screen reader announces as an unfinished
+    // one. Required markers go too — a `*` is an instruction, and there is
+    // nothing here to instruct.
+    ? `<div class="modal-body record-read">${fieldsHTML}${authorHTML(record)}</div>`
+    : `<form id="record-form" class="modal-body">${fieldsHTML}${authorHTML(record)}</form>`}
       <div class="modal-foot">
         ${!isNew && canDeleteRecords() ? `<button class="btn btn-danger-ghost" id="record-delete">${icon('trash-2', 15)} Delete</button>` : '<span></span>'}
         <div class="modal-foot-right">
