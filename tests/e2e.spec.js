@@ -1606,6 +1606,91 @@ test.describe('team workspaces', () => {
     await second.close();
   });
 
+  /*
+   * The same rules, on a module the USER built.
+   *
+   * Every other role test drives a template module or one the demo dataset
+   * created. A module made in the builder is a third case: its fields, types
+   * and options are chosen at runtime and its id was never in TEMPLATES. If
+   * anything about the gating keyed off a known module rather than off the
+   * caller's role, this is where it would show.
+   */
+  test('roles apply the same way to a module the user built themselves', async ({ page, browser }) => {
+    const ownerEmail = uniqueEmail('custom-owner');
+    await onboard(page, { name: 'Custom Co', templates: ['Contacts'] });
+    await signIn(page, ownerEmail);
+
+    // A module of their own, with a field type the templates never use here.
+    await page.click('#add-module-btn');
+    await page.fill('#b-name', 'Equipment');
+    await page.click('#b-add-field');
+    const row = page.locator('.builder-field').last();
+    await row.locator('.bf-label').fill('Serial');
+    await row.locator('.bf-list').check();
+    await page.click('#b-save');
+    await expect(page.locator('#nav-modules .nav-link:has-text("Equipment")')).toBeVisible({ timeout: 20000 });
+
+    await page.click('#nav-modules .nav-link:has-text("Equipment")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Laser cutter');
+    await page.fill('#f-serial', 'LC-0042');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Laser cutter")')).toBeVisible();
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+    const url = await inviteLink(page);
+
+    const second = await browser.newContext();
+    const mate = await second.newPage();
+    await mate.goto(new URL(url).pathname + new URL(url).search);
+    const mateEmail = uniqueEmail('custom-mate');
+    await signIn(mate, mateEmail, { claim: 'none' });
+    await expect(mate.locator('[data-join]').first()).toBeVisible({ timeout: 25000 });
+    await mate.click('[data-join="fresh"]');
+    await expect(mate.locator('#nav-modules .nav-link:has-text("Equipment")')).toBeVisible({ timeout: 25000 });
+
+    const members = await (await page.request.get('/api/org/members')).json();
+    const target = members.members.find((m) => m.email === mateEmail);
+    expect((await page.request.patch(`/api/org/members/${target.id}`, { data: { role: 'viewer' } })).ok()).toBeTruthy();
+    await mate.reload();
+
+    // The custom module is fully readable, including its custom field.
+    await mate.click('#nav-modules .nav-link:has-text("Equipment")');
+    await expect(mate.locator('tr:has-text("Laser cutter")')).toBeVisible({ timeout: 20000 });
+    await expect(mate.locator('#main')).toContainText('LC-0042');
+
+    // And gated exactly as a template module is.
+    expect(await mate.locator('#add-record-btn').count(), 'custom module offers Add').toBe(0);
+    expect(await mate.locator('#import-csv-btn').count(), 'custom module offers CSV import').toBe(0);
+    await expect(mate.locator('#export-csv-btn')).toBeVisible();
+
+    await mate.click('tr:has-text("Laser cutter") td:first-child');
+    const modal = mate.locator('#modal-root');
+    await expect(modal.locator('.record-read')).toBeVisible({ timeout: 15000 });
+    expect(await modal.locator('input, select, textarea').count(), 'custom fields are editable').toBe(0);
+    await expect(modal).toContainText('LC-0042');
+    await mate.keyboard.press('Escape');
+
+    /*
+     * And the server refuses a write to it, which is the half the UI cannot
+     * guarantee. Pushed directly, so this is the rule and not the button.
+     */
+    const before = await (await page.request.get('/api/data')).json();
+    const rec = before.records.find((r) => r.data && r.data.name === 'Laser cutter');
+    const out = await mate.evaluate(async (id) => {
+      const rows = await DB.getAll('records');
+      const target2 = rows.find((r) => r.id === id);
+      await DB.put('records', { ...target2, data: { ...target2.data, serial: 'TAMPERED' }, updatedAt: Date.now() });
+      Scope.set('dirty', '1');
+      return Cloud.sync();
+    }, rec.id);
+    expect(out, 'the sync should have reported a refusal').toBeTruthy();
+
+    const after = await (await page.request.get('/api/data')).json();
+    const still = after.records.find((r) => r.id === rec.id);
+    expect(still.data.serial, 'a viewer edited a record in a user-built module').toBe('LC-0042');
+    await second.close();
+  });
+
   test('a demoted member has their module edit reverted, and is told why', async ({ page, browser }) => {
     const ownerEmail = uniqueEmail('demote-owner');
     await onboard(page, { name: 'Demote Co' });

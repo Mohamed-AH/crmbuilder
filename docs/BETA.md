@@ -176,20 +176,69 @@ minutes against a 15-minute timeout is one missed check away from a cold start.
 | Storage warning at 85% | Export a backup, then look at the Organisations table. Check the **reclaimable** line under each size before you act: a tenant that is mostly tombstones will shrink on its own and is not the same problem as one that is genuinely large. |
 | A workspace looks far bigger than its record count | Probably tombstones — the row will say `N% reclaimable`. Every delete leaves a small permanent row for 180 days, so a tester who loads and clears the demo data repeatedly builds them up faster than real records. Nothing to fix; deleted rows are not recoverable and the space comes back on its own. `node scripts/inspect.mjs` prints the same split per organisation, plus the date the first ones expire. |
 
-### Standing up a demo deployment
+### Standing up a demo workspace, locally
 
-`node scripts/seed-fixture.mjs --yes` fills the **file store** with four
-organisations, a team covering every role, tombstones aged across the retention
-window, and meta counters that match — enough to show the operator panel doing
-its job without waiting for real usage. `--clean --yes` takes it back out.
+For seeing the operator panel, the role ladder and the storage figures doing
+their job without waiting for real usage. **This runs on your own machine
+against the file store — it is not a deployment step**, and it cannot reach
+Atlas even if you ask it to (`CLAUDE.md` §34).
 
-It writes `DATA_DIR/store.json` and has **no MongoDB path at all**, deliberately
-(`CLAUDE.md` §34), so it cannot reach a real tenant. A server started with
-`MONGODB_URI` set will not see anything it seeds — the script warns about that,
-because it is the obvious way to lose an afternoon.
+```sh
+# 1. Seed. DATA_DIR keeps it away from your ordinary ./data.
+DATA_DIR=./data/demo node scripts/seed-fixture.mjs --yes
+
+# 2. Run against that same directory, with dev sign-in on.
+#    MONGODB_URI must be EMPTY here — see the warning below.
+MONGODB_URI= DATA_DIR=./data/demo ALLOW_DEV_LOGIN=1 node server.js
+
+# 3. Open http://localhost:8321 and sign in as any account below.
+#    Dev sign-in takes an email and no password.
+
+# When you are done:
+DATA_DIR=./data/demo node scripts/seed-fixture.mjs --clean --yes
+```
+
+**`MONGODB_URI` is the trap.** If it is set — including from a `.env` file the
+server picks up — the server reads MongoDB and will not see a single thing the
+fixture wrote. You get a working app with an empty workspace and no error, which
+is the obvious way to lose an afternoon. `MONGODB_URI=` on the command line, as
+above, clears it for that one process. The seed script warns you if it sees one
+set, but it cannot know what the server will be started with.
+
+**Two environment variables and nothing else:**
+
+| Variable | Value | Why |
+|---|---|---|
+| `DATA_DIR` | `./data/demo` | Where the fixture is written and where the server reads it. Both commands must use the same one |
+| `MONGODB_URI` | *empty* | Forces the file store. Anything else and the fixture is invisible |
+| `ALLOW_DEV_LOGIN` | `1` | Lets you sign in as the fixture accounts without Google. **Off in production**, and the smoke test checks that |
+
+### The demo accounts
+
+Fixed, and they only change if `scripts/seed-fixture.mjs` changes. Every address
+is on `.invalid`, which RFC 2606 reserves so it can never reach a real inbox.
+
+| Sign in as | Role | Sees |
+|---|---|---|
+| `maya@fixture.invalid` | **owner** of Lumen Studio | Everything: module fields, invites, the team, the workspace name and currency |
+| `daniel@fixture.invalid` | **member** | Records, including deleting them. No schema, no settings |
+| `priya@fixture.invalid` | **contributor** | Add and edit records, but no Delete on a record |
+| `sam@fixture.invalid` | **viewer** | Read and export only — a *View only* badge, records open as values, no write buttons anywhere |
+| `ops@fixture.invalid` | **platform admin**, own org | The Admin screen: Deployment card, Organisations table, quotas, alerts |
+| `nadia@fixture.invalid` | **owner** of Northwind Consulting | A second tenant, so no organisation reads as 100% of the database |
+
+**To see the role work**, sign in as `maya` in one browser profile and `sam` in
+another (or a private window) against the same server — the point is two people
+in one workspace, which one profile cannot show you.
+
+**What the fixture contains:** four organisations — Lumen Studio with the four
+team members, Northwind with one, an operations org for the platform admin, and
+one deliberately empty placeholder so you can recognise that row rather than
+fear it. Plus tombstones aged 2–176 days across the retention window, so the
+Organisations table's *reclaimable* figure has something real to show.
 
 Not to be confused with **Load demo data** inside the app, which is a user
-loading samples into their own workspace on their own device.
+loading samples into their own workspace on their own device (`CLAUDE.md` §34).
 
 ### Closing the beta
 

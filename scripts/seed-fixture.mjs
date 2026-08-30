@@ -418,8 +418,22 @@ function main() {
   console.log(`  ${s.orgs} organisations, ${s.users} accounts (${TEAM.map((t) => t.role).join(', ')}, platformAdmin)`);
   console.log(`  ${s.liveModules} modules · ${s.liveRecords} live records · ${s.tombstones} tombstones`);
   console.log(`  tombstones aged ${Math.min(...TOMBSTONE_AGES_DAYS)}–${s.oldestTombstoneDays} days, so retention is visible`);
-  console.log(`\n  ALLOW_DEV_LOGIN=1 DATA_DIR=${DATA_DIR} node server.js`);
-  console.log(`  then sign in as any of: ${['ops', ...TEAM.map((t) => t.key)].map((k) => k + DOMAIN).join(', ')}`);
+  /*
+   * MONGODB_URI= is not decoration. If the server starts with one set — from
+   * the environment or a .env it picks up — it reads Mongo and sees none of
+   * this, with no error: a working app over an empty workspace. Printing the
+   * command without it hands the reader that afternoon.
+   */
+  console.log(`\n  MONGODB_URI= DATA_DIR=${DATA_DIR} ALLOW_DEV_LOGIN=1 node server.js`);
+  console.log('\n  then sign in (dev sign-in takes an email, no password) as:');
+  const accounts = [
+    ...TEAM.map((t) => [t.key + DOMAIN, `${t.role}, Lumen Studio`]),
+    [`ops${DOMAIN}`, 'platformAdmin, own org — the Admin screen'],
+    [`nadia${DOMAIN}`, 'owner, Northwind Consulting — the second tenant'],
+  ];
+  const pad = Math.max(...accounts.map(([e]) => e.length));
+  for (const [email, what] of accounts) console.log(`    ${email.padEnd(pad)}  ${what}`);
+  console.log('\n  docs/BETA.md § "Standing up a demo workspace, locally" has the rest.');
 }
 
 const FIXTURE_ORG_NAMES = ['Fixture Operations', 'Lumen Studio', 'Northwind Consulting', 'Meridian Partners (vacated)'];

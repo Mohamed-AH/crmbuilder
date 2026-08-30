@@ -2484,6 +2484,27 @@ drifted one does not throw — it loads and is quietly wrong.
   vetoes removal**, whatever the org is called. Guarded by a test that fails on
   the name-only version.
 
+### Running it, and the trap that has to be printed twice
+
+Reported after a real attempt: the fixture was unrunnable from the docs. There
+was no instruction that this is a **local** thing, no environment setup, and the
+accounts existed only in the script's own output — so the only way to learn who
+to sign in as was to run the thing you could not work out how to run.
+
+`docs/BETA.md` § *"Standing up a demo workspace, locally"* now carries three
+runnable commands, the env table and the six accounts with their roles.
+
+**`MONGODB_URI` is the trap, and it fails silently.** With one set — including
+from a `.env` the server picks up — the server reads Mongo and sees nothing the
+fixture wrote: a working app over an empty workspace, no error, no clue. So
+`MONGODB_URI=` is on the command line in the doc **and** in the line the script
+prints when it finishes. The script cannot know what the server will later be
+started with, so it prints the whole command rather than a hint.
+
+**The account list belongs in both places for the same reason.** A doc gets read
+before the run and the script's output gets read after it, and the person who
+needs it may only see one. It prints roles now, and no longer omits the second
+tenant's owner — the account you need to see that no org reads as 100%.
 
 ---
 
@@ -2635,3 +2656,30 @@ is the pattern rule 2 argues against. Not converted, because a module's *shape*
 is a list of controls — the type, the required flag and the list flag are what
 make it legible — and rendering that as prose would lose the thing being read.
 Say that rather than treating it as an inconsistency to tidy.
+
+### A module the user built themselves is not a different case
+
+Asked directly, and worth an answer that is measured rather than argued: every
+role test until now drove a **template** module, so "does this hold for a module
+someone built in the builder" was an assumption, not a result.
+
+It holds, and structurally it has to — nothing on either side of the seam looks
+at where a module came from. `canEditRecords` / `canDeleteRecords` /
+`canEditSchema` take a *user*; `applyPush` gates by role on the row's `wsId`;
+`TEMPLATES` is a seed for the builder and is never consulted again. There is no
+provenance field on a module for a permission check to read even if one wanted
+to.
+
+Guarded anyway, because "structurally impossible" is the claim that stops being
+true after a refactor nobody connected to it. *"roles apply the same way to a
+module the user built themselves"* builds an **Equipment** module through the
+real builder with a custom `Serial` field, adds a record, then demotes a
+colleague to viewer and asserts they read the custom module and its custom
+field, get `.record-read` with zero inputs, see no add or import control — and,
+pushing straight through `Cloud.sync()` rather than the UI, cannot change
+`serial`. Checked against the broken state per §9: with `canEditRecords`
+returning `true` it fails on the value, `LC-0042` against `TAMPERED`.
+
+**The push is the half that matters.** Asserting only that the buttons are gone
+tests the client's manners; the viewer who matters is the one who does not use
+the buttons.
