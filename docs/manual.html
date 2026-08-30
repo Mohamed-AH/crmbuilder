@@ -746,11 +746,12 @@
             <tr><td><strong>Owner</strong></td><td>Everything: module fields, adding and deleting modules, invites, and managing the team</td></tr>
             <tr><td><strong>Member</strong></td><td>Create, edit and delete records</td></tr>
             <tr><td><strong>Contributor</strong></td><td>Create and edit records, but not delete them</td></tr>
-            <tr><td><strong>Viewer</strong></td><td>Read only</td></tr>
+            <tr><td><strong>Viewer</strong></td><td>Read only &mdash; and export</td></tr>
           </tbody>
         </table>
       </div>
-      <p>A field rename changes what every record in the team means, so the schema belongs with whoever is accountable for the workspace. Anyone below owner opening the module builder sees the fields but cannot change them.</p>
+      <p>A field rename changes what every record in the team means, so the schema belongs with whoever is accountable for the workspace. Anyone below owner opening the module builder sees the fields but cannot change them. The workspace&rsquo;s name and currency are owner-only for the same reason: changing the currency relabels every amount in the team&rsquo;s records rather than converting them.</p>
+      <p class="note tip"><strong>What view-only looks like.</strong> It is a complete app for reading, not a restricted one for writing. A viewer sees every module and record, can search and sort, switch between table and board, open any record, and export to CSV or JSON &mdash; which is the whole job if they are an auditor or an investor doing due diligence. Records open as values rather than as a form, so there is no Save button to look for and nothing to type into by mistake. A quiet <em>View only</em> badge sits beside their name in the sidebar, and Settings says so once in plain words. Buttons that would create or delete something are simply not shown.</p>
       <p>If someone's role changes while they are offline, work they did in the meantime that they are no longer allowed to do is undone when they reconnect, and the app says which rule stopped it rather than leaving them to guess.</p>
 
       <p><strong>Managing the team</strong> (Settings → Team, owners only): set anyone's role from the picker beside their name, remove them, and revoke an invite link that has not been used yet.</p>

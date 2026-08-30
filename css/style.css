@@ -196,6 +196,16 @@ svg.lucide { vertical-align: -2px; flex-shrink: 0; }
 .card-head h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 .empty-hint { color: var(--text-soft); margin: 8px 0; }
 .settings-hint { color: var(--text-soft); margin: 0 0 14px; max-width: 62ch; font-size: 13px; }
+/* Said once, where identity lives, rather than as a banner on every screen —
+   a banner nags and reads as an error state (§36). Quiet on purpose: this is a
+   fact about the account, not a warning about it. */
+.role-pill {
+  margin-left: 6px; padding: 1px 6px; border-radius: 99px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--text-soft); background: var(--surface);
+  border: 1px solid var(--border-strong); vertical-align: 1px;
+}
+
 /* A record shown to somebody who cannot edit it.
    Values on a page, not a form with its inputs turned off — a greyed-out form
    still reads as one that failed. The label is quiet and the value carries the

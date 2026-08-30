@@ -71,6 +71,18 @@
   const myRole = () => (Cloud.isAuthed && Cloud.user ? Cloud.user.role : null);
   const canEditRecords = () => myRole() !== 'viewer';
   const canDeleteRecords = () => myRole() !== 'viewer' && myRole() !== 'contributor';
+  // The workspace's name and currency, owner-only — mirrors canEditSettings()
+  // on the server, which is the one that decides (§14).
+  const canEditSettings = () => canEditSchema();
+  /*
+   * Read-only is a state worth naming once rather than testing for everywhere.
+   *
+   * The rule behind every gate below (§36): creating something is HIDDEN,
+   * because a missing Add button explains itself; anything non-mutating —
+   * search, sort, the view switch, Export — stays, because that is the whole
+   * job for an auditor or an investor reading the workspace.
+   */
+  const isViewOnly = () => myRole() === 'viewer';
 
   const MODULE_COLORS = ['#1570ef', '#0e9384', '#099250', '#dc6803', '#c11574', '#6938ef', '#d92d20', '#475467'];
   const MODULE_ICONS = ['package', 'users', 'building-2', 'handshake', 'square-check-big', 'target', 'sticky-note', 'calendar', 'receipt', 'briefcase', 'wrench', 'truck', 'star', 'tag', 'clipboard-list', 'folder', 'map-pin', 'globe', 'phone', 'mail', 'heart', 'database'];
@@ -739,7 +751,7 @@
       <div class="user-chip">
         ${u.picture ? `<img class="avatar" src="${esc(u.picture)}" alt="" referrerpolicy="no-referrer">` : `<span class="avatar avatar-fallback">${esc((u.name || u.email)[0].toUpperCase())}</span>`}
         <span class="user-chip-text">
-          <span class="user-chip-name">${esc(u.name || u.email)}</span>
+          <span class="user-chip-name">${esc(u.name || u.email)}${isViewOnly() ? '<span class="role-pill">View only</span>' : ''}</span>
           <span class="sync-status" data-status="${Cloud.status}"><span class="sync-dot"></span>${labels[Cloud.status] || 'Synced'}</span>
         </span>
       </div>`;
@@ -753,6 +765,12 @@
         <span class="nav-icon" style="color:${esc(m.color)};background:${esc(m.color)}1a">${modIcon(m)}</span>
         <span class="nav-label">${esc(m.name)}</span>
       </a>`).join('') || '<p class="nav-empty">No modules yet</p>';
+
+    // The "+" beside Modules is static in index.html, so it is hidden here
+    // rather than conditionally rendered. Creating a module is owner-only, and
+    // a create affordance that refuses is the thing §36 exists to remove.
+    const addModule = $('#add-module-btn');
+    if (addModule) addModule.classList.toggle('hidden', !canEditSchema());
 
     // Show Admin to whoever it is actually useful to: the platform operator,
     // and org owners whose org has someone else in it. A solo signup owns an
@@ -1115,10 +1133,10 @@
               <span class="stat-count">${records.length}</span>
               <span class="stat-label">${esc(mod.name)}</span>
             </a>`).join('')}
-          <button class="stat-card stat-card-add" id="dash-add-module">
+          ${canEditSchema() ? `<button class="stat-card stat-card-add" id="dash-add-module">
             <span class="stat-icon">${icon('plus', 18)}</span>
             <span class="stat-label">Add module</span>
-          </button>
+          </button>` : ''}
         </div>
         <div class="dash-grid">
           <div class="card">
@@ -1142,17 +1160,19 @@
                 <span class="stat-tile-value">${esc(fmtCurrency(totalValue))}</span>
                 <span class="stat-tile-sub">Sum of all currency fields across modules</span>
               </div>` : ''}
+            ${canEditRecords() ? `
             <div class="card">
               <div class="card-head"><h2>Quick add</h2></div>
               <div class="quick-add">
                 ${modules.slice(0, 6).map((m) => `
                   <button class="btn btn-outline" data-quick-add="${m.id}">${icon('plus', 14)} ${esc(singular(m.name))}</button>`).join('')}
               </div>
-            </div>
+            </div>` : ''}
           </div>
         </div>
       </div>`;
-    $('#dash-add-module').addEventListener('click', () => openBuilder(null));
+    const dashAdd = $('#dash-add-module');
+    if (dashAdd) dashAdd.addEventListener('click', () => openBuilder(null));
     $$('[data-quick-add]').forEach((b) => b.addEventListener('click', () => {
       const mod = getModule(b.dataset.quickAdd);
       if (mod) openRecord(mod, null);
@@ -1581,10 +1601,20 @@
                 <button class="seg-btn ${st.view === 'table' ? 'on' : ''}" data-view="table" title="Table view">${icon('table-properties', 15)}</button>
                 <button class="seg-btn ${st.view === 'kanban' ? 'on' : ''}" data-view="kanban" title="Board view">${icon('square-kanban', 15)}</button>
               </div>` : ''}
+            <!-- Export stays for everyone. Reading the workspace and taking a
+                 copy of it IS the job for an auditor or an investor, and
+                 nothing about it writes. -->
             <button class="icon-btn" id="export-csv-btn" title="Export to CSV">${icon('download', 15)}</button>
-            <button class="icon-btn" id="import-csv-btn" title="Import from CSV">${icon('upload', 15)}</button>
-            <input type="file" id="import-csv-file" accept=".csv,text/csv" class="hidden">
-            <button class="icon-btn" id="edit-module-btn" title="Edit module">${icon('pencil', 15)}</button>
+            ${canEditRecords() ? `
+              <button class="icon-btn" id="import-csv-btn" title="Import from CSV">${icon('upload', 15)}</button>
+              <input type="file" id="import-csv-file" accept=".csv,text/csv" class="hidden">` : ''}
+            <!-- Kept for every role, and RETITLED rather than hidden. The
+                 builder already renders read-only for non-owners — no save, no
+                 delete, and a line naming the rule — so this is the entry to a
+                 read view that exists, not a create affordance that refuses.
+                 Seeing which fields a module has is reading, and an auditor
+                 has a legitimate reason to look. -->
+            <button class="icon-btn" id="edit-module-btn" title="${canEditSchema() ? 'Edit module' : 'View module fields'}">${icon(canEditSchema() ? 'pencil' : 'table-properties', 15)}</button>
             ${canEditRecords() ? `<button class="btn btn-primary" id="add-record-btn">${icon('plus', 15)} Add</button>` : ''}
           </div>
         </div>
@@ -1604,10 +1634,17 @@
     }));
     const addBtn = $('#add-record-btn');
     if (addBtn) addBtn.addEventListener('click', () => openRecord(mod, null));
-    $('#edit-module-btn').addEventListener('click', () => openBuilder(mod));
+    // Guarded, because these are no longer rendered for every role and an
+    // unguarded addEventListener on null throws before the page finishes
+    // binding — which would take the whole screen down, not just the button.
+    const editBtn = $('#edit-module-btn');
+    if (editBtn) editBtn.addEventListener('click', () => openBuilder(mod));
     $('#export-csv-btn').addEventListener('click', () => exportModuleCSV(mod));
-    $('#import-csv-btn').addEventListener('click', () => $('#import-csv-file').click());
-    $('#import-csv-file').addEventListener('change', (e) => openCSVImport(mod, e));
+    const importBtn = $('#import-csv-btn');
+    if (importBtn) {
+      importBtn.addEventListener('click', () => $('#import-csv-file').click());
+      $('#import-csv-file').addEventListener('change', (e) => openCSVImport(mod, e));
+    }
     bindModuleBody(mod);
   }
 
@@ -2548,6 +2585,7 @@
           </div>`}
         <div class="card">
           <div class="card-head"><h2>Workspace</h2></div>
+          ${canEditSettings() ? `
           <div class="settings-grid">
             <div class="form-row">
               <label for="set-name">Business name</label>
@@ -2560,12 +2598,28 @@
               </select>
             </div>
           </div>
-          <button class="btn btn-primary" id="save-workspace">Save workspace</button>
+          <button class="btn btn-primary" id="save-workspace">Save workspace</button>` : `
+          <!-- Values, not disabled inputs (§36). Owner-only because changing
+               the currency RELABELS every stored amount for the whole team
+               (§23), which is structural rather than a preference. -->
+          <div class="record-read">
+            <div class="read-row"><div class="read-label">Business name</div>
+              <div class="read-value">${SETTINGS.businessName ? esc(SETTINGS.businessName) : '<span class="muted">—</span>'}</div></div>
+            <div class="read-row"><div class="read-label">Currency</div>
+              <div class="read-value">${esc(SETTINGS.currency)}</div></div>
+          </div>
+          <p class="settings-hint" style="margin:12px 0 0">These are set by the team's owner. Changing the currency would relabel every amount in the workspace, so it stays with them.</p>`}
         </div>
         <div class="card">
           <div class="card-head"><h2>Account & sync</h2></div>
           ${authed ? `
-            <p class="settings-hint">Signed in as <strong>${esc(Cloud.user.email)}</strong>${Cloud.user.role === 'platformAdmin' ? ' (platform admin)' : Cloud.user.role === 'owner' ? ' (owner)' : ''}. Your workspace syncs automatically; changes made offline sync when you're back online.</p>
+            <p class="settings-hint">Signed in as <strong>${esc(Cloud.user.email)}</strong>${ROLE_LABELS[Cloud.user.role] ? ` (${esc(ROLE_LABELS[Cloud.user.role].toLowerCase())})` : ''}. Your workspace syncs automatically; changes made offline sync when you're back online.</p>
+            ${isViewOnly() ? `
+              <!-- Said once, in the place the account is already described.
+                   Framed as what they CAN do: a view-only account may be an
+                   intern, an investor or an external auditor, and "denied" is
+                   a word for an attacker (§36). -->
+              <p class="settings-hint"><strong>You have view-only access to this workspace.</strong> You can open and read everything here, search it, and export it to CSV or JSON. Adding and changing records is done by the rest of the team.</p>` : ''}
             <div class="btn-row">
               <button class="btn" id="sync-now-btn">${icon('refresh-cw', 15)} Sync now</button>
               <button class="btn" id="report-problem-btn">${icon('sticky-note', 15)} Report a problem</button>
@@ -2624,30 +2678,35 @@
           <p class="settings-hint">Export a backup file anytime, or use one to move your CRM between devices.</p>
           <div class="btn-row">
             <button class="btn" id="export-btn">${icon('download', 15)} Export data (JSON)</button>
-            <button class="btn" id="import-btn">${icon('upload', 15)} Import backup</button>
-            <input type="file" id="import-file" accept="application/json,.json" class="hidden">
+            ${canEditRecords() ? `
+              <button class="btn" id="import-btn">${icon('upload', 15)} Import backup</button>
+              <input type="file" id="import-file" accept="application/json,.json" class="hidden">` : ''}
           </div>
         </div>
         <div class="card">
           <div class="card-head"><h2>App</h2></div>
           <div class="btn-row">
+            <!-- Installing is a device-local act and writes nothing to the
+                 workspace, so it stays whatever the role. -->
             <button class="btn ${deferredInstall ? '' : 'hidden'}" id="settings-install">${icon('download', 15)} Install on this device</button>
-            <button class="btn" id="add-template-btn">${icon('plus', 15)} Add module from template</button>
-            <button class="btn" id="load-demo-btn">${icon('database', 15)} Load demo data</button>
+            ${canEditSchema() ? `<button class="btn" id="add-template-btn">${icon('plus', 15)} Add module from template</button>` : ''}
+            ${canEditRecords() ? `<button class="btn" id="load-demo-btn">${icon('database', 15)} Load demo data</button>` : ''}
             <button class="btn" id="replay-tour-btn">${icon('map-pin', 15)} Replay the tour</button>
-            ${demoCount ? `<button class="btn" id="remove-demo-btn">${icon('trash-2', 15)} Remove sample data (${esc(demoBreakdown)})</button>` : ''}
+            ${demoCount && canEditRecords() ? `<button class="btn" id="remove-demo-btn">${icon('trash-2', 15)} Remove sample data (${esc(demoBreakdown)})</button>` : ''}
           </div>
-          <p class="settings-hint" style="margin:12px 0 0">Demo data fills every module with a sample business so you can explore or present without entering records first. It is added alongside anything you already have.</p>
+          ${canEditRecords() ? '<p class="settings-hint" style="margin:12px 0 0">Demo data fills every module with a sample business so you can explore or present without entering records first. It is added alongside anything you already have.</p>' : ''}
         </div>
+        ${canDeleteRecords() ? `
         <div class="card danger-zone">
           <div class="card-head"><h2>Danger zone</h2></div>
           <div class="btn-row">
             <button class="btn btn-danger-ghost" id="reset-btn">${icon('trash-2', 15)} Delete all data</button>
           </div>
-        </div>
+        </div>` : ''}
       </div>`;
 
-    $('#save-workspace').addEventListener('click', async () => {
+    const saveWs = $('#save-workspace');
+    if (saveWs) saveWs.addEventListener('click', async () => {
       const nextCurrency = $('#set-currency').value;
       if (nextCurrency !== SETTINGS.currency && !(await confirmCurrencyChange(SETTINGS.currency, nextCurrency))) return;
       SETTINGS.businessName = $('#set-name').value.trim();
@@ -2662,9 +2721,16 @@
     if (reportBtn) reportBtn.addEventListener('click', openProblemReport);
     bindTeamActions();
     $('#export-btn').addEventListener('click', exportData);
-    $('#import-btn').addEventListener('click', () => $('#import-file').click());
-    $('#import-file').addEventListener('change', importData);
-    $('#reset-btn').addEventListener('click', async () => {
+    // Each of these is now conditional on role, so every bind is guarded: an
+    // addEventListener on null throws and takes the whole screen down with it,
+    // not just the button that is missing.
+    const importBtn = $('#import-btn');
+    if (importBtn) {
+      importBtn.addEventListener('click', () => $('#import-file').click());
+      $('#import-file').addEventListener('change', importData);
+    }
+    const resetBtn = $('#reset-btn');
+    if (resetBtn) resetBtn.addEventListener('click', async () => {
       if (!confirm('Delete ALL modules and records from this device? Export a backup first if you might need this data.')) return;
       await DB.softClearAll();
       Scope.remove('snapshot');
@@ -2677,7 +2743,8 @@
     });
     const installBtn = $('#settings-install');
     if (installBtn) installBtn.addEventListener('click', promptInstall);
-    $('#add-template-btn').addEventListener('click', openTemplatePicker);
+    const addTemplate = $('#add-template-btn');
+    if (addTemplate) addTemplate.addEventListener('click', openTemplatePicker);
     $('#replay-tour-btn').addEventListener('click', startTourWithConsent);
     const removeDemo = $('#remove-demo-btn');
     if (removeDemo) {
@@ -2691,7 +2758,8 @@
         route();
       });
     }
-    $('#load-demo-btn').addEventListener('click', async () => {
+    const loadDemo = $('#load-demo-btn');
+    if (loadDemo) loadDemo.addEventListener('click', async () => {
       const replace = modules.length > 0
         && confirm('Replace your current modules and records with the demo business?\n\nOK = replace everything (your current data is deleted)\nCancel = add demo data alongside what you have');
       await loadDemoData({ replace });

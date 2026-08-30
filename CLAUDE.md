@@ -154,7 +154,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v30`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v31`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -2601,3 +2601,37 @@ survived a full suite, a screenshot review and a live deployment.
 
 The lesson is the one this file keeps relearning: a defect that renders as
 *plausible* is invisible until something forces it to render differently.
+
+### Gating the rest, and the one thing that must NOT be hidden
+
+Creates and destructive actions are hidden per rule 1: dashboard quick-add and
+Add module, the sidebar's `+`, CSV import, Import backup, Load demo data, Add
+module from template, Delete all data. The workspace name and currency render
+as values for anyone but an owner.
+
+**Export stays for every role, deliberately.** Reading the workspace and taking
+a copy of it *is* the job for an auditor or an investor, and nothing about it
+writes. That is a policy choice, not an oversight.
+
+**Hiding `#edit-module-btn` was wrong, and a test caught it.** The builder
+already renders read-only for non-owners — no save, no delete, and a line
+naming the rule — so hiding the button removed the entry point to a read view
+that was already correct. It is retitled instead: *View module fields*, with a
+table icon rather than a pencil. Seeing which fields a module has is reading.
+
+The general form: **before hiding a control, check whether it already opens a
+read view.** Rule 1 is about creating, not about looking.
+
+**Every bind is guarded now.** Nine handlers used to call
+`addEventListener` on an element the template always produced. Once the
+template is conditional, an unguarded bind throws and takes the whole screen
+down rather than just the missing button — which is a far worse failure than
+the one being fixed.
+
+### Left deliberately
+
+`.builder-readonly` still greys its inputs with `pointer-events: none`, which
+is the pattern rule 2 argues against. Not converted, because a module's *shape*
+is a list of controls — the type, the required flag and the list flag are what
+make it legible — and rendering that as prose would lose the thing being read.
+Say that rather than treating it as an inconsistency to tidy.

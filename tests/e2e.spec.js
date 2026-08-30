@@ -1507,7 +1507,7 @@ test.describe('team workspaces', () => {
    * Values, not disabled inputs: a greyed-out form still looks like one that
    * broke.
    */
-  test('a viewer opens a record as values, not as a form that cannot be saved', async ({ page, browser }) => {
+  test('a view-only account gets a finished app for reading, not a broken one for writing', async ({ page, browser }) => {
     const ownerEmail = uniqueEmail('ro-owner');
     await onboard(page, { name: 'Read Only Co', templates: ['Contacts'] });
     await signIn(page, ownerEmail);
@@ -1553,6 +1553,56 @@ test.describe('team workspaces', () => {
     expect(await modal.locator('.req').count()).toBe(0);
     expect(await modal.locator('#record-save, #record-delete').count()).toBe(0);
     await expect(modal.locator('[data-close]').last()).toHaveText(/Close/);
+    await mate.keyboard.press('Escape');
+
+    /*
+     * And the rest of the surface, in one pass.
+     *
+     * The audit that started this found write controls offered on every
+     * screen: quick-add and Add module on the dashboard, Import from CSV and
+     * Edit module in the header, and a Save workspace button over an editable
+     * business name and currency — which a viewer could actually change until
+     * the server gate landed (§14).
+     *
+     * The rule (§36): creating is hidden, non-mutating stays. Export is
+     * deliberately in the second group — reading the workspace and taking a
+     * copy IS the job for an auditor or an investor.
+     */
+    await mate.goto('/#/');
+    await expect(mate.locator('.stat-card').first()).toBeVisible({ timeout: 20000 });
+    expect(await mate.locator('#dash-add-module').count(), 'dashboard offers Add module').toBe(0);
+    expect(await mate.locator('[data-quick-add]').count(), 'dashboard offers quick add').toBe(0);
+    expect(await mate.locator('#add-module-btn:visible').count(), 'sidebar offers a new module').toBe(0);
+
+    await mate.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(mate.locator('h1')).toContainText('Contacts');
+    expect(await mate.locator('#add-record-btn').count(), 'module offers Add').toBe(0);
+    expect(await mate.locator('#import-csv-btn').count(), 'module offers CSV import').toBe(0);
+    // Kept, but retitled: the builder is already a read view for non-owners,
+    // so this opens something legible rather than refusing.
+    await expect(mate.locator('#edit-module-btn')).toHaveAttribute('title', 'View module fields');
+    await expect(mate.locator('#export-csv-btn'), 'export must stay — it is the job').toBeVisible();
+    await expect(mate.locator('#record-search'), 'search must stay').toBeVisible();
+
+    await mate.goto('/#/settings');
+    await expect(mate.locator('.page-head .subtitle')).toBeVisible({ timeout: 20000 });
+    expect(await mate.locator('#set-name').count(), 'settings offers an editable name').toBe(0);
+    expect(await mate.locator('#set-currency').count(), 'settings offers an editable currency').toBe(0);
+    expect(await mate.locator('#save-workspace').count(), 'settings offers Save workspace').toBe(0);
+    expect(await mate.locator('#import-btn').count(), 'settings offers Import backup').toBe(0);
+    expect(await mate.locator('#reset-btn').count(), 'settings offers Delete all data').toBe(0);
+    expect(await mate.locator('#add-template-btn').count(), 'settings offers Add module').toBe(0);
+    await expect(mate.locator('#export-btn'), 'JSON export must stay').toBeVisible();
+
+    // The workspace is still READABLE — this is a read view, not a blank card.
+    await expect(mate.locator('.card:has(h2:text-is("Workspace"))')).toContainText('Read Only Co');
+
+    // Said once, where identity lives, and once more where the account is
+    // described. Not a banner on every screen.
+    await expect(mate.locator('.role-pill')).toHaveText('View only');
+    await expect(mate.locator('#main')).toContainText('view-only access');
+    // Framed as what they can do, never as a refusal.
+    await expect(mate.locator('#main')).not.toContainText(/denied|forbidden|not permitted/i);
     await second.close();
   });
 

@@ -301,11 +301,24 @@ does plus one more thing:
 | **Owner** | Everything: module fields, adding and deleting modules, invites, and managing the team |
 | **Member** | Create, edit and delete records |
 | **Contributor** | Create and edit records, but not delete them |
-| **Viewer** | Read only |
+| **Viewer** | Read only — and export |
 
 A field rename changes what every record in the team means, so the schema
 belongs with whoever is accountable for the workspace. Anyone below owner
-opening the module builder sees the fields but cannot change them.
+opening the module builder sees the fields but cannot change them. The
+workspace's name and currency are owner-only for the same reason: changing the
+currency relabels every amount in the team's records rather than converting
+them.
+
+**What view-only looks like.** It is a complete app for reading, not a
+restricted one for writing. A viewer sees every module and record, can search
+and sort, switch between table and board, open any record, and export to CSV or
+JSON — which is the whole job if they are an auditor or an investor doing due
+diligence. Records open as values rather than as a form, so there is no Save
+button to look for and nothing to type into by mistake. A quiet *View only*
+badge sits beside their name in the sidebar, and Settings says so once in
+plain words. Buttons that would create or delete something are simply not
+shown.
 
 If someone's role changes while they are offline, work they did in the meantime
 that they are no longer allowed to do is undone when they reconnect, and the
