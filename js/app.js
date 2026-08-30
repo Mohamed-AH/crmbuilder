@@ -532,6 +532,23 @@
         });
       }
     }
+    /*
+     * A refused settings change, put back to the workspace's real values.
+     *
+     * Unconditionally, and taking the SERVER'S clock with it — the same reason
+     * a rejected row does (§14). The pull only carries settings when
+     * settingsServerAt has moved, and refusing does not move it, so a local
+     * copy stamped later would keep winning here and be re-pushed on every
+     * sync, for ever. Overwriting with the server's clock drops it back below
+     * the push watermark and the loop ends.
+     */
+    if (rejected.settings && rejected.settings.doc) {
+      SETTINGS = { ...DEFAULT_SETTINGS, ...rejected.settings.doc };
+      Scope.set('settings', JSON.stringify(SETTINGS));
+      Scope.set('settingsAt', String(rejected.settings.updatedAt || 0));
+      undone.push({ kind: 'settings', id: null, name: null, reason: 'settings' });
+    }
+
     if (undone.length) relationNameCache.clear();
     return undone;
   }
@@ -625,6 +642,12 @@
      * rule and a bug report. Modules are named first because losing a schema
      * change is the more startling of the two.
      */
+    // Settings first: a workspace-wide relabel is the most startling of the
+    // three to see undone, because it changes every screen at once.
+    if (undone.some((r) => r.kind === 'settings')) {
+      toast('The workspace name and currency are set by the team\'s owner — your change was undone');
+      return;
+    }
     const mod = undone.find((r) => r.kind === 'modules');
     if (mod) {
       toast(mod.name

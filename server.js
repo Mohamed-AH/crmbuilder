@@ -1177,6 +1177,30 @@ function canEditSchema(user) {
   return user.role === 'owner' || user.role === 'platformAdmin';
 }
 
+/*
+ * The workspace's name and currency are owner-only, for the same reason the
+ * schema is.
+ *
+ * This was ungated entirely: `applyPush` checked roles for records and modules
+ * and wrote settings from anybody. A view-only account could rename the team's
+ * workspace and switch its currency, and the owner would see both. Proved
+ * against the seeded fixture, not inferred — "RENAMED BY A VIEWER", USD to JPY,
+ * nothing rejected.
+ *
+ * Currency is the half that matters. §23: changing it RELABELS every stored
+ * amount rather than converting, across the whole team — so an external auditor
+ * with read-only access could turn every dollar figure into yen for everybody.
+ * That makes it a structural setting, not a preference, and it belongs beside
+ * the schema rather than beside a display option.
+ *
+ * A separate function from canEditSchema() on purpose: the two happen to be the
+ * same rule today, and naming them separately is what lets one move later
+ * without silently dragging the other with it.
+ */
+function canEditSettings(user) {
+  return user.role === 'owner' || user.role === 'platformAdmin';
+}
+
 // A viewer may read and nothing else.
 function canEditRecords(user) {
   return user.role !== 'viewer';
@@ -1598,21 +1622,40 @@ async function applyPush(user, body) {
   let settingsWritten = false;
   if (body.settings && typeof body.settings === 'object') {
     const meta = (await store.getData(wsId)) || {};
-    // Exactly zero, not falsy-zero. A device that has never had settings sends
-    // 0, and `Number(x) || now` would restamp that as this instant — which is
-    // how a fresh device signing in used to overwrite the workspace's real
-    // settings with its own defaults.
-    const raw = Number(body.settingsUpdatedAt);
-    const incomingAt = Number.isFinite(raw) ? raw : now;
-    if (incomingAt > (meta.settingsUpdatedAt || 0)) {
-      await store.putData(wsId, {
-        wsId,
-        orgId: user.orgId || null,
-        settings: body.settings,
-        settingsUpdatedAt: incomingAt,
-        settingsServerAt: serverStamp(),
-      });
-      settingsWritten = true;
+    /*
+     * Refused, and handed back the workspace's real settings.
+     *
+     * Returning the server's copy is not a courtesy — it is what stops the
+     * refusal repeating forever. The pull only sends settings when
+     * settingsServerAt has moved, and refusing does not move it, so a device
+     * whose local settingsUpdatedAt is newer would keep winning locally and
+     * re-pushing on every sync. That is §14's rule in the settings path: a
+     * rejection cannot be resolved by last-write-wins, so the client is given
+     * the server's value AND the server's clock to overwrite with.
+     */
+    if (!canEditSettings(user)) {
+      rejected.settings = {
+        doc: meta.settings || {},
+        updatedAt: meta.settingsUpdatedAt || 0,
+        reason: 'settings',
+      };
+    } else {
+      // Exactly zero, not falsy-zero. A device that has never had settings
+      // sends 0, and `Number(x) || now` would restamp that as this instant —
+      // which is how a fresh device signing in used to overwrite the
+      // workspace's real settings with its own defaults.
+      const raw = Number(body.settingsUpdatedAt);
+      const incomingAt = Number.isFinite(raw) ? raw : now;
+      if (incomingAt > (meta.settingsUpdatedAt || 0)) {
+        await store.putData(wsId, {
+          wsId,
+          orgId: user.orgId || null,
+          settings: body.settings,
+          settingsUpdatedAt: incomingAt,
+          settingsServerAt: serverStamp(),
+        });
+        settingsWritten = true;
+      }
     }
   }
 
@@ -2632,7 +2675,10 @@ app.post('/api/sync', requireAuth, async (req, res) => {
     await refreshCounts(req.user);
     store.addEvent('sync', req.user.id, req.user.orgId).catch(() => {});
   }
-  const refused = rejected.modules.length + rejected.records.length;
+  // Settings counts too. Counting only the two arrays dropped a settings-only
+  // refusal on the floor: the write was correctly blocked, and the client was
+  // told nothing — so it kept its newer local copy and re-pushed for ever.
+  const refused = rejected.modules.length + rejected.records.length + (rejected.settings ? 1 : 0);
   res.json({
     ...out,
     pushed: touched,

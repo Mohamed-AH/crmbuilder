@@ -85,7 +85,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 201 Node tests + 80 Playwright tests, 41 smoke checks. On
+**All green:** 204 Node tests + 80 Playwright tests, 41 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -632,15 +632,41 @@ one ordering to reason about rather than a matrix.
 
 | | owner / platformAdmin | member | contributor | viewer |
 |---|---|---|---|---|
-| read | ✅ | ✅ | ✅ | ✅ |
+| read, export | ✅ | ✅ | ✅ | ✅ |
 | records: create, edit | ✅ | ✅ | ✅ | ❌ |
 | records: delete | ✅ | ✅ | ❌ | ❌ |
 | module fields, add/delete modules | ✅ | ❌ | ❌ | ❌ |
 | invite, roles, remove members | ✅ | ❌ | ❌ | ❌ |
+| workspace name and currency | ✅ | ❌ | ❌ | ❌ |
 
 `canEditSchema()` exists twice on purpose: on the server (`server.js`) it
 decides, and on the client (`js/app.js`) it only avoids offering a button whose
 effect would be undone a second later.
+
+**The workspace name and currency are owner-only, and were not.** `applyPush`
+gated records and modules by role and wrote settings from anybody, so a
+view-only account could rename the team's workspace and switch its currency —
+and the owner saw both. Found by driving the seeded fixture as a real viewer
+(§34), not by reading the code, which is why it survived §26's role work and
+the security audit.
+
+Currency is the half that matters: §23 records that changing it **relabels**
+every stored amount rather than converting, for the whole team. That makes it a
+structural setting, and it sits beside the schema rather than beside a display
+preference. `canEditSettings()` is a separate function from `canEditSchema()`
+deliberately — the rule is the same today, and separate names are what let one
+move later without silently dragging the other.
+
+Two traps in the fix, both of which shipped broken first:
+
+- **The refusal must carry the server's copy AND its clock.** The pull only
+  sends settings when `settingsServerAt` moves, and refusing does not move it —
+  so a device whose local `settingsUpdatedAt` is newer keeps winning locally and
+  re-pushes on every sync, for ever. Same rule as a rejected row, in a path
+  nobody had applied it to.
+- **`refused` counted only the two arrays.** A settings-only refusal was
+  correctly blocked and then dropped from the response, so the client was told
+  nothing — which is the same forever-repush, arrived at from the other end.
 
 **Refused, not errored.** `applyPush` skips a member's module write and returns
 the server's own copy in `rejected`. The client overwrites its local row with

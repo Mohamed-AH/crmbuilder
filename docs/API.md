@@ -323,6 +323,12 @@ POST /api/admin/alerts/test
 GET  /api/admin/export              ← Bearer token, NOT a session
 ```
 
+**`rejected.settings`** is the third rejection channel, beside `modules` and
+`records`. The workspace name and currency are owner-only (`CLAUDE.md` §14), and
+a refusal carries the workspace's real `doc` **and its `updatedAt`** — the
+client must overwrite with both, or its newer local clock keeps winning and it
+re-pushes on every sync.
+
 ### `GET /api/admin/platform`
 
 Platform admin only. Cached `PLATFORM_CACHE_MS` (30s) because `usageByOrg()`

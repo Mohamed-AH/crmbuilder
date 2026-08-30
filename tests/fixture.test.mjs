@@ -174,6 +174,81 @@ describe('the seeded fixture, read by a real server', () => {
     assert.equal(refused.reason, 'readonly', 'the server names the rule; the client must not have to guess');
   });
 
+  /*
+   * The workspace name and currency are the team's, not a reader's.
+   *
+   * applyPush gated records and modules by role and wrote settings from
+   * anybody, so a view-only account could rename the team's workspace and
+   * switch its currency — and the owner saw both. Found by driving the fixture
+   * rather than reading the code, which is why it survived §26's role work.
+   *
+   * The currency half is the one that matters: §23 records that changing it
+   * RELABELS every stored amount rather than converting, across everybody.
+   */
+  test('a viewer cannot rename the workspace or change its currency', async () => {
+    const owner = await signIn('maya@fixture.invalid');
+    const before = (await req('/api/data', { cookies: owner })).json.settings;
+    assert.ok(before.businessName, 'the fixture should have named the workspace');
+
+    const viewer = await signIn('sam@fixture.invalid');
+    const out = (await req('/api/sync', {
+      method: 'POST',
+      cookies: viewer,
+      body: {
+        since: 0,
+        settings: { businessName: 'RENAMED BY A VIEWER', currency: 'JPY' },
+        settingsUpdatedAt: Date.now(),
+      },
+    })).json;
+
+    const after = (await req('/api/data', { cookies: owner })).json.settings;
+    assert.equal(after.businessName, before.businessName, 'the workspace was renamed by a viewer');
+    assert.equal(after.currency, before.currency, 'a viewer relabelled every amount in the team');
+
+    /*
+     * And the refusal hands back the real settings, WITH the server's clock.
+     * Without that the client keeps its newer local copy, wins locally, and
+     * re-pushes on every sync for ever — §14's rule, in the settings path.
+     */
+    assert.ok(out.rejected && out.rejected.settings, 'the refusal must be reported, not silent');
+    assert.equal(out.rejected.settings.doc.businessName, before.businessName);
+    assert.equal(out.rejected.settings.reason, 'settings');
+    assert.equal(typeof out.rejected.settings.updatedAt, 'number',
+      'the server\'s clock has to come back, or the client cannot drop below its push watermark');
+  });
+
+  test('a contributor cannot change the workspace name or currency either', async () => {
+    const owner = await signIn('maya@fixture.invalid');
+    const before = (await req('/api/data', { cookies: owner })).json.settings;
+
+    const contributor = await signIn('priya@fixture.invalid');
+    const out = (await req('/api/sync', {
+      method: 'POST',
+      cookies: contributor,
+      body: { since: 0, settings: { ...before, currency: 'EUR' }, settingsUpdatedAt: Date.now() },
+    })).json;
+
+    assert.ok(out.rejected && out.rejected.settings, 'contributors write records, not the workspace');
+    assert.equal((await req('/api/data', { cookies: owner })).json.settings.currency, before.currency);
+  });
+
+  test('an owner can still change them, so the gate is not simply off', async () => {
+    const owner = await signIn('maya@fixture.invalid');
+    const before = (await req('/api/data', { cookies: owner })).json.settings;
+    const out = (await req('/api/sync', {
+      method: 'POST',
+      cookies: owner,
+      body: {
+        since: 0,
+        settings: { ...before, businessName: 'Lumen Studio (renamed by its owner)' },
+        settingsUpdatedAt: Date.now(),
+      },
+    })).json;
+    assert.equal(out.rejected && out.rejected.settings, undefined, 'an owner must not be refused');
+    assert.equal((await req('/api/data', { cookies: owner })).json.settings.businessName,
+      'Lumen Studio (renamed by its owner)');
+  });
+
   test('a seeded contributor may add but not delete', async () => {
     const cookies = await signIn('priya@fixture.invalid');
     assert.equal((await req('/api/me', { cookies })).json.user.role, 'contributor');
