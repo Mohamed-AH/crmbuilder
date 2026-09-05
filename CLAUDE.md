@@ -87,7 +87,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 214 Node tests + 81 Playwright tests, 41 smoke checks. On
+**All green:** 215 Node tests + 81 Playwright tests, 41 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -917,8 +917,23 @@ point.** It mixes two kinds of thing:
 
 | Kind | Keys | Restored? |
 |---|---|---|
-| operator decisions | `signupMode`, `orgCreation` | **yes** |
+| operator decisions | `signupMode`, `orgCreation`, and each one's `…SetAt` / `…SetBy` | **yes** |
 | runtime state | `egressBytes`, `egressMonth`, `alerts` | **no** |
+
+**A decision is three keys, not one, and the first version of this missed
+that.** `setSignupMode()` and `setOrgCreation()` each write the value plus
+`<name>SetAt` and `<name>SetBy`, so the original two-name allow-list restored
+the lever and dropped its provenance: signups came back open, correctly, with
+no record of who opened them or when. Not data loss you would notice — an audit
+trail missing at the moment somebody asks why signups were open.
+
+**CI could not have found it.** The fixture seeded exactly the two keys the
+allow-list named, so the bug and its test were built from one wrong assumption
+and nine other assertions passed. What found it was **restoring a real artifact
+from the live deployment** — the drill in `docs/BETA.md`, one day after it was
+written, doing the one job the automated version cannot. The fixture now seeds
+all six plus the runtime keys, and the list is derived from
+`OPERATOR_DECISIONS` so a third lever is one string rather than three.
 
 Restoring the runtime half seeds a fresh deployment with a dead one's traffic
 against this month's allowance, and carries the escalate-only alert state

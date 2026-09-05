@@ -60,7 +60,23 @@ const accessRequests = backup.accessRequests || [];
  * state until somebody decides otherwise, and defaulting the other way would
  * carry it silently.
  */
-const RESTORED_PLATFORM_KEYS = ['signupMode', 'orgCreation'];
+/*
+ * A decision is three keys, not one. `setSignupMode()` and `setOrgCreation()`
+ * in server.js each write the value plus `<name>SetAt` and `<name>SetBy` — who
+ * changed it and when. The first version of this list named only the two bare
+ * values, so a restore kept the lever and dropped its provenance: signups came
+ * back open, correctly, with no record of who opened them.
+ *
+ * It was invisible to the test, because the fixture seeded the same two keys
+ * the list named — the bug and its test were built from one wrong assumption.
+ * A real artifact from the live deployment is what showed the other four.
+ *
+ * Derived rather than hand-listed so a third lever added later is one string
+ * here, not three. A lever that does not follow the convention simply gets its
+ * value restored and no provenance, which is the allow-list failing closed.
+ */
+const OPERATOR_DECISIONS = ['signupMode', 'orgCreation'];
+const RESTORED_PLATFORM_KEYS = OPERATOR_DECISIONS.flatMap((k) => [k, `${k}SetAt`, `${k}SetBy`]);
 const platform = Object.fromEntries(
   RESTORED_PLATFORM_KEYS
     .filter((k) => (backup.platform || {})[k] !== undefined)
@@ -76,8 +92,11 @@ console.log(`  ${accessRequests.length} access request(s)`);
 // Say which levers are coming back. An operator restoring in an incident needs
 // to know the deployment will come up with signups shut before they find out
 // from a tester who cannot get in.
-console.log(Object.keys(platform).length
-  ? `  operator settings restored: ${Object.entries(platform).map(([k, v]) => `${k}=${v}`).join(', ')}`
+// Only the decisions are named. Their SetAt/SetBy travel with them but are a
+// user id and a timestamp, which say nothing useful in a one-line summary.
+const decisions = OPERATOR_DECISIONS.filter((k) => platform[k] !== undefined);
+console.log(decisions.length
+  ? `  operator settings restored: ${decisions.map((k) => `${k}=${platform[k]}`).join(', ')}`
   : '  no stored operator settings in this backup — the env vars will decide');
 
 /*

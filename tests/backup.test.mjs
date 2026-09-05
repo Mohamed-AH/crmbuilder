@@ -130,15 +130,32 @@ before(async () => {
     decidedAt: Date.now(),
     decidedBy: 'ops',
   }];
+  /*
+   * Shaped like a REAL deployment's platform document, which is not what the
+   * first version of this fixture held. `setSignupMode()` and `setOrgCreation()`
+   * each write three keys — the value plus SetAt/SetBy — and seeding only the
+   * two bare values let a restore that dropped the provenance pass, because the
+   * fixture and the allow-list shared one wrong assumption. Found by restoring
+   * a real artifact from the live deployment.
+   *
+   * If a lever is ever added, seed all three of its keys here.
+   */
+  const DECIDED_AT = 1756000000000;
   store.platform = {
-    // Operator decisions — a restore SHOULD bring these back (step 2).
+    // Operator decisions, with the provenance the server really writes.
+    // A restore must bring back all six.
     signupMode: 'closed',
+    signupModeSetAt: DECIDED_AT,
+    signupModeSetBy: 'ops-user-id',
     orgCreation: 'closed',
-    // Runtime state — a restore should NOT, because it belongs to the dead
+    orgCreationSetAt: DECIDED_AT,
+    orgCreationSetBy: 'ops-user-id',
+    // Runtime state — a restore must NOT, because it belongs to the dead
     // deployment: seeding a fresh one with this carries spent alert steps and
     // another instance's traffic across (§17, §25).
     egressBytes: 4242,
-    alerts: { storage: { lastLevel: 85, lastFiredAt: Date.now() } },
+    egressMonth: '1999-01',
+    alerts: { storage: { lastLevel: 85, lastFiredAt: DECIDED_AT } },
   };
   writeFileSync(storeFile, JSON.stringify(store));
 
@@ -188,9 +205,11 @@ before(async () => {
    */
   const sourceStore = JSON.parse(readFileSync(storeFile, 'utf8'));
   assert.equal(sourceStore.accessRequests?.length, 1, 'the source lost the approved request — the gap tests would be hollow');
-  assert.equal(sourceStore.platform?.signupMode, 'closed', 'the source lost signupMode — the gap tests would be hollow');
-  assert.equal(sourceStore.platform?.orgCreation, 'closed', 'the source lost orgCreation — the gap tests would be hollow');
+  for (const key of ['signupMode', 'signupModeSetAt', 'signupModeSetBy', 'orgCreation', 'orgCreationSetAt', 'orgCreationSetBy']) {
+    assert.notEqual(sourceStore.platform?.[key], undefined, `the source lost platform.${key} — the tests below would be hollow`);
+  }
   assert.equal(sourceStore.platform?.egressBytes !== undefined, true, 'the source lost its runtime counters');
+  assert.equal(sourceStore.platform?.alerts !== undefined, true, 'the source lost its alert state');
 
   const restored = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'restore.mjs')], {
     cwd: ROOT,
@@ -332,6 +351,30 @@ describe('what a restore brings back, and what it deliberately does not', () => 
     assert.equal(backup.platform?.signupMode, 'closed', 'the export dropped platform');
     assert.equal(restoredStore.platform?.signupMode, 'closed', 'signupMode did not come back — a restore reopens signups');
     assert.equal(restoredStore.platform?.orgCreation, 'closed', 'orgCreation did not come back');
+  });
+
+  /*
+   * The provenance, asserted separately because it is a different failure: the
+   * lever comes back and the record of who pulled it does not. Losing that is
+   * not data loss you would notice — it is an audit trail missing at exactly
+   * the moment somebody asks why signups were open.
+   *
+   * The narrow ['signupMode', 'orgCreation'] allow-list passes every other test
+   * in this file and fails only here.
+   */
+  test('who set an operator decision, and when, comes back with it', () => {
+    for (const key of ['signupMode', 'orgCreation']) {
+      assert.equal(
+        restoredStore.platform?.[`${key}SetAt`],
+        backup.platform?.[`${key}SetAt`],
+        `${key}SetAt was dropped — the decision came back without when it was made`,
+      );
+      assert.equal(
+        restoredStore.platform?.[`${key}SetBy`],
+        backup.platform?.[`${key}SetBy`],
+        `${key}SetBy was dropped — the decision came back without who made it`,
+      );
+    }
   });
 
   /*

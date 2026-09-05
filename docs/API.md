@@ -417,9 +417,10 @@ so it is deliberately awkward. `CLAUDE.md` §17:
 (no `accessRequests`, no `platform`) rather than branching on the number.
 
 **`platform` is exported whole and restored in part.** `restore.mjs` takes only
-the operator decisions — `signupMode` and `orgCreation` — and leaves the runtime
-state (`egressBytes`, `egressMonth`, `alerts`) behind, because that belongs to
-the deployment that produced it. `CLAUDE.md` §17.
+the operator decisions — `signupMode` and `orgCreation`, each with its `…SetAt`
+and `…SetBy` — and leaves the runtime state (`egressBytes`, `egressMonth`,
+`alerts`) behind, because that belongs to the deployment that produced it.
+A decision is three keys, not one: `CLAUDE.md` §17.
 
 **Never put a credential in `platform`.** It is in every nightly artifact from
 version 2 onward, and a GitHub build artifact is downloadable by anyone with
