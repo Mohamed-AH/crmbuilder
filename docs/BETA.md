@@ -164,6 +164,39 @@ continuous, so it consumes roughly 744 of Render's 750 monthly instance-hours
 and only works while this is the only free service on the account; and 14
 minutes against a 15-minute timeout is one missed check away from a cold start.
 
+### Knowing the backup ran
+
+The nightly job pings **Healthchecks.io** as its last step, and Healthchecks
+alerts you when a ping does not arrive.
+
+That is worth having because of how this fails. When `BACKUP_URL` or
+`BACKUP_TOKEN` is unset the job **skips and the run goes green** — which is how
+the deployment ran for weeks with a tick every night and no backups at all.
+Nothing was red, and nothing was going to be. The same shape returns on its own
+later: GitHub disables scheduled workflows after **60 days of repository
+inactivity**, silently, and a repo holding only this workflow goes quiet fast.
+
+**Setting it up:**
+
+1. Create a free check at healthchecks.io. Period **1 day**, grace **1 day** —
+   a nightly job that has not reported in 25 hours is worth a message.
+2. Point it at Telegram or email.
+3. Copy its ping URL into the backup repo's secrets as **`HEALTHCHECK_URL`**.
+
+The ping URL is a bearer credential — anyone holding it can fake a success — so
+it goes in a secret and is never echoed into a log.
+
+**What you should see.** On a good run, the last step prints
+`Pinged Healthchecks.` If the secret is unset it prints
+`HEALTHCHECK_URL is not set — this backup has no dead-man's switch` and carries
+on, because a missing ping URL is not a reason to fail a backup that worked.
+
+If the ping itself fails you get a **warning, not a red run**, for the same
+reason: the backup succeeded and is stored. Healthchecks will alert you about
+the absent ping anyway, and the warning in the log is what distinguishes "the
+URL is wrong" from "the deployment is down" — opposite problems with the same
+symptom.
+
 ### Drilling the backup
 
 **An untested backup is a rumour.** This proves that a *real* nightly artifact

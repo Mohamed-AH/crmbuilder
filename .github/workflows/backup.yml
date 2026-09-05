@@ -74,3 +74,44 @@ jobs:
           path: crmbuilder-backup-*.json
           retention-days: 30
           if-no-files-found: error
+
+      # LAST on purpose. Healthchecks alerts on a ping that does NOT arrive, so
+      # what this reports is "a validated backup was fetched AND stored". Put it
+      # before "Keep it" and it would report success for a backup that was never
+      # uploaded.
+      #
+      # `ready == 'true'` is doing two jobs here, and the first is the whole
+      # reason this step exists. When the secrets are unset this job SKIPS and
+      # the run goes GREEN — which is how it produced no backups at all for
+      # weeks while the Actions history showed a tick every night. An
+      # unconditional ping would have told Healthchecks "fine" every one of
+      # those nights. The second job is free: a failed step short-circuits the
+      # ones after it, so a fetch that 401s, or a payload that fails the shape
+      # check, never reaches this either.
+      #
+      # It also covers the failure this was added for — GitHub disables
+      # scheduled workflows after 60 days of repository inactivity, silently.
+      # No run, no ping, and Healthchecks says so.
+      #
+      # HEALTHCHECK_URL is a bearer credential: anyone holding it can fake a
+      # success. It lives in a secret and is never echoed into the log.
+      - name: Tell Healthchecks the backup landed
+        if: steps.check.outputs.ready == 'true'
+        env:
+          PING: ${{ secrets.HEALTHCHECK_URL }}
+        run: |
+          if [ -z "$PING" ]; then
+            echo "HEALTHCHECK_URL is not set — this backup has no dead-man's switch."
+            exit 0
+          fi
+          # Deliberately NOT fatal. The backup succeeded and is stored, so
+          # failing here would paint a red run over work that was done
+          # correctly — and Healthchecks already alerts on the missing ping.
+          # The warning is what tells you the URL is wrong rather than the
+          # deployment being down, which are opposite problems.
+          if curl --fail --silent --show-error --max-time 10 \
+                  --retry 3 --retry-delay 5 -o /dev/null "$PING"; then
+            echo "Pinged Healthchecks."
+          else
+            echo "::warning::Backup succeeded but the Healthchecks ping failed — check HEALTHCHECK_URL."
+          fi
