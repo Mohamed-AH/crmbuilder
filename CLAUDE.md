@@ -87,7 +87,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 205 Node tests + 81 Playwright tests, 41 smoke checks. On
+**All green:** 213 Node tests + 81 Playwright tests, 41 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -398,6 +398,7 @@ parallel and they each spawn real servers:
 | `migration.test.mjs` | 8500–8699 | 6 |
 | `signup.test.mjs` | 8700–8960 | 61 |
 | `oauth.test.mjs` | 9300–9405 | 6 |
+| `backup.test.mjs` | 9500–9550 | 2 |
 
 They used to overlap badly — `api.test.mjs` alone spanned 8300–8899, across
 three other files' ranges. Widen a block and check the neighbours.
@@ -914,6 +915,36 @@ escalate-only alert state across (§25), so a threshold that already fired stays
 quiet on the deployment that now needs it. Export all of it; restore only the
 decisions. The drill shows this directly: the restored store's `platform` holds
 only the `egressBytes` the *new* server accumulated on its own.
+
+### The drill runs on every push now (`tests/backup.test.mjs`)
+
+Export from a real server, restore with the real script, boot a second server
+over the result, ask it what it has. Ports 9500–9550 (§9).
+
+**Two canaries, one per tenant, and that is the design.** Aggregate counts pass
+happily when rows land in the *wrong* workspace — the wsId collision above lost
+174 of 180 records with every total still looking plausible. So each owner must
+see their own canary and must **not** see the other's. The isolation test was
+checked by inverting it: with the assertion flipped it fails, which is what
+proves it is not passing on an empty pull.
+
+**Two of these tests assert what the export currently LOSES**, and they are
+written that way on purpose — a test that has only ever seen the fixed code
+proves nothing (§9). The source deployment is seeded with a real approved
+request and real operator settings before it boots, and `before` asserts they
+were still there at export time: without that check, "absent" is hollow and
+would keep passing after the gap is closed. **When the export starts carrying
+them, invert those two rather than deleting them.**
+
+**One test must NOT flip:** *"runtime counters are not carried into the restored
+deployment"*. That is the `platform` split — decisions restore, counters do not.
+
+**Snapshot the restored store before anything boots over it.** A running server
+writes to `store.json` within its first request — the egress counter lands in
+`platform` immediately — so reading it afterwards cannot tell "the restore
+brought this back" from "the new deployment accumulated it". The first version
+of the runtime-state assertion failed against perfectly correct code for
+exactly that reason.
 
 **And one for the workspace-webhook work before it starts.** `workspaces[].meta`
 is the `data` collection, which includes `settings` — so workspace settings are
