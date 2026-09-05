@@ -405,6 +405,26 @@ so it is deliberately awkward. `CLAUDE.md` §17:
 - Compared by hashing both sides — `timingSafeEqual` throws on a length
   mismatch, and the throw would itself leak the length.
 
+**The body, `version: 2`:**
+
+```
+{ app, kind, version, exportedAt, storage,
+  orgs[], users[], accessRequests[], platform{},
+  workspaces[{ wsId, meta, modules[], records[] }] }
+```
+
+`version` is informational — `scripts/restore.mjs` tolerates a version 1 body
+(no `accessRequests`, no `platform`) rather than branching on the number.
+
+**`platform` is exported whole and restored in part.** `restore.mjs` takes only
+the operator decisions — `signupMode` and `orgCreation` — and leaves the runtime
+state (`egressBytes`, `egressMonth`, `alerts`) behind, because that belongs to
+the deployment that produced it. `CLAUDE.md` §17.
+
+**Never put a credential in `platform`.** It is in every nightly artifact from
+version 2 onward, and a GitHub build artifact is downloadable by anyone with
+repo read access.
+
 ---
 
 ## 6. Public and self-service

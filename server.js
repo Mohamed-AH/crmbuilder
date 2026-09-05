@@ -3286,14 +3286,36 @@ app.get('/api/admin/export', async (req, res) => {
     workspaces.push({ wsId, meta, modules, records });
   }
 
+  /*
+   * version 2 adds accessRequests and platform. Nothing reads this field —
+   * restore.mjs tolerates their absence rather than branching on it — but a
+   * human holding a backup file should be able to tell which shape it is.
+   *
+   * accessRequests is the approval allowlist, and losing it means everybody
+   * approved has to ask again (§20). It carries the addresses of people who
+   * were DECLINED as well, so the nightly artifact now holds personal data
+   * about non-users: that is a deliberate trade for recoverability, and it is
+   * the reason the artifact's retention and its download audience matter.
+   *
+   * platform is exported whole, and restored selectively — restore.mjs takes
+   * only the operator decisions. See §17 for why the runtime half must not
+   * cross into a new deployment.
+   *
+   * NEVER PUT A CREDENTIAL IN `platform`. It lands in every nightly artifact
+   * from here on, and a GitHub build artifact is downloadable by anyone with
+   * repo read access. §18 records that a Telegram webhook URL contains a bot
+   * token; that class of value belongs in the environment, not in here.
+   */
   const body = {
     app: 'crmbuilder',
     kind: 'backup',
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     storage: store.kind(),
     orgs: await store.listOrgs(),
     users: await store.listUsers(),
+    accessRequests: await store.listAccessRequests(),
+    platform: await store.getPlatformSettings(),
     workspaces,
   };
   console.log(`Backup export: ${workspaces.length} workspace(s), ${body.users.length} account(s)`);

@@ -306,49 +306,82 @@ describe('a backup, restored and asked what it holds', () => {
 });
 
 /*
- * These two assert what the export does NOT carry today.
- *
- * They are the Red half of step 2, written first on purpose (§9: a test that
- * has only ever seen the fixed code proves nothing). The source deployment is
- * seeded with a real approved request and real operator settings above, so
- * "absent" here is a measurement rather than a tautology.
- *
- * WHEN STEP 2 SHIPS, these flip: the request should come back, and so should
- * signupMode and orgCreation — but NOT egressBytes or alerts, which belong to
- * the deployment that died. Invert the assertions rather than deleting them.
+ * `platform` is exported whole and restored in PART, so these three read as one
+ * set: two things that must cross, one that must not. They were written as the
+ * Red half before the export carried anything (§9), and inverted when it did —
+ * which is why they are assertions about behaviour rather than about a shape
+ * somebody hoped for.
  */
-describe('what a restore silently loses today', () => {
-  test('the approval allowlist does not survive the round trip', () => {
-    assert.equal(backup.accessRequests, undefined, 'the export has started carrying accessRequests — flip this test (step 2)');
-    assert.deepEqual(
-      restoredStore.accessRequests ?? [],
-      [],
-      'approved requests came back — flip this test, approval IS the allowlist (§20)',
+describe('what a restore brings back, and what it deliberately does not', () => {
+  test('the approval allowlist survives, so nobody has to ask twice', () => {
+    assert.equal(backup.accessRequests?.length, 1, 'the export dropped accessRequests');
+    assert.equal(
+      restoredStore.accessRequests?.[0]?.email,
+      'knocking@drill.invalid',
+      'the approved request did not come back — approval IS the allowlist (§20)',
     );
+    assert.equal(restoredStore.accessRequests[0].status, 'approved', 'the decision came back without its verdict');
   });
 
   /*
-   * The source deployment had signups and org creation CLOSED. The restored one
-   * has no stored mode at all, so §16's precedence hands the decision to the env
-   * var — which is how a restore quietly reopens a door the operator shut.
+   * §16's guarantee is that a stored panel decision beats the env var and
+   * survives a redeploy. Until step 2 that did not extend to a restore, so a
+   * recovery quietly reopened a door the operator had shut.
    */
-  test('the operator signup decisions fall back to the environment', () => {
-    assert.equal(backup.platform, undefined, 'the export has started carrying platform — flip this test (step 2)');
-
-    const platform = restoredStore.platform || {};
-    assert.equal(platform.signupMode, undefined, 'signupMode came back — flip this test (step 2)');
-    assert.equal(platform.orgCreation, undefined, 'orgCreation came back — flip this test (step 2)');
+  test('the operator signup decisions survive the round trip', () => {
+    assert.equal(backup.platform?.signupMode, 'closed', 'the export dropped platform');
+    assert.equal(restoredStore.platform?.signupMode, 'closed', 'signupMode did not come back — a restore reopens signups');
+    assert.equal(restoredStore.platform?.orgCreation, 'closed', 'orgCreation did not come back');
   });
 
   /*
-   * This one does NOT flip when step 2 ships — it is the half that must keep
-   * passing. `platform` mixes operator decisions with runtime state, and
-   * restoring the runtime half seeds a fresh deployment with a dead one's
-   * traffic and its spent alert steps (§17, §25).
+   * The half that must NOT cross, and the reason the whole document could not
+   * simply be copied. `egressBytes` is a dead instance's traffic against this
+   * month's allowance; `alerts` holds the escalate-only step each rule last
+   * announced (§25), so carrying it silences a threshold on the deployment that
+   * now needs it.
    */
-  test('runtime counters are not carried into the restored deployment', () => {
-    const platform = restoredStore.platform || {};
-    assert.equal(platform.egressBytes, undefined, 'a dead deployment\'s egress total was restored (§17)');
-    assert.equal(platform.alerts, undefined, 'spent alert steps were restored — thresholds will stay silent (§25)');
+  test('runtime counters and spent alert steps are left behind', () => {
+    /*
+     * Not pinned to the seeded 4242: the egress counter is keyed by month and
+     * rolls over, so a value seeded without a matching `egressMonth` is reset
+     * to zero and re-accumulated by the running server. That is the counter
+     * working. What matters is that the export carries whatever it holds and
+     * the restore refuses it, so assert the shape rather than the number.
+     */
+    assert.equal(typeof backup.platform?.egressBytes, 'number', 'the export should carry the whole document');
+    assert.ok(backup.platform?.alerts, 'the export should carry the whole document');
+
+    assert.equal(restoredStore.platform?.egressBytes, undefined, 'a dead deployment\'s egress total was restored (§17)');
+    assert.equal(restoredStore.platform?.egressMonth, undefined, 'a dead deployment\'s egress month was restored (§17)');
+    assert.equal(restoredStore.platform?.alerts, undefined, 'spent alert steps were restored — thresholds will stay silent (§25)');
+  });
+
+  /*
+   * A version 1 backup carries neither key. The file on disk is older than the
+   * code reading it far more often than the other way round, so this is the
+   * ordinary case rather than an edge one.
+   */
+  test('a backup from before this change still restores', () => {
+    const legacy = JSON.parse(JSON.stringify(backup));
+    delete legacy.accessRequests;
+    delete legacy.platform;
+    legacy.version = 1;
+
+    const file = path.join(srcDir, 'legacy.json');
+    const into = path.join(srcDir, 'legacy-out');
+    writeFileSync(file, JSON.stringify(legacy));
+
+    const run = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'restore.mjs')], {
+      cwd: ROOT,
+      env: { ...process.env, BACKUP_FILE: file, DATA_DIR: into, MONGODB_URI: '' },
+      encoding: 'utf8',
+    });
+    assert.equal(run.status, 0, `a version 1 backup must still restore:\n${run.stdout}\n${run.stderr}`);
+
+    const store = JSON.parse(readFileSync(path.join(into, 'store.json'), 'utf8'));
+    assert.deepEqual(store.accessRequests, [], 'a missing collection must restore as empty, not undefined');
+    assert.deepEqual(store.platform, {}, 'a missing platform must restore as empty, not undefined');
+    assert.equal(store.users.length, backup.users.length, 'the records still have to come back');
   });
 });

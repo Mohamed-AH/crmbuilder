@@ -197,10 +197,19 @@ workspace satisfy every total, so finish by opening the restored copy at
 `http://localhost:9521`, signing in as a real account, and checking that its
 own records are the ones you expect.
 
-**What a restore does not bring back:** approved join requests, and the signup
-mode and org-creation gate you set in the panel. Those fall back to the
-deployment's environment variables, so **check Admin → Beta access after any
-real restore** — a restore can quietly reopen signups you had paused.
+**What a restore brings back, and what it does not.** Approved join requests and
+your panel settings — the signup mode and the org-creation gate — come back, so
+a recovered deployment comes up shut if that is how you left it. Step 1's output
+names them, e.g. `operator settings restored: signupMode=closed`.
+
+Deliberately left behind: the monthly egress counter and the alert state, which
+belong to the deployment that produced them. A restored deployment starts its
+own count and re-announces a threshold it is still over, rather than staying
+quiet because the dead one had already mentioned it.
+
+**Still worth a look after a real restore:** Admin → Beta access, to confirm the
+mode is what you expect. A backup taken before this change (`version: 1`)
+carries no settings at all and will fall back to the environment variables.
 
 Do this monthly against a real artifact, and again whenever the export changes
 shape.

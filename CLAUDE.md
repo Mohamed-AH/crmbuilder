@@ -87,7 +87,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 213 Node tests + 81 Playwright tests, 41 smoke checks. On
+**All green:** 214 Node tests + 81 Playwright tests, 41 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -899,22 +899,42 @@ store and re-exporting it, comparing shapes rather than sizes — and by signing
 in as a named account to see its own records. `docs/BETA.md` § *"Drilling the
 backup"* has the runnable version.
 
-**Known gaps in the export, confirmed by running it.** The body carries `orgs`,
-`users` and `workspaces` only. `accessRequests` and `platform` are absent, so a
-restore loses the approval allowlist (§20 — approval *is* the allowlist) and
-the stored signup mode and `orgCreation` gate (§16, §24), which then fall back
-to the env vars. §16's guarantee that *"a redeploy cannot silently undo the
-operator"* does not extend to a restore. Nothing crashes — `FileStore`
-coalesces missing collections — but a restore can silently reopen signups.
+### The export lost two collections, and `platform` is not one thing
 
-`platform` is **not one thing**, and this is the trap for whoever closes that
-gap: it holds operator decisions (`signupMode`, `orgCreation`) *and* runtime
-state (`egressBytes`, per-rule `alerts` steps). Restoring the runtime half into
-a fresh deployment seeds it with a dead one's traffic and carries the
-escalate-only alert state across (§25), so a threshold that already fired stays
-quiet on the deployment that now needs it. Export all of it; restore only the
-decisions. The drill shows this directly: the restored store's `platform` holds
-only the `egressBytes` the *new* server accumulated on its own.
+**Found by running the drill, not by reading it.** The body carried `orgs`,
+`users` and `workspaces` only, so a restore lost the approval allowlist (§20 —
+approval *is* the allowlist) and the stored signup mode and `orgCreation` gate
+(§16, §24). Nothing crashed, because `FileStore` coalesces missing collections
+— **a restore silently reopened signups the operator had shut**, which is the
+one failure mode you least want during a recovery. §16's guarantee that *"a
+redeploy cannot silently undo the operator"* did not extend to a restore.
+
+The export carries both now (`version: 2`, informational — `restore.mjs`
+tolerates a version 1 body rather than branching on the number).
+
+**`platform` is exported whole and restored in PART, and the split is the
+point.** It mixes two kinds of thing:
+
+| Kind | Keys | Restored? |
+|---|---|---|
+| operator decisions | `signupMode`, `orgCreation` | **yes** |
+| runtime state | `egressBytes`, `egressMonth`, `alerts` | **no** |
+
+Restoring the runtime half seeds a fresh deployment with a dead one's traffic
+against this month's allowance, and carries the escalate-only alert state
+across (§25) — so a threshold that already fired stays quiet on the deployment
+that now needs it. **An allow-list, not a delete-list:** a key added to
+`platform` later is runtime state until somebody decides otherwise, and
+defaulting the other way would carry it silently.
+
+**`accessRequests` carries declined addresses too**, so the nightly artifact now
+holds personal data about people who never became users. That is a deliberate
+trade for recoverability, and it is why the artifact's retention window and its
+download audience are worth revisiting.
+
+**And the rule this creates: NEVER PUT A CREDENTIAL IN `platform`.** It is in
+every nightly artifact from version 2 onward, and a GitHub build artifact is
+downloadable by anyone with repo read access.
 
 ### The drill runs on every push now (`tests/backup.test.mjs`)
 
@@ -928,16 +948,29 @@ see their own canary and must **not** see the other's. The isolation test was
 checked by inverting it: with the assertion flipped it fails, which is what
 proves it is not passing on an empty pull.
 
-**Two of these tests assert what the export currently LOSES**, and they are
-written that way on purpose — a test that has only ever seen the fixed code
-proves nothing (§9). The source deployment is seeded with a real approved
-request and real operator settings before it boots, and `before` asserts they
-were still there at export time: without that check, "absent" is hollow and
-would keep passing after the gap is closed. **When the export starts carrying
-them, invert those two rather than deleting them.**
+**Three tests cover the `platform` split as one set** — two things that must
+cross the restore and one that must not. Two of them were written asserting
+*absence*, before the export carried anything, and inverted when it did. That
+ordering is why they are assertions about behaviour rather than about a shape
+somebody hoped for (§9: a test that has only ever seen the fixed code proves
+nothing). The one that never flipped — *"runtime counters and spent alert steps
+are left behind"* — was checked by removing the allow-list from `restore.mjs`,
+which makes it fail by name.
 
-**One test must NOT flip:** *"runtime counters are not carried into the restored
-deployment"*. That is the `platform` split — decisions restore, counters do not.
+The source deployment is seeded with a real approved request and real operator
+settings before it boots, and `before` asserts they were still there at export
+time. Without that check the whole set is hollow: it would pass against a
+deployment that never had anything to lose.
+
+**Do not pin the seeded `egressBytes` value.** The counter is keyed by month and
+rolls over, so a value seeded without a matching `egressMonth` is zeroed and
+re-accumulated by the running server — the first version of that assertion
+failed with `28 !== 4242` against a counter doing its job. Assert the shape and
+that the restore refuses it, never the number.
+
+**A version 1 backup is covered too**, and is the ordinary case rather than an
+edge one: the file on disk is older than the code reading it far more often than
+the other way round.
 
 **Snapshot the restored store before anything boots over it.** A running server
 writes to `store.json` within its first request — the egress counter lands in

@@ -34,12 +34,51 @@ if (backup.app !== 'crmbuilder' || backup.kind !== 'backup') {
 const workspaces = backup.workspaces || [];
 const users = backup.users || [];
 const orgs = backup.orgs || [];
+
+/*
+ * Both default, because a version 1 backup carries neither and must still
+ * restore cleanly — the file on disk is older than the code reading it more
+ * often than the other way round.
+ */
+const accessRequests = backup.accessRequests || [];
+
+/*
+ * `platform` is exported whole and restored in PART, and the split is the
+ * point rather than an optimisation.
+ *
+ * Operator decisions describe how the deployment should behave and must
+ * survive — §16's guarantee is that a panel decision beats the env var, and a
+ * restore that dropped them silently reopens signups the operator had shut.
+ *
+ * Runtime state describes what the DEAD deployment did. `egressBytes` is
+ * another instance's traffic against this month's allowance, and `alerts`
+ * holds the escalate-only step each rule last announced (§25) — carrying that
+ * across means a threshold already crossed stays quiet on the new deployment,
+ * which is exactly when it is wanted. Neither is a decision, so neither comes.
+ *
+ * An allow-list, not a delete-list: a key added to `platform` later is runtime
+ * state until somebody decides otherwise, and defaulting the other way would
+ * carry it silently.
+ */
+const RESTORED_PLATFORM_KEYS = ['signupMode', 'orgCreation'];
+const platform = Object.fromEntries(
+  RESTORED_PLATFORM_KEYS
+    .filter((k) => (backup.platform || {})[k] !== undefined)
+    .map((k) => [k, backup.platform[k]]),
+);
 const records = workspaces.reduce((n, w) => n + (w.records || []).length, 0);
 const modules = workspaces.reduce((n, w) => n + (w.modules || []).length, 0);
 
 console.log(`Backup taken ${backup.exportedAt}`);
 console.log(`  ${orgs.length} organisation(s), ${users.length} account(s)`);
 console.log(`  ${workspaces.length} workspace(s), ${modules} module(s), ${records} record(s)`);
+console.log(`  ${accessRequests.length} access request(s)`);
+// Say which levers are coming back. An operator restoring in an incident needs
+// to know the deployment will come up with signups shut before they find out
+// from a tester who cannot get in.
+console.log(Object.keys(platform).length
+  ? `  operator settings restored: ${Object.entries(platform).map(([k, v]) => `${k}=${v}`).join(', ')}`
+  : '  no stored operator settings in this backup — the env vars will decide');
 
 /*
  * What the store must be able to say afterwards.
@@ -60,6 +99,9 @@ const expected = {
   workspaces: workspaces.filter((w) => w.meta).length,
   modules,
   records,
+  // Counted for the same reason as the rest: a collection this script claims
+  // to restore and never counts back is the gap the file-store branch was.
+  requests: accessRequests.length,
 };
 
 function verifyCounts(actual) {
@@ -91,11 +133,16 @@ if (process.env.MONGODB_URI) {
     process.exit(1);
   }
 
-  for (const name of ['users', 'orgs', 'data', 'modules', 'records']) {
+  for (const name of ['users', 'orgs', 'data', 'modules', 'records', 'accessRequests', 'platform']) {
     await db.collection(name).deleteMany({});
   }
   if (users.length) await db.collection('users').insertMany(users.map((u) => ({ ...u })));
   if (orgs.length) await db.collection('orgs').insertMany(orgs.map((o) => ({ ...o })));
+  if (accessRequests.length) await db.collection('accessRequests').insertMany(accessRequests.map((r) => ({ ...r })));
+  // MongoStore keys this document by `id: 'platform'` and projects that field
+  // back out on read, so restoring the bare settings object would write a row
+  // its own getter cannot find. Nothing throws; the settings are simply absent.
+  if (Object.keys(platform).length) await db.collection('platform').insertOne({ id: 'platform', ...platform });
 
   for (const ws of workspaces) {
     if (ws.meta) await db.collection('data').insertOne({ ...ws.meta });
@@ -112,6 +159,7 @@ if (process.env.MONGODB_URI) {
     workspaces: await db.collection('data').countDocuments(),
     modules: await db.collection('modules').countDocuments(),
     records: await db.collection('records').countDocuments(),
+    requests: await db.collection('accessRequests').countDocuments(),
   };
   // Close before verifying: verifyCounts exits on a mismatch, and an open
   // client would keep the process alive past it.
@@ -122,7 +170,11 @@ if (process.env.MONGODB_URI) {
   // The file store: one JSON document, shaped the way FileStore expects.
   const dir = process.env.DATA_DIR || './data/restored';
   await mkdir(dir, { recursive: true });
-  const out = { users, orgs, invites: [], betaCodes: [], data: {}, events: [], items: { modules: {}, records: {} } };
+  const out = {
+    users, orgs, accessRequests, platform,
+    invites: [], betaCodes: [], feedback: [], data: {}, events: [],
+    items: { modules: {}, records: {} },
+  };
   for (const ws of workspaces) {
     if (ws.meta) out.data[ws.wsId] = ws.meta;
     out.items.modules[ws.wsId] = Object.fromEntries((ws.modules || []).map((m) => [m.id, m]));
@@ -142,6 +194,7 @@ if (process.env.MONGODB_URI) {
     workspaces: Object.keys(written.data || {}).length,
     modules: inBags(written.items?.modules),
     records: inBags(written.items?.records),
+    requests: (written.accessRequests || []).length,
   });
   console.log(`\nStart the server with DATA_DIR=${dir} to look at it.`);
 }
