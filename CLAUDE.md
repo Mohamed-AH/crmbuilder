@@ -263,7 +263,8 @@ modules { wsId, orgId, id, createdBy, updatedBy, updatedAt, serverAt,
 records { wsId, orgId, id, createdBy, updatedBy, updatedAt, serverAt,
           deletedAt, deletedOn, doc }
 data    { wsId, orgId, settings, settingsUpdatedAt, settingsServerAt,
-          moduleCount, recordCount, perRecord, orgOwned, updatedAt }  ← meta
+          moduleCount, recordCount, perRecord, orgOwned, updatedAt,
+          hook }  ← meta.  `hook` is a SIBLING of settings, never inside it (§38)
 events  { type, userId, orgId, day, at }
 ```
 

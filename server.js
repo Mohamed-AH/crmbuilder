@@ -1682,6 +1682,20 @@ async function pullChanges(user, cursor, won = null) {
   }
 
   const meta = (await store.getData(wsId)) || {};
+  /*
+   * `meta.settings`, NEVER `meta`. The meta doc also carries `hook` — the
+   * workspace's outbound webhook URL, which is a credential (§18: a Telegram
+   * webhook URL contains the bot token) — and this is the line that would
+   * broadcast it to every member, contributor and viewer if it ever became
+   * `{ doc: meta }`.
+   *
+   * That is also why the URL is not IN `settings`. Masking it on the way out
+   * would not merely fail to help, it would destroy it: the client merges the
+   * pulled document into its own and pushes the whole thing back on the next
+   * save, so a masked string wins by last-write-wins the first time somebody
+   * changes the currency. Guarded by "an owner changing the currency does not
+   * erase the webhook" in tests/api.test.mjs.
+   */
   let settings = null;
   if (meta.settings && (meta.settingsServerAt || 0) > cursor) {
     settings = { doc: meta.settings, updatedAt: meta.settingsUpdatedAt || 0 };

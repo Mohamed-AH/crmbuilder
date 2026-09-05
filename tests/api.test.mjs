@@ -74,6 +74,34 @@ async function expireInvite(code) {
   await startServer();
 }
 
+/*
+ * Put a webhook on a workspace's meta doc directly, the way `expireInvite`
+ * ages an invite — stop, edit, start, because FileStore holds the store in
+ * memory and rewrites the whole file on save (§12).
+ *
+ * Deliberately NOT through the endpoint that Stage 3 adds. What is under test
+ * here is the storage shape: a credential sitting beside `settings` on the
+ * meta doc must not be broadcast by sync and must not be clobbered by a
+ * settings write. Planting it directly means these tests hold whatever the
+ * endpoint later does, and they would have caught the original design (the URL
+ * inside `settings`) before any endpoint existed to blame.
+ */
+async function plantHook(wsId, hook) {
+  await stopServer();
+  const file = join(dataDir, 'store.json');
+  const raw = JSON.parse(await readFile(file, 'utf8'));
+  raw.data[wsId] = { ...(raw.data[wsId] || {}), hook };
+  await writeFile(file, JSON.stringify(raw));
+  await startServer();
+}
+
+// Safe to read while the server runs: every save is a temp file plus an atomic
+// rename (§30), so a reader gets the whole old file or the whole new one.
+async function readHook(wsId) {
+  const raw = JSON.parse(await readFile(join(dataDir, 'store.json'), 'utf8'));
+  return (raw.data[wsId] || {}).hook;
+}
+
 async function waitForServer(url, timeoutMs = 20000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -1710,5 +1738,134 @@ describe('a pushed record cannot carry dangerous field keys', () => {
     // have grown a property the payload asked for.
     const me = await req('/api/me', { cookies: hand });
     assert.ok(!JSON.stringify(me.json).includes('polluted'), 'Object.prototype is untouched');
+  });
+});
+
+/*
+ * The workspace webhook lives OUTSIDE `settings`, and this is the proof.
+ *
+ * The obvious home for a per-workspace webhook URL is `settings`, beside the
+ * currency and the business name. It cannot go there, for two reasons, and the
+ * second is worse than the first:
+ *
+ *   1. `pullChanges` sends `meta.settings` WHOLE to anyone whose cursor is
+ *      behind `settingsServerAt` — member, contributor, viewer. The URL is a
+ *      credential (§18: a Telegram webhook URL contains the bot token), so
+ *      that puts it in every teammate's IndexedDB, offline, permanently.
+ *      Masking it on the way out of a GET does nothing, because the GET is not
+ *      the delivery path.
+ *
+ *   2. Masking would then DESTROY it. The client merges the pulled document
+ *      into its own settings and pushes the whole thing back on the next save,
+ *      where last-write-wins accepts it — so the masked string overwrites the
+ *      real URL the first time an owner changes the currency. Redaction and
+ *      last-write-wins cannot both apply to one document.
+ *
+ * So `hook` is a sibling key on the meta doc. `putData` merges on both stores,
+ * so a settings write leaves it standing; `pullChanges` reads `meta.settings`
+ * specifically, so sync cannot reach it. That is structural rather than
+ * filtered — it holds even for somebody who never reads this comment.
+ */
+describe('the workspace webhook is stored where sync cannot reach it', () => {
+  const owner = jar();
+  const looker = jar();
+  let wsId = null;
+  let lookerId = null;
+
+  // Distinctive enough that a substring search over a whole response body is
+  // a meaningful assertion rather than a coincidence.
+  const SECRET = 'ZZTOPSECRETWEBHOOKTOKEN';
+  const HOOK_URL = `https://hooks.example.com/services/T0/B0/${SECRET}`;
+
+  before(async () => {
+    const o = await req('/auth/dev', { method: 'POST', body: { email: 'hook-owner@team.test' }, cookies: owner });
+    wsId = o.json.user.orgId;
+    const l = await req('/auth/dev', { method: 'POST', body: { email: 'hook-looker@team.test' }, cookies: looker });
+    lookerId = l.json.user.id;
+    const code = (await req('/api/org/invites', { method: 'POST', body: {}, cookies: owner })).json.invite.code;
+    await req('/api/org/join', { method: 'POST', body: { code }, cookies: looker });
+    await req(`/api/org/members/${lookerId}`, { method: 'PATCH', body: { role: 'viewer' }, cookies: owner });
+
+    // A real workspace to pull: settings, a module and a record.
+    await req('/api/sync', {
+      method: 'POST',
+      cookies: owner,
+      body: {
+        since: 0,
+        settings: { currency: 'USD', businessName: 'Hook Test Ltd' },
+        settingsUpdatedAt: 1000,
+        modules: [{ id: 'hm1', updatedAt: 1000, doc: { id: 'hm1', name: 'Invoices', fields: [] } }],
+        records: [{ id: 'hr1', updatedAt: 1000, doc: { id: 'hr1', moduleId: 'hm1', data: { title: 'INV-1' } } }],
+      },
+    });
+
+    await plantHook(wsId, { url: HOOK_URL, addedAt: 1000, addedBy: 'hook-owner@team.test' });
+  });
+
+  test('the hook was actually planted, or everything below is vacuous', async () => {
+    assert.equal((await readHook(wsId)).url, HOOK_URL);
+  });
+
+  /*
+   * The whole response body is searched rather than a named field, because a
+   * field-by-field assertion only covers the fields somebody thought of. This
+   * one fails for `settings.webhookUrl`, for a stray `meta` echo, and for any
+   * future field that happens to carry it.
+   */
+  test('a full pull carries no trace of it, for the owner or for a viewer', async () => {
+    for (const [who, cookies] of [['the owner', owner], ['a viewer', looker]]) {
+      for (const path of ['/api/sync?since=0', '/api/data']) {
+        const { status, text } = await req(path, { cookies });
+        assert.equal(status, 200, `${path} as ${who}`);
+        assert.ok(!text.includes(SECRET), `${path} leaked the webhook token to ${who}`);
+        assert.ok(!text.includes('hooks.example.com'), `${path} leaked the webhook host to ${who}`);
+      }
+    }
+  });
+
+  /*
+   * THE ONE THAT JUSTIFIES THE WHOLE STORAGE DECISION.
+   *
+   * With the URL inside `settings` this fails destructively: the client's
+   * settings document does not contain it, so a currency change pushes a
+   * document without it and last-write-wins replaces the stored copy. The
+   * credential is gone, silently, because somebody switched to euros.
+   */
+  test('an owner changing the currency does not erase the webhook', async () => {
+    const out = await req('/api/sync', {
+      method: 'POST',
+      cookies: owner,
+      body: { since: 0, settings: { currency: 'EUR', businessName: 'Hook Test Ltd' }, settingsUpdatedAt: 2000 },
+    });
+    assert.equal(out.status, 200);
+
+    // The settings write has to have LANDED, or this passes on a no-op.
+    const pulled = await req('/api/sync?since=0', { cookies: owner });
+    assert.equal(pulled.json.settings.doc.currency, 'EUR', 'the currency change did not land');
+
+    assert.equal((await readHook(wsId)).url, HOOK_URL, 'the settings write took the webhook with it');
+  });
+
+  test('and neither does a write through the legacy snapshot route', async () => {
+    // /api/data is still served so a client on cached older JS keeps syncing
+    // through a deploy, and it is a SECOND writer of the same meta doc.
+    const out = await req('/api/data', {
+      method: 'PUT',
+      cookies: owner,
+      body: { modules: [], records: [], settings: { currency: 'GBP', businessName: 'Hook Test Ltd' } },
+    });
+    assert.equal(out.status, 200);
+    assert.equal((await readHook(wsId)).url, HOOK_URL, 'the legacy route took the webhook with it');
+  });
+
+  test('a viewer whose settings push is refused cannot reach it either', async () => {
+    const out = await req('/api/sync', {
+      method: 'POST',
+      cookies: looker,
+      body: { since: 0, settings: { currency: 'JPY', businessName: 'Viewer renamed us' }, settingsUpdatedAt: 9000 },
+    });
+    assert.ok(out.json.rejected.settings, 'a viewer must not be able to write settings at all (§14)');
+    assert.ok(!out.text.includes(SECRET), 'the refusal handed back the meta doc rather than the settings');
+    assert.equal((await readHook(wsId)).url, HOOK_URL);
   });
 });
