@@ -286,6 +286,7 @@ POST   /api/org/join                { code }
 GET    /api/org/hook                owner only — masked, NEVER the URL
 PUT    /api/org/hook                owner only — { url }; '' removes it
 POST   /api/org/hook/test           owner only — sends one, 6/min per caller
+GET    /api/org/reminders           owner only — counts + the exact message, sends nothing
 ```
 
 **Removing is not deleting.** `DELETE /api/org/members/:id` moves the person to
@@ -334,6 +335,7 @@ GET  /api/admin/beta-codes          POST, DELETE /:code
 GET  /api/admin/access-requests     POST /:email/decide
 GET  /api/admin/feedback            PATCH /:id
 POST /api/admin/alerts/test
+POST /api/admin/reminders/run       force one reminder pass now
 GET  /api/admin/export              ← Bearer token, NOT a session
 ```
 
@@ -479,6 +481,14 @@ must never break `/health`: evaluate and store first, notify after.
 `platform.alerts`; 60% speaks once and stays quiet until 85%, re-arming only
 after a drop. An alert that fires hourly trains you to ignore it, which is worse
 than none.
+
+**Reminders run off `/health`, once per workspace per LOCAL day.** `POST
+/api/admin/reminders/run` forces a pass immediately; `force` skips the gap
+between passes but **not** the per-day rule, because a button that could send a
+second digest to the same channel is the spam the design spends most of its
+rules avoiding. The day is marked **before** the send, so a failing destination
+costs one missed digest rather than a channel full of retries — the failure
+shows on the workspace's own settings screen. `CLAUDE.md` §39.
 
 `POST /api/admin/alerts/test` fires a message **and reports what every rule
 currently sees**, so "nothing is wrong" can be told apart from "the webhook has

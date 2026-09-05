@@ -407,6 +407,7 @@ parallel and they each spawn real servers:
 | `oauth.test.mjs` | 9300–9405 | 6 |
 | `backup.test.mjs` | 9500–9550 | 2 |
 | `ssrf.test.mjs` | 9600–9650 | 2 (capture servers, not the app) |
+| `reminders.test.mjs` | 9700–9750 | 1 app + 1 capture |
 
 They used to overlap badly — `api.test.mjs` alone spanned 8300–8899, across
 three other files' ranges. Widen a block and check the neighbours.

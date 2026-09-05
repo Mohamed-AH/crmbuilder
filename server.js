@@ -2388,6 +2388,14 @@ app.get('/health', async (req, res) => {
    * Rate-limited in evaluateAlerts, so a burst of pings costs one pass.
    */
   evaluateAlerts().catch((err) => console.warn('Alert evaluation failed:', err.message));
+
+  /*
+   * And the reminder pass, on the same ping and for the same reasons: after
+   * the response, never awaited, never able to lengthen /health. Its own gap
+   * and its once-per-local-day rule are what keep a burst of pings to one
+   * scan (§39).
+   */
+  remindPass().catch((err) => console.warn('Reminder pass failed:', err.message));
 });
 
 /*
@@ -3536,8 +3544,166 @@ async function remindersDue(wsId, { now = new Date(), ignoreEnabled = false } = 
  * because it is switched off".
  */
 app.get('/api/org/reminders', requireAuth, requireSettingsOwner, async (req, res) => {
-  const due = await remindersDue(workspaceIdFor(req.user), { ignoreEnabled: true });
-  res.json({ reminders: due, hook: publicHook(await getHook(workspaceIdFor(req.user))) });
+  const wsId = workspaceIdFor(req.user);
+  const due = await remindersDue(wsId, { ignoreEnabled: true });
+  const meta = (await store.getData(wsId)) || {};
+
+  /*
+   * The EXACT text that would be sent, not a description of it.
+   *
+   * This is also the only place the digest wording is observable from a test:
+   * the workspace webhook goes through the SSRF guard, which refuses loopback,
+   * so a local capture server cannot receive one — and adding a bypass so it
+   * could is precisely the weakening §30 refused for the feedback webhook. A
+   * preview that shows the real string is both the honest product answer and
+   * the seam that makes the wording testable.
+   */
+  const name = (meta.settings || {}).businessName || '';
+  const { head, lines, tail } = digestText(name, due);
+  res.json({
+    reminders: { ...due, message: due.total ? [head, ...lines, tail].join('\n') : '' },
+    reminded: meta.reminded || null,
+    hook: publicHook(meta.hook || null),
+  });
+});
+
+/* ---- the daily pass -------------------------------------------------------
+ *
+ * Runs off the back of the /health ping, like the alert rules (§25), because
+ * UptimeRobot already hits it every 14 minutes to keep the free tier awake and
+ * a second scheduler would be a second thing to keep alive.
+ *
+ * ONE PASS PER WORKSPACE PER LOCAL DAY, whether or not it sends. This is a
+ * morning digest, not live alerting, and saying so is what makes the cost
+ * bounded: at most one scan of a workspace's rows per day however often the
+ * ping arrives. The consequence, stated rather than discovered: something that
+ * becomes due at 11am is reported tomorrow. A live version means rescanning
+ * every tenant every fourteen minutes, which is a different feature with a
+ * different price.
+ */
+const REMIND_MIN_GAP_MS = Number(process.env.REMIND_MIN_GAP_MS || 5 * 60 * 1000);
+const REMIND_MAX_PER_PASS = Number(process.env.REMIND_MAX_PER_PASS || 25);
+let lastRemindRun = 0;
+
+function digestText(name, due) {
+  // Only the untrusted halves are neutralised. The app's own URL below has to
+  // stay a working link, which is why this is not applied to the whole string.
+  const who = neutraliseMentions(name || 'Your CRM');
+  const noun = due.total === 1 ? 'item needs' : 'items need';
+  const head = `${who} — ${due.total} ${noun} attention`;
+  const lines = due.modules.map((m) => {
+    const parts = [];
+    if (m.overdue) parts.push(`${m.overdue} overdue`);
+    if (m.upcoming) parts.push(`${m.upcoming} due within ${due.days} day${due.days === 1 ? '' : 's'}`);
+    return `• ${neutraliseMentions(m.name)}: ${parts.join(', ')}`;
+  });
+  // Counts, never record names — a webhook destination is not necessarily as
+  // private as the workspace, and the message's job is to get somebody to open
+  // the CRM rather than to reproduce it in a chat channel.
+  return { head, lines, tail: APP_URL };
+}
+
+/*
+ * One workspace. Returns why it did nothing, so a pass can be explained.
+ *
+ * THE GATES ARE ORDERED BY COST, and that ordering is the scale story: the
+ * switch and the webhook are read off the meta doc that was already fetched,
+ * so a workspace that is not using this never touches the records collection.
+ */
+async function remindWorkspace(wsId, now) {
+  const meta = (await store.getData(wsId)) || {};
+  const remind = remindSettings(meta.settings);
+  if (!remind.enabled) return { skipped: 'disabled' };
+  if (!meta.hook || !meta.hook.url) return { skipped: 'no-hook' };
+
+  const zone = DateRules.resolveZone((meta.settings || {}).timezone);
+  const key = DateRules.dayKey(zone, now);
+  const state = meta.reminded || {};
+  if (state.lastRunOn === key) return { skipped: 'done-today' };
+  // Before the workspace's own morning. A digest that arrives at 3am because
+  // that is when the ping happened to cross midnight is a reason to turn the
+  // feature off.
+  if (DateRules.zoneParts(zone, now).hour < remind.hour) return { skipped: 'too-early' };
+
+  const due = await remindersDue(wsId, { now });
+
+  /*
+   * THE DAY IS MARKED BEFORE THE SEND, deliberately.
+   *
+   * Marking afterwards means a send that throws is retried on the next ping,
+   * and a destination that fails slowly turns one digest into a channel full
+   * of them. Spamming a team channel is worse than missing a day, so the
+   * failure is recorded on the hook (the settings card shows it) and the next
+   * pass is tomorrow's.
+   */
+  await store.putData(wsId, {
+    reminded: {
+      lastRunOn: key, lastRunAt: Date.now(), lastCount: due.total, lastZone: zone,
+    },
+  });
+
+  // Nothing due is not a message. A daily "all clear" is the fastest way to
+  // teach a channel to ignore this, which is §25's escalate-only lesson.
+  if (!due.total) return { skipped: 'nothing-due', dayKey: key };
+
+  const name = ((meta.settings || {}).businessName) || '';
+  const { head, lines, tail } = digestText(name, due);
+  const out = await deliverToHook(wsId, {
+    rich: [`**${head}**`, ...lines, tail].join('\n'),
+    plain: [head, ...lines, tail].join('\n'),
+  });
+  return { sent: out.ok, error: out.error || '', count: due.total, dayKey: key };
+}
+
+async function remindPass({ force = false, now = new Date() } = {}) {
+  const started = Date.now();
+  if (!force && started - lastRemindRun < REMIND_MIN_GAP_MS) return { skipped: 'too-soon' };
+  lastRemindRun = started;
+
+  const out = { at: started, workspaces: 0, scanned: 0, sent: 0, failed: 0, capped: false };
+  const wsIds = await store.listWorkspaceIds();
+  out.workspaces = wsIds.length;
+
+  for (const wsId of wsIds) {
+    if (out.scanned >= REMIND_MAX_PER_PASS) { out.capped = true; break; }
+    try {
+      const r = await remindWorkspace(wsId, now);
+      if (r.skipped === 'disabled' || r.skipped === 'no-hook' || r.skipped === 'done-today' || r.skipped === 'too-early') continue;
+      out.scanned += 1;
+      if (r.sent) out.sent += 1;
+      else if (r.error) out.failed += 1;
+    } catch (err) {
+      // One wedged workspace must not stop the rest. Its own row keeps its
+      // day unmarked, so it is retried on the next pass rather than skipped.
+      out.failed += 1;
+      console.warn(`Reminder pass failed for one workspace: ${err.message}`);
+    }
+  }
+
+  out.ms = Date.now() - started;
+  /*
+   * Recorded for the operator to LOOK AT, not to be alerted on.
+   *
+   * The engine and the alert rules both run off the same ping, so a rule that
+   * fired when reminders went stale could never fire for the reason that
+   * matters: if the ping dies, nothing evaluates it either. That is §17's
+   * shape — the backup workflow that reported success every night while
+   * producing nothing — reached from a different direction. The push half of
+   * this belongs at healthchecks.io beside the backup's, which is
+   * configuration rather than code.
+   */
+  await store.updatePlatformSettings({ reminders: out }).catch(() => {});
+  return out;
+}
+
+/*
+ * Run one now. Platform admin only, and `force` skips the gap between passes
+ * but NOT the once-per-local-day rule — the point is to prove the wiring, and
+ * a button that could send a second digest to the same channel is the spam
+ * this design spends most of its rules avoiding.
+ */
+app.post('/api/admin/reminders/run', requireAuth, requirePlatformAdmin, async (req, res) => {
+  res.json({ ok: true, pass: await remindPass({ force: true }) });
 });
 
 /*
@@ -3724,6 +3890,42 @@ const FEEDBACK_WEBHOOK_URL = process.env.FEEDBACK_WEBHOOK_URL || '';
  */
 const TELEGRAM_PATH = /^\/bot[^/]+\/sendMessage$/;
 
+/*
+ * Text a CUSTOMER chose, on its way into somebody's chat channel.
+ *
+ * A workspace name or a module name reaches a webhook payload, and each
+ * provider has its own way of turning text into a notification that wakes a
+ * whole channel. Applied at the point untrusted text ENTERS the message, never
+ * to the whole message — the app's own URL has to stay a working link.
+ *
+ * WHAT ACTUALLY PINGS, per provider, because the mitigations differ:
+ *
+ *   Discord — a bare `@everyone` / `@here` in `content` pings, and so does
+ *     `<@id>`. The proper fix is `allowed_mentions: { parse: [] }` below,
+ *     which is Discord's own documented switch; the zero-width space here is
+ *     the belt for a provider that ignores it.
+ *   Slack — a bare `@everyone` does NOT ping. Only the angle-bracket forms do
+ *     (`<!channel>`, `<!here>`, `<@U123>`), so escaping `<` and `>` is the
+ *     control — and it is also exactly what Slack's own docs prescribe for
+ *     literal angle brackets, so it renders correctly there.
+ *   Telegram — nothing, because no parse_mode is ever set (§18).
+ *
+ * THE COST, stated rather than hidden: a literal `<` in a module name renders
+ * as `&lt;` on Discord and Telegram, which do not decode entities. That is a
+ * cosmetic price on a rare character, paid to keep Slack's mention syntax
+ * inert — and Slack is the likelier destination. Do not "fix" it by dropping
+ * the escaping.
+ */
+function neutraliseMentions(text) {
+  return String(text ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    // Readable, and inert: the zero-width space breaks the token without
+    // changing what a person sees.
+    .replace(/@(everyone|here|channel)\b/gi, '@​$1');
+}
+
 function webhookRequest(rawUrl, { rich, plain }) {
   let url;
   try {
@@ -3734,7 +3936,15 @@ function webhookRequest(rawUrl, { rich, plain }) {
   if (!TELEGRAM_PATH.test(url.pathname)) {
     // Discord reads `content`, Slack reads `text`. Sending both means one
     // shape works for either without a provider setting to get wrong.
-    return { url: url.toString(), body: { content: rich, text: rich } };
+    //
+    // `allowed_mentions: { parse: [] }` is Discord's own switch for "this
+    // message notifies nobody", and it is the real control rather than the
+    // text mangling in neutraliseMentions — which is the belt for providers
+    // that do not offer one. Slack ignores the unknown field.
+    return {
+      url: url.toString(),
+      body: { content: rich, text: rich, allowed_mentions: { parse: [] } },
+    };
   }
 
   // chat_id is a parameter, not part of the path. Taken off the query string
