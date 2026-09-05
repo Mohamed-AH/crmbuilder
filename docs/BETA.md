@@ -31,9 +31,10 @@ step this whole flow exists to remove.
 | `MONGODB_URI` | your Atlas string | Without it, data is lost on every redeploy |
 
 **3. Confirm the backup works before anyone depends on it.**
-Run the Nightly backup workflow by hand, download the artifact, and restore it
-into a scratch database following `DEPLOYMENT.md` → *Restoring, and testing that
-you can*. A backup you have never restored is a rumour.
+Run the **Nightly backup** workflow by hand — it lives in the private repo
+`Mohamed-AH/crmback`, not in the app repo (`DEPLOYMENT.md` → *Backups* says
+why) — then follow § *"Drilling the backup"* below. A backup you have never
+restored is a rumour.
 
 **4. Mint a code.**
 Admin → Beta access → New beta code. Give it a label (which batch of people), a
@@ -232,7 +233,8 @@ are done (step 6).
 
 #### Step 1 — Get an artifact
 
-GitHub → **Actions** → **Nightly backup** → the newest green run → download
+In the **private** repo `Mohamed-AH/crmback` — not the app repo — go to
+**Actions** → **Nightly backup** → the newest green run → download
 **`crmbuilder-backup`** from the Artifacts section, and unzip it. You get a file
 named `crmbuilder-backup-YYYY-MM-DD.json`.
 

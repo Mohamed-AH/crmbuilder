@@ -231,17 +231,39 @@ the service sleeps anyway.
 
 ### Backups
 
-**MongoDB M0 has no automated backups and no point-in-time recovery.** The
-nightly export in `.github/workflows/backup.yml` is the entire safety net.
+**MongoDB M0 has no automated backups and no point-in-time recovery.** A nightly
+export is the entire safety net.
 
-Set up:
+> **The backup workflow does not live in this repository.** It runs from the
+> private repo **`Mohamed-AH/crmback`**, and that is the copy to edit.
+>
+> **This repository is public, and so are its build artifacts.** A backup is a
+> complete dump of every customer's records, accounts and organisations — plus
+> `accessRequests`, which carries the addresses of people who asked for access
+> and were *declined*. Running the job here would publish all of it. The
+> workflow was removed rather than left in place unconfigured, because a
+> workflow with no secrets **skips and reports success**: it showed a green tick
+> every night while producing no backups at all, which is worse than a red one.
+>
+> Its history is still here — `git log -- .github/workflows/backup.yml`.
+
+Set up, in `crmback`:
 
 1. Generate a token: `openssl rand -base64 32`
 2. Add `BACKUP_TOKEN` to the Render service's environment.
 3. Add the same value as a GitHub Actions **secret** named `BACKUP_TOKEN`, plus
    `BACKUP_URL` set to the deployment's URL.
-4. Run the workflow once by hand (Actions → Nightly backup → Run workflow) and
-   check the artifact.
+4. Add `HEALTHCHECK_URL` — a healthchecks.io ping URL, period 1 day, grace
+   6 hours. Without it the job still backs up, but nothing tells you when it
+   stops. GitHub disables scheduled workflows after 60 days of repository
+   inactivity, silently, and a repo holding one workflow goes quiet fast.
+5. Run the workflow once by hand (Actions → Nightly backup → Run workflow),
+   check the artifact, and confirm the check's *Last Ping* moved.
+
+**Then drill it.** `docs/BETA.md` § *"Drilling the backup"* restores a real
+artifact into a scratch directory. Do it monthly — restoring a real one is what
+found a defect the automated test could not see, because the test's fixture and
+the code shared an assumption (`CLAUDE.md` §17).
 
 The endpoint is `GET /api/admin/export`, and it is deliberately awkward:
 

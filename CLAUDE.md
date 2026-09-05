@@ -831,8 +831,30 @@ deferred to a `consume()` the caller runs only after the account exists.
 ## 17. Backups and usage (beta stage 2)
 
 M0 has **no automated backups and no point-in-time recovery**, so
-`GET /api/admin/export` plus `.github/workflows/backup.yml` is the entire
-safety net. `scripts/restore.mjs` puts one back, into Mongo or the file store.
+`GET /api/admin/export` plus a nightly workflow is the entire safety net.
+`scripts/restore.mjs` puts one back, into Mongo or the file store.
+
+**The workflow is not in this repository — it runs from the private repo
+`Mohamed-AH/crmback`**, and that is the copy to edit. Two reasons, and the
+second is the one that would have hurt:
+
+- **This repo is public, and so are its build artifacts.** A backup is every
+  customer's records, accounts and organisations, plus `accessRequests` —
+  which carries the addresses of people who asked for access and were
+  *declined*. Running the job here would publish all of it.
+- **It was removed, not left unconfigured.** A workflow with no secrets
+  **skips and reports success**: it showed a green tick every night while
+  producing no backups at all, and that state ran unnoticed for weeks. A
+  no-op that reports success is worse than a failure, because nothing will
+  ever contradict it. Its history is still here —
+  `git log -- .github/workflows/backup.yml`.
+
+**The dead-man's switch is the other half.** The job's last step pings
+healthchecks.io, and only when a *validated backup was fetched and stored* —
+gated on the same `ready == 'true'` that the skip fails, so an unconfigured run
+cannot report health. Without it the 60-day inactivity rule silently disables
+the schedule on a repo that holds one file and therefore goes quiet fast.
+`docs/BETA.md` § *"Knowing the backup ran"* has the setup.
 
 **The export is the highest-value route in the app** — one request returns
 every customer's data — so it is deliberately awkward:
