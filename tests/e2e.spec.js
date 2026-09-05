@@ -2790,3 +2790,115 @@ test('records stamped before the last push still reach the server', async ({ pag
   const onServer = (delta.records || []).some((r) => r.id === backdatedId && !r.deleted);
   expect(onServer, 'a backdated record must not be silently stranded on the device').toBe(true);
 });
+
+/*
+ * The webhook and the time zone, driven as the two roles that matter.
+ *
+ * The webhook URL is a credential (§18: a Telegram URL contains the bot
+ * token), so the thing worth proving in a browser is the NEGATIVE: after the
+ * save, the token is not in the DOM, not in the input, and not anywhere a
+ * member can reach. §36's audit found the settings hole by driving the app as
+ * a real role rather than by reading the code; this is the same instrument.
+ */
+test.describe('workspace notifications', () => {
+  const TOKEN = 'E2ESECRETWEBHOOKTOKEN';
+  const HOOK = `https://hooks.example.invalid/services/T7/B7/${TOKEN}`;
+
+  test('an owner saves a webhook and is never shown it again', async ({ page }) => {
+    await onboard(page, { name: 'Hooked Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('hook-owner'));
+
+    await page.goto('/#/settings');
+    const field = page.locator('#hook-url');
+    await expect(field).toBeVisible({ timeout: 20000 });
+    await field.fill(HOOK);
+    await page.click('#hook-save');
+
+    // Saved, and honest that nothing was delivered — .invalid resolves
+    // nowhere, so the far end genuinely cannot be reached. A screen that said
+    // only "saved" would be true and useless: the next thing is silence.
+    await expect(page.locator('.toast').last()).toContainText(/saved/i, { timeout: 20000 });
+
+    // Wait for the re-render before reading the DOM: renderSettings is async
+    // and the click handler does not await it (§4).
+    await expect(page.locator('.read-label', { hasText: 'Sending to' })).toBeVisible({ timeout: 20000 });
+
+    const html = await page.content();
+    expect(html.includes(TOKEN), 'the token is in the DOM after saving').toBe(false);
+    expect(html).toContain('hooks.example.invalid');
+    // A fresh, empty box — not the saved URL waiting to be copied out.
+    await expect(page.locator('#hook-url')).toHaveValue('');
+
+    // Turning it off removes the credential rather than blanking a field.
+    page.once('dialog', (d) => d.accept());
+    await page.click('#hook-clear');
+    await expect(page.locator('.toast').last()).toContainText(/turned off/i, { timeout: 20000 });
+    await expect(page.locator('.read-label', { hasText: 'Sending to' })).toHaveCount(0);
+  });
+
+  test('a member does not see the notifications card at all', async ({ page, browser }) => {
+    await onboard(page, { name: 'Hooked Team', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('hook-boss'));
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+
+    await page.goto('/#/settings');
+    await page.click('#invite-btn');
+    await expect(page.locator('#invite-url')).toBeVisible({ timeout: 20000 });
+    const url = await page.locator('#invite-url').inputValue();
+    await page.click('.modal [data-close]');
+
+    const second = await browser.newContext();
+    const mate = await second.newPage();
+    await mate.goto(new URL(url).pathname + new URL(url).search);
+    await signIn(mate, uniqueEmail('hook-mate'), { claim: 'none' });
+    await expect(mate.locator('[data-join]').first()).toBeVisible({ timeout: 25000 });
+    await mate.click('[data-join="fresh"]');
+
+    // A reload rather than a goto: the colleague is already on #/settings by
+    // the end of the join, and navigating to the same hash is a same-document
+    // change that does not re-render (§15).
+    await mate.goto('/#/settings');
+    await mate.reload();
+    await expect(mate.locator('.card-head h2', { hasText: 'Account & sync' })).toBeVisible({ timeout: 25000 });
+
+    // Rule 1 of §36: a control that CREATES something is hidden, because a
+    // missing button explains itself. There is nothing to read here either —
+    // the masked destination is still a fact about a credential.
+    await expect(mate.locator('#hook-url')).toHaveCount(0);
+    await expect(mate.locator('#hook-save')).toHaveCount(0);
+    await expect(mate.locator('.card-head h2', { hasText: 'Notifications' })).toHaveCount(0);
+
+    /*
+     * And the time zone, in the same pass because it is the other half of what
+     * Stage 4 added to this screen: an owner gets a picker, everyone else gets
+     * the value. A disabled input would still look like a form that failed
+     * (§36 rule 2).
+     */
+    await expect(mate.locator('#set-timezone')).toHaveCount(0);
+    await expect(mate.locator('.read-label', { hasText: 'Time zone' })).toBeVisible();
+    // The owner's own screen, for the contrast. Re-rendered rather than
+    // assumed: this page has been sitting on Settings since it copied the
+    // invite link, and its markup predates the colleague existing.
+    await page.goto('/#/settings');
+    await page.reload();
+    await expect(page.locator('#set-timezone')).toBeVisible({ timeout: 25000 });
+
+    await second.close();
+  });
+
+  test('a time zone chosen by the owner survives a reload', async ({ page }) => {
+    await onboard(page, { name: 'Zoned Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('zone-owner'));
+    await page.goto('/#/settings');
+    await expect(page.locator('#set-timezone')).toBeVisible({ timeout: 20000 });
+
+    // A real IANA name from the browser's own list, so this cannot pass on a
+    // value Intl would reject.
+    await page.selectOption('#set-timezone', 'Asia/Tokyo');
+    await page.click('#save-workspace');
+    await expect(page.locator('.toast').last()).toContainText(/saved/i);
+
+    await page.reload();
+    await expect(page.locator('#set-timezone')).toHaveValue('Asia/Tokyo', { timeout: 20000 });
+  });
+});

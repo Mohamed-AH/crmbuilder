@@ -228,7 +228,32 @@ Open **Settings** from the bottom of the sidebar.
   applies. To actually convert, export a backup, convert the numbers in a
   spreadsheet, and import it back.
 
+- **Time zone** — which calendar day a date belongs to when the server works it
+  out on your behalf. Your own screens already use this device's clock, so this
+  only matters for anything sent to you rather than looked at by you. Leave it
+  unset and dates are treated as UTC.
+
 Click **Save workspace** to apply.
+
+All three are set by the team's **owner**. Everyone else sees them as values
+rather than as a form — changing the currency would relabel every amount in the
+workspace for the whole team, so it stays with the person who owns it.
+
+### Notifications (owners only)
+
+If your team uses Slack, Discord or Telegram, an owner can paste a **webhook
+URL** in Settings and send a test message to check it works. Right now that
+test is all it does — nothing sends on its own yet.
+
+Three things worth knowing:
+
+- **The URL works like a password**, so it is never shown to you again after
+  you save it. You'll see enough to recognise which channel it points at. To
+  change it, paste a new one; to switch it off, use **Turn off**.
+- **It is never included in a backup**, for the same reason. If your workspace
+  is ever restored from one, an owner has to paste the URL again.
+- **Only the owner** can see or change it — not members, and not view-only
+  accounts.
 
 ---
 

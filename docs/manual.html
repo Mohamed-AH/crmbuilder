@@ -688,12 +688,20 @@
       <ul>
         <li><strong>Business name</strong> — shown at the top of the sidebar and on the dashboard.</li>
         <li><strong>Currency</strong> — 30 currencies. Changing it reformats every money field everywhere, immediately.</li>
+        <li><strong>Time zone</strong> — which calendar day a date belongs to when the server works it out on your behalf. Your own screens already use this device's clock. Leave it unset and dates are treated as UTC.</li>
       </ul>
       <div class="note">
         <span class="note-label">Note</span>
         <p>Currency changes <em>display</em>, not the stored numbers — switching from USD to EUR relabels amounts, it does not convert them.</p>
       </div>
-      <p>Click <strong>Save workspace</strong> to apply.</p>
+      <p>Click <strong>Save workspace</strong> to apply. All three are set by the team's <strong>owner</strong>; everyone else sees them as values rather than as a form.</p>
+
+      <h3>Notifications (owners only)</h3>
+      <p>If your team uses Slack, Discord or Telegram, an owner can paste a <strong>webhook URL</strong> in Settings and send a test message to check it works. That test is all it does today — nothing sends on its own yet.</p>
+      <div class="note caution">
+        <span class="note-label">Careful</span>
+        <p>The webhook URL works like a password, so it is never shown to you again after you save it, and it is never included in a backup. If your workspace is restored from one, an owner has to paste it again.</p>
+      </div>
     </section>
 
     <!-- 10 -->

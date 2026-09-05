@@ -73,6 +73,7 @@ hosting plan is not the free tier they assume.
 | `RATE_WINDOW_MS` | `60000` | the rate limiter's window |
 | `RATE_AUTH_MAX` | `60` | OAuth callbacks per window per IP. Each one makes the server exchange a token with Google, so this bounds outbound work — it is **not** brute-force protection, because there is no password to guess |
 | `RATE_ASK_MAX` | `5` | access requests per window per IP. The queue an operator works by hand is otherwise trivially floodable |
+| `RATE_HOOK_TEST_MAX` | `6` | webhook test sends per window per IP. Owner-only already, so this is not about the population — it is the one authenticated route that makes the server dial an address the caller chose. The block list in `lib/safe-fetch.js` is the control; this bounds what a compromised owner account can do with it |
 | `SYNC_BODY_LIMIT` | `8mb` | body limit for `/api/sync` and `/api/data` only. Every other route is capped at 64 KB |
 
 **The rate limiter counts per instance, in memory.** On a single free-tier

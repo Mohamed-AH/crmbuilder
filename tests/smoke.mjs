@@ -154,6 +154,17 @@ const MUST_NOT_SERVE = [
   // Only present when a deployment has fallen back to the file store — which
   // is exactly when it would be every customer's records on a guessable path.
   ['/data/store.json', 'file-store database'],
+  /*
+   * The allow-list check run backwards.
+   *
+   * `lib/` is server-side code and is deliberately NOT `js/`, which is an
+   * allow-listed asset directory (§28) — a file there is downloadable and
+   * wants an index.html entry, an sw.js APP_SHELL entry and a CACHE_VERSION
+   * bump. Every other assertion in this suite proves a file IS reachable;
+   * this one proves a directory is not, which is what would catch somebody
+   * adding 'lib' to ASSET_DIRS to make an import work.
+   */
+  ['/lib/safe-fetch.js', 'server-side source'],
 ];
 
 for (const [path, what] of MUST_NOT_SERVE) {

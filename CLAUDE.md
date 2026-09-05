@@ -50,6 +50,8 @@ never change, because everything cross-references them.
 | Guided tour: card covering its own highlight | §35 |
 | **View-only**: what it must look like, and the hole | §36 · §14 |
 | **Dates**: the due filter, and the UTC parsing trap | §37 |
+| **Outbound webhooks**: the guard, and where the URL lives | §38 |
+| Workspace time zone — and why the filter ignores it | §38 · §37 |
 | E2E suite slow or "flaky" | §32 |
 | **What tombstones cost**, and reading storage figures | §33 · §26 |
 | **How the docs are organised**, and what is frozen | §29 |
@@ -65,6 +67,8 @@ No build step, no frontend framework — plain ES5-ish scripts loaded in order b
 
 ```
 server.js             Express: static PWA, OAuth, /api/sync + /api/data, /api/admin/*, /api/org, /health
+lib/safe-fetch.js     SSRF guard for customer-chosen webhook destinations (§38)
+                      server-side, CommonJS, and deliberately NOT under js/
 index.html            app shell (script order matters — see §3)
 privacy.html          privacy policy | terms.html  terms of use  (see §19)
 legal.css             styling for those two — they load no app JS at all
@@ -402,6 +406,7 @@ parallel and they each spawn real servers:
 | `signup.test.mjs` | 8700–8960 | 61 |
 | `oauth.test.mjs` | 9300–9405 | 6 |
 | `backup.test.mjs` | 9500–9550 | 2 |
+| `ssrf.test.mjs` | 9600–9650 | 2 (capture servers, not the app) |
 
 They used to overlap badly — `api.test.mjs` alone spanned 8300–8899, across
 three other files' ranges. Widen a block and check the neighbours.
@@ -2309,7 +2314,7 @@ prefer it over an action that needs a licence check.
 | 9 | NoSQL injection | **FALSE** — swept every call site, Phase 2 |
 | 10 | Mass assignment | **FALSE** — both PATCH routes build explicit patches |
 | 11 | Prototype pollution | **FALSE** — probed, not exploitable; guard added anyway |
-| 12 | SSRF via the feedback webhook | **FALSE** — env-only, no runtime setter |
+| 12 | SSRF via the feedback webhook | **FALSE** — env-only, no runtime setter. **Superseded by §38:** the workspace webhook IS a runtime setter, and is a deliberate outbound sink behind `lib/safe-fetch.js` |
 | 13 | Verify Google ID tokens | **DOES NOT APPLY** — authorization-code flow, no client-supplied token |
 | 14 | Permissive CORS | **FALSE** — no CORS middleware exists; absence is the mitigation |
 | 15 | Static fallback session secret | **FALSE** — falls back to `crypto.randomBytes(32)` |
@@ -2939,3 +2944,174 @@ it in minutes.
 - **No `server.js` change.** `ASSET_DIRS` allow-lists the whole `js/` directory
   (§28), so a new file there is served automatically — but the smoke test's
   `ASSETS` is what *proves* it, and it went 41 → 42.
+
+
+---
+
+## 38. The workspace webhook, and the credential that could not live in `settings`
+
+Phase 2 of the reminders work — the transport, built before the engine that
+will use it (§37 was Phase 1). Its only user-facing surface is a Settings card
+and a test button; nothing sends on its own yet. That is the cost of building
+the transport first, and it is still the right order: the alternative is
+writing an SSRF guard under pressure with the feature already half-built.
+
+### It cannot go in `settings`, and the second reason is worse than the first
+
+The obvious home is beside the currency and the business name. Two facts, both
+read out of the code rather than assumed:
+
+- **`pullChanges` sends `meta.settings` WHOLE** to anyone whose cursor is
+  behind `settingsServerAt` — member, contributor, **viewer**. The URL is a
+  credential (§18: a Telegram webhook URL contains the bot token), so that puts
+  it in every teammate's IndexedDB, offline, permanently. Masking it out of a
+  `GET` does nothing, because the `GET` is not the delivery path.
+- **Masking would then DESTROY it.** `js/app.js` merges the pulled document
+  into local settings and `js/cloud.js` pushes the whole thing back on the next
+  save, where last-write-wins accepts it — so `https://…/bot•••••/sendMessage`
+  overwrites the real URL the first time an owner changes the currency.
+  **Redaction and last-write-wins cannot both apply to one document.**
+
+So `hook` is a **sibling** key on the meta doc. `putData` merges on both stores
+(spread on FileStore, `$set` on MongoStore), so a settings write leaves it
+standing; `pullChanges` names `meta.settings` specifically, so sync cannot
+reach it. Structural rather than filtered — it holds for somebody who never
+reads the comment.
+
+§17 had already written half of this down before there was code to hit it:
+*"Keep it out of `settings`, or redact it on export."* The sync path is the
+half that note did not reach.
+
+Guarded by *"an owner changing the currency does not erase the webhook"*, which
+fails **destructively** on the original design, and by a leak assertion that
+searches the whole response body rather than a named field — a field-by-field
+check only covers the fields somebody thought of.
+
+### `node:https`, not `fetch`, and that is the substance
+
+**DNS rebinding is a time-of-check/time-of-use bug.** Validate with
+`dns.lookup` and then call `fetch(url)` and fetch resolves the hostname *a
+second time*: a one-second TTL answering public and then `169.254.169.254`
+walks straight through a correct check. Enumerating hostname encodings — the
+usual advice — does not touch it; the second query *is* the vulnerability.
+
+`node:https` takes a `lookup` option that flows to `tls.connect`, so the socket
+dials the address we already validated, with SNI and `Host` intact. The undici
+equivalent needs undici's `Agent`, which is not reachable on any `node:`
+specifier and would mean a fifth production dependency.
+
+Two things come free that are flags on `fetch`:
+
+- **It never follows redirects at all** — a property of the API rather than an
+  option a later edit can drop, so a 30x to the metadata endpoint cannot be
+  followed. The code only has to *report* it.
+- **The encoding zoo needs no enumeration.** `0177.0.0.1`, `2130706433`,
+  `0x7f.1` are all blocked by the same path as the dotted form, because **we
+  never parse the hostname — we validate what the resolver returned.**
+
+**The pin is proven, not asserted.** The transport test posts to
+`webhook.invalid:<port>`, which no resolver answers for, and succeeds *only*
+because the pinned address is the one dialled. A companion test shows the same
+request failing `ENOTFOUND` without it.
+
+### Traps, and two of them shipped broken first
+
+- **`::ffff:0:0/96` in the block list breaks every webhook in the product.**
+  It looks like a free backstop under the v4-mapped unwrapping. `net.BlockList`
+  matches a v4-mapped v6 **subnet** against plain `ipv4` checks, so that one
+  line makes `check('1.1.1.1','ipv4')` true and nothing is ever deliverable.
+  All twenty-one blocked-range assertions passed while the guard refused the
+  entire internet; *"lets an ordinary public address through"* is what caught
+  it, which is why a block list needs that test.
+- **`new URL('https://[::1]/').hostname` is `'[::1]'`** — brackets included —
+  so `dns.lookup` failed on it and every IPv6 literal was classified
+  *unresolvable* rather than *blocked*. Not exploitable (a failed resolve means
+  no socket either way), but the save path treats the two differently, so
+  `https://[fd00::1]/x` was being **stored**. Node's own `urlToHttpOptions`
+  strips them the same way. Asserting only `ok === false` passes on the broken
+  code; the test asserts the `code`.
+- **The suite is split in two, and it has to be.** Classification is tested
+  with no sockets; the transport is tested against a local capture server with
+  the block list stood down. Together you must either weaken the guard so the
+  capture server is reachable or never exercise redirects, timeouts and
+  pinning. Same lesson as §30's `127.0.0.1` feedback test.
+- **`lib/` is a new top-level directory and is deliberately not `js/`**, which
+  is served (§28). `tests/smoke.mjs` asserts `/lib/safe-fetch.js` is a **404** —
+  the allow-list check run backwards, and the only thing that would catch
+  somebody adding `lib` to `ASSET_DIRS` to make an import work. Smoke 42 → 43.
+- **CommonJS, and `.js` not `.mjs`.** `server.js` is CommonJS and
+  `package.json` allows Node ≥ 18; `require()` of ESM only works from 22.12, so
+  an `.mjs` here runs locally and throws `ERR_REQUIRE_ESM` on a deployment
+  pinned to 18 or 20 — at require time, so the whole server fails to boot.
+
+### The save refuses only what can never work
+
+A malformed URL, `http:`, or an address the guard will not dial are properties
+of the **URL**, so storing one means a webhook refused identically at every
+send for ever. An unresolvable host, a refused connection, a timeout or a 500
+are properties of the **moment**: refusing those means an owner cannot
+configure a webhook while the far end is down, or before they have finished
+setting it up at the other end. Those save, carrying the reason on
+`lastError` — which the settings screen shows. `sendGuarded` returns a `code`
+so the two can be told apart.
+
+**No read-back, anywhere.** An owner who has lost the token re-enters it; the
+masked form exists only so the screen can say *which* destination is
+configured. `lastError` is the message with the URL scrubbed out, because
+§18's "nothing interpolates a webhook URL into a log line" now has a second
+place it could break: that field is persisted and rendered.
+
+Owner-only via `canEditSettings()` — the function that exists separately from
+`canEditSchema()` (§14) precisely so a workspace-level setting can hang off it.
+**403, not 404**, matching the sibling team routes: §5's 404-not-403 rule is
+about *cross-org* access, and a member already knows their own workspace
+exists, so hiding a permission behind a lie buys nothing.
+
+### It does not travel in a backup
+
+`workspaces[].meta` **is** the `data` collection, so anything on the meta doc
+is in every nightly artifact — downloadable by anyone with read access to the
+private repo (§17). The export replaces `hook` with `{ redacted: true }`.
+
+**Replaced, not deleted, and that is the point.** The marker is the only thing
+that can tell an operator their notifications are not coming back on their own;
+a silently absent hook after a recovery is a channel that has been dead since
+the incident, which is exactly when somebody is relying on it. `restore.mjs`
+counts them, says so, and strips the marker before writing so `publicHook()`
+cannot report a hook with no URL behind it.
+
+The drill seeds a live webhook on one tenant before boot, and `before` asserts
+it survived to export time — otherwise "the export does not carry it" is true
+for the wrong reason. That check doubles as proof that `refreshCounts`' meta
+write merges rather than replaces.
+
+### The time zone, and why the browser filter must not use it
+
+`settings.timezone`, `''` when nobody has chosen — **not `'UTC'`**. The
+distinction earns its place on screen: *"Not set — dates are treated as UTC"*
+is a prompt, *"UTC"* is a claim somebody made. The picker is built from
+`Intl.supportedValuesOf('timeZone')`, so the list cannot drift from what `Intl`
+will accept, with a two-entry fallback for browsers without it — a
+hand-maintained list of 400 names is a second source that goes stale (§29).
+
+**No server-side validation, deliberately.** Validating in `applyPush` means
+touching the sync seam — six recorded traps (§10) plus §14's rejection rules —
+to guard against a string only a hand-written push can produce, and a refusal
+there has nowhere good to go: rejecting a whole push over a timezone makes a
+hard error out of what every other violation treats as a refusal. Phase 3 will
+resolve at *read* time with a `UTC` fallback instead. Store whatever arrives;
+never trust it at use.
+
+**§37's filter deliberately does not read it.** That runs in the browser, and
+somebody in Tokyo looking at the list should see *their* today. The workspace
+zone exists for the server, which has no viewer. Unifying the two reintroduces
+exactly the off-by-one `js/date-rules.js` exists to prevent.
+
+### §30's audit table changes
+
+Row 12 read **FALSE — env-only, no runtime setter**. These routes *are* that
+setter, so it now reads: *false for the env webhook; the workspace webhook is a
+deliberate outbound sink with a guard.* An audit table that quietly keeps a
+stale FALSE is worse than one that never had the row.
+
+`CACHE_VERSION` bumped to `crmbuilder-v33`.

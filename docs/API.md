@@ -283,6 +283,9 @@ POST   /api/org/invites             owner only → { code }
 DELETE /api/org/invites/:code       revoke
 GET    /api/org/invites/:code/preview   unauthenticated
 POST   /api/org/join                { code }
+GET    /api/org/hook                owner only — masked, NEVER the URL
+PUT    /api/org/hook                owner only — { url }; '' removes it
+POST   /api/org/hook/test           owner only — sends one, 6/min per caller
 ```
 
 **Removing is not deleting.** `DELETE /api/org/members/:id` moves the person to
@@ -290,6 +293,17 @@ a fresh org of their own: account intact, team workspace untouched. Account
 deletion is `/api/admin/users/:id`, and `deleteAccount()` is still the only
 thing that can take a workspace with it. The two are one word apart and a decade
 of data apart. `CLAUDE.md` §15.
+
+**The webhook is write-only, and it is a credential.** `GET /api/org/hook`
+returns a masked form, the host, and when it last delivered — never the URL, on
+any route, to anybody. An owner who has lost the token re-enters it. `PUT`
+refuses **400** for a URL that can never work (malformed, `http:`, or an address
+the guard will not dial) and **stores** one that merely did not answer just now,
+carrying the reason on `lastError`; the difference is a property of the URL
+versus a property of the moment. Outbound requests go through
+`lib/safe-fetch.js`, which resolves once, checks every answer against a block
+list, pins that address into the socket, and never follows a redirect.
+`CLAUDE.md` §38.
 
 **`wouldStrandTeam()` is one rule behind three endpoints** — leave, self-demote
 and join. The last owner of a populated team walking away leaves people with a

@@ -15,7 +15,18 @@
   // so they are addressed through Scope. Reading them at module scope is safe:
   // Scope resolves synchronously from the last known identity, which is what
   // keeps the first paint immediate.
-  const DEFAULT_SETTINGS = { currency: 'USD', businessName: '' };
+  /*
+   * `timezone` is '' — NOT 'UTC' — when nobody has chosen one, and the
+   * distinction earns its place on the screen: "Not set, so dates are treated
+   * as UTC" is a prompt, "UTC" is a claim somebody made.
+   *
+   * It exists for the SERVER, which has no viewer and therefore no wall
+   * calendar of its own. The due-date filter (§37) deliberately does not read
+   * it: that runs in the browser, and somebody in Tokyo looking at the list
+   * should see their today, not the owner's. Unifying the two would reintroduce
+   * exactly the off-by-one js/date-rules.js exists to prevent.
+   */
+  const DEFAULT_SETTINGS = { currency: 'USD', businessName: '', timezone: '' };
   let SETTINGS = { ...DEFAULT_SETTINGS };
   function loadSettingsFromScope() {
     SETTINGS = { ...DEFAULT_SETTINGS };
@@ -91,6 +102,24 @@
    * job for an auditor or an investor reading the workspace.
    */
   const isViewOnly = () => myRole() === 'viewer';
+
+  /*
+   * The zone list comes from the browser, so it can never drift from what
+   * Intl will actually accept. `supportedValuesOf` is recent enough to need a
+   * fallback: without one, an older browser renders an empty <select> and the
+   * owner cannot set a zone at all. The fallback is deliberately tiny — the
+   * device's own zone plus UTC — because a hand-maintained list of 400 names
+   * is a second source that goes stale (§29).
+   */
+  function deviceTimeZone() {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; }
+  }
+  function timeZoneOptions() {
+    try {
+      if (typeof Intl.supportedValuesOf === 'function') return Intl.supportedValuesOf('timeZone');
+    } catch { /* fall through */ }
+    return [...new Set([deviceTimeZone(), 'UTC'].filter(Boolean))];
+  }
 
   const MODULE_COLORS = ['#1570ef', '#0e9384', '#099250', '#dc6803', '#c11574', '#6938ef', '#d92d20', '#475467'];
   const MODULE_ICONS = ['package', 'users', 'building-2', 'handshake', 'square-check-big', 'target', 'sticky-note', 'calendar', 'receipt', 'briefcase', 'wrench', 'truck', 'star', 'tag', 'clipboard-list', 'folder', 'map-pin', 'globe', 'phone', 'mail', 'heart', 'database'];
@@ -2605,7 +2634,15 @@
           const pending = res.canInvite
             ? await Cloud.org.invites().catch(() => ({ invites: [] }))
             : { invites: [] };
+          // Owner-only, and a member's request is a 403 — expected, not an
+          // error worth surfacing, the same as the invite list above. The
+          // client check only avoids asking a question we know the answer to;
+          // the server is what decides (§14).
+          const wh = canEditSettings()
+            ? await Cloud.org.getHook().catch(() => null)
+            : null;
           org = {
+            hook: (wh && wh.hook) || null,
             ...res.org,
             memberCount: res.memberCount,
             canInvite: res.canInvite,
@@ -2644,7 +2681,15 @@
                 ${CURRENCIES.map((c) => `<option value="${c}" ${c === SETTINGS.currency ? 'selected' : ''}>${c}</option>`).join('')}
               </select>
             </div>
+            <div class="form-row">
+              <label for="set-timezone">Time zone</label>
+              <select class="input" id="set-timezone">
+                <option value="">Not set — dates are treated as UTC</option>
+                ${timeZoneOptions().map((z) => `<option value="${esc(z)}" ${z === SETTINGS.timezone ? 'selected' : ''}>${esc(z)}</option>`).join('')}
+              </select>
+            </div>
           </div>
+          <p class="settings-hint">The time zone decides which calendar day a reminder belongs to. Your own screens already use this device's clock${deviceTimeZone() ? ` (${esc(deviceTimeZone())})` : ''}.</p>
           <button class="btn btn-primary" id="save-workspace">Save workspace</button>` : `
           <!-- Values, not disabled inputs (§36). Owner-only because changing
                the currency RELABELS every stored amount for the whole team
@@ -2654,6 +2699,8 @@
               <div class="read-value">${SETTINGS.businessName ? esc(SETTINGS.businessName) : '<span class="muted">—</span>'}</div></div>
             <div class="read-row"><div class="read-label">Currency</div>
               <div class="read-value">${esc(SETTINGS.currency)}</div></div>
+            <div class="read-row"><div class="read-label">Time zone</div>
+              <div class="read-value">${SETTINGS.timezone ? esc(SETTINGS.timezone) : '<span class="muted">Not set</span>'}</div></div>
           </div>
           <p class="settings-hint" style="margin:12px 0 0">These are set by the team's owner. Changing the currency would relabel every amount in the workspace, so it stays with them.</p>`}
         </div>
@@ -2720,6 +2767,34 @@
             </div>
             <p class="settings-hint">Leaving gives you a fresh, empty workspace of your own. The team's records stay with the team.</p>` : ''}
         </div>` : ''}
+        ${authed && org && canEditSettings() ? `
+        <div class="card">
+          <div class="card-head"><h2>Notifications</h2></div>
+          <p class="settings-hint">Send alerts to a chat channel. Paste the webhook URL that Slack, Discord or Telegram gives you — it goes to your team's channel, not to us.</p>
+          ${org.hook && org.hook.configured ? `
+            <!-- A read view, not a filled-in input (§36 rule 2). There is no
+                 read-back anywhere in this feature: the URL is a credential and
+                 is never sent to a browser again after it is saved. -->
+            <div class="record-read">
+              <div class="read-row"><div class="read-label">Sending to</div>
+                <div class="read-value">${esc(org.hook.masked)}</div></div>
+              <div class="read-row"><div class="read-label">Last delivery</div>
+                <div class="read-value">${org.hook.lastError
+                  ? `<span class="pill">Failed</span> ${esc(org.hook.lastError)}`
+                  : (org.hook.lastOkAt ? esc(fmtWhen(org.hook.lastOkAt)) : '<span class="muted">Not tried yet</span>')}</div></div>
+            </div>
+            <div class="btn-row">
+              <button class="btn" id="hook-test">${icon('refresh-cw', 15)} Send a test message</button>
+              <button class="btn btn-danger-ghost" id="hook-clear">${icon('trash-2', 15)} Turn off</button>
+            </div>
+            <p class="settings-hint" style="margin:12px 0 0">We never show the full URL again — it works like a password. To point this somewhere else, paste a new one below.</p>` : ''}
+          <div class="form-row" style="margin-top:12px">
+            <label for="hook-url">${org.hook && org.hook.configured ? 'Replace the webhook URL' : 'Webhook URL'}</label>
+            <input class="input" id="hook-url" type="url" autocomplete="off" spellcheck="false"
+                   placeholder="https://hooks.slack.com/services/...">
+          </div>
+          <button class="btn btn-primary" id="hook-save">Save webhook</button>
+        </div>` : ''}
         <div class="card">
           <div class="card-head"><h2>Backup & restore</h2></div>
           <p class="settings-hint">Export a backup file anytime, or use one to move your CRM between devices.</p>
@@ -2758,9 +2833,66 @@
       if (nextCurrency !== SETTINGS.currency && !(await confirmCurrencyChange(SETTINGS.currency, nextCurrency))) return;
       SETTINGS.businessName = $('#set-name').value.trim();
       SETTINGS.currency = nextCurrency;
+      SETTINGS.timezone = $('#set-timezone').value;
       saveSettings();
       renderSidebar();
       toast('Workspace saved');
+    });
+
+    /*
+     * The webhook controls. Every bind is guarded because the whole card is
+     * conditional, and addEventListener on null throws and takes the entire
+     * Settings screen down rather than one missing button (§36).
+     *
+     * Each of these re-renders on success rather than patching the DOM: the
+     * card shows the masked destination and the last delivery, and both come
+     * from the server. Guessing at them locally is how a screen ends up
+     * confidently wrong about state it does not own.
+     */
+    const hookSave = $('#hook-save');
+    if (hookSave) hookSave.addEventListener('click', async () => {
+      const url = $('#hook-url').value.trim();
+      if (!url) return toast('Paste the webhook URL your chat app gave you');
+      hookSave.disabled = true;
+      try {
+        const out = await Cloud.org.setHook(url);
+        // Saved, but the server could not reach it. Saying "saved" alone would
+        // be true and useless — the next thing that happens is silence.
+        toast(out.delivered
+          ? 'Webhook saved, and a test message went through'
+          : `Webhook saved, but nothing was delivered: ${(out.hook && out.hook.lastError) || 'no answer'}`);
+        await renderSettings();
+      } catch (err) {
+        // The server's refusal is the useful message here — it names the
+        // reason, e.g. that the address is not one we will connect to.
+        toast(err.message || 'That webhook could not be saved');
+        hookSave.disabled = false;
+      }
+    });
+
+    const hookTest = $('#hook-test');
+    if (hookTest) hookTest.addEventListener('click', async () => {
+      hookTest.disabled = true;
+      try {
+        const out = await Cloud.org.testHook();
+        toast(out.ok ? 'Test message sent' : `Not delivered: ${out.error || 'no answer'}`);
+        await renderSettings();
+      } catch (err) {
+        toast(err.message || 'Could not send a test');
+        hookTest.disabled = false;
+      }
+    });
+
+    const hookClear = $('#hook-clear');
+    if (hookClear) hookClear.addEventListener('click', async () => {
+      if (!confirm('Turn off notifications for this workspace? The webhook URL is not stored anywhere else, so you will need to paste it again to turn them back on.')) return;
+      try {
+        await Cloud.org.setHook('');
+        toast('Notifications turned off');
+        await renderSettings();
+      } catch (err) {
+        toast(err.message || 'Could not turn notifications off');
+      }
     });
     const inviteBtn = $('#invite-btn');
     if (inviteBtn) inviteBtn.addEventListener('click', openInvite);

@@ -294,6 +294,21 @@ const Cloud = (() => {
       setRole: (id, role) => api(`/api/org/members/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ role }) }, TIMEOUT.admin),
       remove: (id) => api(`/api/org/members/${encodeURIComponent(id)}`, { method: 'DELETE' }, TIMEOUT.admin),
       leave: () => api('/api/org/leave', { method: 'POST', body: '{}' }, TIMEOUT.admin),
+      /*
+       * The workspace's outbound webhook. Owner-only; a member gets a 403.
+       *
+       * getHook never returns the URL — there is no read-back anywhere in this
+       * feature, so a lost token is re-entered rather than recovered. What
+       * comes back is a masked form plus when it last worked.
+       *
+       * setHook and testHook make the SERVER open an outbound connection, so
+       * they take the admin timeout rather than the short one: the guard's own
+       * send budget is 5s and a request that gave up before its own server did
+       * would report a failure the server does not agree with.
+       */
+      getHook: () => api('/api/org/hook', {}, TIMEOUT.admin),
+      setHook: (url) => api('/api/org/hook', { method: 'PUT', body: JSON.stringify({ url }) }, TIMEOUT.admin),
+      testHook: () => api('/api/org/hook/test', { method: 'POST', body: '{}' }, TIMEOUT.admin),
     },
 
     acceptBeta: () => api('/api/me/beta-accepted', { method: 'POST', body: '{}' }, TIMEOUT.auth),
