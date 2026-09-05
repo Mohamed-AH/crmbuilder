@@ -19,10 +19,15 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import {
+// A default import off the CommonJS module rather than named imports: named
+// exports from CJS depend on cjs-module-lexer recognising the shape, and this
+// works on every Node the package supports.
+import guard from '../lib/safe-fetch.js';
+
+const {
   defaultBlockList, emptyBlockList, normaliseAddress, isBlocked,
   pinnedLookup, resolveAndPin, sendGuarded, maskUrl, hostOf,
-} from '../lib/safe-fetch.mjs';
+} = guard;
 
 const BLOCK = defaultBlockList();
 
@@ -212,7 +217,13 @@ describe('sendGuarded refuses before it opens a socket', () => {
   test('a private destination, by name or by number', async () => {
     for (const url of [
       'https://127.0.0.1/hook',
+      // Bracketed, which is how a URL spells an IPv6 literal. url.hostname
+      // keeps the brackets, so without stripping them this resolves to nothing
+      // and is classified "unresolvable" rather than "blocked" — which the
+      // save path treats as a warning rather than a refusal.
       'https://[::1]/hook',
+      'https://[fd00::1]/hook',
+      'https://[::ffff:127.0.0.1]/hook',
       'https://169.254.169.254/latest/meta-data/',
       'https://10.0.0.5/hook',
       'https://localhost/hook',
@@ -220,6 +231,24 @@ describe('sendGuarded refuses before it opens a socket', () => {
       const out = await sendGuarded(url, {});
       assert.equal(out.ok, false, `${url} was not refused`);
       assert.match(out.error, /not reachable from here|could not resolve/);
+    }
+  });
+
+  /*
+   * The CODE matters, not only the refusal, and this is the assertion the
+   * bracket-stripping exists for.
+   *
+   * The save path in server.js refuses `blocked` and merely warns about
+   * `unresolved` — a URL that did not answer just now is a property of the
+   * moment, not of the URL. Without stripping the brackets an IPv6 literal
+   * resolves to nothing and is classified `unresolved`, so https://[fd00::1]/x
+   * was stored as a webhook rather than rejected. Asserting only `ok === false`
+   * passes on the unfixed code.
+   */
+  test('an IPv6 literal is classified blocked, not merely unresolvable', async () => {
+    for (const url of ['https://[::1]/hook', 'https://[fd00::1]/hook', 'https://[::ffff:169.254.169.254]/hook']) {
+      const out = await sendGuarded(url, {});
+      assert.equal(out.code, 'blocked', `${url} was classified ${out.code}`);
     }
   });
 

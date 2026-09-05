@@ -85,6 +85,22 @@ const platform = Object.fromEntries(
 const records = workspaces.reduce((n, w) => n + (w.records || []).length, 0);
 const modules = workspaces.reduce((n, w) => n + (w.modules || []).length, 0);
 
+/*
+ * Webhook URLs are never exported — they are credentials (§18: a Telegram
+ * webhook URL contains the bot token) and a backup artifact is downloadable by
+ * anyone with read access to the repository the nightly job runs in. The
+ * export leaves `{ redacted: true }` behind instead of deleting the key, and
+ * this is why: the marker is the only thing that can tell an operator their
+ * notifications are not coming back on their own.
+ *
+ * Stripped before writing, so the restored store holds no half-shaped hook for
+ * publicHook() to report as configured.
+ */
+const redactedHooks = workspaces.filter((w) => w.meta && w.meta.hook && w.meta.hook.redacted).length;
+for (const ws of workspaces) {
+  if (ws.meta && ws.meta.hook && ws.meta.hook.redacted) delete ws.meta.hook;
+}
+
 console.log(`Backup taken ${backup.exportedAt}`);
 console.log(`  ${orgs.length} organisation(s), ${users.length} account(s)`);
 console.log(`  ${workspaces.length} workspace(s), ${modules} module(s), ${records} record(s)`);
@@ -98,6 +114,11 @@ const decisions = OPERATOR_DECISIONS.filter((k) => platform[k] !== undefined);
 console.log(decisions.length
   ? `  operator settings restored: ${decisions.map((k) => `${k}=${platform[k]}`).join(', ')}`
   : '  no stored operator settings in this backup — the env vars will decide');
+if (redactedHooks) {
+  console.log(`\n  ${redactedHooks} workspace(s) had a notification webhook configured.`);
+  console.log('  Webhook URLs are credentials and are never exported, so they do NOT come back.');
+  console.log('  Each of those owners must re-enter theirs in Settings, or their notifications stay off.');
+}
 
 /*
  * What the store must be able to say afterwards.

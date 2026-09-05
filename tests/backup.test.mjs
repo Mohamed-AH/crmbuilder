@@ -38,6 +38,14 @@ const DST = `http://127.0.0.1:${DST_PORT}`;
 const TOKEN = 'backup-drill-token';
 const MAYA_CANARY = 'CANARY-7Q4X';
 const NADIA_CANARY = 'CANARY-N2M8';
+// A webhook URL is a credential (§18: a Telegram URL contains the bot token)
+// and a backup artifact is downloadable by anyone with read access to the
+// private repo the nightly job runs in. Distinctive enough that searching the
+// whole export body for it is a meaningful assertion.
+const HOOK_TOKEN = 'CANARY-WEBHOOK-TOKEN-J8P2';
+const HOOK_URL = `https://hooks.drill.invalid/services/T9/B9/${HOOK_TOKEN}`;
+let hookWsId = null;
+let restoreOutput = '';
 
 let srcDir;
 let dstDir;
@@ -157,6 +165,18 @@ before(async () => {
     egressMonth: '1999-01',
     alerts: { storage: { lastLevel: 85, lastFiredAt: DECIDED_AT } },
   };
+  /*
+   * A live webhook on one tenant, planted before boot for the same reason as
+   * everything above: FileStore rewrites the whole file on save, so an edit
+   * under a running server is clobbered (§12).
+   */
+  const mayaUser = (store.users || []).find((u) => u.email === 'maya@fixture.invalid');
+  assert.ok(mayaUser, 'the fixture no longer seeds maya@fixture.invalid');
+  hookWsId = mayaUser.orgId;
+  store.data[hookWsId] = {
+    ...(store.data[hookWsId] || {}),
+    hook: { url: HOOK_URL, addedAt: DECIDED_AT, addedBy: 'maya@fixture.invalid', lastOkAt: DECIDED_AT },
+  };
   writeFileSync(storeFile, JSON.stringify(store));
 
   srcChild = await boot(SRC_PORT, srcDir);
@@ -210,6 +230,12 @@ before(async () => {
   }
   assert.equal(sourceStore.platform?.egressBytes !== undefined, true, 'the source lost its runtime counters');
   assert.equal(sourceStore.platform?.alerts !== undefined, true, 'the source lost its alert state');
+  // The hook has to have SURVIVED the source deployment's own writes, or
+  // "the export does not carry it" is true for the wrong reason. refreshCounts
+  // rewrites the meta doc on every sync, so this doubles as proof that a
+  // counts write merges rather than replaces.
+  assert.equal(sourceStore.data?.[hookWsId]?.hook?.url, HOOK_URL,
+    'the source lost the webhook before the export — the redaction tests would be hollow');
 
   const restored = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'restore.mjs')], {
     cwd: ROOT,
@@ -217,6 +243,7 @@ before(async () => {
     encoding: 'utf8',
   });
   assert.equal(restored.status, 0, `restore failed:\n${restored.stdout}\n${restored.stderr}`);
+  restoreOutput = restored.stdout;
 
   /*
    * Snapshot the restored store BEFORE anything boots over it.
@@ -426,5 +453,51 @@ describe('what a restore brings back, and what it deliberately does not', () => 
     assert.deepEqual(store.accessRequests, [], 'a missing collection must restore as empty, not undefined');
     assert.deepEqual(store.platform, {}, 'a missing platform must restore as empty, not undefined');
     assert.equal(store.users.length, backup.users.length, 'the records still have to come back');
+  });
+});
+
+/*
+ * The one thing in a workspace that must NOT survive the round trip.
+ *
+ * §17 already carries the rule this enforces: workspaces[].meta is the `data`
+ * collection, so anything on the meta doc is in every nightly artifact, and a
+ * GitHub build artifact is downloadable by anyone with repo read access. A
+ * webhook URL is a live credential (§18: a Telegram URL contains the bot
+ * token), so it is redacted on the way out.
+ *
+ * Replaced with a marker rather than deleted, and the third test is why: a
+ * silently absent hook after a recovery is a notification channel that has
+ * been dead since the incident, which is exactly when somebody is relying on
+ * it. The marker is the only thing that can tell an operator to re-enter it.
+ */
+describe('a webhook URL does not travel in a backup', () => {
+  test('the artifact carries the marker and not the credential', () => {
+    const raw = readFileSync(backupFile, 'utf8');
+    assert.ok(!raw.includes(HOOK_TOKEN), 'the backup file contains a live webhook token');
+    assert.ok(!raw.includes('hooks.drill.invalid'), 'the backup file names the webhook host');
+
+    // And it did not simply vanish: the marker proves the workspace HAD one,
+    // which is what stops this passing on an export that lost the meta doc.
+    const ws = backup.workspaces.find((w) => w.wsId === hookWsId);
+    assert.ok(ws, 'the workspace with the webhook is missing from the backup entirely');
+    assert.deepEqual(ws.meta.hook, { redacted: true });
+    assert.equal(ws.meta.settings !== undefined, true, 'the rest of the meta doc still travels');
+  });
+
+  test('the restored deployment has no webhook at all, not a broken one', () => {
+    // The marker is stripped before writing, so publicHook() cannot report a
+    // hook as configured when there is no URL behind it.
+    assert.equal(restoredStore.data?.[hookWsId]?.hook, undefined);
+  });
+
+  test('and the restore says so, because nothing else will', () => {
+    assert.match(restoreOutput, /1 workspace\(s\) had a notification webhook configured/);
+    assert.match(restoreOutput, /re-enter/i);
+  });
+
+  test('the owner is told their notifications are off, rather than left to find out', async () => {
+    const maya = await signIn(DST, 'maya@fixture.invalid');
+    const { json } = await req(DST, '/api/org/hook', { cookies: maya });
+    assert.deepEqual(json.hook, { configured: false });
   });
 });

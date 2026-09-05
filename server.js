@@ -3210,6 +3210,188 @@ app.post('/api/org/leave', requireAuth, async (req, res) => {
   res.json({ ok: true, user: publicUser(updated) });
 });
 
+/* ---- the workspace's outbound webhook -------------------------------------
+ *
+ * The destination is chosen by a CUSTOMER, which is the thing that makes this
+ * different from FEEDBACK_WEBHOOK_URL. §30 recorded the audit's SSRF finding
+ * as FALSE because that one comes from process.env and has no runtime setter;
+ * these three routes ARE that setter, and lib/safe-fetch.js is what keeps the
+ * finding false for everything except a destination we have checked.
+ *
+ * Stored as `hook` on the workspace's meta doc, a SIBLING of `settings` and
+ * never inside it — see the comment in pullChanges and §38. There is no
+ * read-back anywhere: an owner who has lost the token re-enters it.
+ */
+const { sendGuarded, maskUrl, hostOf } = require('./lib/safe-fetch');
+
+const HOOK_TEST_PER_MIN = Number(process.env.RATE_HOOK_TEST_MAX || 6);
+
+async function getHook(wsId) {
+  const meta = await store.getData(wsId);
+  return (meta && meta.hook) || null;
+}
+
+/*
+ * What an owner may see. Never the URL.
+ *
+ * `lastError` is the message only — lib/safe-fetch.js scrubs the URL out of it
+ * before it gets here, because §18's rule that nothing interpolates a webhook
+ * URL into a log line now has a second place it could break: this field is
+ * persisted and rendered on a screen.
+ */
+function publicHook(hook) {
+  if (!hook || !hook.url) return { configured: false };
+  return {
+    configured: true,
+    host: hostOf(hook.url),
+    masked: maskUrl(hook.url),
+    addedAt: hook.addedAt || 0,
+    addedBy: hook.addedBy || '',
+    lastOkAt: hook.lastOkAt || 0,
+    lastErrorAt: hook.lastErrorAt || 0,
+    lastError: hook.lastError || '',
+  };
+}
+
+/*
+ * Send to a workspace's own webhook, through the guard.
+ *
+ * The payload shaping is webhookRequest()'s — shared with the env-supplied
+ * path, so Discord, Slack and Telegram get what each of them reads (§18). The
+ * TRANSPORT is not shared: the env path keeps `fetch` and is untouched by this
+ * work, because its capture test points at 127.0.0.1 on purpose and any guard
+ * strong enough to matter would have to be bypassed for it. Deliberate
+ * duplication, the same shape as canEditSchema existing twice (§14).
+ *
+ * Never throws. The outcome is recorded on the hook so the owner can see
+ * whether their channel has been dead since they rotated a token.
+ */
+async function deliverToHook(wsId, { rich, plain }) {
+  const hook = await getHook(wsId);
+  if (!hook || !hook.url) return { ok: false, error: 'no webhook configured' };
+
+  const shaped = webhookRequest(hook.url, { rich, plain });
+  if (shaped.error) {
+    // webhookRequest's messages name the env var, which is not what is wrong here.
+    const error = shaped.error.replace('FEEDBACK_WEBHOOK_URL', 'The webhook URL');
+    await store.putData(wsId, { hook: { ...hook, lastErrorAt: Date.now(), lastError: error } });
+    return { ok: false, error };
+  }
+
+  const out = await sendGuarded(shaped.url, shaped.body);
+  /*
+   * A 2xx is not delivery. Telegram answers 200 with {ok:false} for a bad
+   * chat_id or a bot the recipient never started (§18), and a webhook that
+   * silently delivers nothing is the failure mode this whole design avoids.
+   */
+  const undelivered = out.ok && out.json && out.json.ok === false;
+  const ok = out.ok && !undelivered;
+  const error = ok ? '' : (undelivered
+    ? `the destination accepted the request but did not deliver it${out.json.description ? ` (${out.json.description})` : ''}`
+    : out.error || 'the notification was not delivered');
+
+  await store.putData(wsId, {
+    hook: ok
+      ? { ...hook, lastOkAt: Date.now(), lastErrorAt: 0, lastError: '' }
+      : { ...hook, lastErrorAt: Date.now(), lastError: error },
+  });
+  return { ok, error: ok ? '' : error };
+}
+
+/*
+ * Owner-only, via canEditSettings() rather than isOrgOwner().
+ *
+ * The two are the same rule today and are separate functions on purpose (§14):
+ * a webhook is a workspace-level setting, so it hangs off the settings
+ * permission and will follow it if that ever moves.
+ *
+ * 403 rather than 404, matching the sibling team routes. §5's 404-not-403 rule
+ * is about CROSS-ORG access — not confirming another tenant's resources exist.
+ * A member already knows their own workspace exists, so hiding a permission
+ * behind a lie buys nothing and reads as a bug.
+ */
+function requireSettingsOwner(req, res, next) {
+  if (!canEditSettings(req.user)) {
+    return res.status(403).json({ error: 'Only an owner can change workspace notifications' });
+  }
+  if (!req.user.orgId) return res.status(400).json({ error: 'You are not in an organisation' });
+  next();
+}
+
+app.get('/api/org/hook', requireAuth, requireSettingsOwner, async (req, res) => {
+  res.json({ hook: publicHook(await getHook(workspaceIdFor(req.user))) });
+});
+
+app.put('/api/org/hook', requireAuth, requireSettingsOwner, async (req, res) => {
+  const wsId = workspaceIdFor(req.user);
+  const url = String((req.body && req.body.url) || '').trim();
+
+  if (!url) {
+    await store.putData(wsId, { hook: null });
+    return res.json({ ok: true, hook: publicHook(null) });
+  }
+  if (url.length > 2048) return res.status(413).json({ error: 'That URL is too long to be real.' });
+
+  /*
+   * Resolved and checked AT SAVE, so a bad destination fails at the moment
+   * somebody is looking at it and can fix it — rather than at 3am inside a
+   * scheduled job with nobody to tell. It is checked again at every send,
+   * because DNS moves and this one is not a substitute for that.
+   */
+  const probe = await sendGuarded(url, {
+    content: 'crmbuilder: checking this webhook',
+    text: 'crmbuilder: checking this webhook',
+  });
+
+  /*
+   * REFUSE only what can never work; WARN about what merely did not work now.
+   *
+   * A malformed URL, a non-https scheme and a destination the guard will not
+   * dial are properties of the URL, so saving one would store something that
+   * is refused identically at every send for ever — better to say so while
+   * somebody is looking at the field.
+   *
+   * An unresolvable host, a refused connection, a timeout or a 500 are
+   * properties of the MOMENT. Refusing the save on those means an owner cannot
+   * configure a webhook while the far end is down, or before they have
+   * finished setting it up at the other end — and a webhook nobody could save
+   * during an incident is the wrong failure. Those are stored with the reason
+   * on `lastError`, which is what the settings screen shows.
+   */
+  if (['invalid_url', 'scheme', 'blocked'].includes(probe.code)) {
+    return res.status(400).json({ error: probe.error });
+  }
+
+  const hook = {
+    url,
+    addedAt: Date.now(),
+    addedBy: req.user.email,
+    lastOkAt: probe.ok ? Date.now() : 0,
+    lastErrorAt: probe.ok ? 0 : Date.now(),
+    lastError: probe.ok ? '' : (probe.error || ''),
+  };
+  await store.putData(wsId, { hook });
+  res.json({ ok: true, hook: publicHook(hook), delivered: probe.ok });
+});
+
+/*
+ * Rate-limited, and not because the population is large — it is owners, on
+ * their own workspace. It is limited because it is the one authenticated route
+ * that makes the server open an outbound connection to an address the caller
+ * chose, which is the same reason /auth/google/callback is capped. The guard
+ * is the control; this bounds what a compromised owner account can do with it.
+ */
+app.post('/api/org/hook/test', requireAuth, requireSettingsOwner,
+  rateLimit('hooktest', HOOK_TEST_PER_MIN), async (req, res) => {
+    const head = 'Test notification from your CRM';
+    const body = 'If you can read this, notifications for this workspace are working.';
+    const out = await deliverToHook(workspaceIdFor(req.user), {
+      rich: [`**${head}**`, body].join('\n'),
+      plain: [head, body].join('\n'),
+    });
+    res.json({ ok: out.ok, error: out.error || '', hook: publicHook(await getHook(workspaceIdFor(req.user))) });
+  });
+
 /*
  * Copy one workspace's live rows into another.
  *
@@ -3287,6 +3469,24 @@ app.get('/api/admin/export', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
+  /*
+   * A backup is downloadable by anyone with read access to the repository the
+   * nightly job runs in, and it already carries every customer's records plus
+   * the addresses of people who asked for access and were declined (§17). A
+   * live webhook URL is a credential on top of that — §18: a Telegram URL
+   * contains the bot token — so it does not go in.
+   *
+   * Replaced, not deleted. The marker is what lets restore.mjs SAY that a
+   * workspace had one and that it has to be re-entered; a silently absent hook
+   * after a recovery is a notification channel that has been dead since the
+   * incident, which is precisely when somebody is relying on it.
+   */
+  const redactMeta = (meta) => {
+    if (!meta) return meta;
+    if (!meta.hook || !meta.hook.url) return meta;
+    return { ...meta, hook: { redacted: true } };
+  };
+
   const wsIds = await store.listWorkspaceIds();
   const workspaces = [];
   for (const wsId of wsIds) {
@@ -3297,7 +3497,7 @@ app.get('/api/admin/export', async (req, res) => {
       store.listItems('modules', wsId, { since: 0 }),
       store.listItems('records', wsId, { since: 0 }),
     ]);
-    workspaces.push({ wsId, meta, modules, records });
+    workspaces.push({ wsId, meta: redactMeta(meta), modules, records });
   }
 
   /*

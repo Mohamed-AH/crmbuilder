@@ -1869,3 +1869,152 @@ describe('the workspace webhook is stored where sync cannot reach it', () => {
     assert.equal((await readHook(wsId)).url, HOOK_URL);
   });
 });
+
+/*
+ * The three routes an owner uses to point their workspace at a chat channel.
+ *
+ * These ARE the runtime setter that §30's SSRF finding was FALSE for the
+ * absence of, so the tests are as much about what they refuse as what they do.
+ */
+describe('workspace webhook routes', () => {
+  const owner = jar();
+  const hand = jar();
+  let handId = null;
+  let wsId = null;
+
+  const TOKEN = 'QQREALLYSECRETHOOKTOKEN';
+  // Deliberately a name nothing resolves. The save path must not require
+  // delivery — see "refuses only what can never work" below — so this is a
+  // URL that stores successfully and never reaches anything, which is what
+  // makes these tests offline-safe.
+  const URL_OK = `https://hooks.example.invalid/services/T1/B1/${TOKEN}`;
+
+  before(async () => {
+    const o = await req('/auth/dev', { method: 'POST', body: { email: 'wh-owner@team.test' }, cookies: owner });
+    wsId = o.json.user.orgId;
+    const h = await req('/auth/dev', { method: 'POST', body: { email: 'wh-hand@team.test' }, cookies: hand });
+    handId = h.json.user.id;
+    const code = (await req('/api/org/invites', { method: 'POST', body: {}, cookies: owner })).json.invite.code;
+    await req('/api/org/join', { method: 'POST', body: { code }, cookies: hand });
+  });
+
+  test('nothing is configured to begin with', async () => {
+    const { status, json } = await req('/api/org/hook', { cookies: owner });
+    assert.equal(status, 200);
+    assert.deepEqual(json.hook, { configured: false });
+  });
+
+  /*
+   * REFUSED BEFORE ANY SOCKET OPENS. Each of these is a property of the URL
+   * rather than of the moment, so storing one would mean a webhook that is
+   * refused identically at every send for ever.
+   */
+  test('a destination the guard will not dial is refused, with the reason', async () => {
+    for (const [what, url] of [
+      ['loopback', 'https://127.0.0.1/hook'],
+      ['loopback by name', 'https://localhost/hook'],
+      ['the cloud metadata endpoint', 'https://169.254.169.254/latest/meta-data/'],
+      ['a private address', 'https://10.1.2.3/hook'],
+      ['IPv6 loopback', 'https://[::1]/hook'],
+    ]) {
+      const { status, json } = await req('/api/org/hook', { method: 'PUT', body: { url }, cookies: owner });
+      assert.equal(status, 400, `${what} was accepted`);
+      assert.match(json.error, /not reachable from here|could not resolve/);
+    }
+    assert.deepEqual((await req('/api/org/hook', { cookies: owner })).json.hook, { configured: false },
+      'a refused save must not have stored anything');
+  });
+
+  test('http is refused, because the URL carries a token', async () => {
+    const { status, json } = await req('/api/org/hook', {
+      method: 'PUT', body: { url: 'http://hooks.example.invalid/x' }, cookies: owner,
+    });
+    assert.equal(status, 400);
+    assert.match(json.error, /https/);
+  });
+
+  test('so is something that is not a URL at all', async () => {
+    const { status } = await req('/api/org/hook', { method: 'PUT', body: { url: 'chat me on slack' }, cookies: owner });
+    assert.equal(status, 400);
+  });
+
+  /*
+   * A host that does not resolve is a property of the MOMENT, not of the URL.
+   * Refusing the save on it means an owner cannot configure a webhook while
+   * the far end is down, or before they have finished setting it up at the
+   * other end — and a webhook nobody can save during an incident is the wrong
+   * failure. It stores, carrying the reason it did not deliver.
+   */
+  test('a well-formed URL that did not answer is still saved, with the reason recorded', async () => {
+    const { status, json } = await req('/api/org/hook', { method: 'PUT', body: { url: URL_OK }, cookies: owner });
+    assert.equal(status, 200);
+    assert.equal(json.hook.configured, true);
+    assert.equal(json.delivered, false);
+    assert.ok(json.hook.lastError, 'the owner has to be told it did not get through');
+    assert.ok(json.hook.lastErrorAt > 0);
+  });
+
+  /*
+   * NO READ-BACK, ANYWHERE. An owner who has lost the token re-enters it. The
+   * masked form exists so the screen can say WHICH destination is configured
+   * without the response, the screen or the browser's memory holding the
+   * credential.
+   */
+  test('the owner never gets the URL back, only enough to recognise it', async () => {
+    const { text, json } = await req('/api/org/hook', { cookies: owner });
+    assert.ok(!text.includes(TOKEN), 'the token came back');
+    assert.ok(!text.includes(URL_OK), 'the URL came back');
+    assert.equal(json.hook.host, 'hooks.example.invalid');
+    assert.match(json.hook.masked, /hooks\.example\.invalid\/services/);
+    assert.equal(json.hook.addedBy, 'wh-owner@team.test');
+  });
+
+  test('and it still never reaches a sync response', async () => {
+    for (const cookies of [owner, hand]) {
+      const { text } = await req('/api/sync?since=0', { cookies });
+      assert.ok(!text.includes(TOKEN));
+    }
+  });
+
+  test('a member cannot read it, set it, or test it', async () => {
+    // A member, not a viewer: the point is that this is owner-only rather than
+    // merely write-protected, so the rung immediately below owner is the one
+    // worth checking.
+    assert.equal((await req('/api/org/hook', { cookies: hand })).status, 403);
+    assert.equal((await req('/api/org/hook', {
+      method: 'PUT', body: { url: 'https://evil.example.invalid/x' }, cookies: hand,
+    })).status, 403);
+    assert.equal((await req('/api/org/hook/test', { method: 'POST', body: {}, cookies: hand })).status, 403);
+    // And the owner's hook is untouched by the attempt.
+    assert.equal((await req('/api/org/hook', { cookies: owner })).json.hook.host, 'hooks.example.invalid');
+  });
+
+  test('a stranger gets nothing', async () => {
+    const outsider = jar();
+    await req('/auth/dev', { method: 'POST', body: { email: 'wh-outsider@other.test' }, cookies: outsider });
+    const { json } = await req('/api/org/hook', { cookies: outsider });
+    // Their own workspace, which has no webhook — never this team's.
+    assert.deepEqual(json.hook, { configured: false });
+  });
+
+  test('the test button reports failure honestly rather than claiming success', async () => {
+    const { status, json } = await req('/api/org/hook/test', { method: 'POST', body: {}, cookies: owner });
+    assert.equal(status, 200, 'the route worked; the delivery did not');
+    assert.equal(json.ok, false);
+    assert.ok(json.error, 'a silent failure here is the bug this whole design avoids');
+    assert.ok(!json.error.includes(TOKEN), 'the token must not ride out on an error message');
+  });
+
+  test('clearing it removes the credential rather than blanking a field', async () => {
+    const { json } = await req('/api/org/hook', { method: 'PUT', body: { url: '' }, cookies: owner });
+    assert.deepEqual(json.hook, { configured: false });
+    assert.equal(await readHook(wsId), null);
+  });
+
+  test('an absurd URL is refused before it is stored', async () => {
+    const { status } = await req('/api/org/hook', {
+      method: 'PUT', body: { url: `https://hooks.example.invalid/${'x'.repeat(3000)}` }, cookies: owner,
+    });
+    assert.equal(status, 413);
+  });
+});
