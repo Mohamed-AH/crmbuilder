@@ -166,53 +166,178 @@ minutes against a 15-minute timeout is one missed check away from a cold start.
 
 ### Drilling the backup
 
-An untested backup is a rumour. This proves the nightly artifact can actually
-be put back, and it never writes to production — it only reads a file GitHub
-already holds.
+**An untested backup is a rumour.** This proves that a *real* nightly artifact
+can be put back. It reads a file GitHub already holds and never writes to
+production — nothing here touches the live deployment or its database.
 
-**The one safety rule:** `restore.mjs` writes to **MongoDB whenever
+`tests/backup.test.mjs` already runs the same export → restore → boot cycle on
+every push, so the *mechanism* is covered by CI. What CI cannot do is prove that
+**your actual artifacts** restore, because it only ever tests a fixture it built
+seconds earlier. That is what this drill is for, and it is the only part that
+needs a human.
+
+Do it **monthly**, and again after any change to the export.
+
+---
+
+#### Before you start
+
+**The one safety rule.** `restore.mjs` writes to **MongoDB whenever
 `MONGODB_URI` is set**, and with `RESTORE_OVERWRITE=1` it clears every
-collection first. Put `MONGODB_URI=` on every command below, and never set
-`RESTORE_OVERWRITE` during a drill.
+collection first. That is the live database, one environment variable away.
+
+- Put `MONGODB_URI=` on **every** command below. It clears the variable for
+  that one process, including anything a `.env` would have supplied.
+- **Never** set `RESTORE_OVERWRITE` during a drill. It has no use here.
+- Restore into a scratch directory, **never `./data`**.
+
+**The artifact is every customer's data.** Treat the download like a database
+dump, because it is one: keep it out of shared folders, and delete it when you
+are done (step 6).
+
+---
+
+#### Step 1 — Get an artifact
+
+GitHub → **Actions** → **Nightly backup** → the newest green run → download
+**`crmbuilder-backup`** from the Artifacts section, and unzip it. You get a file
+named `crmbuilder-backup-YYYY-MM-DD.json`.
+
+**What you should see:** a file of tens to hundreds of kilobytes. A file of a
+few hundred *bytes* means the export returned an error page instead of a
+backup — stop and check `BACKUP_TOKEN` on the service.
+
+> Artifacts expire after 30 days, so there is nothing older than that to test.
+
+#### Step 2 — Restore it into a scratch directory
 
 ```sh
-# 1. Actions → Nightly backup → newest green run → download and unzip the
-#    artifact. Then restore it into a scratch directory, never ./data.
 MONGODB_URI= BACKUP_FILE=./crmbuilder-backup-2026-01-01.json \
   DATA_DIR=./data/drill node scripts/restore.mjs
+```
 
-# 2. Boot the restored copy on a spare port.
+**What you should see** — the figures will be yours, the shape is what matters:
+
+```
+Backup taken 2026-09-05T05:49:45.589Z
+  4 organisation(s), 6 account(s)
+  2 workspace(s), 11 module(s), 180 record(s)
+  0 access request(s)
+  no stored operator settings in this backup — the env vars will decide
+
+Restored into ./data/drill/store.json. Counted back:
+       6  accounts
+       4  organisations
+       2  workspaces
+      11  modules
+     180  records
+       0  requests
+
+Start the server with DATA_DIR=./data/drill to look at it.
+```
+
+The first block is what the **backup claims**. The second is what the restored
+store **actually holds**, read back off disk. They must agree, and the script
+exits non-zero if they do not.
+
+**About that fifth line.** Artifacts taken before the export started carrying
+operator settings are `version: 1` and say *"no stored operator settings in this
+backup"*. That is correct for them, not a fault. A `version: 2` artifact instead
+prints what it is bringing back:
+
+```
+  1 access request(s)
+  operator settings restored: signupMode=closed, orgCreation=closed
+```
+
+**If it fails** it says so and stops, naming the shortfall per line:
+
+```
+       1  workspaces  <- expected 2
+       6  records  <- expected 180
+
+Counts do not match the backup. Do not trust this restore.
+```
+
+That is the whole point of the step. Do not continue past it.
+
+#### Step 3 — Boot the restored copy
+
+On a spare port, so you can leave anything else running.
+
+```sh
 MONGODB_URI= DATA_DIR=./data/drill PORT=9521 ALLOW_DEV_LOGIN=1 node server.js
+```
 
-# 3. When you are done.
+**What you should see:**
+
+```
+Storage: file (set MONGODB_URI for MongoDB)
+CRM Builder running on http://localhost:9521 (port 9521)
+Google OAuth: disabled · Dev login: enabled
+```
+
+**`Storage: file` is the line that matters.** If it says MongoDB, a
+`MONGODB_URI` leaked in from somewhere and you are looking at the live database
+rather than the restore. Stop and start again.
+
+`ALLOW_DEV_LOGIN=1` is what lets you sign in without Google. It is refused in
+production, so it is safe here and useless there.
+
+#### Step 4 — Sign in as yourself and look
+
+Open `http://localhost:9521` and sign in with **your own real email address** —
+dev sign-in takes an email and no password. The account already exists in the
+restored data, so the signup gate lets you straight through.
+
+**What you should see:** your workspace as it stood when the backup was taken.
+Your modules in the sidebar, your records in them, your business name in
+Settings.
+
+**This step is not optional, and counts cannot replace it.** Rows restored into
+the *wrong* workspace satisfy every total in step 2 and are only visible here.
+So check that the records you see are **yours** — not merely that some records
+exist.
+
+If you have a second account (a colleague, or the fixture's), sign in as that
+one too and confirm it sees its own workspace and not yours.
+
+#### Step 5 — Check the operator settings
+
+Admin → **Beta access**.
+
+- **From a `version: 2` artifact:** the mode should be whatever you had set when
+  the backup was taken. Step 2 already told you which.
+- **From a `version: 1` artifact:** there are no stored settings, so this falls
+  back to the `SIGNUP_MODE` environment variable. Expected, and the reason step
+  2 says so out loud.
+
+Deliberately **not** restored: the monthly egress counter and the alert state.
+A restored deployment starts its own count and will re-announce a threshold it
+is still over, rather than staying quiet because the dead deployment had
+already mentioned it.
+
+#### Step 6 — Clean up
+
+```sh
 rm -rf ./data/drill
 ```
 
-Step 1 prints a count of accounts, organisations, workspaces, modules and
-records, and **exits non-zero if any of them disagrees with the backup** — so a
-silent partial restore fails loudly rather than telling you to go and look.
+And delete the downloaded artifact. It is a full copy of every customer's data
+and it does not belong in a Downloads folder.
 
-**Counts are necessary and not sufficient.** Rows restored into the *wrong*
-workspace satisfy every total, so finish by opening the restored copy at
-`http://localhost:9521`, signing in as a real account, and checking that its
-own records are the ones you expect.
+---
 
-**What a restore brings back, and what it does not.** Approved join requests and
-your panel settings — the signup mode and the org-creation gate — come back, so
-a recovered deployment comes up shut if that is how you left it. Step 1's output
-names them, e.g. `operator settings restored: signupMode=closed`.
+#### What a successful drill has proved
 
-Deliberately left behind: the monthly egress counter and the alert state, which
-belong to the deployment that produced them. A restored deployment starts its
-own count and re-announces a threshold it is still over, rather than staying
-quiet because the dead one had already mentioned it.
+- The artifact parses, and is a CRM Builder backup rather than an error page.
+- Every collection came back at full count, verified against the file on disk.
+- A real server boots on it.
+- **Your own records are in your own workspace** — the thing counts cannot show.
 
-**Still worth a look after a real restore:** Admin → Beta access, to confirm the
-mode is what you expect. A backup taken before this change (`version: 1`)
-carries no settings at all and will fall back to the environment variables.
-
-Do this monthly against a real artifact, and again whenever the export changes
-shape.
+If any step fails, the artifact is not a recovery path and the deployment is
+running without a safety net. That is worth knowing on a quiet Tuesday rather
+than during an incident.
 
 ### If something goes wrong
 
