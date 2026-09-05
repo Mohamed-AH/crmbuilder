@@ -16,11 +16,18 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const SRC_URL = new URL('../js/date-rules.js', import.meta.url);
 const src = readFileSync(fileURLToPath(SRC_URL), 'utf8');
 // eslint-disable-next-line no-new-func
 const DateRules = new Function(`${src}; return DateRules;`)();
+
+// The same file, through the seam server.js uses. Asserted rather than assumed,
+// because the whole point of the one-line export is that there is no second
+// copy of this arithmetic — and a require() that quietly returned something
+// else would leave the server running untested code that LOOKS shared.
+const required = createRequire(import.meta.url)('../js/date-rules.js');
 
 // A fixed "now" so nothing here depends on the day the suite happens to run.
 // Local noon, deliberately: midnight would sit exactly on the boundary this is
@@ -153,4 +160,127 @@ describe('the same day means the same thing everywhere', () => {
         `local calendar arithmetic drifted in ${tz}`);
     });
   }
+});
+
+/*
+ * One file, three consumers — and the export that makes it so.
+ *
+ * The alternatives were duplicating this arithmetic into lib/ (a second source
+ * that goes stale — §29) or eval-ing the served file at boot. Instead the file
+ * ends with a `typeof module` guard, so the browser gets a global, server.js
+ * gets a require, and the `new Function` harness above is untouched.
+ */
+describe('the same arithmetic reaches the browser, the server and these tests', () => {
+  test('require() returns the same surface as the global', () => {
+    assert.deepEqual(Object.keys(required).sort(), Object.keys(DateRules).sort());
+    for (const key of Object.keys(required)) {
+      assert.equal(typeof required[key], 'function', `${key} is not callable through require`);
+    }
+  });
+
+  test('and it agrees with the evaluated copy, rather than merely existing', () => {
+    // A require() that returned a stale or partial object would pass the shape
+    // check above. This is the assertion that fails if the two ever diverge.
+    for (const [value, days] of [['2026-09-12', 7], ['2026-09-20', 7], ['2020-01-01', 7], ['nonsense', 7]]) {
+      assert.equal(required.isDueWithin(value, days, NOW), DateRules.isDueWithin(value, days, NOW), value);
+      assert.equal(required.daysUntil(value, NOW), DateRules.daysUntil(value, NOW), value);
+    }
+  });
+});
+
+describe('DateRules.resolveZone never throws, because nothing validates the stored value', () => {
+  /*
+   * The workspace timezone is stored WITHOUT server-side validation (§38:
+   * validating in applyPush means touching the sync seam to guard a string
+   * only a hand-written push can produce). So the guarantee lives here, at the
+   * point of use — and it has to hold, because a throw would take down a
+   * scheduled pass for every workspace on account of one typo.
+   */
+  test('a real IANA name survives', () => {
+    for (const zone of ['UTC', 'Asia/Tokyo', 'America/Los_Angeles', 'Pacific/Auckland', 'Europe/London']) {
+      assert.equal(DateRules.resolveZone(zone), zone);
+    }
+  });
+
+  test('anything Intl will not accept becomes UTC instead of throwing', () => {
+    for (const junk of ['Not/AZone', 'Mars/Olympus', '../../etc/passwd', 'UTC+3', '{}', 42, {}, [], true]) {
+      assert.equal(DateRules.resolveZone(junk), 'UTC', `resolveZone(${JSON.stringify(junk)})`);
+    }
+  });
+
+  test('unset is UTC too — the difference between "unset" and "UTC" is a thing the SCREEN says', () => {
+    assert.equal(DateRules.resolveZone(''), 'UTC');
+    assert.equal(DateRules.resolveZone(null), 'UTC');
+    assert.equal(DateRules.resolveZone(undefined), 'UTC');
+  });
+});
+
+describe('a named zone has its own calendar day, and its own idea of "already done today"', () => {
+  // 15:00 UTC on 12 September 2026. Tokyo is already on the 13th; Los Angeles
+  // is still on the morning of the 12th. One instant, two calendar days —
+  // which is the entire reason the day key cannot be computed in UTC.
+  const INSTANT = new Date(Date.UTC(2026, 8, 12, 15, 0, 0));
+
+  test('the day key is the workspace own day, not the server one', () => {
+    assert.equal(DateRules.dayKey('Asia/Tokyo', INSTANT), '2026-09-13');
+    assert.equal(DateRules.dayKey('America/Los_Angeles', INSTANT), '2026-09-12');
+    assert.equal(DateRules.dayKey('UTC', INSTANT), '2026-09-12');
+  });
+
+  /*
+   * The assertion that a UTC day key cannot satisfy. Computed in UTC these two
+   * are the same string, so a "once per day" gate would let Tokyo's Monday
+   * digest go out on Sunday evening — or suppress it entirely.
+   */
+  test('two workspaces roll over on different absolute instants', () => {
+    assert.notEqual(
+      DateRules.dayKey('Asia/Tokyo', INSTANT),
+      DateRules.dayKey('America/Los_Angeles', INSTANT),
+      'a day key computed in UTC would make these equal',
+    );
+  });
+
+  test('the local hour comes back on a 0-23 cycle, never 24', () => {
+    // Midnight in Tokyo is 15:00 UTC the day before. `hour12: false` selects
+    // h24 on some ICU builds and renders this as "24", which would put an
+    // hour-of-day gate on the wrong side of the boundary.
+    assert.equal(DateRules.zoneParts('Asia/Tokyo', INSTANT).hour, 0);
+    assert.equal(DateRules.zoneParts('America/Los_Angeles', INSTANT).hour, 8);
+    for (let h = 0; h < 24; h += 1) {
+      const at = new Date(Date.UTC(2026, 8, 12, h, 30, 0));
+      const got = DateRules.zoneParts('Asia/Tokyo', at).hour;
+      assert.ok(got >= 0 && got <= 23, `hour ${got} is outside 0-23`);
+    }
+  });
+
+  test('a nonsense zone falls back to UTC rather than taking the pass down', () => {
+    assert.equal(DateRules.dayKey('Not/AZone', INSTANT), DateRules.dayKey('UTC', INSTANT));
+    assert.equal(DateRules.zoneParts('Not/AZone', INSTANT).zone, 'UTC');
+  });
+
+  test('daysUntil answers in the zone it is given, not the process one', () => {
+    // In Tokyo it is already the 13th, so the 13th is "today" (0) and the 12th
+    // is yesterday. In Los Angeles the 12th is today and the 13th is tomorrow.
+    assert.equal(DateRules.daysUntil('2026-09-13', INSTANT, 'Asia/Tokyo'), 0);
+    assert.equal(DateRules.daysUntil('2026-09-12', INSTANT, 'Asia/Tokyo'), -1);
+    assert.equal(DateRules.daysUntil('2026-09-13', INSTANT, 'America/Los_Angeles'), 1);
+    assert.equal(DateRules.daysUntil('2026-09-12', INSTANT, 'America/Los_Angeles'), 0);
+  });
+
+  test('and isDueWithin carries the zone through', () => {
+    assert.equal(DateRules.isDueWithin('2026-09-12', 0, INSTANT, 'Asia/Tokyo'), true, 'yesterday in Tokyo is overdue');
+    assert.equal(DateRules.isDueWithin('2026-09-13', 0, INSTANT, 'America/Los_Angeles'), false, 'tomorrow in LA is outside a zero-day window');
+  });
+
+  /*
+   * Omitting the zone must keep the §37 behaviour exactly. The browser filter
+   * deliberately does NOT use the workspace zone — someone in Tokyo looking at
+   * a list should see THEIR today — so the two-argument form has to stay the
+   * viewer's local calendar day.
+   */
+  test('omitting the zone is still the viewer local day', () => {
+    assert.equal(DateRules.daysUntil('2026-09-12', NOW), 0);
+    assert.equal(DateRules.daysUntil('2026-09-12', NOW, ''), 0, 'empty string means unset, not a zone');
+    assert.equal(DateRules.isDueWithin('2026-09-19', 7, NOW), true);
+  });
 });
