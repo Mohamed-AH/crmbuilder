@@ -164,6 +164,47 @@ continuous, so it consumes roughly 744 of Render's 750 monthly instance-hours
 and only works while this is the only free service on the account; and 14
 minutes against a 15-minute timeout is one missed check away from a cold start.
 
+### Drilling the backup
+
+An untested backup is a rumour. This proves the nightly artifact can actually
+be put back, and it never writes to production — it only reads a file GitHub
+already holds.
+
+**The one safety rule:** `restore.mjs` writes to **MongoDB whenever
+`MONGODB_URI` is set**, and with `RESTORE_OVERWRITE=1` it clears every
+collection first. Put `MONGODB_URI=` on every command below, and never set
+`RESTORE_OVERWRITE` during a drill.
+
+```sh
+# 1. Actions → Nightly backup → newest green run → download and unzip the
+#    artifact. Then restore it into a scratch directory, never ./data.
+MONGODB_URI= BACKUP_FILE=./crmbuilder-backup-2026-01-01.json \
+  DATA_DIR=./data/drill node scripts/restore.mjs
+
+# 2. Boot the restored copy on a spare port.
+MONGODB_URI= DATA_DIR=./data/drill PORT=9521 ALLOW_DEV_LOGIN=1 node server.js
+
+# 3. When you are done.
+rm -rf ./data/drill
+```
+
+Step 1 prints a count of accounts, organisations, workspaces, modules and
+records, and **exits non-zero if any of them disagrees with the backup** — so a
+silent partial restore fails loudly rather than telling you to go and look.
+
+**Counts are necessary and not sufficient.** Rows restored into the *wrong*
+workspace satisfy every total, so finish by opening the restored copy at
+`http://localhost:9521`, signing in as a real account, and checking that its
+own records are the ones you expect.
+
+**What a restore does not bring back:** approved join requests, and the signup
+mode and org-creation gate you set in the panel. Those fall back to the
+deployment's environment variables, so **check Admin → Beta access after any
+real restore** — a restore can quietly reopen signups you had paused.
+
+Do this monthly against a real artifact, and again whenever the export changes
+shape.
+
 ### If something goes wrong
 
 | Symptom | First thing to check |

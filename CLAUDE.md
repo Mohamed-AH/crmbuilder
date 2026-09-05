@@ -35,6 +35,7 @@ never change, because everything cross-references them.
 | Alerts and thresholds | §25 |
 | **Before removing a meter** — what it costs | [`docs/archive/TELEMETRY.md`](docs/archive/TELEMETRY.md) |
 | Backups, export auth, measured usage | §17 |
+| **Restoring a backup** — what it verifies, what it loses | §17 |
 | Problem reports and webhook shapes | §18 |
 | Legal pages, service-worker page trap | §19 |
 | **What the server publishes** (allow-list) | §28 |
@@ -867,6 +868,59 @@ minutes. Two consequences worth remembering: that is continuous, so it consumes
 ~744 of Render's 750 monthly instance-hours and only works while this is the
 only free service on the account; and 14 minutes against a 15-minute idle
 timeout is one missed check from asleep.
+
+### The restore verified one branch and not the other
+
+`restore.mjs` counted its rows back on the **Mongo** path and, on the **file
+store** path, wrote `store.json`, printed *"go and look"*, and checked nothing.
+The asymmetry ran the wrong way round: the file store is the only kind of drill
+that is safe to run regularly — Mongo means either a scratch cluster or
+`RESTORE_OVERWRITE=1` against something real — so the cheap, repeatable half of
+the exercise was the half that could not fail.
+
+Both branches now call one `verifyCounts()` over accounts, organisations,
+workspaces, modules and records, and `exit(1)` on any mismatch. Each asks the
+store what it holds *now* — Mongo counts documents, the file store re-reads the
+file it just wrote. **Counting the object we were about to write would restate
+the intent rather than check the outcome**, which is the whole point.
+
+**Measured against the broken state, and it was worse than predicted.** The
+failure used is a real one: the file store keys workspaces by `wsId`, so a
+backup carrying two workspaces with the same id has the second
+`Object.fromEntries` **replace** the first's bag rather than merge with it. On
+that input the pre-fix script printed *"Restored into …"* and exited **0** while
+holding 6 of 180 records and 1 of 11 modules. It reports the shortfall per line
+and exits 1 now.
+
+**What a passing count still does not prove.** Rows landing in the wrong
+workspace satisfy every total. The drill therefore ends by booting the restored
+store and re-exporting it, comparing shapes rather than sizes — and by signing
+in as a named account to see its own records. `docs/BETA.md` § *"Drilling the
+backup"* has the runnable version.
+
+**Known gaps in the export, confirmed by running it.** The body carries `orgs`,
+`users` and `workspaces` only. `accessRequests` and `platform` are absent, so a
+restore loses the approval allowlist (§20 — approval *is* the allowlist) and
+the stored signup mode and `orgCreation` gate (§16, §24), which then fall back
+to the env vars. §16's guarantee that *"a redeploy cannot silently undo the
+operator"* does not extend to a restore. Nothing crashes — `FileStore`
+coalesces missing collections — but a restore can silently reopen signups.
+
+`platform` is **not one thing**, and this is the trap for whoever closes that
+gap: it holds operator decisions (`signupMode`, `orgCreation`) *and* runtime
+state (`egressBytes`, per-rule `alerts` steps). Restoring the runtime half into
+a fresh deployment seeds it with a dead one's traffic and carries the
+escalate-only alert state across (§25), so a threshold that already fired stays
+quiet on the deployment that now needs it. Export all of it; restore only the
+decisions. The drill shows this directly: the restored store's `platform` holds
+only the `egressBytes` the *new* server accumulated on its own.
+
+**And one for the workspace-webhook work before it starts.** `workspaces[].meta`
+is the `data` collection, which includes `settings` — so workspace settings are
+already in every nightly artifact. §18 records that a Telegram webhook URL
+contains a bot token. Storing a per-workspace webhook URL in `settings` would
+put live credentials into a GitHub artifact downloadable by anyone with repo
+read access. Keep it out of `settings`, or redact it on export.
 
 ---
 

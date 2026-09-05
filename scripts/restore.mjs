@@ -41,6 +41,40 @@ console.log(`Backup taken ${backup.exportedAt}`);
 console.log(`  ${orgs.length} organisation(s), ${users.length} account(s)`);
 console.log(`  ${workspaces.length} workspace(s), ${modules} module(s), ${records} record(s)`);
 
+/*
+ * What the store must be able to say afterwards.
+ *
+ * The Mongo branch has always counted its rows back. The file store wrote
+ * store.json, printed "go and look", and verified nothing — so a drill against
+ * the file store could not fail, and the file store is the only kind of drill
+ * that is safe to run regularly. That asymmetry meant the cheap, repeatable
+ * half of the exercise was the half that proved least.
+ *
+ * Both branches now ask the store what it holds *now*: Mongo counts documents,
+ * the file store re-reads the file it just wrote. Counting the object we were
+ * about to write would restate our intent rather than check the outcome.
+ */
+const expected = {
+  accounts: users.length,
+  organisations: orgs.length,
+  workspaces: workspaces.filter((w) => w.meta).length,
+  modules,
+  records,
+};
+
+function verifyCounts(actual) {
+  let bad = 0;
+  for (const [label, want] of Object.entries(expected)) {
+    const got = actual[label];
+    if (got !== want) bad += 1;
+    console.log(`  ${String(got).padStart(6)}  ${label}${got === want ? '' : `  <- expected ${want}`}`);
+  }
+  if (bad) {
+    console.error('\nCounts do not match the backup. Do not trust this restore.');
+    process.exit(1);
+  }
+}
+
 const overwrite = process.env.RESTORE_OVERWRITE === '1';
 
 if (process.env.MONGODB_URI) {
@@ -73,15 +107,17 @@ if (process.env.MONGODB_URI) {
   }
 
   const back = {
-    users: await db.collection('users').countDocuments(),
+    accounts: await db.collection('users').countDocuments(),
+    organisations: await db.collection('orgs').countDocuments(),
+    workspaces: await db.collection('data').countDocuments(),
+    modules: await db.collection('modules').countDocuments(),
     records: await db.collection('records').countDocuments(),
   };
+  // Close before verifying: verifyCounts exits on a mismatch, and an open
+  // client would keep the process alive past it.
   await client.close();
-  console.log(`\nRestored. Counted back: ${back.users} account(s), ${back.records} record row(s).`);
-  if (back.users !== users.length || back.records !== records) {
-    console.error('Counts do not match the backup. Do not trust this restore.');
-    process.exit(1);
-  }
+  console.log('\nRestored. Counted back:');
+  verifyCounts(back);
 } else {
   // The file store: one JSON document, shaped the way FileStore expects.
   const dir = process.env.DATA_DIR || './data/restored';
@@ -94,7 +130,20 @@ if (process.env.MONGODB_URI) {
   }
   const target = path.join(dir, 'store.json');
   await writeFile(target, JSON.stringify(out));
-  console.log(`\nRestored into ${target}. Start the server with DATA_DIR=${dir} to look at it.`);
+
+  const written = JSON.parse(await readFile(target, 'utf8'));
+  const inBags = (bag) => Object.values(bag || {}).reduce((n, m) => n + Object.keys(m).length, 0);
+  console.log(`\nRestored into ${target}. Counted back:`);
+  verifyCounts({
+    accounts: (written.users || []).length,
+    organisations: (written.orgs || []).length,
+    // Keyed by wsId, so two workspaces sharing one would silently merge here
+    // and show up as a shortfall rather than as a wrong-looking success.
+    workspaces: Object.keys(written.data || {}).length,
+    modules: inBags(written.items?.modules),
+    records: inBags(written.items?.records),
+  });
+  console.log(`\nStart the server with DATA_DIR=${dir} to look at it.`);
 }
 
 console.log('\nNow sign in as one of the restored accounts and check the record count matches.');
