@@ -3585,6 +3585,67 @@ const REMIND_MIN_GAP_MS = Number(process.env.REMIND_MIN_GAP_MS || 5 * 60 * 1000)
 const REMIND_MAX_PER_PASS = Number(process.env.REMIND_MAX_PER_PASS || 25);
 let lastRemindRun = 0;
 
+/*
+ * The dead-man's switch, and it is the half §39 said could not be built
+ * in-process — correctly, because an ALERT RULE for this cannot work: the
+ * rules and the engine run off the same ping, so a dead ping stops the thing
+ * that would notice. An outbound ping is the other shape of the same idea and
+ * it does work, because the absence of a signal is what gets noticed, by
+ * somebody else's machine.
+ *
+ * It covers BOTH failure modes at once, which is the reason it earns its
+ * place: the engine wedging, and the keep-warm ping dying. Either stops the
+ * pass, and either therefore stops this.
+ *
+ * Env-supplied, so it is the unrestricted trust level (§38) and uses plain
+ * `fetch` like FEEDBACK_WEBHOOK_URL — no runtime setter, which is what keeps
+ * §30's SSRF finding false for it. The URL is a bearer credential (anyone
+ * holding it can fake a success), so it must never reach `platform` (§17's
+ * rule) and nothing here interpolates it into a log line. Node's network
+ * errors carry hostnames, not paths, and the secret is in the path.
+ */
+const REMINDER_HEALTHCHECK_URL = process.env.REMINDER_HEALTHCHECK_URL || '';
+
+function reminderCheckUrl(failed) {
+  if (!REMINDER_HEALTHCHECK_URL) return '';
+  try {
+    const u = new URL(REMINDER_HEALTHCHECK_URL);
+    if (failed) u.pathname = `${u.pathname.replace(/\/$/, '')}/fail`;
+    return u.toString();
+  } catch {
+    console.warn('REMINDER_HEALTHCHECK_URL is not a valid URL — the reminder pass has no dead-man\'s switch.');
+    return '';
+  }
+}
+
+/*
+ * PINGED FOR A PASS THAT RAN, not for one that sent something.
+ *
+ * A quiet weekend, or a deployment where nobody has switched the digest on,
+ * is the engine working — gating on `sent > 0` would turn every Sunday into
+ * an alert, which is §25's "an alert that fires when nothing is wrong trains
+ * you to ignore it".
+ *
+ * That is NOT a contradiction of §17's rule that an unconfigured run must not
+ * report health. There, "did nothing" meant missing secrets — a
+ * misconfiguration wearing success's clothes. Here it is a legitimate state,
+ * and what is actually being asserted is "a pass executed". A pass that was
+ * rate-limited, or that threw before finishing, never reaches this.
+ */
+function pingReminderCheck(pass) {
+  const url = reminderCheckUrl(pass.failed > 0);
+  if (!url) return;
+  fetch(url, {
+    method: 'POST',
+    // Counts only — Healthchecks shows the body in its log, and that log is
+    // one more place a workspace's contents must not turn up.
+    body: `scanned ${pass.scanned}, sent ${pass.sent}, failed ${pass.failed}, ${pass.ms}ms`,
+    signal: AbortSignal.timeout(5000),
+  }).then((r) => {
+    if (!r.ok) console.warn(`Reminder healthcheck rejected the ping: HTTP ${r.status}`);
+  }).catch((err) => console.warn('Reminder healthcheck ping failed:', err.message));
+}
+
 function digestText(name, due) {
   // Only the untrusted halves are neutralised. The app's own URL below has to
   // stay a working link, which is why this is not applied to the whole string.
@@ -3693,6 +3754,10 @@ async function remindPass({ force = false, now = new Date() } = {}) {
    * configuration rather than code.
    */
   await store.updatePlatformSettings({ reminders: out }).catch(() => {});
+  // After the state is stored, and fire-and-forget: a dead or slow
+  // Healthchecks must never be able to hold up or fail a pass that worked.
+  // Same rule as the feedback notifier and the alert webhook.
+  pingReminderCheck(out);
   return out;
 }
 

@@ -95,7 +95,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 342 Node tests + 88 Playwright tests, 43 smoke checks. On
+**All green:** 346 Node tests + 88 Playwright tests, 43 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -3268,12 +3268,55 @@ So staleness splits, and only one half is code:
   Deployment card, and `null` until the first pass rather than a
   zero-hour-old success. An operator who looks, sees. The card says plainly
   that if the ping stops, nothing here can tell you.
-- **Push** — belongs at healthchecks.io beside the backup's (§17), which is
-  configuration rather than code.
+- **Push** — `REMINDER_HEALTHCHECK_URL`. **This is code, and the first
+  version of this section said it was "configuration rather than code",
+  which was wrong.** The backup's switch is configuration because an external
+  job runs it and can `curl`; this pass runs *inside* the server, so the
+  server has to emit the ping. Nothing external can see whether it happened.
 
-An in-process rule would still be worth having for a ping that is alive while
-the engine fails, which is a real and different failure — but it must be
-documented as covering only that, or it reads as protection it does not give.
+**What the outbound ping fixes that a rule could not.** A rule asks "is
+something wrong" and needs to be running to answer. A ping asserts "I am
+alive", and the thing that notices its ABSENCE is somebody else's machine —
+which is exactly the property a dead ping loop destroys in the rule and cannot
+touch here. So it covers **both** failure modes at once: the engine wedging,
+and the keep-warm ping dying. Either stops the pass, and either therefore
+stops the signal.
+
+**Pinged for a pass that RAN, not one that SENT.** A quiet weekend, or a
+deployment where nobody has switched the digest on, is the engine working;
+gating on `sent > 0` pages you every Sunday, which is §25's "an alert that
+fires when nothing is wrong trains you to ignore it". That is **not** a
+contradiction of §17's rule that an unconfigured run must not report health —
+there, "did nothing" meant missing secrets wearing success's clothes. Here it
+is a legitimate state, and the claim being made is only "a pass executed". A
+pass that was rate-limited, or that threw before finishing, never reaches the
+ping.
+
+**Silence and `/fail` are told apart on purpose.** Healthchecks treats
+`<url>/fail` as an explicit failure signal, so a pass with a failed delivery
+says "I am running and something in me is broken" while a dead deployment says
+nothing at all. Opposite problems, opposite responses — reporting both as
+silence would throw that away.
+
+Env-supplied, so it is the unrestricted trust level (§38) and uses plain
+`fetch` — no runtime setter, which keeps §30's SSRF finding false for it. The
+URL is a bearer credential, so it must never reach `platform` (§17's rule) and
+nothing interpolates it into a log line. The body carries counts only:
+Healthchecks shows it in its own log, which is one more place a customer's data
+must not appear.
+
+**Test trap, hit twice.** The healthcheck tests need their own deployment.
+The main suite deliberately leaves workspaces whose sends fail, so a pass there
+correctly signals `/fail` — which makes "a healthy pass reports health"
+unprovable on it, and the failure reads as the ping being broken when it is the
+fixture. The second server also keeps the real `REMIND_MIN_GAP_MS`, which is
+what makes the rate-limited path reachable at all. And **the platform admin is
+the FIRST account on a deployment** (§21): signing in fresh gets an owner,
+`/api/admin/reminders/run` answers 403, no pass runs, no ping is sent — a
+third way to arrive at "the ping looks broken".
+
+Setup steps, and what a red check means in each direction, are in
+`docs/BETA.md` § *"Knowing the daily digest is still running"*.
 
 ### The suite is split in three, and it has to be
 

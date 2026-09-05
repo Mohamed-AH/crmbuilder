@@ -198,6 +198,58 @@ the absent ping anyway, and the warning in the log is what distinguishes "the
 URL is wrong" from "the deployment is down" — opposite problems with the same
 symptom.
 
+### Knowing the daily digest is still running
+
+The reminder pass (§39) runs off the same `/health` ping that keeps the free
+tier awake. That is cheap and needs no scheduler, and it has one consequence
+worth naming: **if the keep-warm ping stops, the digest stops, and nothing
+inside the deployment can tell you** — the alert rules run off that same ping,
+so whatever would have noticed has stopped too.
+
+A second Healthchecks check closes it, and it covers **both** failure modes at
+once: the engine wedging, and the ping loop dying. Either stops the pass, and
+either therefore stops the signal.
+
+**Setting it up:**
+
+1. Create a second free check at healthchecks.io — name it something like
+   **crmbuilder reminders**. Period **1 hour**, grace **1 hour**.
+   The pass runs roughly every 14 minutes behind UptimeRobot, so two hours of
+   silence is a real stall rather than a blip.
+2. Point it at the same place as the backup check.
+3. Copy its ping URL into **Render → the service → Environment** as
+   `REMINDER_HEALTHCHECK_URL`, and redeploy.
+
+The ping URL is a bearer credential — anyone holding it can fake a success —
+so it lives in the environment and never in `platform`, which is in every
+nightly backup artifact (§17).
+
+**What you should see.** Within about fifteen minutes of the redeploy, the
+check goes green and its log shows a line like
+`scanned 0, sent 0, failed 0, 3ms`. Counts only: the ping body never carries a
+workspace or module name, because that log is one more place a customer's data
+must not appear.
+
+**Green with `sent 0` is correct.** The check asserts that a pass *ran*, not
+that anything was sent — a quiet weekend, or a deployment where nobody has
+switched the digest on, is the engine working. Gating it on "something was
+sent" would page you every Sunday, which is the fastest way to learn to ignore
+it.
+
+**A red check means one of two things**, and they are different:
+
+| What you see | What it means |
+|---|---|
+| **No ping** (the check just goes down) | The deployment is asleep, or the pass is throwing before it finishes. Check that UptimeRobot is still pinging `/health`. |
+| **An explicit failure** (a `/fail` ping) | The deployment is fine and *running*; one or more workspaces could not have their digest delivered. Admin → Deployment shows the last pass, and each owner's Notifications card shows their own reason. |
+
+Silence and `/fail` are opposite problems with opposite responses, which is why
+the pass signals them differently rather than just going quiet.
+
+**Without it set**, nothing breaks and nothing is logged loudly — the pass just
+has no dead-man's switch, exactly as the backup did before its own check
+existed.
+
 ### Drilling the backup
 
 **An untested backup is a rumour.** This proves that a *real* nightly artifact

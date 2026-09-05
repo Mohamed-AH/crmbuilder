@@ -34,15 +34,22 @@ const DR = createRequire(import.meta.url)('../js/date-rules.js');
 
 // A fresh port per boot (§4): rebinding one that was listening a moment ago
 // races, and on Windows the new listener loses.
-const PORT = 9700 + Math.floor(Math.random() * 30);
+const PORT = 9700 + Math.floor(Math.random() * 28);
+// A SECOND app server, with the real gap between passes left in place, so the
+// rate-limited path can be exercised. The main one runs with the gap at zero
+// because everything else in this file drives passes deliberately.
+const GAPPED_PORT = 9730 + Math.floor(Math.random() * 4);
 const CAPTURE_PORT = 9735 + Math.floor(Math.random() * 15);
 const BASE = `http://127.0.0.1:${PORT}`;
+const HC_PATH = '/hc/abc-123-secret';
 
 let child = null;
 let dataDir = null;
 let serverLog = '';
 let capture = null;
 let captured = [];
+let gapped = null;
+let gappedLog = '';
 
 function jar() {
   const cookies = new Map();
@@ -58,8 +65,8 @@ function jar() {
   };
 }
 
-async function req(path, { cookies, method = 'GET', body } = {}) {
-  const res = await fetch(`${BASE}${path}`, {
+async function req(path, { cookies, method = 'GET', body, base = BASE } = {}) {
+  const res = await fetch(`${base}${path}`, {
     method,
     redirect: 'manual',
     headers: { 'Content-Type': 'application/json', ...(cookies ? { Cookie: cookies.header() } : {}) },
@@ -91,11 +98,13 @@ function dayIn(zone, offset) {
 
 before(async () => {
   captured = [];
+  // Records the PATH as well as the body: a Healthchecks failure signal is
+  // the same URL with `/fail` appended, so the path is the assertion.
   capture = http.createServer((rq, rs) => {
     const chunks = [];
     rq.on('data', (c) => chunks.push(c));
     rq.on('end', () => {
-      captured.push(Buffer.concat(chunks).toString('utf8'));
+      captured.push({ url: rq.url, body: Buffer.concat(chunks).toString('utf8') });
       rs.writeHead(200, { 'Content-Type': 'application/json' });
       rs.end('{"ok":true}');
     });
@@ -121,6 +130,7 @@ before(async () => {
       // The env-supplied webhook is unrestricted by design (§30) — a capture
       // server on loopback is the whole reason that decision was made.
       FEEDBACK_WEBHOOK_URL: `http://127.0.0.1:${CAPTURE_PORT}/capture`,
+      REMINDER_HEALTHCHECK_URL: `http://127.0.0.1:${CAPTURE_PORT}${HC_PATH}`,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -137,6 +147,7 @@ before(async () => {
 
 after(async () => {
   if (child) { const dead = new Promise((r) => child.once('exit', r)); child.kill(); await dead; }
+  if (gapped) { const dead = new Promise((r) => gapped.once('exit', r)); gapped.kill(); await dead; }
   if (capture) await new Promise((r) => capture.close(r));
   if (dataDir) await rm(dataDir, { recursive: true, force: true });
 });
@@ -146,14 +157,15 @@ after(async () => {
  * `hour: 0` so the morning gate is open whatever time the suite runs; the gate
  * itself gets its own test with hour 23.
  */
-async function seed(email, { zone = 'UTC', enabled = true, hook = true, hour = 0, due = true, name = 'Seed Co' } = {}) {
+async function seed(email, { zone = 'UTC', enabled = true, hook = true, hour = 0, due = true, name = 'Seed Co', base = BASE } = {}) {
   const cookies = jar();
-  const me = await req('/auth/dev', { method: 'POST', body: { email }, cookies });
+  const me = await req('/auth/dev', { method: 'POST', body: { email }, cookies, base });
   const wsId = me.json.user.orgId;
 
   await req('/api/sync', {
     method: 'POST',
     cookies,
+    base,
     body: {
       since: 0,
       settings: { currency: 'USD', businessName: name, timezone: zone, remind: { enabled, days: 7, hour } },
@@ -184,12 +196,12 @@ async function seed(email, { zone = 'UTC', enabled = true, hook = true, hour = 0
     // nowhere) but STORED, because an unresolvable host is a property of the
     // moment rather than of the URL (§38). That is what these tests need: a
     // configured destination whose sends deterministically fail.
-    await req('/api/org/hook', { method: 'PUT', body: { url: 'https://hooks.example.invalid/services/T/B/XYZ' }, cookies });
+    await req('/api/org/hook', { method: 'PUT', body: { url: 'https://hooks.example.invalid/services/T/B/XYZ' }, cookies, base });
   }
   return { cookies, wsId };
 }
 
-const runPass = (cookies) => req('/api/admin/reminders/run', { method: 'POST', body: {}, cookies });
+const runPass = (cookies, base = BASE) => req('/api/admin/reminders/run', { method: 'POST', body: {}, cookies, base });
 
 describe('the daily pass and its gates', () => {
   let admin = null;
@@ -403,15 +415,167 @@ describe('the payload a provider actually receives', () => {
     await req('/api/feedback', { method: 'POST', body: { message: 'hello @everyone <!channel>' }, cookies });
 
     const deadline = Date.now() + 8000;
-    while (Date.now() < deadline && !captured.length) await new Promise((r) => setTimeout(r, 100));
-    assert.ok(captured.length, 'the capture server received nothing');
+    let hit = null;
+    while (Date.now() < deadline && !hit) {
+      hit = captured.find((c) => c.url === '/capture');
+      if (!hit) await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.ok(hit, 'the capture server received nothing');
 
-    const body = JSON.parse(captured[0]);
+    const body = JSON.parse(hit.body);
     // Discord's own switch for "this message notifies nobody". The text
     // mangling is the belt for providers that do not offer one; this is the
     // real control, and Slack ignores the unknown field.
     assert.deepEqual(body.allowed_mentions, { parse: [] });
     assert.ok(body.content, 'Discord reads content');
     assert.ok(body.text, 'Slack reads text');
+  });
+});
+
+/*
+ * THE DEAD-MAN'S SWITCH.
+ *
+ * §39 records why an in-process ALERT RULE for this cannot work: the rules and
+ * the engine run off the same /health ping, so a dead ping stops the thing
+ * that would notice. An outbound ping is the other shape of the same idea and
+ * it does work — the ABSENCE of a signal is what gets noticed, on somebody
+ * else's machine. It covers both failure modes at once, which is why it earns
+ * its place: the engine wedging, and the keep-warm ping dying. Either stops
+ * the pass, and either therefore stops this.
+ *
+ * A SECOND DEPLOYMENT, with its own data directory, and that is not fussiness.
+ * The suite above deliberately leaves workspaces whose sends fail, so a pass
+ * there correctly signals `/fail` — which makes "a healthy pass reports
+ * health" unprovable on it. The first version of these tests ran on the shared
+ * server and failed for exactly that reason, which read as the ping being
+ * broken when it was the fixture.
+ *
+ * It also keeps the REAL gap between passes, so the rate-limited path is
+ * reachable: the main server runs with the gap at zero.
+ */
+describe("the reminder pass reports to a dead-man's switch", () => {
+  let gappedDir = null;
+  const GAPPED = `http://127.0.0.1:${GAPPED_PORT}`;
+  const hcHits = () => captured.filter((c) => c.url.startsWith(HC_PATH));
+  const admin = jar();
+
+  async function waitForPing(seen) {
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline && hcHits().length <= seen) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return hcHits();
+  }
+
+  before(async () => {
+    gappedDir = await mkdtemp(join(tmpdir(), 'crmb-remind-hc-'));
+    gapped = spawn(process.execPath, ['server.js'], {
+      cwd: ROOT,
+      env: {
+        ...process.env,
+        PORT: String(GAPPED_PORT),
+        DATA_DIR: gappedDir,
+        ALLOW_DEV_LOGIN: '1',
+        MONGODB_URI: '',
+        SESSION_SECRET: 'reminder-hc-secret',
+        SIGNUP_MODE: 'open',
+        NODE_ENV: 'test',
+        // The real thing: a burst of keep-warm pings must cost one pass.
+        REMIND_MIN_GAP_MS: '600000',
+        REMINDER_HEALTHCHECK_URL: `http://127.0.0.1:${CAPTURE_PORT}${HC_PATH}`,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    gapped.stdout.on('data', (d) => { gappedLog += d; });
+    gapped.stderr.on('data', (d) => { gappedLog += d; });
+
+    const deadline = Date.now() + 20000;
+    for (;;) {
+      if (Date.now() > deadline) throw new Error(`healthcheck server did not start:\n${gappedLog}`);
+      try { if ((await fetch(`${GAPPED}/healthz`, { signal: AbortSignal.timeout(1500) })).ok) break; } catch { /* not up */ }
+      await new Promise((r) => setTimeout(r, 120));
+    }
+    // The first account on a deployment that names nobody is the platform
+    // admin (§21). Signing in later gets an owner, `/api/admin/reminders/run`
+    // answers 403, no pass runs and no ping is sent — which looks exactly like
+    // the ping being broken.
+    await req('/auth/dev', { method: 'POST', body: { email: 'ops@hc.test' }, cookies: admin, base: GAPPED });
+  });
+
+  after(async () => {
+    if (gappedDir) await rm(gappedDir, { recursive: true, force: true });
+  });
+
+  test('a pass that ran pings the check, even when it sent nothing', async () => {
+    /*
+     * Nothing on this deployment has the digest on, so the pass legitimately
+     * does nothing — and that IS the engine working. Gating the ping on
+     * `sent > 0` would turn every quiet weekend into an alert, which is §25's
+     * "an alert that fires when nothing is wrong trains you to ignore it".
+     *
+     * Not §17's unconfigured-run case: there, doing nothing meant missing
+     * secrets wearing success's clothes. Here it is a legitimate state, and
+     * what is being asserted is only "a pass executed".
+     */
+    const was = hcHits().length;
+    await seed('hc-quiet@hc.test', { due: false, base: GAPPED });
+    await runPass(admin, GAPPED);
+
+    const hits = await waitForPing(was);
+    assert.ok(hits.length > was, 'a completed pass did not report health');
+    const last = hits[hits.length - 1];
+    assert.equal(last.url, HC_PATH, 'a healthy pass must not signal failure');
+    assert.match(last.body, /scanned \d+, sent \d+, failed \d+/, 'the ping carries the pass summary');
+  });
+
+  test('the ping body carries counts and nothing from a workspace', async () => {
+    // Healthchecks shows the body in its own log, which is one more place a
+    // customer's data must not turn up.
+    const was = hcHits().length;
+    await seed('hc-private@hc.test', { name: 'Confidential Holdings', due: false, base: GAPPED });
+    await runPass(admin, GAPPED);
+    const hits = await waitForPing(was);
+    // Not vacuous: a loop over an empty list asserts nothing, and the first
+    // version of this passed that way while no ping was being sent at all.
+    assert.ok(hits.length > was, 'no ping arrived, so this proves nothing');
+    for (const hit of hits) {
+      assert.ok(!hit.body.includes('Confidential Holdings'), 'a workspace name reached the healthcheck log');
+      assert.ok(!hit.body.includes('Invoices'), 'a module name reached the healthcheck log');
+    }
+  });
+
+  /*
+   * A ping from a pass that was SKIPPED would keep the check green while real
+   * passes had stopped happening — a green tick over nothing, which is the
+   * exact failure §17 records for the backup workflow.
+   */
+  test('a second ping inside the gap is not a pass, and is not reported as one', async () => {
+    // The forced pass above set the clock, so these are well inside the gap.
+    const was = hcHits().length;
+    for (let i = 0; i < 2; i += 1) {
+      assert.equal((await fetch(`${GAPPED}/health`, { signal: AbortSignal.timeout(5000) })).ok, true);
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+    assert.equal(hcHits().length, was, 'a rate-limited no-op reported health');
+  });
+
+  /*
+   * `<url>/fail` is Healthchecks' explicit failure signal, and it is a better
+   * answer than silence: silence says "the deployment is gone", `/fail` says
+   * "it is running and something in it is broken". Opposite problems, wanting
+   * opposite responses.
+   */
+  test('a pass where a workspace failed signals failure rather than health', async () => {
+    const was = hcHits().length;
+    // This seed's hook points at a host that resolves nowhere, so the send
+    // fails deterministically and offline.
+    await seed('hc-fails@hc.test', { base: GAPPED });
+    await runPass(admin, GAPPED);
+
+    const hits = await waitForPing(was);
+    assert.ok(hits.length > was, 'no ping arrived');
+    const last = hits[hits.length - 1];
+    assert.equal(last.url, `${HC_PATH}/fail`, 'a pass with a failed delivery reported health');
+    assert.match(last.body, /failed [1-9]/);
   });
 });
