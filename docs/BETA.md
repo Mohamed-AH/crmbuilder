@@ -198,6 +198,126 @@ the absent ping anyway, and the warning in the log is what distinguishes "the
 URL is wrong" from "the deployment is down" — opposite problems with the same
 symptom.
 
+### Trying the daily digest, end to end
+
+**Locally, in about ten minutes, without waiting a day.** The pass normally
+fires off the keep-warm ping and refuses to run twice for the same workspace on
+the same local day — both of which make it awkward to watch. This drives it on
+purpose instead.
+
+You need a webhook URL you can watch. A throwaway Slack or Discord channel is
+ideal. If you have neither, `https://webhook.site` gives you a URL and a live
+log in one click — but treat it as public, because it is.
+
+**It cannot be a local capture server, and that is the guard working.** A
+customer-supplied webhook may not dial a private address, so
+`http://127.0.0.1:9000/hook` is refused twice over — once for `http:` and once
+for loopback. Steps 3, 5 and 7 all work offline against a URL that never
+delivers; only step 4 and the message itself need a real public HTTPS
+destination.
+
+**1. Start a server with the day-gate loosened.**
+
+```sh
+MONGODB_URI= DATA_DIR=./data/digest-trial ALLOW_DEV_LOGIN=1 \
+  REMIND_MIN_GAP_MS=0 node server.js
+```
+
+`MONGODB_URI=` is the trap that bites here as it does with the fixture: with one
+set — including from a `.env` the server picks up — the server reads Mongo and
+none of this exists.
+
+`REMIND_MIN_GAP_MS=0` only removes the five-minute gap *between passes*. The
+once-per-workspace-per-day rule is still on, deliberately, and step 6 is how you
+get around it.
+
+**2. Sign in and give yourself something that is due.**
+
+Open `http://localhost:8321`, load the demo business from the onboarding
+screen, then sign in (dev sign-in takes any email, no password) choosing
+**bring everything** so the samples come with you. The demo seeds Tasks with
+overdue due-dates, so there is something real to count.
+
+**3. Check the filter first, so you know the right answer.**
+
+Open **Tasks** → the **Due date** filter → *next 7 days*. Write down the number
+in the count badge. **The digest must say exactly this.** If it does not, that
+is a bug worth reporting, not a rounding difference.
+
+**4. Point it at your channel.**
+
+Settings → **Notifications** → paste the webhook URL → **Save webhook**. You
+should get *"Webhook saved, and a test message went through"* and a message in
+the channel. Then press **Send a test message** to prove the button separately.
+
+**5. Read the digest before you switch it on.**
+
+Under **Daily digest**, set *Look ahead* to **next 7 days** and *Not before* to
+**00:00**, then look at the preview block. It shows the **exact string** your
+team would receive — that is deliberate, so nobody's first sight of the message
+is in a shared channel. Check the Tasks number against step 3. Then set
+**Send it → Once a day** and save.
+
+**6. Make it fire now.**
+
+```sh
+curl -s http://localhost:8321/health > /dev/null
+```
+
+That is the real mechanism, not a test hatch: in production UptimeRobot hits
+`/health` every 14 minutes to keep the free tier awake, and the pass rides on
+the back of it. No cookie, no authentication — the endpoint is public and the
+pass runs for any caller, because the keep-warm ping is the only regular caller
+there is.
+
+The pass happens *after* the response, so `curl` returns instantly and the
+message lands a moment later.
+
+**What you should see:** one message in the channel, of the shape
+
+```
+Lumen Studio — 9 items need attention
+• Tasks: 4 overdue, 5 due within 7 days
+http://localhost:8321
+```
+
+Your numbers will differ — they are whatever the demo data and today's date
+make true — but the **shape** is fixed, and the Tasks count must match step 3.
+On a hand-seeded workspace with one overdue and one upcoming row it reads
+`Lumen Studio — 2 items need attention · Tasks: 1 overdue, 1 due within 7
+days`, which is what this runbook was checked against.
+
+**7. Prove it will not send twice.**
+
+Hit `/health` again. **Nothing new arrives**, and Settings still shows the same
+*Last checked* time. That is the once-per-local-day rule, and it is what stops
+a digest becoming a stream.
+
+To watch a second one, delete `./data/digest-trial` and start over, or edit
+`reminded.lastRunOn` for that workspace in `store.json` with the server
+stopped — FileStore holds the store in memory and rewrites the whole file, so
+editing it under a running server is clobbered.
+
+**Things worth trying because they are the interesting cases:**
+
+| Try this | What should happen |
+|---|---|
+| Set *Look ahead* to **next 30 days** and re-read the preview | The count grows and the wording says `due within 30 days` |
+| Clear every overdue task, then force a pass | **No message at all.** A quiet day is silent by design |
+| Name a module `<!channel> urgent` and re-read the preview | It appears as text, inert — it cannot wake a Slack channel |
+| Point the webhook at `https://127.0.0.1/x` | Refused at save, with a reason. Customer-supplied URLs may not dial private addresses |
+| Point it at `https://nothing.invalid/x` | **Saved**, with the failure recorded. Unreachable-right-now is a property of the moment, not of the URL |
+| Sign in as a member of the same team and open Settings | No Notifications card at all — this is owner-only |
+
+**And what it will not do**, so the trial does not read as a fault:
+
+- It never names a record. *"Tasks: 4 overdue"*, never which four.
+- It will not send twice in a day, even if you want it to.
+- It does not chase anything that becomes due later the same day — that is
+  tomorrow's message.
+- Nothing arrives at a fixed clock time: *Not before* is a floor, and the
+  message goes on the first pass after that hour.
+
 ### Knowing the daily digest is still running
 
 The reminder pass (§39) runs off the same `/health` ping that keeps the free
@@ -554,7 +674,12 @@ beta* button — we work through those by hand.
   but not delete. **Viewer** is read-only.
 - Everyone on a team can see every module; roles govern what you can *do*, not
   what you can see, and there is no per-module access.
-- No email notifications of any kind.
+- **No email of any kind.** If you want to be nudged about things that are due,
+  Settings → Notifications takes a Slack, Discord or Telegram webhook URL and
+  posts a once-a-day count to that channel. It is off until you turn it on, it
+  says *how many* rather than *which*, and a day with nothing due sends nothing
+  at all. Only an owner can set it, and the URL is never shown back to you
+  after you save it — treat it like a password.
 - The guided tour needs sample data, and offers to load it. Settings → Remove
   sample data takes it back out and keeps anything you added.
 

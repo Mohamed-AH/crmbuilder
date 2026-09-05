@@ -1877,8 +1877,14 @@ and it is exactly what is needed before reversing a decision.
 
 ### `docs/API.md`
 
-43 routes across six boundaries — the biggest single blocker to anyone extending
-the backend, since the contract existed only in `server.js`.
+The biggest single blocker to anyone extending the backend, since the contract
+existed only in `server.js`.
+
+**The route count lives in API.md and nowhere else**, and this section learned
+that the hard way: it was written as "43 routes", repeated in `docs/README.md`,
+and both were stale two phases later at 47. That is this section's own thesis
+(a number written in a second place is a number that goes stale) failing
+against the section that states it.
 
 It **routes rather than restates**. Each section points at the `CLAUDE.md`
 section holding the reasoning instead of re-explaining it, because a second

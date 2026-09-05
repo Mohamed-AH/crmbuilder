@@ -32,7 +32,7 @@ is why status is declared, not inferred.
 | **deploy or host it** | [../DEPLOYMENT.md](../DEPLOYMENT.md) |
 | **run it as an operator** | [BETA.md](BETA.md) — signups, quotas, alerts, backups, the tester note |
 | **change the code** | [../CLAUDE.md](../CLAUDE.md) — read §3 *Invariants* and §4 *Traps* first |
-| **call or extend the API** | [API.md](API.md) — 43 routes, auth, sync, roles, alerts |
+| **call or extend the API** | [API.md](API.md) — every route, auth, sync, roles, alerts, reminders |
 | **understand why a decision was made** | [archive/](archive/) |
 | **sell it** | [../MARKETING.md](../MARKETING.md) |
 
@@ -48,7 +48,7 @@ is why status is declared, not inferred.
 | [DEMO-SCRIPT.md](DEMO-SCRIPT.md) | presenter | Timed 10-minute demo, imperative, with the expected questions. |
 | [ONBOARDING.md](ONBOARDING.md) | rollout | Getting a business *using* it inside a week. |
 | [BETA.md](BETA.md) | operator | Runbook: consent screen, codes, usage, alerts, access requests, plus the note to send testers. |
-| [API.md](API.md) | developers | The HTTP contract and the rules behind it. |
+| [API.md](API.md) | developers | The HTTP contract and the rules behind it. Carries the route count; nothing else should. |
 | [../DEPLOYMENT.md](../DEPLOYMENT.md) | operator | Render + Atlas + OAuth, the env matrix, backups, what the deployment publishes. |
 | [../CLAUDE.md](../CLAUDE.md) | developers | **The densest document here.** Architecture, invariants, and every trap that has cost time. |
 | [../MARKETING.md](../MARKETING.md) | go-to-market | B2B/B2C copy and launch threads. |

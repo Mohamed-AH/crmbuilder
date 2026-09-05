@@ -226,7 +226,33 @@ Free hosting sleeps when idle. The app is local-first so it paints immediately
 regardless; a paid plan removes the wake-up entirely.
 
 **"Can it send email / integrate with X?"**
-Not built in. CSV in and out is the integration surface today.
+No email — there is no mail plumbing at all, deliberately. What it *does* have
+is **outbound webhooks**: an owner pastes a Slack, Discord or Telegram webhook
+URL in Settings, and the workspace can post to that channel. CSV in and out is
+still the data integration surface.
+
+**"Can it chase me about things that are due?"**
+Yes, once a day. Turn on the **daily digest** in Settings and the workspace
+posts a count of what is due or overdue to your chat channel — *"Invoices: 2
+overdue, 3 due within 7 days"*. Three things to say plainly, because each one
+will otherwise be a surprise:
+
+- **Counts, not names.** It never says *which* invoice. A chat channel usually
+  has more people in it than the CRM does, so the details stay in the CRM and
+  the message is a nudge to open it.
+- **Once a day, in the morning.** They pick the earliest hour and the
+  look-ahead window. Something that becomes due at lunchtime is in tomorrow's.
+- **A quiet day sends nothing.** There is no daily "all clear" to learn to
+  ignore.
+
+Overdue rows are always counted, however old — the window only bounds the
+future side. If they ask why: a reminder that hides the six-month-old unpaid
+invoice is worse than none.
+
+**"Does that mean you can see our data?"**
+No. The webhook posts from the deployment to *their* chat service, using a URL
+they supply and that is never shown back to them. The digest carries counts and
+module names, never record contents.
 
 ---
 

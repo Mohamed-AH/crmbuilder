@@ -105,6 +105,33 @@ One habit, consistently kept, is what makes the data trustworthy enough to rely 
 
 ## Week 1 check-in (15 minutes)
 
+### Switch the daily digest on — but only now, not on day one
+
+Leave it off during setup. A digest over a half-imported workspace counts rows
+nobody has looked at yet, and the first message they ever get from the system
+being wrong is expensive.
+
+By week 1 there is real data and a real due date to chase, so:
+
+1. **Settings → Notifications**, paste the webhook URL from their Slack,
+   Discord or Telegram channel, and press **Send a test message**. Watch it
+   arrive in the channel before going further.
+2. Under **Daily digest**, set the look-ahead window and the earliest hour, and
+   check the preview — the screen shows the exact message their team will get.
+3. Only then switch it on.
+
+**Set three expectations while you are there**, because each is otherwise a
+support question:
+
+- It says *how many*, never *which*. The details stay in the CRM.
+- It goes once a day. Something due this afternoon is in tomorrow's message.
+- A quiet day sends nothing at all.
+
+**Only the owner can see or change this**, and the URL is never shown back to
+anyone after it is saved — so if they rotate it in Slack, they paste the new
+one rather than editing the old.
+
+
 - [ ] Are records being added? (If not: what's the friction — is it a missing
       field, or a missing habit?)
 - [ ] Does the pipeline reflect reality, or has everything stalled in one column?
