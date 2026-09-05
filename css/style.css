@@ -335,6 +335,27 @@ a.stat-card:hover, .stat-card-add:hover { border-color: var(--border-strong); bo
 .onboard-account .settings-hint { margin: 0; }
 .mode-switch { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
 .team-role { padding: 4px 8px; font-size: 12.5px; width: auto; }
+/* The daily digest block inside the Notifications card. Defined here rather
+   than reached for: §27 records that inventing a class name produces an
+   unstyled box that still looks plausible in a screenshot, which is how
+   `.note.warn` shipped looking fine and meaning nothing. */
+.hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0 16px; }
+.settings-sub { margin: 0 0 6px; font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
+/* The exact string that would be sent, so it is shown as text rather than
+   prose — pre-wrap keeps the line breaks the message really has, and the
+   overflow guard stops a long module name pushing the card sideways. */
+.digest-preview {
+  margin: 0 0 14px; padding: 10px 12px; max-width: 62ch;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.55; white-space: pre-wrap;
+  overflow-wrap: anywhere; overflow-x: auto;
+}
+.settings-hint code {
+  padding: 1px 5px; border-radius: 5px; background: var(--surface-2);
+  border: 1px solid var(--border); font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
 .meter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin: 12px 0; }
 .meter { border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; background: var(--surface-2); }
 .meter-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; font-weight: 600; }

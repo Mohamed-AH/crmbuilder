@@ -4347,7 +4347,7 @@ app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, re
     return res.json({ ...platformCache.body, cached: true });
   }
 
-  const [orgs, users, usage, byOrg, egress] = await Promise.all([
+  const [orgs, users, usage, byOrg, egress, platformSettings] = await Promise.all([
     store.listOrgs(),
     store.listUsers(),
     usageReport(),
@@ -4356,6 +4356,7 @@ app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, re
       return [];
     }),
     egressReport(),
+    store.getPlatformSettings(),
   ]);
 
   const bytesFor = new Map(byOrg.map((o) => [o.orgId, o]));
@@ -4412,6 +4413,21 @@ app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, re
       ram: ramReport(),
       egress,
     },
+    /*
+     * PULL, NOT PUSH, and the distinction is the whole design (§39).
+     *
+     * The reminder engine and the alert rules both run off the /health ping,
+     * so an alert rule for "reminders have gone stale" could never fire for
+     * the reason that matters: if the ping dies, nothing evaluates the rule
+     * either. That is §17's shape — the backup workflow that reported success
+     * every night while producing nothing — reached from a different
+     * direction. So this is here to be LOOKED at, and the pushed half belongs
+     * at healthchecks.io beside the backup's, which is configuration.
+     *
+     * `null` until the first pass, which is honest: a deployment that has
+     * never run one should say so rather than report a zero-hour-old success.
+     */
+    reminders: platformSettings.reminders || null,
     orgs: rows,
     orgCreation: await orgCreation(),
     // A deployment constant, so it is sent once rather than on every row. The

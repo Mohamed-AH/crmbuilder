@@ -309,6 +309,16 @@ const Cloud = (() => {
       getHook: () => api('/api/org/hook', {}, TIMEOUT.admin),
       setHook: (url) => api('/api/org/hook', { method: 'PUT', body: JSON.stringify({ url }) }, TIMEOUT.admin),
       testHook: () => api('/api/org/hook/test', { method: 'POST', body: '{}' }, TIMEOUT.admin),
+      /*
+       * Counts, the exact message that would be sent, and when the last pass
+       * ran. Owner-only, and it carries the hook too — one round trip instead
+       * of two on a screen that needs both.
+       *
+       * It SENDS NOTHING. The preview answers as if reminders were switched
+       * on, because requiring somebody to enable a thing in order to see what
+       * it would do is how a surprise message reaches a team channel.
+       */
+      reminders: () => api('/api/org/reminders', {}, TIMEOUT.admin),
     },
 
     acceptBeta: () => api('/api/me/beta-accepted', { method: 'POST', body: '{}' }, TIMEOUT.auth),

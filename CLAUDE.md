@@ -51,7 +51,9 @@ never change, because everything cross-references them.
 | **View-only**: what it must look like, and the hole | §36 · §14 |
 | **Dates**: the due filter, and the UTC parsing trap | §37 |
 | **Outbound webhooks**: the guard, and where the URL lives | §38 |
-| Workspace time zone — and why the filter ignores it | §38 · §37 |
+| **Daily digest**: the pass, its gates, mentions | §39 |
+| Why a "reminders are stale" alert cannot work | §39 |
+| Workspace time zone — and why the filter ignores it | §39 · §38 · §37 |
 | E2E suite slow or "flaky" | §32 |
 | **What tombstones cost**, and reading storage figures | §33 · §26 |
 | **How the docs are organised**, and what is frozen | §29 |
@@ -93,7 +95,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 234 Node tests + 83 Playwright tests, 42 smoke checks. On
+**All green:** 342 Node tests + 88 Playwright tests, 43 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -129,6 +131,8 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
   beta notice and runbook (stage 4) — see §16, §17, §18, §19
 - **Access requests**: a stranger who arrives on their own can ask, and an
   approval lets them straight in with nothing to email — see §20
+- **Per-workspace webhooks** behind an SSRF guard, and a **daily digest** of
+  what is due or overdue — off by default, counts only — see §38, §39
 - Docs: see `docs/README.md` — the map, and which are frozen
 
 ### Not built yet
@@ -161,7 +165,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v32`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v34`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -3116,3 +3120,200 @@ deliberate outbound sink with a guard.* An audit table that quietly keeps a
 stale FALSE is worse than one that never had the row.
 
 `CACHE_VERSION` bumped to `crmbuilder-v33`.
+
+
+---
+
+## 39. The reminder engine, and the staleness alert that cannot exist
+
+Phase 3 of the reminders work — the engine §38's transport was built for. A
+daily digest of what is due or overdue, per workspace, to that workspace's own
+webhook. **Off by default**, because nobody's team channel should get a
+message because somebody deployed a new version.
+
+### One file, three consumers
+
+§37's calendar arithmetic lives in a browser global inside `js/`, which
+`server.js` cannot `require`. Both usual answers are worse than the problem:
+copying it into `lib/` makes a second source that goes stale (§29's whole
+thesis), and eval-ing the served file at boot needs a paragraph in §30
+explaining why it is not an injection risk. Instead, one line at the foot of
+`js/date-rules.js`:
+
+```js
+if (typeof module !== 'undefined' && module.exports) module.exports = DateRules;
+```
+
+The browser still gets its global, `server.js` gets a `require`, and
+`tests/dateRules.test.mjs`'s `new Function` harness is untouched because
+`module` is undefined inside it. **Requiring `js/` from the server is
+deliberate** — that directory being *served* (§28) and being *required* are
+unrelated concerns.
+
+Asserted rather than assumed: the tests `require()` through the same seam the
+server uses, compare the surface **and** compare answers. A require that
+quietly returned something stale would pass a shape check while leaving the
+server running untested code that looks shared.
+
+### Two clocks, and they are not the same question
+
+| | Whose day | Used by |
+|---|---|---|
+| `today(now)` | the **viewer's**, from local getters | §37's filter, in the browser |
+| `today(now, zone)` | a **named zone's** | the engine, which has no viewer |
+
+The browser filter deliberately does **not** read the workspace zone: somebody
+in Tokyo looking at a list should see *their* today. Unifying them
+reintroduces exactly the off-by-one `js/date-rules.js` exists to prevent, so
+it is written down in both files.
+
+`resolveZone()` **never throws**, and that is a requirement rather than a
+convenience — §38 records why the timezone is stored without server-side
+validation, so the guarantee has to live at every point of use. A throw would
+take down a scheduled pass for every workspace because one of them holds a
+typo. Same rule for `remindSettings()`, which clamps rather than trusts: a NaN
+window makes `isDueWithin` false for everything and the digest goes quiet
+**without ever erroring** — a defect that renders as plausible (§36).
+
+**`hourCycle: 'h23'`, not `hour12: false`.** The latter selects h24 on some
+ICU builds and renders midnight as `"24"`, which puts the morning gate on the
+wrong side of a day boundary. The `% 24` is a second belt, because which cycle
+you get is a property of the runtime rather than of this code.
+
+### `Intl.supportedValuesOf('timeZone')` does not contain `UTC`
+
+418 canonical IANA names, and **not one of them is `UTC`** — not `UTC`, not
+`Etc/UTC`. A container with no `TZ` set resolves to exactly `UTC`, so §38's
+picker could not offer such an owner their own zone, and pre-selecting the
+detected one silently selected nothing. It would have arrived as *"my time
+zone isn't in the list"*.
+
+Found by an E2E test that could not select the browser's own zone — a test
+failing for a reason that turned out to be the product. The device zone and
+`UTC` are unioned back in; still the runtime's list, plus the two values it
+omits.
+
+### The pass
+
+Off the `/health` ping, like the alert rules (§25) — UptimeRobot already hits
+it every 14 minutes and a second scheduler is a second thing to keep alive.
+After the response, never awaited.
+
+**One pass per workspace per LOCAL day, whether or not it sends.** That is
+what bounds the cost: at most one scan of a workspace's rows per day however
+often the ping arrives. The consequence is stated rather than discovered —
+something that becomes due at 11am is reported tomorrow. A live version means
+rescanning every tenant every fourteen minutes, which is a different feature
+with a different price.
+
+**The day is marked BEFORE the send.** Marking afterwards retries on every
+ping, and a destination that fails slowly turns one digest into a channel full
+of them. Spamming a team channel is worse than missing a day, so the failure
+is recorded on the hook where the settings card shows it. Guarded by a test
+whose destination always fails.
+
+**The gates are ordered by cost**, and that ordering is the whole scale story:
+`enabled` and `hook.url` are read off the meta doc already in hand, so a
+workspace not using this never touches the records collection. Two tests
+assert the day is left **unmarked** in those cases rather than merely that
+nothing was sent — a marked day would prove the rows had been read.
+
+**Nothing due sends nothing.** A daily "all clear" is the fastest way to teach
+a channel to ignore this — §25's escalate-only lesson in a new place.
+
+### Counts, never record names
+
+A digest reads *"Invoices: 2 overdue, 3 due within 7 days"* and never names a
+row. **A decision, not an omission:** a webhook destination is not necessarily
+as private as the workspace — a shared client channel is a plausible place for
+an owner to point it, and they will not think about that while pasting a URL.
+§18 already refuses to put record names on a chat service; the direction
+differs here (a team's own data to their own channel, chosen by them) but the
+exposure is the same shape. The nudge works without them: the message's job is
+to get somebody to open the CRM. Easy to add later, impossible to un-send.
+
+### Mentions: two mitigations, because the providers differ
+
+| | What pings | Control |
+|---|---|---|
+| Discord | bare `@everyone`, `<@id>` in `content` | `allowed_mentions: { parse: [] }` — its own documented switch |
+| Slack | only `<!channel>`, `<@U123>`; a bare `@everyone` does **not** | escaping `<` and `>`, which Slack's docs also prescribe for literal brackets |
+| Telegram | nothing — no `parse_mode` is ever set (§18) | — |
+
+Both are needed; neither alone covers the other. Applied where untrusted text
+**enters** the message, never to the whole string, because the app's own URL
+has to stay a working link.
+
+**The cost, stated rather than hidden:** a literal `<` in a module name renders
+as `&lt;` on Discord and Telegram, which do not decode entities. A cosmetic
+price on a rare character, paid to keep Slack's mention syntax inert. Do not
+"fix" it by dropping the escaping.
+
+This lands in `webhookRequest`, shared with the feedback and alert paths — so
+a bug report containing `@everyone` can no longer wake the operator's channel
+either. §9's shared-helper rule applies.
+
+### The staleness alert that cannot exist
+
+The brief asked for one. **It cannot work**, and the reason is worth keeping:
+the engine and the alert rules both run off the `/health` ping, so a rule for
+"reminders have gone stale" could never fire for the reason that matters — a
+dead ping stops the thing that would evaluate it. That is §17's shape, the
+backup workflow that reported success every night while producing nothing,
+reached from a different direction.
+
+So staleness splits, and only one half is code:
+
+- **Pull** — `platform.reminders` on `/api/admin/platform`, rendered on the
+  Deployment card, and `null` until the first pass rather than a
+  zero-hour-old success. An operator who looks, sees. The card says plainly
+  that if the ping stops, nothing here can tell you.
+- **Push** — belongs at healthchecks.io beside the backup's (§17), which is
+  configuration rather than code.
+
+An in-process rule would still be worth having for a ping that is alive while
+the engine fails, which is a real and different failure — but it must be
+documented as covering only that, or it reads as protection it does not give.
+
+### The suite is split in three, and it has to be
+
+A workspace webhook goes through `lib/safe-fetch.js`, which refuses loopback,
+so a local capture server **cannot** receive one — and a bypass so it could is
+exactly the weakening §30 declined for the feedback webhook.
+
+| Half | How |
+|---|---|
+| pass mechanics | driven through the real endpoints, read back out of the store |
+| payload shape | a capture server, through the **env** webhook — unrestricted by design, and it shares one payload builder |
+| message wording | read off the **preview**, which returns the exact string |
+
+Returning the real string from the preview is the better product answer
+regardless: an owner reads what their team will read before switching it on.
+
+`tests/reminders.test.mjs`, ports 9700–9750 (§9). Six mutations each fail the
+test that names them: dropping any of the three gates, marking the day after
+the send, dropping `neutraliseMentions`, dropping `allowed_mentions`.
+
+**And the parity test is the one that justifies sharing a file.** The count in
+the digest must equal what the due-date filter shows. It **aligns the two
+clocks first**, setting the workspace zone to the browser's own — without
+that it would pass in a UTC container and fail on a European developer machine
+for something that is not a defect. Checked against a future-only window: it
+fails by name, *"the digest would say 3 but the filter shows 7"*.
+
+### Traps in the UI half
+
+- **§27's invented-class trap, nearly repeated.** `.hr`, `.settings-sub` and
+  `.digest-preview` did not exist in `css/style.css`; an undefined class
+  renders as an unstyled box that still looks plausible in a screenshot, which
+  is how `.note.warn` shipped meaning nothing. They are defined now.
+- **`DB` is a bare global, not `window.DB`.** A top-level `const` in a classic
+  script is lexical, so `window.DB` is `undefined` — an E2E `page.evaluate`
+  reaching for it fails with a `TypeError` that names the property rather than
+  the mistake.
+- **The preview is computed by the SERVER**, so saving digest settings has to
+  `await Cloud.sync()` before re-rendering. `persist()` only schedules a
+  debounced push, and redrawing straight away shows the old window beside the
+  new controls — §33's adjacent-and-wrong number in a new place.
+
+`CACHE_VERSION` bumped to `crmbuilder-v34`.

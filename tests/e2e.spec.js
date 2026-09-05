@@ -2975,3 +2975,71 @@ test('the reminder count is the number the due-date filter shows', async ({ page
   // wrong together, which is the failure a parity test is worst at catching.
   expect(tasks.overdue).toBeGreaterThan(0);
 });
+
+/*
+ * The digest card, driven as an owner.
+ *
+ * The preview is the half worth testing in a browser: it is the exact string a
+ * team would read, and it is the only place that string is visible before it
+ * is sent — the workspace webhook goes through the SSRF guard, which will not
+ * dial a capture server (§39).
+ */
+test('an owner can see exactly what the daily digest would say, before switching it on', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#onboard-demo')).toBeVisible();
+  await page.click('#onboard-demo');
+  await expect(page.locator('#workspace-name')).toHaveText('Lumen Studio', { timeout: 20000 });
+  // 'all' brings the samples: the demo business IS the fixture, and the
+  // default claim leaves them on the device (§11).
+  await signIn(page, uniqueEmail('digest-owner'), { claim: 'all' });
+  await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 25000 });
+
+  await page.goto('/#/settings');
+  await expect(page.locator('#remind-enabled')).toBeVisible({ timeout: 20000 });
+
+  // Off by default. Nobody's team channel gets a message because they
+  // deployed a new version.
+  await expect(page.locator('#remind-enabled')).toHaveValue('off');
+
+  /*
+   * And it still says what it WOULD send. Requiring somebody to enable a
+   * thing in order to see what it does is how a surprise message reaches a
+   * channel, so the preview answers regardless of the switch.
+   */
+  const preview = page.locator('.digest-preview');
+  await expect(preview).toBeVisible();
+  const text = await preview.textContent();
+  expect(text).toContain('Lumen Studio');
+  expect(text).toMatch(/needs? attention/);
+  expect(text).toMatch(/overdue|due within/);
+
+  // Counts, never record names — a webhook destination is not necessarily as
+  // private as the workspace.
+  // `DB` is a top-level const in a classic script, so it is a bare global and
+  // NOT a property of window — reaching for window.DB gets undefined.
+  const names = await page.evaluate(async () => {
+    const recs = await DB.getAll('records');
+    // Any distinctive stored string will do: the assertion is that NONE of a
+    // workspace's record contents reach the message, not that one field does.
+    return recs
+      .flatMap((r) => Object.values(r.data || {}))
+      .filter((v) => typeof v === 'string' && v.length > 8)
+      .slice(0, 8);
+  });
+  expect(names.length).toBeGreaterThan(0);
+  for (const name of names) {
+    expect(text, `the digest named a record: ${name}`).not.toContain(name);
+  }
+
+  // Switching it on is a save, and the preview is recomputed by the SERVER —
+  // so this also proves the settings reached it rather than only the browser.
+  await page.selectOption('#remind-enabled', 'on');
+  await page.selectOption('#remind-days', '30');
+  await page.click('#remind-save');
+  await expect(page.locator('.toast').last()).toContainText(/digest on/i, { timeout: 20000 });
+  await expect(page.locator('.digest-preview')).toContainText('due within 30 days', { timeout: 20000 });
+
+  await page.reload();
+  await expect(page.locator('#remind-enabled')).toHaveValue('on', { timeout: 20000 });
+  await expect(page.locator('#remind-days')).toHaveValue('30');
+});

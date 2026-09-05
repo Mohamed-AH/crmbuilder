@@ -255,6 +255,35 @@ Three things worth knowing:
 - **Only the owner** can see or change it — not members, and not view-only
   accounts.
 
+#### The daily digest
+
+With a webhook set, an owner can turn on a once-a-day message: a count of what
+is due or already overdue, per module — the same rows the **Due date** filter
+shows (§ *Table view and board view*). Three settings:
+
+- **Look ahead** — how far into the future counts as "due". Anything already
+  overdue is always included, however old.
+- **Not before** — the earliest the message may go out, read in the
+  workspace's time zone. It is a floor, not an exact time: the message goes on
+  the first check after that hour.
+- **Send it** — off until you turn it on.
+
+Before you switch it on, the screen shows **exactly the message your team
+would get**. Read it there first.
+
+Four things worth knowing:
+
+- **It is counts, not names.** The message says *"Invoices: 2 overdue, 3 due
+  within 7 days"* and never names a record. A chat channel often has more
+  people in it than your CRM does, so the details stay in the CRM.
+- **A quiet day sends nothing.** No message means nothing is due — you will
+  not get a daily "all clear" to learn to ignore.
+- **Once a day.** Something that becomes due this afternoon is in tomorrow's
+  message.
+- **If a message fails to send, that day is used up.** The reason shows on the
+  Notifications card. This is deliberate: the alternative is a channel full of
+  retries.
+
 ---
 
 ## 10. Accounts, sync and multiple devices

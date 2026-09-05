@@ -2654,11 +2654,15 @@
           // error worth surfacing, the same as the invite list above. The
           // client check only avoids asking a question we know the answer to;
           // the server is what decides (§14).
+          // One call for both — /api/org/reminders carries the hook as well,
+          // and this screen needs the two together.
           const wh = canEditSettings()
-            ? await Cloud.org.getHook().catch(() => null)
+            ? await Cloud.org.reminders().catch(() => null)
             : null;
           org = {
             hook: (wh && wh.hook) || null,
+            reminders: (wh && wh.reminders) || null,
+            reminded: (wh && wh.reminded) || null,
             ...res.org,
             memberCount: res.memberCount,
             canInvite: res.canInvite,
@@ -2810,6 +2814,43 @@
                    placeholder="https://hooks.slack.com/services/...">
           </div>
           <button class="btn btn-primary" id="hook-save">Save webhook</button>
+
+          <hr class="hr">
+          <h3 class="settings-sub">Daily digest</h3>
+          <p class="settings-hint">Once a day, a count of what is due or already overdue — the same rows the <strong>Due date</strong> filter shows on each module. Counts only: it says how many, not which, so the details stay in the CRM.</p>
+          <div class="settings-grid">
+            <div class="form-row">
+              <label for="remind-enabled">Send it</label>
+              <select class="input" id="remind-enabled">
+                <option value="off" ${org.reminders && org.reminders.enabled ? '' : 'selected'}>Off</option>
+                <option value="on" ${org.reminders && org.reminders.enabled ? 'selected' : ''}>Once a day</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label for="remind-days">Look ahead</label>
+              <select class="input" id="remind-days">
+                ${DUE_WINDOWS.map(([d, text]) => `<option value="${d}" ${(org.reminders ? org.reminders.days : 7) === d ? 'selected' : ''}>${esc(text)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-row">
+              <label for="remind-hour">Not before</label>
+              <select class="input" id="remind-hour">
+                ${Array.from({ length: 24 }, (unused, h) => `<option value="${h}" ${(org.reminders ? org.reminders.hour : 9) === h ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <p class="settings-hint">The time is read in the workspace's time zone${org.reminders && org.reminders.zoneSet ? ` (${esc(org.reminders.zone)})` : ' — not set, so UTC'}, and it is the earliest the digest may go out rather than an exact time. Anything that becomes due later the same day is reported the next morning.</p>
+          ${org.reminders && org.reminders.message ? `
+            <!-- The exact string, not a description of it. An owner should be
+                 able to read what their team will read before switching it on. -->
+            <p class="settings-hint"><strong>Right now it would say:</strong></p>
+            <pre class="digest-preview">${esc(org.reminders.message)}</pre>` : `
+            <p class="settings-hint"><strong>Right now it would say nothing</strong> — ${org.reminders && org.reminders.skipped === 'no-date-fields'
+    ? 'no module here has a date field to watch.'
+    : 'nothing is due or overdue inside that window. A quiet day sends no message at all.'}</p>`}
+          ${org.reminded && org.reminded.lastRunAt ? `
+            <p class="settings-hint">Last checked ${esc(fmtWhen(org.reminded.lastRunAt))}${org.reminded.lastCount ? ` — ${org.reminded.lastCount} item${org.reminded.lastCount === 1 ? '' : 's'}` : ' — nothing to say'}.</p>` : ''}
+          <button class="btn btn-primary" id="remind-save">Save digest settings</button>
         </div>` : ''}
         <div class="card">
           <div class="card-head"><h2>Backup & restore</h2></div>
@@ -2897,6 +2938,26 @@
         toast(err.message || 'Could not send a test');
         hookTest.disabled = false;
       }
+    });
+
+    const remindSave = $('#remind-save');
+    if (remindSave) remindSave.addEventListener('click', async () => {
+      SETTINGS.remind = {
+        enabled: $('#remind-enabled').value === 'on',
+        days: Number($('#remind-days').value),
+        hour: Number($('#remind-hour').value),
+      };
+      saveSettings();
+      /*
+       * The preview is computed by the SERVER, so it cannot be refreshed until
+       * the settings have actually landed there. persist() only schedules a
+       * debounced push; re-rendering straight away would redraw the card from
+       * the copy the server still holds and show the OLD window beside the new
+       * controls — §33's adjacent-and-wrong number, in a new place.
+       */
+      if (Cloud.isAuthed) await Cloud.sync().catch(() => {});
+      toast(SETTINGS.remind.enabled ? 'Daily digest on' : 'Daily digest off');
+      await renderSettings();
     });
 
     const hookClear = $('#hook-clear');
@@ -3409,6 +3470,16 @@
               </div>`).join('')}
           </div>
           <p class="settings-hint">Memory is sampled when this page loads, so it catches a slow leak rather than a sudden spike — the burst that would actually restart the container happens between looks.</p>
+          <!-- Something to LOOK at, not something that pages you. The engine
+               and the alert rules run off the same /health ping, so a rule for
+               "reminders have gone stale" could never fire for the reason that
+               matters — a dead ping stops the thing that would evaluate it. The
+               pushed half of this belongs at healthchecks.io beside the
+               backup's (§39). -->
+          <p class="settings-hint">${platform.reminders && platform.reminders.at ? `
+            <strong>Reminder pass</strong> ran ${esc(fmtWhen(platform.reminders.at))} — ${platform.reminders.scanned} workspace${platform.reminders.scanned === 1 ? '' : 's'} scanned, ${platform.reminders.sent} digest${platform.reminders.sent === 1 ? '' : 's'} sent${platform.reminders.failed ? `, ${platform.reminders.failed} failed` : ''}${platform.reminders.capped ? ' (capped — the rest go on the next ping)' : ''}.
+            It runs off the keep-warm ping, so if that stops, so does this — and nothing here can tell you, because the same ping is what would.` : `
+            <strong>No reminder pass has run yet.</strong> It happens on the keep-warm ping to <code>/health</code>, and only for workspaces that have switched the daily digest on.`}</p>
           <div class="mode-switch">
             <span class="settings-hint" style="margin:0;align-self:center">New organisations:</span>
             ${[['open', 'Allowed'], ['closed', 'Capped']].map(([value, label]) => `
