@@ -110,6 +110,7 @@ const ASSETS = [
   ['/js/boot-icons.js', 'javascript'],
   ['/js/templates.js', 'javascript'],
   ['/js/csv.js', 'javascript'],
+  ['/js/date-rules.js', 'javascript'],
   ['/js/demo-data.js', 'javascript'],
   // scope.js and tour.js are in index.html and sw.js's APP_SHELL but were not
   // checked here. That gap costs more now the server serves an allow-list: a

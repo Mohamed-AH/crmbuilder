@@ -49,6 +49,7 @@ never change, because everything cross-references them.
 | **Demo data vs the seed fixture** — which is which | §34 |
 | Guided tour: card covering its own highlight | §35 |
 | **View-only**: what it must look like, and the hole | §36 · §14 |
+| **Dates**: the due filter, and the UTC parsing trap | §37 |
 | E2E suite slow or "flaky" | §32 |
 | **What tombstones cost**, and reading storage figures | §33 · §26 |
 | **How the docs are organised**, and what is frozen | §29 |
@@ -73,6 +74,7 @@ js/boot-icons.js      fills static icon placeholders — a file, not inline (§3
 js/scope.js           whose data is this — storage scopes (see §11)
 js/db.js              IndexedDB wrapper, one database per scope
 js/csv.js             RFC 4180 CSV reader/writer
+js/date-rules.js      calendar-day arithmetic for the due filter (see §37)
 js/templates.js       prebuilt module templates
 js/demo-data.js       fictional business (generated — see §6)
 js/tour.js            guided walkthrough engine (no dependencies)
@@ -87,7 +89,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 215 Node tests + 81 Playwright tests, 41 smoke checks. On
+**All green:** 234 Node tests + 83 Playwright tests, 42 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -155,7 +157,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v31`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v32`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -2838,3 +2840,101 @@ returning `true` it fails on the value, `LC-0042` against `TAMPERED`.
 **The push is the half that matters.** Asserting only that the buttons are gone
 tests the client's manners; the viewer who matters is the one who does not use
 the buttons.
+
+
+---
+
+## 37. The due-date filter, and two traps it walked into
+
+Phase 1 of the reminders work (§17's neighbour — the operator features that
+grew out of "what would make this sellable"). Deliberately client-only: an
+in-memory filter over rows already loaded, no new endpoint, no sync, nothing
+the server can refuse.
+
+**The plan arrived written for a React app** — `src/lib/`, `src/components/
+ModuleView.jsx`, a `userTimezone` argument. There is no `src/`, no `.jsx` and
+no framework here (§1). Translated rather than followed: `js/date-rules.js` as
+a global beside `js/csv.js`, the control inside `renderModule` in `js/app.js`,
+and the filter inside `visibleRecords()` — which already calls itself "the
+single source of truth for what rows this module view shows".
+
+### Why the file exists at all
+
+`new Date('2026-09-12')` is parsed as **UTC midnight**. Anywhere west of
+Greenwich its `.getDate()` is the 11th, so the obvious three-line inline
+version reports "due tomorrow" for something due today, for every user in the
+Americas, while being perfectly correct for whoever wrote it in London.
+
+So a stored day is parsed by **regex** into its parts, today is read from local
+calendar getters, and both are projected through `Date.UTC` before subtracting.
+UTC has no daylight saving, so the difference of two midnights is always an
+exact multiple of a day — subtracting local timestamps gives 23- and 25-hour
+days twice a year and a rounded division that is off by one across the change.
+
+`tests/dateRules.test.mjs` runs the same assertions under **five timezones in
+real child processes**, because `process.env.TZ` set inside a running Node
+process does not reliably re-initialise the date code. Checked against the
+naive implementation: it fails `Pacific/Midway` and `America/New_York` and
+passes UTC, `Pacific/Kiritimati` (+14) and `Asia/Kolkata` — exactly the
+signature above, correct for the author and wrong for half the world.
+
+### Overdue is included, and that is the whole design
+
+The helper is **`isDueWithin`, not `isExpiringSoon`**. "Expiring soon" reads as
+a future window, and a filter showing only the future hides the overdue invoice
+and the lapsed certificate — the rows most worth looking at. A name promising
+"soon" while returning true for a six-month-old invoice is a small lie told at
+every call site.
+
+Two tests pin it, and both were checked against `n >= 0 && n <= days`:
+*"overdue is always included, however old"* fails, and so does the E2E once it
+was strengthened — see below.
+
+### The E2E claimed to catch something it did not
+
+The first version asserted every visible row was under the horizon, and a
+comment said that would fail on a future-only window. It would not: excluding
+overdue leaves every remaining row under the horizon too. **The demo seeds four
+tasks with a negative `{ __rel: days }` offset (§6)**, so the test now requires
+at least one *overdue* row to survive, which is deterministic rather than a
+hope about the dataset. Checked: it fails on the mutation.
+
+### §4's cascade trap, hit again, in the same file
+
+`.due-filter { width: auto }` lost to `.input { width: 100% }` — equal
+specificity, and `.input` sits later in `css/style.css`. Measured rather than
+guessed, by driving the app and reading geometry: the select rendered **777px
+wide**, wrapped `.module-actions` into six rows, and took the page head from
+39px to **130px**.
+
+**That broke a test three files away.** The taller head pushed the kanban board
+down, leaving the guided tour no room at step 2 — whose target is the whole
+board — so `step 2 card covers its own highlight` failed, which §35 records as
+the correct behaviour when the target genuinely does not fit. `git stash` and a
+re-run proved the tour passed without this change, so it was a real regression
+and not the old flake. Fixed with `.module-actions .due-filter`, per §4's own
+prescription: **use a more specific selector.**
+
+The lesson is §9's: the failure surfaced in the tour, two files and one feature
+away from the CSS rule that caused it, and reading the geometry is what named
+it in minutes.
+
+### Smaller decisions, recorded so they are not re-litigated
+
+- **One `<select>`, not a chip plus a window picker.** The options *are* the
+  states, so the filter cannot be on with no window or a window with the filter
+  off.
+- **It names the field it watches** ("Due date: next 7 days"). Filtering on a
+  date the reader cannot see is indistinguishable from rows going missing.
+- **Absent entirely when a module has no date field**, rather than present and
+  inert — §36's rule 1.
+- **`watchedDateField` prefers a list column**, then the first date field. A
+  guess, but the UI names the result, so it is a visible one.
+- **A full `renderModule` on change, not `renderModuleBodyOnly`.** The count
+  badge lives in the page head; leaving it on the unfiltered total is §33's
+  adjacent-and-wrong number in a new place.
+- **Sorted soonest-first while the filter is on**, so the overdue rows it
+  deliberately keeps sit at the top.
+- **No `server.js` change.** `ASSET_DIRS` allow-lists the whole `js/` directory
+  (§28), so a new file there is served automatically — but the smoke test's
+  `ASSETS` is what *proves* it, and it went 41 → 42.

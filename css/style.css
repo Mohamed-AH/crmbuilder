@@ -184,6 +184,16 @@ svg.lucide { vertical-align: -2px; flex-shrink: 0; }
 /* Specificity note: .input below declares the `padding` shorthand and would
    otherwise win on source order, dropping the text onto the search icon. */
 .search-wrap .search-input { width: 230px; padding-left: 34px; }
+/* Specificity note, and it is the same one as the line above — §4's standing
+   trap. `.input` declares `width: 100%` and sits LATER in this file, so a bare
+   `.due-filter { width: auto }` loses on source order: the select stretched to
+   the full flex row (measured at 777px), wrapped .module-actions into six rows,
+   and pushed the page head to 130px tall. That in turn left the guided tour no
+   room at step 2 and broke a test three files away. Keep the parent in the
+   selector.
+   `auto` so the control sizes to its longest option, which carries the module's
+   own field label ("Expected close: next 90 days"). */
+.module-actions .due-filter { width: auto; max-width: 260px; }
 
 .card {
   background: var(--surface);

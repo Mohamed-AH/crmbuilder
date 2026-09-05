@@ -615,6 +615,78 @@ test.describe('demo data', () => {
     await page.click('#nav-modules .nav-link:has-text("Contacts")');
     await expect(page.locator('.count-badge')).toHaveText(String(DEMO.countFor('contacts')));
   });
+
+  /*
+   * The date filter, driven rather than reasoned about (§9).
+   *
+   * The assertions are derived from what is on screen, not from a count the
+   * demo happens to seed today — every date in the demo is generated relative
+   * to the day it loads (`{ __rel: days }`, §6), so a hardcoded number here
+   * would be the trap §34 already records for three other counts.
+   */
+  test('the due-date filter narrows a module to what needs attention', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('#onboard-demo')).toBeVisible();
+    await page.click('#onboard-demo');
+    await expect(page.locator('#workspace-name')).toHaveText('Lumen Studio', { timeout: 20000 });
+
+    // Tasks has a "Due date" and opens as a table, so the dates are readable.
+    await page.click('#nav-modules .nav-link:has-text("Tasks")');
+    const filter = page.locator('#due-filter');
+    await expect(filter).toBeVisible();
+
+    // It names the field it watches — filtering on a date the reader cannot
+    // see is indistinguishable from rows going missing.
+    await expect(filter.locator('option').nth(1)).toContainText('Due date');
+
+    const all = Number(await page.locator('.count-badge').textContent());
+    expect(all).toBeGreaterThan(0);
+
+    await filter.selectOption('7');
+    // The badge is in the page head, so it has to move with the filter — a
+    // total that stays put beside a shortened list is §33's adjacent-and-wrong
+    // number in a new place.
+    await expect(page.locator('.count-badge')).not.toHaveText(String(all));
+    const narrowed = Number(await page.locator('.count-badge').textContent());
+    expect(narrowed).toBeLessThan(all);
+    await expect(page.locator('tbody tr')).toHaveCount(narrowed);
+
+    /*
+     * Every row shown is genuinely inside the window, read off the rendered
+     * cells rather than from state — this is what a user sees.
+     */
+    const cells = await page.locator('tbody tr td[data-label="Due date"]').allTextContents();
+    expect(cells.length).toBe(narrowed);
+    const horizon = new Date();
+    horizon.setDate(horizon.getDate() + 7);
+    for (const text of cells) {
+      expect(text.trim(), 'a row with no due date must not survive the filter').not.toBe('');
+      expect(new Date(text).getTime()).toBeLessThanOrEqual(horizon.getTime());
+    }
+
+    /*
+     * And at least one of them is already OVERDUE.
+     *
+     * Without this the test passes just as happily against a future-only
+     * window, because every row would still be under the horizon — the first
+     * version of this test claimed to catch that and did not. The demo seeds
+     * four tasks with a negative offset (§6's `{ __rel: days }`), so this is
+     * deterministic rather than a hope about the dataset.
+     *
+     * It is the assertion that stops somebody "tidying" isDueWithin into
+     * `n >= 0 && n <= days` and quietly hiding every overdue invoice.
+     */
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const overdue = cells.filter((t) => new Date(t).getTime() < startOfToday.getTime());
+    expect(overdue.length, 'overdue rows must survive the filter — they are the reason to look')
+      .toBeGreaterThan(0);
+
+    // And back: clearing restores every row, so the filter is a view and not a
+    // deletion the user has to undo.
+    await filter.selectOption('');
+    await expect(page.locator('.count-badge')).toHaveText(String(all));
+  });
 });
 
 test.describe('guided tour', () => {

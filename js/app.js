@@ -41,6 +41,14 @@
     ['relation', 'Link to module'],
   ];
 
+  /*
+   * The windows the date filter offers. Every one of them also includes
+   * anything already overdue (js/date-rules.js) — the wording says "next 30
+   * days" because that is the half a user chooses, and a label reading
+   * "overdue or within 30 days" on four options is noise once you know.
+   */
+  const DUE_WINDOWS = [[7, 'next 7 days'], [14, 'next 14 days'], [30, 'next 30 days'], [90, 'next 90 days']];
+
   const ROLE_LABELS = {
     platformAdmin: 'platform admin', owner: 'owner', member: 'member',
     contributor: 'contributor', viewer: 'viewer',
@@ -146,6 +154,7 @@
         q: '',
         view: mod && mod.defaultView === 'kanban' && kanbanField(mod) ? 'kanban' : 'table',
         sort: null, // { key, dir: 'asc'|'desc' }; null = most recently edited
+        due: null, // days ahead for the date filter; null = show every row
       });
     }
     return viewState.get(moduleId);
@@ -198,8 +207,21 @@
     if (q) {
       records = records.filter((r) => Object.values(r.data).some((v) => String(v ?? '').toLowerCase().includes(q)));
     }
+    /*
+     * The date filter, in memory over rows already loaded — it triggers no
+     * sync and asks the server nothing. A record with no date in that field
+     * drops out, which is the point: an invoice with no due date is not due.
+     */
+    const watched = st.due === null ? null : DateRules.watchedDateField(mod);
+    if (watched) {
+      records = records.filter((r) => DateRules.isDueWithin(r.data[watched.key], st.due));
+    }
     const sortField = st.sort && mod.fields.find((f) => f.key === st.sort.key);
     if (sortField) records.sort(compareBy(sortField, st.sort.dir));
+    // Soonest first while the date filter is on, so the overdue rows — which
+    // this filter deliberately keeps (js/date-rules.js) — sit at the top where
+    // they are the reason to have looked.
+    else if (watched) records.sort(compareBy(watched, 'asc'));
     else records.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     return records;
   }
@@ -1588,6 +1610,7 @@
     const st = state(id);
     const records = await visibleRecords(mod);
     const kf = kanbanField(mod);
+    const dateFilter = DateRules.watchedDateField(mod);
 
     main.innerHTML = `
       <div class="page page-full">
@@ -1596,6 +1619,17 @@
             <span class="count-badge">${records.length}</span></h1>
           <div class="module-actions">
             <div class="search-wrap">${icon('search', 15)}<input type="search" id="record-search" class="input search-input" placeholder="Search ${esc(mod.name.toLowerCase())}…" value="${esc(st.q)}"></div>
+            <!-- Absent entirely when the module has no date field, rather than
+                 shown and inert. One control, not a chip plus a window picker:
+                 the options ARE the states, so there is no way to have the
+                 filter on with no window or a window with the filter off.
+                 It names the field it watches, because filtering on a date the
+                 reader cannot see is indistinguishable from rows going missing. -->
+            ${dateFilter ? `
+              <select class="input due-filter" id="due-filter" aria-label="Filter by ${esc(dateFilter.label)}" title="Filter by ${esc(dateFilter.label)}">
+                <option value="">All ${esc(mod.name.toLowerCase())}</option>
+                ${DUE_WINDOWS.map(([days, text]) => `<option value="${days}" ${st.due === days ? 'selected' : ''}>${esc(dateFilter.label)}: ${esc(text)}</option>`).join('')}
+              </select>` : ''}
             ${kf ? `
               <div class="seg" role="group" aria-label="View">
                 <button class="seg-btn ${st.view === 'table' ? 'on' : ''}" data-view="table" title="Table view">${icon('table-properties', 15)}</button>
@@ -1628,6 +1662,19 @@
       st.q = search.value;
       renderModuleBodyOnly(mod);
     });
+    const dueSel = $('#due-filter');
+    // Guarded, like every bind here: the control is conditional on the module
+    // having a date field, and an unguarded listener would take the whole
+    // screen down rather than just the missing filter (§36).
+    if (dueSel) {
+      dueSel.addEventListener('change', () => {
+        st.due = dueSel.value === '' ? null : Number(dueSel.value);
+        // Full re-render, not the body alone: the count badge beside the title
+        // is part of the head, and leaving it showing the unfiltered total is
+        // the kind of adjacent-and-wrong number §33 was reported for.
+        renderModule(id);
+      });
+    }
     $$('.seg-btn', main).forEach((b) => b.addEventListener('click', () => {
       st.view = b.dataset.view;
       renderModule(id);
