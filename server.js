@@ -3224,6 +3224,18 @@ app.post('/api/org/leave', requireAuth, async (req, res) => {
  */
 const { sendGuarded, maskUrl, hostOf } = require('./lib/safe-fetch');
 
+/*
+ * The SAME file the browser loads and tests/dateRules.test.mjs evaluates —
+ * js/date-rules.js ends with a `typeof module` guard so all three read one
+ * copy of the arithmetic (§39). Not a duplicate in lib/, which would be a
+ * second source that goes stale (§29), and not an eval at boot.
+ *
+ * It is required from js/ deliberately. That directory is SERVED (§28), but
+ * serving a file and requiring it are unrelated: this is client code the
+ * server also happens to need, not server code hiding in a public directory.
+ */
+const DateRules = require('./js/date-rules.js');
+
 const HOOK_TEST_PER_MIN = Number(process.env.RATE_HOOK_TEST_MAX || 6);
 
 async function getHook(wsId) {
@@ -3391,6 +3403,142 @@ app.post('/api/org/hook/test', requireAuth, requireSettingsOwner,
     });
     res.json({ ok: out.ok, error: out.error || '', hook: publicHook(await getHook(workspaceIdFor(req.user))) });
   });
+
+/* ---- reminders: what a workspace would be told about today ----------------
+ *
+ * Phase 3 stage 2. This COMPUTES and returns; it never sends and never writes.
+ * The sending pass is stage 3 and is built on top of this, so an owner can see
+ * exactly what would go out before switching anything on — which matters more
+ * here than usual, because a wrong reminder lands in a shared channel, cannot
+ * be recalled, and burns the trust the feature exists to earn.
+ */
+const REMIND_DEFAULTS = { enabled: false, days: 7, hour: 9 };
+
+/*
+ * Stored settings are never trusted at the point of use, the same rule
+ * DateRules.resolveZone() follows and for the same reason: §38 records why
+ * the timezone is stored WITHOUT server-side validation, and `remind` arrives
+ * through the identical unvalidated sync seam. A NaN window here would make
+ * `isDueWithin` return false for everything and the digest would go quiet
+ * without ever erroring — a defect that renders as plausible (§36).
+ */
+function remindSettings(settings) {
+  const raw = (settings && settings.remind) || {};
+  const num = (v, fallback, lo, hi) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(hi, Math.max(lo, Math.round(n)));
+  };
+  return {
+    enabled: raw.enabled === true,
+    days: num(raw.days, REMIND_DEFAULTS.days, 0, 365),
+    hour: num(raw.hour, REMIND_DEFAULTS.hour, 0, 23),
+  };
+}
+
+/*
+ * What this workspace would be told, right now.
+ *
+ * COUNTS ONLY — no record names, and that is a decision rather than an
+ * omission. A webhook destination is not necessarily as private as the
+ * workspace: a shared client channel is a plausible place for an owner to
+ * point this, and they will not think about it at the moment they paste a URL.
+ * §18 already refuses to put record names on a chat service for the feedback
+ * path; the direction is different here (a team's own data to their own
+ * channel, which they chose) but the exposure is the same shape, and the nudge
+ * works without them — the message's job is to get somebody to open the CRM.
+ *
+ * `ignoreEnabled` exists so the preview can answer before the feature is
+ * switched on. Requiring somebody to enable a thing in order to see what it
+ * would do is how a surprise message reaches a team channel.
+ *
+ * THE SCAN IS ORDERED CHEAPEST-FIRST. Modules are read before records, and a
+ * workspace with no date field at all returns without ever touching the
+ * records collection. That is the whole cap on what this costs as tenant
+ * count grows, so the early returns are load-bearing rather than tidiness.
+ */
+async function remindersDue(wsId, { now = new Date(), ignoreEnabled = false } = {}) {
+  const meta = (await store.getData(wsId)) || {};
+  const settings = meta.settings || {};
+  const remind = remindSettings(settings);
+  const zone = DateRules.resolveZone(settings.timezone);
+  const base = {
+    ...remind,
+    zone,
+    zoneSet: !!settings.timezone,
+    dayKey: DateRules.dayKey(zone, now),
+    total: 0,
+    overdue: 0,
+    upcoming: 0,
+    modules: [],
+    skipped: null,
+  };
+
+  if (!remind.enabled && !ignoreEnabled) return { ...base, skipped: 'disabled' };
+
+  const modules = await store.listItems('modules', wsId, { since: 0, includeDeleted: false });
+  const watched = [];
+  for (const e of modules) {
+    // The SAME choice the browser filter makes (§37), so the count in the
+    // message is reproducible by clicking the control. A digest counting rows
+    // the owner cannot get back to is a support ticket.
+    const field = DateRules.watchedDateField(e.doc);
+    if (field) watched.push({ id: e.id, name: String((e.doc && e.doc.name) || 'Untitled'), field });
+  }
+  if (!watched.length) return { ...base, skipped: 'no-date-fields' };
+
+  const byModule = new Map(watched.map((w) => [w.id, { ...w, overdue: 0, upcoming: 0 }]));
+  const records = await store.listItems('records', wsId, { since: 0, includeDeleted: false });
+  for (const e of records) {
+    const doc = e.doc;
+    if (!doc || !doc.moduleId) continue;
+    const bucket = byModule.get(doc.moduleId);
+    if (!bucket) continue;
+    const value = (doc.data || {})[bucket.field.key];
+    // The workspace's zone, not the container's. The server has no viewer to
+    // borrow a wall clock from, and a UTC answer is off by a day for most of
+    // the world (§39).
+    const n = DateRules.daysUntil(value, now, zone);
+    if (n === null || n > remind.days) continue;
+    if (n < 0) bucket.overdue += 1;
+    else bucket.upcoming += 1;
+  }
+
+  const rows = [...byModule.values()]
+    .map((m) => ({
+      id: m.id,
+      name: m.name,
+      field: String(m.field.label || m.field.key),
+      overdue: m.overdue,
+      upcoming: m.upcoming,
+      total: m.overdue + m.upcoming,
+    }))
+    .filter((m) => m.total > 0)
+    .sort((a, b) => b.overdue - a.overdue || b.total - a.total || a.name.localeCompare(b.name));
+
+  return {
+    ...base,
+    total: rows.reduce((n, m) => n + m.total, 0),
+    overdue: rows.reduce((n, m) => n + m.overdue, 0),
+    upcoming: rows.reduce((n, m) => n + m.upcoming, 0),
+    modules: rows,
+    scanned: { modules: modules.length, records: records.length },
+  };
+}
+
+/*
+ * The preview. Owner-only, like the webhook it will feed — this is
+ * notification configuration rather than a view of the data, and everything it
+ * reports is already visible to every role through the module list.
+ *
+ * `ignoreEnabled` is always on here: the question this answers is "what would
+ * you send", and that has to be answerable before the answer is "nothing,
+ * because it is switched off".
+ */
+app.get('/api/org/reminders', requireAuth, requireSettingsOwner, async (req, res) => {
+  const due = await remindersDue(workspaceIdFor(req.user), { ignoreEnabled: true });
+  res.json({ reminders: due, hook: publicHook(await getHook(workspaceIdFor(req.user))) });
+});
 
 /*
  * Copy one workspace's live rows into another.

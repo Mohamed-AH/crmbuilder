@@ -114,11 +114,27 @@
   function deviceTimeZone() {
     try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; }
   }
+  /*
+   * THE AUTHORITATIVE LIST IS MISSING A VALUE THE RUNTIME ITSELF REPORTS.
+   *
+   * `Intl.supportedValuesOf('timeZone')` returns 418 canonical IANA names and
+   * NOT ONE of them is `UTC` — not `UTC`, not `Etc/UTC`. A container with no
+   * TZ set resolves to exactly `UTC`, so on such a machine the picker could
+   * not offer the owner their own zone, and pre-selecting the detected one
+   * silently selected nothing. Found by an E2E test that could not choose the
+   * browser's own zone; it would have reached a user as "my time zone isn't in
+   * the list".
+   *
+   * So the device's zone and `UTC` are unioned in rather than trusted to be
+   * there. Still no hand-maintained list of 400 names (§29) — the list is
+   * still the runtime's, with the two values it omits added back.
+   */
   function timeZoneOptions() {
+    let list = [];
     try {
-      if (typeof Intl.supportedValuesOf === 'function') return Intl.supportedValuesOf('timeZone');
-    } catch { /* fall through */ }
-    return [...new Set([deviceTimeZone(), 'UTC'].filter(Boolean))];
+      if (typeof Intl.supportedValuesOf === 'function') list = Intl.supportedValuesOf('timeZone');
+    } catch { /* an older browser: the fallback below is the whole list */ }
+    return [...new Set([...list, 'UTC', deviceTimeZone()].filter(Boolean))].sort();
   }
 
   const MODULE_COLORS = ['#1570ef', '#0e9384', '#099250', '#dc6803', '#c11574', '#6938ef', '#d92d20', '#475467'];

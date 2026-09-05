@@ -15,6 +15,25 @@ import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+// The same arithmetic the server and the browser use — js/date-rules.js ends
+// with a `typeof module` guard so there is one copy, not three (§39). Used
+// here to build the fixture's dates, so the expectations are computed the way
+// the code under test computes them rather than restated by hand.
+const DR = createRequire(import.meta.url)('../js/date-rules.js');
+
+/*
+ * A calendar day `offset` days from today IN A NAMED ZONE, as 'YYYY-MM-DD'.
+ * Exact rather than approximate: day numbers are UTC midnights, so adding
+ * whole days cannot drift across a daylight-saving change (§37).
+ */
+function dayIn(zone, offset) {
+  const [y, m, d] = DR.dayKey(zone, new Date()).split('-').map(Number);
+  const at = new Date(Date.UTC(y, m - 1, d) + offset * 86400000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}`;
+}
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const EXTERNAL = process.env.BASE_URL;
@@ -2016,5 +2035,182 @@ describe('workspace webhook routes', () => {
       method: 'PUT', body: { url: `https://hooks.example.invalid/${'x'.repeat(3000)}` }, cookies: owner,
     });
     assert.equal(status, 413);
+  });
+});
+
+/*
+ * What a workspace would be told about today, computed but never sent.
+ *
+ * The number in a reminder has to be reproducible by clicking the due-date
+ * filter (§37) — a digest counting rows the owner cannot get back to is a
+ * support ticket, not a notification. That parity is structural here because
+ * both sides call the same `watchedDateField` and `daysUntil` out of one file
+ * (§39), and the E2E test compares the two counts on screen.
+ */
+describe('reminder preview', () => {
+  const owner = jar();
+  const hand = jar();
+
+  // A named zone, pinned, so these expectations hold on a developer machine in
+  // any timezone. The workspace zone is what the SERVER uses; the browser
+  // filter deliberately uses the viewer's own (§38), and the two can honestly
+  // disagree — which is why the E2E parity test aligns them first.
+  const ZONE = 'Asia/Tokyo';
+
+  before(async () => {
+    await req('/auth/dev', { method: 'POST', body: { email: 'remind-owner@team.test' }, cookies: owner });
+    const h = await req('/auth/dev', { method: 'POST', body: { email: 'remind-hand@team.test' }, cookies: hand });
+    const code = (await req('/api/org/invites', { method: 'POST', body: {}, cookies: owner })).json.invite.code;
+    await req('/api/org/join', { method: 'POST', body: { code }, cookies: hand });
+    void h;
+
+    const mod = {
+      id: 'rm-invoices',
+      name: 'Invoices',
+      fields: [
+        { key: 'name', label: 'Reference', type: 'text', showInList: true },
+        { key: 'issued', label: 'Issued', type: 'date' },
+        { key: 'due', label: 'Due', type: 'date', showInList: true },
+      ],
+    };
+    const rec = (id, due, name) => ({
+      id, updatedAt: 1000, doc: { id, moduleId: 'rm-invoices', data: { name, due } },
+    });
+
+    await req('/api/sync', {
+      method: 'POST',
+      cookies: owner,
+      body: {
+        since: 0,
+        settings: { currency: 'USD', businessName: 'Remind Ltd', timezone: ZONE, remind: { enabled: false, days: 7 } },
+        settingsUpdatedAt: 2000,
+        modules: [{ id: 'rm-invoices', updatedAt: 1000, doc: mod }],
+        records: [
+          rec('rm-old', dayIn(ZONE, -40), 'INV-OLD'),
+          rec('rm-late', dayIn(ZONE, -2), 'INV-LATE'),
+          rec('rm-today', dayIn(ZONE, 0), 'INV-TODAY'),
+          rec('rm-soon', dayIn(ZONE, 3), 'INV-SOON'),
+          rec('rm-edge', dayIn(ZONE, 7), 'INV-EDGE'),
+          rec('rm-far', dayIn(ZONE, 8), 'INV-FAR'),
+          rec('rm-blank', '', 'INV-BLANK'),
+        ],
+      },
+    });
+  });
+
+  const preview = async (cookies = owner) => (await req('/api/org/reminders', { cookies })).json;
+
+  test('counts the same window the filter shows, overdue included', async () => {
+    const { reminders } = await preview();
+    const inv = reminders.modules.find((m) => m.id === 'rm-invoices');
+    assert.ok(inv, 'the module with a date field is missing from the digest');
+    // -40, -2, 0, +3, +7 are in. +8 is out. A blank date is never due.
+    assert.equal(inv.overdue, 2, 'overdue rows must be counted, not hidden (§37)');
+    assert.equal(inv.upcoming, 3);
+    assert.equal(inv.total, 5);
+    assert.equal(reminders.total, 5);
+  });
+
+  /*
+   * The boundary in both directions. A window that excluded its own last day,
+   * or that ran a day long, passes the totals above only by luck.
+   */
+  test('the last day of the window is inside it and the next day is not', async () => {
+    const { reminders } = await preview();
+    assert.equal(reminders.total, 5, `+7 in, +8 out — got ${reminders.total}`);
+  });
+
+  test('it watches the field the filter would watch, and says which', async () => {
+    const { reminders } = await preview();
+    // Two date fields on this module; `watchedDateField` prefers the list
+    // column, so it must be Due rather than Issued — and the answer is named,
+    // because filtering on a date the reader cannot see is indistinguishable
+    // from rows going missing (§37).
+    assert.equal(reminders.modules[0].field, 'Due');
+  });
+
+  test('the workspace zone is used, not the container one', async () => {
+    const { reminders } = await preview();
+    assert.equal(reminders.zone, ZONE);
+    assert.equal(reminders.zoneSet, true);
+    assert.equal(reminders.dayKey, DR.dayKey(ZONE, new Date()));
+  });
+
+  /*
+   * COUNTS ONLY, and it is a decision rather than an omission: a webhook
+   * destination is not necessarily as private as the workspace — a shared
+   * client channel is a plausible place for an owner to point it — and §18
+   * already refuses to put record names on a chat service.
+   */
+  test('no record names or values come back, only counts', async () => {
+    const { text } = await req('/api/org/reminders', { cookies: owner });
+    for (const name of ['INV-OLD', 'INV-LATE', 'INV-TODAY', 'INV-SOON', 'INV-EDGE', 'INV-BLANK']) {
+      assert.ok(!text.includes(name), `the preview leaked a record name: ${name}`);
+    }
+    assert.ok(text.includes('Invoices'), 'the module name is carried, since it is what makes the count legible');
+  });
+
+  test('it answers before anything is switched on', async () => {
+    const { reminders } = await preview();
+    // Requiring somebody to enable a thing in order to see what it would do is
+    // how a surprise message reaches a team channel.
+    assert.equal(reminders.enabled, false);
+    assert.equal(reminders.skipped, null);
+    assert.ok(reminders.total > 0);
+  });
+
+  test('a member cannot read it', async () => {
+    assert.equal((await req('/api/org/reminders', { cookies: hand })).status, 403);
+  });
+
+  /*
+   * THE SCALE CAP, and the early return is load-bearing rather than tidiness:
+   * modules are read before records, so a workspace with no date field at all
+   * never touches the records collection. That is the whole bound on what a
+   * daily pass costs as tenant count grows.
+   */
+  test('a workspace with no date field returns without scanning records', async () => {
+    const solo = jar();
+    await req('/auth/dev', { method: 'POST', body: { email: 'remind-nodates@solo.test' }, cookies: solo });
+    await req('/api/sync', {
+      method: 'POST',
+      cookies: solo,
+      body: {
+        since: 0,
+        modules: [{ id: 'nd-1', updatedAt: 1, doc: { id: 'nd-1', name: 'Notes', fields: [{ key: 'name', label: 'Name', type: 'text' }] } }],
+        records: [{ id: 'nd-r', updatedAt: 1, doc: { id: 'nd-r', moduleId: 'nd-1', data: { name: 'x' } } }],
+      },
+    });
+    const { reminders } = await preview(solo);
+    assert.equal(reminders.skipped, 'no-date-fields');
+    assert.equal(reminders.total, 0);
+    assert.equal(reminders.scanned, undefined, 'the records collection must not have been read');
+  });
+
+  /*
+   * Stored settings are never trusted at the point of use — the same rule
+   * resolveZone follows, and for the same reason: `remind` arrives through the
+   * unvalidated sync seam (§38). A NaN window would make isDueWithin false for
+   * everything and the digest would go quiet without ever erroring.
+   */
+  test('a nonsense window and a nonsense zone fall back instead of breaking', async () => {
+    await req('/api/sync', {
+      method: 'POST',
+      cookies: owner,
+      body: {
+        since: 0,
+        settings: {
+          currency: 'USD', businessName: 'Remind Ltd',
+          timezone: 'Not/AZone',
+          remind: { enabled: 'yes please', days: 'soon', hour: 99 },
+        },
+        settingsUpdatedAt: 3000,
+      },
+    });
+    const { reminders } = await preview();
+    assert.equal(reminders.zone, 'UTC', 'an unusable zone must not take the pass down');
+    assert.equal(reminders.days, 7, 'a nonsense window falls back to the default');
+    assert.equal(reminders.hour, 23, 'an out-of-range hour is clamped, not stored as 99');
+    assert.equal(reminders.enabled, false, 'only a real boolean true enables sending');
   });
 });

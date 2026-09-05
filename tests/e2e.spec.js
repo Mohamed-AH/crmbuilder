@@ -2902,3 +2902,76 @@ test.describe('workspace notifications', () => {
     await expect(page.locator('#set-timezone')).toHaveValue('Asia/Tokyo', { timeout: 20000 });
   });
 });
+
+/*
+ * THE PARITY TEST, and it is the one that justifies sharing one file.
+ *
+ * The number in a reminder has to be the number the owner sees when they click
+ * the due-date filter. Both sides call the same `watchedDateField` and
+ * `daysUntil` out of js/date-rules.js (§39), but "structurally the same code"
+ * is a claim, and this measures it: the badge on screen against the count the
+ * server would send.
+ *
+ * IT ALIGNS THE TWO CLOCKS FIRST, deliberately. The browser filter uses the
+ * VIEWER's calendar day and the server uses the WORKSPACE's zone (§38), so the
+ * two can honestly differ for a viewer sitting in another country. Setting the
+ * workspace zone to this browser's own is what makes the comparison mean
+ * something — and without it this test would pass in a UTC container and fail
+ * on a developer machine in Europe, for a reason that is not a defect.
+ */
+test('the reminder count is the number the due-date filter shows', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#onboard-demo')).toBeVisible();
+  await page.click('#onboard-demo');
+  await expect(page.locator('#workspace-name')).toHaveText('Lumen Studio', { timeout: 20000 });
+  // 'all', not the default 'work': the demo business IS the fixture here, and
+  // the default claim deliberately leaves samples on the device (§11) — which
+  // would sign in to an empty workspace and give the server nothing to count.
+  await signIn(page, uniqueEmail('parity-owner'), { claim: 'all' });
+  await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 25000 });
+
+  const browserZone = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
+  await page.goto('/#/settings');
+  await expect(page.locator('#set-timezone')).toBeVisible({ timeout: 20000 });
+  /*
+   * The picker must offer the browser its OWN zone, and that is not free:
+   * Intl.supportedValuesOf('timeZone') returns 418 canonical names and none of
+   * them is `UTC`, which is exactly what a container with no TZ set reports.
+   * Building the list from the authoritative source alone left an owner unable
+   * to select their own zone. This assertion is what caught it.
+   */
+  await expect(
+    page.locator(`#set-timezone option[value="${browserZone}"]`),
+    `the picker does not offer this browser own zone (${browserZone})`,
+  ).toHaveCount(1);
+  await page.selectOption('#set-timezone', browserZone);
+  await page.click('#save-workspace');
+  await expect(page.locator('.toast').last()).toContainText(/saved/i);
+  await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 25000 });
+
+  await page.click('#nav-modules .nav-link:has-text("Tasks")');
+  await expect(page.locator('#due-filter')).toBeVisible();
+  await page.locator('#due-filter').selectOption('7');
+  // Wait on the rendered result before reading it: renderModule is async and
+  // the change handler does not await it, so reading straight away samples the
+  // previous render and the assertion passes for the wrong reason (§4).
+  await expect(page.locator('tbody tr').first()).toBeVisible();
+  const onScreen = Number(await page.locator('.count-badge').textContent());
+  expect(onScreen).toBeGreaterThan(0);
+
+  const { reminders } = await (await page.request.get('/api/org/reminders')).json();
+  expect(reminders.zone, 'the workspace zone did not save').toBe(browserZone);
+  const tasks = reminders.modules.find((m) => m.name === 'Tasks');
+  expect(tasks, 'Tasks has a due date, so it must appear in the digest').toBeTruthy();
+  expect(tasks.field).toBe('Due date');
+
+  expect(
+    tasks.total,
+    `the digest would say ${tasks.total} but the filter shows ${onScreen}`,
+  ).toBe(onScreen);
+
+  // And the overdue half specifically, because a digest that counted only the
+  // future would still match a filter that did the same — the two would be
+  // wrong together, which is the failure a parity test is worst at catching.
+  expect(tasks.overdue).toBeGreaterThan(0);
+});
