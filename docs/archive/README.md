@@ -26,6 +26,7 @@ Status belongs somewhere that is maintained. These point at `CLAUDE.md` for it.
 | [TIER-2.md](TIER-2.md) | Field-level merge, roles that cannot delete, and the costing of undoable deletes. 2c and 2a shipped; 2b deliberately not built. | `CLAUDE.md` §26 |
 | [SECURITY-AUDIT.md](SECURITY-AUDIT.md) | The full-application audit plan and its reconnaissance, including which checklist items did not apply to this stack and why. | `CLAUDE.md` §30 |
 | [TELEMETRY.md](TELEMETRY.md) | What the three meters are, why uptime hours are not a fourth, and what removing the egress counter would cost — written when that removal was proposed and declined. Carries the inventory of every file such a removal touches. | `CLAUDE.md` §24, §25 |
+| [UK-LAUNCH.md](UK-LAUNCH.md) | Selling into UK small businesses through an accounting practice: the controller/processor split, why an advisory note's GDPR feature list was in the wrong order, the two architecture decisions (direct referral, managed UK hosting) and what follows from each. Nothing had shipped when it was written. | `CLAUDE.md` |
 
 ## Known-false statements, so nobody is caught by them
 
