@@ -29,8 +29,13 @@ function record(status, name, detail = '') {
   console.log(`  ${mark} ${name}${detail ? `  ${c.dim}${detail}${c.off}` : ''}`);
 }
 
-async function get(path, opts = {}) {
-  const timeout = firstRequestDone ? TIMEOUT : FIRST_TIMEOUT;
+async function get(path, { timeout: override, ...opts } = {}) {
+  // `timeout` is an override for the one check that UPLOADS rather than
+  // fetches. Everything else here is a small GET, so the shared budget is
+  // about how long the server takes to answer; for an upload it is also about
+  // how long the body takes to arrive, which depends on where the runner sits
+  // relative to the origin. See the oversized-body check.
+  const timeout = override || (firstRequestDone ? TIMEOUT : FIRST_TIMEOUT);
   const started = Date.now();
   try {
     const res = await fetch(`${BASE}${path}`, {
@@ -221,14 +226,56 @@ await check('HSTS in production', async () => {
 await check('an oversized body is refused, not absorbed', async () => {
   // Everything but /api/sync takes a small object. 8 MB used to be the limit
   // on every route, which handed an anonymous caller a cheap allocation.
+  //
+  // THE ONLY CHECK IN THIS FILE THAT UPLOADS, and it needs its own budget.
+  // The shared 20s is sized for "how long does the server take to answer",
+  // which is the right question for every other check because they all send a
+  // few hundred bytes. Here the body is 200 KB, so the clock is also counting
+  // the upload — and that depends on the distance from wherever this is run to
+  // wherever the origin is. Moving the deployment from the US to Frankfurt
+  // failed this check from a link that had passed it the day before, while the
+  // limit was working perfectly: a manual curl answered 413 immediately.
+  //
+  // A false FAIL here is expensive out of proportion to the check, because the
+  // summary then reads "Deployment is NOT healthy" over a healthy deployment.
   const { res, err } = await get('/api/feedback', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message: 'x'.repeat(200000) }),
+    timeout: Number(process.env.SMOKE_UPLOAD_TIMEOUT || 60000),
   });
-  if (err) throw new Error(err.message);
-  // 401 is fine too — auth runs first. What must not happen is a 200.
-  if (res.status === 413 || res.status === 401) return `HTTP ${res.status}`;
+  /*
+   * A timeout is NOT a failed limit — it is an unanswered question, and saying
+   * so is the honest report. The limit could be perfect and the link slow; the
+   * only thing established is that this check could not tell. It names the
+   * command that settles it rather than leaving the next person to work out
+   * that a 200 KB POST was involved at all.
+   */
+  if (err) {
+    if (/abort|timeout/i.test(err.message)) {
+      return { status: 'WARN', detail: 'timed out uploading 200 KB — raise SMOKE_UPLOAD_TIMEOUT, or POST it with curl to see the status' };
+    }
+    throw new Error(err.message);
+  }
+  /*
+   * ONLY 413 PASSES, and 401 is the signal that this regressed.
+   *
+   * This used to accept 401 as well, on the reasoning that "auth runs first".
+   * It does not. `app.use(express.json({ limit: '64kb' }))` is global and runs
+   * before any route's middleware, so on a correct server an oversized body is
+   * rejected by the parser and never reaches requireAuth — 413, every time,
+   * authenticated or not. A 401 means the body was ACCEPTED and then refused
+   * for the unrelated reason that we are not signed in, which is exactly what
+   * happens when the limit is missing.
+   *
+   * Measured, not argued: restoring the old global 8mb limit — §30's finding
+   * #4, the regression this check exists for — made it report `HTTP 401` and
+   * PASS. It had never been able to catch the thing it is named after.
+   */
+  if (res.status === 413) return 'HTTP 413';
+  if (res.status === 401) {
+    throw new Error('HTTP 401 — the 200 KB body was parsed before auth refused it, so the body limit is not being enforced');
+  }
   throw new Error(`HTTP ${res.status} — a 200 KB body was not refused`);
 });
 

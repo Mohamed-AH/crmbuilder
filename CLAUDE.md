@@ -52,6 +52,7 @@ never change, because everything cross-references them.
 | **Dates**: the due filter, and the UTC parsing trap | §37 |
 | **Outbound webhooks**: the guard, and where the URL lives | §38 |
 | Telegram setup, and why `sendGuarded` hung | §38 |
+| **UK launch, Frankfurt, and a smoke check that passed on its own bug** | §38 · [`docs/archive/UK-LAUNCH.md`](docs/archive/UK-LAUNCH.md) |
 | **Daily digest**: the pass, its gates, mentions | §39 |
 | Why a "reminders are stale" alert cannot work | §39 |
 | Workspace time zone — and why the filter ignores it | §39 · §38 · §37 |
@@ -3316,6 +3317,55 @@ and `manual.html` both still said the webhook test *"is all it does — nothing
 sends on its own yet"*, two paragraphs above the section describing the daily
 digest that §39 shipped. §27's drift, in the exact pair of files §27 names as
 the easiest to forget.
+
+### Moving the deployment to Frankfurt, and the smoke check that never worked
+
+The UK launch's Phase 0 (`docs/archive/UK-LAUNCH.md`): Render to Frankfurt,
+Atlas to `eu-central-1`, seeded by restoring a real nightly artifact rather
+than starting empty. **Restoring before switching is what closes §21's
+first-account-becomes-`platformAdmin` window** — the app never comes up against
+an empty `users` collection, so the bypass has nothing to fire on regardless of
+`ADMIN_EMAILS`.
+
+`privacy.html` said *"currently in their US regions"*, which was true that
+morning and false the moment the switch landed. It also claimed a **complete**
+list of who else sees the data and omitted **GitHub**, which holds the nightly
+backup. Both fixed. A first draft of the new backup paragraph said backups
+*"are encrypted"* — they are not yet, that is Phase 1 — and it was caught
+before the commit. **A privacy page is the last place an intention should be
+written as a fact.**
+
+#### The check accepted the exact answer that means it failed
+
+The move made `an oversized body is refused, not absorbed` fail with a timeout.
+That part was mundane: it is the **only check in the file that uploads**, the
+body is 200 KB, and the shared 20s budget is sized for "how long does the server
+take to answer" rather than "how long does the body take to arrive". Moving the
+origin further away broke it while the limit worked perfectly — a manual `curl`
+answered 413 immediately. It has its own budget now (`SMOKE_UPLOAD_TIMEOUT`),
+and a timeout reports **WARN** rather than FAIL, because an unanswered question
+is not a failed limit and *"Deployment is NOT healthy"* over a healthy
+deployment is expensive out of proportion to the check.
+
+**The real finding came out of proving the fix.** The check accepted `413` *or*
+`401`, on the reasoning that "auth runs first". **It does not.**
+`app.use(express.json({ limit: '64kb' }))` is global and runs before any
+route's middleware, so on a correct server an oversized body is rejected by the
+parser and never reaches `requireAuth` — 413 every time. A **401 means the body
+was parsed** and then refused for the unrelated reason that nobody was signed
+in, which is exactly what a missing limit looks like.
+
+Measured rather than argued: restoring the old global `8mb` — §30's finding #4,
+the regression this check exists for — made it report `HTTP 401` and **pass**.
+It had never once been able to catch the thing it is named after. Only 413
+passes now, and 401 fails by name.
+
+Two smaller things confirmed while proving it: `bigJson` is mounted on
+`/api/sync` and `/api/data` **before** the global parser, so those two win and
+the global skips them (body-parser sets `req._body` and later parsers bail) —
+the ordering is load-bearing and reversing it would cap a sync push at 64 KB.
+And `curl --data-binary` with a 200 KB argument dies with *"Argument list too
+long"*; write the body to a file first.
 
 ### §30's audit table changes
 
