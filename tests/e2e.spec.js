@@ -2859,6 +2859,18 @@ test.describe('workspace notifications', () => {
     await expect(intro).toContainText(/set up further down/i);
 
     await page.click('.tg-summary');
+
+    /*
+     * Step 2 names the CONSEQUENCE, not just the action. Pressing Start and
+     * adding the bot to a group are not two ways to do the same thing — they
+     * decide whether the digest arrives privately or in a team channel, which
+     * is a choice an owner otherwise discovers after the first send.
+     */
+    const steps = page.locator('.tg-steps');
+    await expect(steps).toContainText(/where the messages should arrive/i);
+    await expect(steps).toContainText(/privately/i);
+    await expect(steps).toContainText(/group/i);
+
     // Nothing is dialled without a token, and the message says what is missing.
     await page.click('#tg-find');
     await expect(page.locator('.toast').last()).toContainText(/token/i, { timeout: 20000 });

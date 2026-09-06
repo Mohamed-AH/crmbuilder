@@ -166,7 +166,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v37`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v38`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -3182,8 +3182,9 @@ throws. Four things in it that each stop a working setup reading as broken:
   the default set so it has to be asked for. It is the one that makes **groups**
   work: group privacy mode is on by default, so a bot in a group never sees
   ordinary messages — but being *added* to the group is a `my_chat_member`
-  update, which it does see. To be confirmed in the trial rather than assumed;
-  it decides how the on-screen instruction is worded, not whether this works.
+  update, which it does see. **Confirmed by trial** (it was flagged here as an
+  assumption first): pressing Start finds the private chat, adding the bot to a
+  group finds the group, and neither needs a message posted afterwards.
 - **Every failure gets its own words.** 401 (wrong token), 409 (this bot already
   has a webhook set elsewhere, so its messages cannot be read), `too_large`, and
   an empty result — which is **not** an error and must not read as one, because
@@ -3278,6 +3279,17 @@ nothing.
 **Buttons, not a `<select>`.** Each row carries the chat's kind — *group*,
 *private* — and a picker's single line would have to drop it. That label is
 what tells two similarly named chats apart.
+
+**Step 2 names the consequence, not the action — found by the trial.** It first
+read *"send your new bot a message; for a group, add the bot instead"*, which
+presents two interchangeable ways of making the bot visible. They are not: **the
+action taken IS the destination.** Press Start and the digest arrives as a
+private message to that one person; add the bot to a group and it goes to the
+whole group. An owner who reads only the action discovers which they picked when
+the first digest lands — possibly in a channel with the client in it, which is
+the exposure §39's counts-only rule already exists for. It is now written as a
+choice with its two outcomes named, and guarded by an E2E assertion so it cannot
+drift back to naming only the steps.
 
 #### The fake Telegram is one file, shared by both suites
 

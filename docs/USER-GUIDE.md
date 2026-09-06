@@ -251,9 +251,14 @@ digest, below.
 looked up. Open *Using Telegram? Set it up here* under Notifications and:
 
 1. Message **@BotFather**, send `/newbot`, and copy the token.
-2. **Send your new bot a message** — a bot cannot start a conversation. For a
-   group, add the bot to the group instead.
-3. Paste the token and press **Find my chat**, then pick the chat from the list.
+2. **Decide where the messages should arrive** — this step is what chooses:
+   - **Privately, to you** — open your new bot and press **Start**.
+   - **To a team group** — add the bot to that group.
+
+   A bot cannot open a conversation, so one of these has to happen before it
+   can see you at all.
+3. Paste the token and press **Find my chat**, then pick the chat from the
+   list — each one says whether it is a private chat or a group.
 
 If the list comes back empty, Telegram has simply forgotten — it only keeps the
 last day of activity. Message the bot again and press the button again.

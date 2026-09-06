@@ -2873,8 +2873,20 @@
             <p class="settings-hint" style="margin-top:12px">Telegram does not hand out a webhook URL. Instead:</p>
             <ol class="tg-steps">
               <li>Message <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">@BotFather</a> on Telegram, send <code>/newbot</code>, and copy the token it gives you.</li>
-              <li><strong>Send your new bot a message</strong> — a bot cannot start a conversation. For a group, add the bot to it instead.</li>
-              <li>Paste the token below and press <strong>Find my chat</strong>.</li>
+              <!-- This step LOOKS like "make the bot notice you" and is really
+                   "choose where the messages land". Confirmed by trial: press
+                   Start and the digest arrives as a private message; add the
+                   bot to a group and it goes to the group. Naming only the
+                   action left the consequence to be discovered afterwards, in
+                   a team channel. -->
+              <li><strong>Decide where the messages should arrive</strong> — that is what this step picks:
+                <ul class="tg-choice">
+                  <li><strong>Privately, to you</strong> — open your new bot and press <strong>Start</strong>.</li>
+                  <li><strong>To a team group</strong> — add the bot to that group.</li>
+                </ul>
+                A bot cannot open a conversation, so one of these has to happen before it can see you at all.
+              </li>
+              <li>Paste the token below and press <strong>Find my chat</strong>, then pick from the list — each one says whether it is a private chat or a group.</li>
             </ol>
             <div class="form-row">
               <label for="tg-token">Bot token</label>

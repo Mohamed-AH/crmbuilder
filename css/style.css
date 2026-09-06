@@ -362,6 +362,11 @@ a.stat-card:hover, .stat-card-add:hover { border-color: var(--border-strong); bo
 .tg-setup[open] { padding-bottom: 14px; }
 .tg-summary { cursor: pointer; padding: 11px 0; font-size: 13px; font-weight: 600; list-style-position: inside; }
 .tg-steps { margin: 0 0 14px; padding-left: 20px; max-width: 62ch; color: var(--text-soft); font-size: 13px; line-height: 1.7; }
+/* The destination choice inside step 2. Defined rather than assumed — an
+   undefined class renders as an unstyled box that still looks plausible
+   (§27). */
+.tg-choice { margin: 6px 0; padding-left: 18px; }
+.tg-choice li { margin: 2px 0; }
 .tg-steps code {
   padding: 1px 5px; border-radius: 5px; background: var(--surface);
   border: 1px solid var(--border); font-size: 12px;
