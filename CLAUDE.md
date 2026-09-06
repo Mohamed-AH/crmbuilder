@@ -96,7 +96,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 352 Node tests + 89 Playwright tests, 43 smoke checks. On
+**All green:** 366 Node tests + 89 Playwright tests, 43 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -166,7 +166,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v35`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v36`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -405,7 +405,7 @@ parallel and they each spawn real servers:
 
 | File | Block | Servers |
 |---|---|---|
-| `api.test.mjs` | 8300–8449 | 3 |
+| `api.test.mjs` | 8300–8449 | 3 app + 1 capture (8440–8449, reserved) |
 | `fixture.test.mjs` | 8450–8499 | 1 |
 | `migration.test.mjs` | 8500–8699 | 6 |
 | `signup.test.mjs` | 8700–8960 | 61 |
@@ -3205,8 +3205,47 @@ callback had no test at all. Precedent and fix are exactly that one:
 independent switches is how the wrong one ends up set in production; a
 deployment that does not redirect the host cannot reach the relaxed path.
 
-`telegramChats` itself is exercised in stage 2, through its route — that is the
-only way to reach it, the same as `deliverToHook`.
+#### The route (stage 2)
+
+`POST /api/org/hook/telegram/chats`, owner-only via `requireSettingsOwner`
+(403, not 404 — §5's rule is about *cross-org* access, and a member knows their
+own workspace exists), token coerced with `String(...)` before it can reach a
+URL, and rate-limited.
+
+**It reads and writes nothing.** An owner who never picks a chat leaves no
+trace on the workspace — in particular no half-configured hook for the settings
+card to report on. Asserted, because "nothing was written" is the kind of
+guarantee that quietly stops being true.
+
+**Its own rate-limit bucket, and a higher bound than the test send.** They are
+limited for the same reason — an authenticated caller making the server dial
+out — but the rhythm differs: a lookup is legitimately pressed several times in
+a row (paste, press, realise you have not messaged the bot yet, message it,
+press again), and spending `/api/org/hook/test`'s allowance on that would refuse
+the send that proves the setup worked. `RATE_TELEGRAM_MAX`, default 12.
+
+**The first run of these tests failed with 429s**, which was the limiter working
+and the test design wrong. Raised for the suite rather than thinning the tests:
+what they cover is the failure *mapping*, and dropping cases to fit a rate limit
+trades real coverage for a bound `rateLimit()` already enforces identically on
+four other routes. Written down because "the tests made the limit looser" is
+exactly the kind of change that should be visible rather than inferred.
+
+**The fake Telegram gets ten reserved ports, not a share of the rotor.**
+`api.test.mjs` hands out a fresh port per boot from its block (§4), so a capture
+server on a port that rotor can also produce is a collision that surfaces as one
+unrelated test failing occasionally — the shape §32 spent a week reading as
+flakiness. The block is unchanged at 8300–8449; the app's span narrows to 140
+and 8440–8449 is the capture server. 8450 is `fixture.test.mjs`, so the
+reservation comes out of this block rather than off the end of it.
+
+**The fixture's group has no `message` update at all**, deliberately — that is
+what makes the `my_chat_member` assertion mean something rather than pass on a
+group that would have been found anyway. Four mutations were checked and each
+fails by name: dropping `my_chat_member` loses the group, adding an `offset`
+trips the request assertion, removing the 409 branch reports *"the destination
+answered HTTP 409"* instead of naming the webhook, and keying the de-duplication
+map by update id returns three chats where there are two.
 
 ### §30's audit table changes
 

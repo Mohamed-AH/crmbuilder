@@ -7,7 +7,7 @@
 > and every section here points at the relevant one rather than restating it —
 > one fact, one home (`CLAUDE.md` §27).
 
-47 routes over six boundaries. All JSON unless noted. All authenticated routes
+48 routes over six boundaries. All JSON unless noted. All authenticated routes
 take the session cookie; there is no bearer token anywhere except
 `/api/admin/export`, which is deliberately different (see §5).
 
@@ -286,6 +286,7 @@ POST   /api/org/join                { code }
 GET    /api/org/hook                owner only — masked, NEVER the URL
 PUT    /api/org/hook                owner only — { url }; '' removes it
 POST   /api/org/hook/test           owner only — sends one, 6/min per caller
+POST   /api/org/hook/telegram/chats owner only — { token } → chats, 12/min per caller
 GET    /api/org/reminders           owner only — counts + the exact message, sends nothing
 ```
 
@@ -305,6 +306,19 @@ versus a property of the moment. Outbound requests go through
 `lib/safe-fetch.js`, which resolves once, checks every answer against a block
 list, pins that address into the socket, and never follows a redirect.
 `CLAUDE.md` §38.
+
+**The Telegram lookup reads and writes nothing.** `POST
+/api/org/hook/telegram/chats` takes a bot token, asks Telegram which chats that
+bot can see, and returns `{ ok, chats: [{ id, title, kind }] }`. The workspace
+is untouched — an owner who never picks a chat leaves no trace. The token is a
+credential and travels one way: it is never stored on its own, never logged, and
+never echoed back; what is persisted is the ordinary `hook.url` the picked chat
+assembles into. The host is fixed, so this is not a runtime-settable outbound
+destination. **An empty list is a 200, not an error** — Telegram keeps updates
+for 24 hours, so a bot messaged yesterday genuinely has nothing to show.
+**400** carries a specific reason for each of: a malformed token, one Telegram
+rejects (401), a bot that already has a webhook set elsewhere (409), and a reply
+too large to read. `CLAUDE.md` §38.
 
 **`wouldStrandTeam()` is one rule behind three endpoints** — leave, self-demote
 and join. The last owner of a populated team walking away leaves people with a

@@ -11,6 +11,7 @@
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import http from 'node:http';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -156,7 +157,16 @@ let PORT_IN_USE = 0;
  * removes the race rather than widening a timeout around it.
  */
 const PORT_BASE = 8300;
-const PORT_SPAN = 150;   // api.test.mjs's block; the ranges are disjoint (§9)
+/*
+ * 8300-8449 is this file's block (§9), and the top ten of it are RESERVED for
+ * the fake Telegram below rather than left to nextPort(). A capture server on
+ * a port the app rotor can also hand out is a collision that shows up as one
+ * unrelated test failing occasionally — exactly the shape §32 spent a week
+ * misreading as flakiness. 8450 is fixture.test.mjs, so the reservation comes
+ * out of this block rather than off the end of it.
+ */
+const PORT_SPAN = 140;
+const TELEGRAM_PORT = 8440 + Math.floor(Math.random() * 10);
 let portOffset = Math.floor(Math.random() * PORT_SPAN);
 const nextPort = () => PORT_BASE + (portOffset++ % PORT_SPAN);
 
@@ -176,6 +186,22 @@ function startServer() {
       // a hundred of them carry a beta code would test the harness rather than
       // the product. The gate has its own file, with servers in each mode.
       SIGNUP_MODE: 'open',
+      // The Telegram test seam. Setting it also stands the block list down for
+      // that one call, which is what lets it reach a capture server on
+      // loopback — one variable rather than two, so a deployment that does not
+      // redirect the host cannot reach the relaxed path (§38).
+      TELEGRAM_API_BASE: `http://127.0.0.1:${TELEGRAM_PORT}`,
+      /*
+       * Raised for the suite, and worth being explicit about: the lookup's
+       * real bound is 12/min, this file drives it about fifteen times in a few
+       * seconds from one IP, and the first run of these tests failed with 429s
+       * — the limiter working, the test design wrong. Raising it here rather
+       * than thinning the tests, because what these cover is the failure
+       * MAPPING, and dropping cases to fit a rate limit would trade real
+       * coverage for a bound that `rateLimit()` already enforces identically
+       * on four other routes.
+       */
+      RATE_TELEGRAM_MAX: '200',
       NODE_ENV: 'test',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -193,14 +219,80 @@ async function stopServer() {
   child = null;
 }
 
+/* ---- a fake Telegram ------------------------------------------------------
+ *
+ * The chat lookup dials a FIXED host, which is what keeps it from being a new
+ * SSRF sink — and is also what makes it untestable without a seam. So the app
+ * is booted with TELEGRAM_API_BASE pointed here, exactly the way
+ * tests/oauth.test.mjs stands up a fake Google against GOOGLE_TOKEN_URL, and
+ * for the same reason: §30 found the OAuth callback had gone years with no
+ * test because it could not be driven without Google on the other end.
+ *
+ * One server, switching on the token in the path, so every failure mapping is
+ * reachable without a server each. `telegramSeen` records what was actually
+ * sent, which is how "no offset is ever acknowledged" is asserted against the
+ * request rather than against the code that builds it.
+ */
+let telegramServer = null;
+let telegramSeen = [];
+
+// Two updates naming the SAME chat, plus a group arriving only as a
+// my_chat_member — the two things the de-duplication and the group case turn
+// on. A group under privacy mode never produces a `message` update at all.
+const TELEGRAM_UPDATES = [
+  { update_id: 1, message: { chat: { id: 111, type: 'private', first_name: 'Maya', username: 'maya' } } },
+  { update_id: 2, message: { chat: { id: 111, type: 'private', first_name: 'Maya', username: 'maya' } } },
+  { update_id: 3, my_chat_member: { chat: { id: -900, type: 'group', title: 'Sales team' } } },
+];
+
+function startTelegram() {
+  telegramServer = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      let body = null;
+      try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* not json */ }
+      const token = decodeURIComponent((/^\/bot([^/]+)\//.exec(req.url) || [])[1] || '');
+      telegramSeen.push({ url: req.url, token, body });
+
+      const send = (status, payload) => {
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(typeof payload === 'string' ? payload : JSON.stringify(payload));
+      };
+
+      if (token === 'bad-token') return send(401, { ok: false, description: 'Unauthorized' });
+      if (token === 'busy-token') return send(409, { ok: false, description: 'terminated by other getUpdates request' });
+      if (token === 'empty-token') return send(200, { ok: true, result: [] });
+      if (token === 'huge-token') {
+        // Over the 64 KB the lookup asks for, written in pieces — a single
+        // large write still emits 'end' after the destroy and would pass
+        // against the hang this cap change fixed (§38).
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        let i = 0;
+        const tick = setInterval(() => {
+          if (i++ >= 80) { clearInterval(tick); return res.end(); }
+          res.write(JSON.stringify({ filler: 'q'.repeat(1000) }));
+        }, 2);
+        return tick.unref();
+      }
+      if (token === 'weird-token') return send(200, { ok: true, result: 'not an array' });
+      return send(200, { ok: true, result: TELEGRAM_UPDATES });
+    });
+  });
+  return new Promise((r) => telegramServer.listen(TELEGRAM_PORT, '127.0.0.1', r));
+}
+
 before(async () => {
   if (EXTERNAL) return;
   dataDir = await mkdtemp(join(tmpdir(), 'crmb-test-'));
+  // Before the app, because startServer() reads TELEGRAM_BASE into its env.
+  await startTelegram();
   await startServer();
 });
 
 after(async () => {
   await stopServer();
+  if (telegramServer) await new Promise((r) => telegramServer.close(r));
   if (dataDir) await rm(dataDir, { recursive: true, force: true });
 });
 
@@ -2035,6 +2127,182 @@ describe('workspace webhook routes', () => {
       method: 'PUT', body: { url: `https://hooks.example.invalid/${'x'.repeat(3000)}` }, cookies: owner,
     });
     assert.equal(status, 413);
+  });
+});
+
+/*
+ * Finding a Telegram chat without reading raw JSON.
+ *
+ * Telegram is the one provider that hands you no webhook URL — a bot token,
+ * and a chat id buried in a getUpdates response. Every test here is about a
+ * setup that WORKS being reported as broken, or the other way round: the
+ * failure mappings exist because collapsing any of them into "no chats found"
+ * recreates the dead end the feature was built to remove (§36).
+ */
+describe('the Telegram chat lookup', () => {
+  const owner = jar();
+  const member = jar();
+  let memberId = null;
+
+  before(async () => {
+    await req('/auth/dev', { method: 'POST', body: { email: 'tg-owner@team.test' }, cookies: owner });
+    const m = await req('/auth/dev', { method: 'POST', body: { email: 'tg-member@team.test' }, cookies: member });
+    memberId = m.json.user.id;
+    const code = (await req('/api/org/invites', { method: 'POST', body: {}, cookies: owner })).json.invite.code;
+    await req('/api/org/join', { method: 'POST', body: { code }, cookies: member });
+    await req(`/api/org/members/${memberId}`, { method: 'PATCH', body: { role: 'member' }, cookies: owner });
+  });
+
+  const look = (token, cookies = owner) =>
+    req('/api/org/hook/telegram/chats', { method: 'POST', body: { token }, cookies });
+
+  test('lists the chats a bot can see, de-duplicated', async () => {
+    telegramSeen = [];
+    const { status, json } = await look('good-token');
+    assert.equal(status, 200);
+    // Three updates, two of which name the same chat.
+    assert.equal(json.chats.length, 2, `expected two distinct chats, got ${JSON.stringify(json.chats)}`);
+
+    const priv = json.chats.find((c) => c.id === '111');
+    assert.ok(priv, 'the private chat is missing');
+    assert.equal(priv.kind, 'private');
+    assert.match(priv.title, /Maya/);
+
+    const group = json.chats.find((c) => c.id === '-900');
+    assert.ok(group, 'the group is missing');
+    assert.equal(group.title, 'Sales team');
+  });
+
+  test('a group reaches the list through my_chat_member, which is why it is asked for', async () => {
+    /*
+     * Group privacy mode is on by default, so a bot in a group never sees an
+     * ordinary message — being ADDED to it is a my_chat_member update, and
+     * that type is NOT in getUpdates' default set. The fixture's group has no
+     * `message` update at all, so a request that failed to ask for
+     * my_chat_member would find the private chat and silently lose the group,
+     * which is the case owners actually want.
+     */
+    telegramSeen = [];
+    const { json } = await look('good-token');
+    assert.ok(json.chats.some((c) => c.id === '-900'), 'the group was lost');
+    assert.ok(
+      telegramSeen[0].body.allowed_updates.includes('my_chat_member'),
+      `my_chat_member was not requested: ${JSON.stringify(telegramSeen[0].body)}`,
+    );
+  });
+
+  test('no offset is ever acknowledged, so pressing again still finds the same chats', async () => {
+    /*
+     * Asserted against the REQUEST, not against the code that builds it.
+     * Acknowledging an offset consumes the update stream at Telegram's end, so
+     * a second press would legitimately come back empty and read as a broken
+     * button — a read that quietly mutates the thing it read.
+     */
+    telegramSeen = [];
+    const first = await look('good-token');
+    const second = await look('good-token');
+    assert.equal(second.json.chats.length, first.json.chats.length);
+    for (const seen of telegramSeen) {
+      assert.equal(seen.body.offset, undefined, `an offset was sent: ${JSON.stringify(seen.body)}`);
+    }
+  });
+
+  test('a token Telegram rejects says so, rather than "no chats"', async () => {
+    const { status, json } = await look('bad-token');
+    assert.equal(status, 400);
+    assert.match(json.error, /BotFather|token/i);
+    assert.ok(!/no chats/i.test(json.error), 'a wrong token must not read as an empty list');
+  });
+
+  test('a bot that already has a webhook elsewhere is named, not reported as empty', async () => {
+    // Telegram answers 409 when getUpdates and setWebhook are both in play.
+    // Without its own wording an owner reusing an existing bot is told
+    // nothing is there, and goes looking for a fault at their end.
+    const { status, json } = await look('busy-token');
+    assert.equal(status, 400);
+    assert.match(json.error, /webhook/i);
+  });
+
+  test('an empty result is not an error, and says what to do about it', async () => {
+    /*
+     * The one that must NOT be a failure. Telegram keeps updates for 24 hours,
+     * so a bot messaged yesterday genuinely has nothing to show — and the
+     * answer is "message it now", not "something is wrong".
+     */
+    const { status, json } = await look('empty-token');
+    assert.equal(status, 200, 'an empty list is a successful answer');
+    assert.deepEqual(json.chats, []);
+  });
+
+  test('an oversized reply is refused, not read as an empty list', async () => {
+    // The cap the lookup raises is 64 KB; this is past it. Before the guard
+    // reported truncation, this would have arrived as unparseable text and
+    // been indistinguishable from a bot with no chats.
+    const { status, json } = await look('huge-token');
+    assert.equal(status, 400);
+    assert.ok(!/no chats/i.test(json.error), 'an oversized reply must not read as an empty list');
+  });
+
+  test('an answer in an unexpected shape is refused rather than half-read', async () => {
+    const { status } = await look('weird-token');
+    assert.equal(status, 400);
+  });
+
+  test('a token that is obviously not one is refused before anything is dialled', async () => {
+    telegramSeen = [];
+    for (const bad of ['', '   ', 'has spaces in it']) {
+      const { status } = await look(bad);
+      assert.equal(status, 400, `"${bad}" should not have been accepted`);
+    }
+    assert.equal(telegramSeen.length, 0, 'nothing should have been sent for a malformed token');
+  });
+
+  test('a non-string token cannot reach the URL', async () => {
+    // §30 Phase 2's rule: a JSON body is the one place a non-string gets in.
+    telegramSeen = [];
+    const { status } = await req('/api/org/hook/telegram/chats', {
+      method: 'POST', body: { token: { $ne: null } }, cookies: owner,
+    });
+    assert.equal(status, 400);
+    assert.equal(telegramSeen.length, 0);
+  });
+
+  test('the token never comes back in the response', async () => {
+    /*
+     * Searched over the whole body rather than a named field — a field-by-field
+     * check only covers the fields somebody thought of (§38). The token is a
+     * credential of the same class as the webhook URL it will end up inside.
+     */
+    const distinctive = '7654321:AAH-ZZTOPSECRETBOTTOKEN';
+    const ok = await req('/api/org/hook/telegram/chats', { method: 'POST', body: { token: distinctive }, cookies: owner });
+    assert.ok(!ok.text.includes(distinctive), `the token leaked: ${ok.text}`);
+
+    const refused = await look('bad-token');
+    assert.ok(!refused.text.includes('bad-token'), `the token leaked in a failure: ${refused.text}`);
+  });
+
+  test('a member is refused, and the refusal does not pretend the workspace is missing', async () => {
+    // 403 rather than 404, matching the sibling settings routes: §5's
+    // 404-not-403 rule is about CROSS-ORG access, and a member already knows
+    // their own workspace exists.
+    telegramSeen = [];
+    const { status } = await look('good-token', member);
+    assert.equal(status, 403);
+    assert.equal(telegramSeen.length, 0, 'a refused caller must not make the server dial out');
+  });
+
+  test('a signed-out caller is refused', async () => {
+    const { status } = await req('/api/org/hook/telegram/chats', { method: 'POST', body: { token: 'good-token' } });
+    assert.equal(status, 401);
+  });
+
+  test('nothing is written to the workspace by a lookup', async () => {
+    // It reads. An owner who never picks a chat must leave no trace — in
+    // particular no half-configured hook for the settings card to report on.
+    const wsId = (await req('/api/me', { cookies: owner })).json.user.orgId;
+    const before = await readHook(wsId);
+    await look('good-token');
+    assert.deepEqual(await readHook(wsId), before);
   });
 });
 

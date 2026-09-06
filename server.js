@@ -3246,6 +3246,15 @@ const DateRules = require('./js/date-rules.js');
 
 const HOOK_TEST_PER_MIN = Number(process.env.RATE_HOOK_TEST_MAX || 6);
 
+/*
+ * Higher than the test-send bound, and on its own bucket, because the RHYTHM
+ * differs rather than the risk. Finding a chat is legitimately pressed several
+ * times in a row — paste the token, press, realise you have not messaged the
+ * bot yet, message it, press again — and a limit tuned for "prove the webhook
+ * works" turns that ordinary loop into a refusal in the middle of onboarding.
+ */
+const TELEGRAM_LOOKUP_PER_MIN = Number(process.env.RATE_TELEGRAM_MAX || 12);
+
 async function getHook(wsId) {
   const meta = await store.getData(wsId);
   return (meta && meta.hook) || null;
@@ -3532,6 +3541,29 @@ app.post('/api/org/hook/test', requireAuth, requireSettingsOwner,
       plain: [head, body].join('\n'),
     });
     res.json({ ok: out.ok, error: out.error || '', hook: publicHook(await getHook(workspaceIdFor(req.user))) });
+  });
+
+/*
+ * Which chats an owner's bot can see, so they never have to read raw JSON.
+ *
+ * Rate-limited on its OWN bucket rather than sharing /api/org/hook/test's.
+ * They are limited for the same reason — an authenticated caller making the
+ * server dial out — but the expected rhythm differs: a lookup is legitimately
+ * pressed two or three times in a row ("message your bot, then try again"),
+ * and spending the test allowance on that would refuse the send that proves
+ * the setup worked.
+ *
+ * Nothing is written. This reads, and a caller who never picks a chat leaves
+ * no trace on the workspace.
+ */
+app.post('/api/org/hook/telegram/chats', requireAuth, requireSettingsOwner,
+  rateLimit('teleglookup', TELEGRAM_LOOKUP_PER_MIN), async (req, res) => {
+    // §30 Phase 2's rule: req.params and cookies are strings already, and a
+    // JSON body is the one place a non-string gets in. Coerced before it can
+    // reach a URL, where an object would stringify to something absurd.
+    const out = await telegramChats(String((req.body && req.body.token) || ''));
+    if (!out.ok) return res.status(400).json({ error: out.error });
+    res.json({ ok: true, chats: out.chats });
   });
 
 /* ---- reminders: what a workspace would be told about today ----------------

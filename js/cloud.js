@@ -310,6 +310,20 @@ const Cloud = (() => {
       setHook: (url) => api('/api/org/hook', { method: 'PUT', body: JSON.stringify({ url }) }, TIMEOUT.admin),
       testHook: () => api('/api/org/hook/test', { method: 'POST', body: '{}' }, TIMEOUT.admin),
       /*
+       * Telegram is the one provider that gives no webhook URL — a bot token,
+       * and a chat id to be dug out of a raw getUpdates response. This asks the
+       * server to do the digging and hand back a list to pick from.
+       *
+       * TIMEOUT.admin for the same reason as setHook and testHook: the server
+       * opens an outbound connection with its own 5s budget, and a client that
+       * gave up first would report a failure the server does not agree with.
+       *
+       * The token is a credential and travels one way only. Nothing here holds
+       * it, and the server never echoes it back — the caller passes it, gets
+       * chats, and lets it go.
+       */
+      telegramChats: (token) => api('/api/org/hook/telegram/chats', { method: 'POST', body: JSON.stringify({ token }) }, TIMEOUT.admin),
+      /*
        * Counts, the exact message that would be sent, and when the last pass
        * ran. Owner-only, and it carries the hook too — one round trip instead
        * of two on a screen that needs both.
