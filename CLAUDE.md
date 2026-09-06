@@ -95,7 +95,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 346 Node tests + 88 Playwright tests, 43 smoke checks. On
+**All green:** 348 Node tests + 89 Playwright tests, 43 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -165,7 +165,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v34`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v35`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -3365,4 +3365,36 @@ fails by name, *"the digest would say 3 but the filter shows 7"*.
   debounced push, and redrawing straight away shows the old window beside the
   new controls — §33's adjacent-and-wrong number in a new place.
 
-`CACHE_VERSION` bumped to `crmbuilder-v34`.
+### The state that rendered as nothing
+
+**Found by running the trial, not the tests**, and it is §36's lesson arriving
+somewhere new. With the default `hour: 9` and a server clock at 02:00, the
+pass correctly skips as `too-early` — and the settings card said **nothing at
+all**, because its only line was *"Last checked …"*, which needs a pass to
+have run. Working exactly as designed, and indistinguishable from broken.
+
+Every branch is named now, and `digestStatusHTML` walks the same gates the
+server walks **in the same order**, so the reason shown is the reason the pass
+would actually stop at:
+
+| Card | State |
+|---|---|
+| *nothing is sent until you switch it on* | off |
+| *set a webhook above first* | on, nowhere to send |
+| *Waiting until 09:00 in \<zone\>, where it is now 07:32* | on, before the morning gate |
+| *Due to go out on the next check* | on, past the hour, not yet run today |
+| *Checked \<when\> — N items. Next check tomorrow* | already ran today |
+
+`zoneParts` carries a **minute** now, so the line can say *07:32* rather than
+*07:00* — an hour-rounded time reads as wrong to somebody looking at their own
+clock, and it sits beside a gate expressed in whole hours.
+
+**The E2E's first version missed a state and then failed against it.** It
+never configured a webhook, so the card correctly said *"set a webhook above
+first"* where the test expected *"Waiting until…"* — the missing state proving
+it needed naming. It walks all four now, choosing the "later today" hour off
+the **workspace's own clock** rather than assuming one, and skipping that
+branch at 23:00 rather than faking it. Checked against the broken state: the
+old card fails on the very first assertion, because *off* said nothing either.
+
+`CACHE_VERSION` bumped to `crmbuilder-v35`.

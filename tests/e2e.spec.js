@@ -3043,3 +3043,81 @@ test('an owner can see exactly what the daily digest would say, before switching
   await expect(page.locator('#remind-enabled')).toHaveValue('on', { timeout: 20000 });
   await expect(page.locator('#remind-days')).toHaveValue('30');
 });
+
+/*
+ * THE CARD ALWAYS SAYS WHAT IT IS WAITING FOR.
+ *
+ * Found by running the trial rather than the tests. With the default 09:00 and
+ * a clock reading 02:00, the pass correctly skips as `too-early` and the card
+ * said NOTHING — its only line was "last checked", which needs a pass to have
+ * run. Working exactly as designed, and indistinguishable from broken.
+ *
+ * Both hours are driven here rather than one, because a status line that is
+ * always present is not the same as one that is right: 23:00 must read as
+ * waiting and 00:00 must not.
+ */
+test('the digest says what it is waiting for, rather than nothing at all', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#onboard-demo')).toBeVisible();
+  await page.click('#onboard-demo');
+  await expect(page.locator('#workspace-name')).toHaveText('Lumen Studio', { timeout: 20000 });
+  await signIn(page, uniqueEmail('waiting-owner'), { claim: 'all' });
+  await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 25000 });
+
+  await page.goto('/#/settings');
+  await expect(page.locator('#remind-enabled')).toBeVisible({ timeout: 20000 });
+  const card = page.locator('.card:has(#remind-enabled)');
+
+  const saveDigest = async (hour) => {
+    await page.selectOption('#remind-enabled', 'on');
+    await page.selectOption('#remind-hour', String(hour));
+    await page.click('#remind-save');
+    await expect(page.locator('.toast').last()).toContainText(/digest on/i, { timeout: 20000 });
+  };
+
+  // 1. Off, and it says so, rather than leaving a blank where an explanation
+  //    should be.
+  await expect(card).toContainText(/nothing is sent until you switch it on/i);
+
+  /*
+   * An hour that cannot have arrived yet — read off the WORKSPACE's own clock
+   * rather than assumed, which is what keeps this deterministic wherever the
+   * suite runs. At 23:00 there is no later hour today, so that branch is
+   * skipped rather than faked.
+   */
+  const nowHour = await page.evaluate(async () => {
+    const r = await fetch('/api/org/reminders').then((res) => res.json());
+    return r.reminders.nowHour;
+  });
+  const laterToday = nowHour === 23 ? null : nowHour + 1;
+
+  // 2. On, but with nowhere to send. The first version of this test missed
+  //    this state entirely and then failed against it — which is the state
+  //    itself proving it needed naming.
+  await saveDigest(laterToday === null ? 0 : laterToday);
+  await expect(card).toContainText(/set a webhook above first/i, { timeout: 20000 });
+
+  await page.locator('#hook-url').fill('https://hooks.example.invalid/services/T9/B9/WAITING');
+  await page.click('#hook-save');
+  await expect(page.locator('.toast').last()).toContainText(/saved/i, { timeout: 20000 });
+  await expect(page.locator('.read-label', { hasText: 'Sending to' })).toBeVisible({ timeout: 20000 });
+
+  // 3. The case that looked like a broken feature: correctly waiting for the
+  //    workspace's morning, and previously saying nothing whatsoever.
+  if (laterToday !== null) {
+    await saveDigest(laterToday);
+    await expect(card).toContainText(
+      new RegExp(`Waiting until ${String(laterToday).padStart(2, '0')}:00`, 'i'),
+      { timeout: 20000 },
+    );
+    // Named to the minute: an hour-rounded time reads as wrong to somebody
+    // looking at their own clock.
+    await expect(card).toContainText(/where it is now \d{2}:\d{2}/i);
+  }
+
+  // 4. Midnight has always arrived, so the same card must stop saying
+  //    "waiting" — a status line that is always present is not the same as one
+  //    that is right.
+  await saveDigest(0);
+  await expect(card).toContainText(/Due to go out/i, { timeout: 20000 });
+});

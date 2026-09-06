@@ -256,7 +256,10 @@ the channel. Then press **Send a test message** to prove the button separately.
 **5. Read the digest before you switch it on.**
 
 Under **Daily digest**, set *Look ahead* to **next 7 days** and *Not before* to
-**00:00**, then look at the preview block. It shows the **exact string** your
+**00:00** — the default is **09:00**, and if the workspace's local clock has
+not reached that yet the pass will correctly do nothing. The card says which
+of those it is waiting on; step 7 below is how to read it. Then look at the
+preview block. It shows the **exact string** your
 team would receive — that is deliberate, so nobody's first sight of the message
 is in a shared channel. Check the Tasks number against step 3. Then set
 **Send it → Once a day** and save.
@@ -290,7 +293,25 @@ On a hand-seeded workspace with one overdue and one upcoming row it reads
 `Lumen Studio — 2 items need attention · Tasks: 1 overdue, 1 due within 7
 days`, which is what this runbook was checked against.
 
-**7. Prove it will not send twice.**
+**7. Read the card before concluding anything is broken.**
+
+The line under **Daily digest** always says what the digest is doing, and
+there are four things it can be:
+
+| What it says | What is true |
+|---|---|
+| *nothing is sent until you switch it on* | It is off |
+| *set a webhook above first* | On, but with nowhere to send |
+| *Waiting until 09:00 in \<zone\>, where it is now 07:32* | On, and correctly waiting for that workspace's morning |
+| *Due to go out on the next check* | On, past the hour, and the next `/health` will send it |
+
+Once a pass has run it says when, and how many items it found.
+
+**"Waiting until…" is the one that looks like a fault and is not.** The
+default hour is 09:00; a server at 02:00 UTC is doing exactly the right thing
+by staying silent. Set *Not before* to **00:00** for a trial.
+
+**8. Prove it will not send twice.**
 
 Hit `/health` again. **Nothing new arrives**, and Settings still shows the same
 *Last checked* time. That is the once-per-local-day rule, and it is what stops

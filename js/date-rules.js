@@ -109,7 +109,7 @@ const DateRules = (() => {
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone: safe,
       year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', hourCycle: 'h23',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
     }).formatToParts(at);
     const get = (type) => Number((parts.find((p) => p.type === type) || {}).value);
     return {
@@ -118,6 +118,10 @@ const DateRules = (() => {
       month: get('month'),
       day: get('day'),
       hour: get('hour') % 24,
+      // Carried so a screen can say "it is 07:32 there now" rather than
+      // rounding to the hour, which reads as wrong to somebody looking at
+      // their own clock.
+      minute: get('minute') % 60,
     };
   }
 

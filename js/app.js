@@ -129,6 +129,49 @@
    * there. Still no hand-maintained list of 400 names (§29) — the list is
    * still the runtime's, with the two values it omits added back.
    */
+  /*
+   * What the digest is doing RIGHT NOW, and it always says something.
+   *
+   * Found by running the trial rather than the tests. With the default 09:00
+   * and a clock reading 02:00, the pass correctly skips as `too-early` — and
+   * the card said nothing at all, because the only line it had was "last
+   * checked", which needs a pass to have run. Working exactly as designed and
+   * indistinguishable from broken, which is §36's lesson arriving in a new
+   * place: a state that renders as nothing is invisible until something makes
+   * it render.
+   *
+   * So every branch is named. The order matters — it walks the same gates the
+   * server walks, in the same order, so the reason shown is the reason the
+   * pass would actually stop at.
+   */
+  function digestStatusHTML(org) {
+    const r = org.reminders;
+    if (!r) return '';
+    const at = org.reminded || {};
+    const when = at.lastRunAt ? esc(fmtWhen(at.lastRunAt)) : '';
+    const hh = `${String(r.hour).padStart(2, '0')}:00`;
+    const zone = r.zoneSet ? esc(r.zone) : 'UTC';
+    const line = (text) => `<p class="settings-hint">${text}</p>`;
+
+    if (!r.enabled) {
+      return line(at.lastRunAt
+        ? `Off. The last check was ${when}.`
+        : 'Off — nothing is sent until you switch it on.');
+    }
+    if (!org.hook || !org.hook.configured) {
+      return line('<strong>Nothing can be sent yet</strong> — set a webhook above first.');
+    }
+    if (at.lastRunOn === r.dayKey) {
+      return line(`Checked ${when}${at.lastCount ? ` — ${at.lastCount} item${at.lastCount === 1 ? '' : 's'}` : ', nothing was due'}. The next check is tomorrow, after ${hh}.`);
+    }
+    if (r.nowHour < r.hour) {
+      // The case that looked like a broken feature: correctly waiting, and
+      // previously saying nothing whatsoever.
+      return line(`<strong>Waiting until ${hh}</strong> in ${zone}, where it is now ${esc(r.nowLabel)}.`);
+    }
+    return line(`<strong>Due to go out</strong> on the next check.${when ? ` The last one was ${when}.` : ''}`);
+  }
+
   function timeZoneOptions() {
     let list = [];
     try {
@@ -2848,8 +2891,7 @@
             <p class="settings-hint"><strong>Right now it would say nothing</strong> — ${org.reminders && org.reminders.skipped === 'no-date-fields'
     ? 'no module here has a date field to watch.'
     : 'nothing is due or overdue inside that window. A quiet day sends no message at all.'}</p>`}
-          ${org.reminded && org.reminded.lastRunAt ? `
-            <p class="settings-hint">Last checked ${esc(fmtWhen(org.reminded.lastRunAt))}${org.reminded.lastCount ? ` — ${org.reminded.lastCount} item${org.reminded.lastCount === 1 ? '' : 's'}` : ' — nothing to say'}.</p>` : ''}
+          ${digestStatusHTML(org)}
           <button class="btn btn-primary" id="remind-save">Save digest settings</button>
         </div>` : ''}
         <div class="card">

@@ -2137,6 +2137,24 @@ describe('reminder preview', () => {
   });
 
   /*
+   * The workspace's own wall clock, so the screen can say what the digest is
+   * WAITING for. Found by running the trial: with the default 09:00 and a
+   * server at 02:00 the pass correctly skips as too-early, and the card said
+   * nothing whatsoever — working exactly as designed and indistinguishable
+   * from broken (§36).
+   */
+  test('it reports the workspace own current time, not the container one', async () => {
+    const { reminders } = await preview();
+    const wall = DR.zoneParts(ZONE, new Date());
+    assert.equal(reminders.nowHour, wall.hour);
+    assert.match(reminders.nowLabel, /^\d{2}:\d{2}$/);
+    assert.equal(reminders.nowLabel, `${String(wall.hour).padStart(2, '0')}:${String(wall.minute).padStart(2, '0')}`);
+    // The comparison the morning gate actually makes, so a screen can predict
+    // it rather than guess.
+    assert.equal(typeof reminders.hour, 'number');
+  });
+
+  /*
    * COUNTS ONLY, and it is a decision rather than an omission: a webhook
    * destination is not necessarily as private as the workspace — a shared
    * client channel is a plausible place for an owner to point it — and §18

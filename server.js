@@ -3470,10 +3470,25 @@ async function remindersDue(wsId, { now = new Date(), ignoreEnabled = false } = 
   const settings = meta.settings || {};
   const remind = remindSettings(settings);
   const zone = DateRules.resolveZone(settings.timezone);
+  /*
+   * The workspace's own wall clock, carried so the screen can say what the
+   * digest is WAITING for.
+   *
+   * Found by running the trial rather than the tests: with the default 09:00
+   * and a server at 02:00, the pass correctly skips as `too-early` and the
+   * settings card says nothing at all — no "last checked" line, because no
+   * pass has run. Working exactly as designed, and indistinguishable from
+   * broken. §36's lesson in a new place: a state that renders as nothing is
+   * invisible until something forces it to render.
+   */
+  const wall = DateRules.zoneParts(zone, now);
+  const pad = (n) => String(n).padStart(2, '0');
   const base = {
     ...remind,
     zone,
     zoneSet: !!settings.timezone,
+    nowHour: wall.hour,
+    nowLabel: `${pad(wall.hour)}:${pad(wall.minute)}`,
     dayKey: DateRules.dayKey(zone, now),
     total: 0,
     overdue: 0,

@@ -240,6 +240,17 @@ describe('a named zone has its own calendar day, and its own idea of "already do
     );
   });
 
+  test('the minute comes back too, so a screen can say 07:32 rather than 07:00', () => {
+    // Rounding to the hour reads as wrong to somebody looking at their own
+    // clock, and this is shown beside a gate expressed in whole hours.
+    assert.equal(DateRules.zoneParts('Asia/Kolkata', INSTANT).minute, 30);
+    assert.equal(DateRules.zoneParts('UTC', INSTANT).minute, 0);
+    for (let m = 0; m < 60; m += 7) {
+      const at = new Date(Date.UTC(2026, 8, 12, 9, m, 0));
+      assert.equal(DateRules.zoneParts('UTC', at).minute, m);
+    }
+  });
+
   test('the local hour comes back on a 0-23 cycle, never 24', () => {
     // Midnight in Tokyo is 15:00 UTC the day before. `hour12: false` selects
     // h24 on some ICU builds and renders this as "24", which would put an
