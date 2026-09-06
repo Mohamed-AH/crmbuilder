@@ -51,7 +51,9 @@
   <h2>Who else sees it</h2>
   <p>The service runs on <strong>Render</strong> (hosting) and
   <strong>MongoDB Atlas</strong> (database). Both hold the data on our behalf in
-  order to run the service. Sign-in is provided by <strong>Google</strong>.</p>
+  order to run the service. Sign-in is provided by <strong>Google</strong>. The
+  daily backup is stored on <strong>GitHub</strong>, in a private repository we
+  control.</p>
 
   <p>If a problem report is sent, we may receive a notification containing
   <strong>your email address and what you wrote</strong> — the diagnostic
@@ -82,11 +84,20 @@
   </ul>
 
   <h2>Where it is kept, and how long</h2>
-  <p>Data sits on Render and MongoDB Atlas infrastructure, currently in their
-  US regions. We keep your workspace for as long as your account exists.
-  Deleted records leave a marker for up to 180 days so the deletion can reach
-  your other devices; the contents are removed immediately. Activity logs and
-  problem reports expire after 90 days.</p>
+  <p>Data is held in <strong>Frankfurt, Germany</strong> — the application on
+  Render and the database on MongoDB Atlas, both in that region. For anyone in
+  the UK, that is a transfer to a country the UK recognises as providing
+  adequate protection, so no additional transfer safeguards are needed.</p>
+
+  <p>We keep your workspace for as long as your account exists. Deleted records
+  leave a marker for up to 180 days so the deletion can reach your other
+  devices; the contents are removed immediately. Activity logs and problem
+  reports expire after 90 days.</p>
+
+  <p>Daily backups are held separately, and are the one place deleted data
+  persists for a short while after you remove it — a backup taken before a
+  deletion still contains it until that backup is discarded. Backups are kept
+  only to recover from a failure and are not used for anything else.</p>
 
   <div class="callout">
     <p><strong>This is a free beta, and backups are limited.</strong> The
