@@ -356,6 +356,25 @@ a.stat-card:hover, .stat-card-add:hover { border-color: var(--border-strong); bo
   border: 1px solid var(--border); font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
+/* "Your webhook did not survive a recovery." Warm rather than red: nothing is
+   broken and nobody did anything wrong — a credential we deliberately do not
+   keep could not come back, and one paste fixes it. An error colour here would
+   read as a fault in the product. Defined, not assumed (§27). */
+/* The translucent-tint idiom this file already uses for --warn (see the sync
+   chip): an alpha-suffixed hex over whatever surface is behind it, so it reads
+   correctly in both themes. A solid light background here would have been
+   hardcoded into a themed app. */
+.note-restore {
+  margin: 0 0 14px; padding: 11px 13px; max-width: 62ch;
+  border: 1px solid #dc680355; border-radius: 8px;
+  background: #dc680318; color: var(--text);
+  font-size: 13px; line-height: 1.6;
+}
+.note-restore code {
+  padding: 1px 5px; border-radius: 5px; background: var(--surface);
+  border: 1px solid var(--border); font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
 /* Telegram setup. Collapsed by default because it is one provider of three,
    and an open block of instructions reads as work everybody has to do. */
 .tg-setup { margin-top: 16px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2); padding: 0 14px; }

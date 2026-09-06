@@ -36,6 +36,7 @@ never change, because everything cross-references them.
 | **Before removing a meter** — what it costs | [`docs/archive/TELEMETRY.md`](docs/archive/TELEMETRY.md) |
 | Backups, export auth, measured usage | §17 |
 | **Restoring a backup** — what it verifies, what it loses | §17 |
+| Restore granularity, and the webhook a recovery cannot bring back | §38 |
 | Problem reports and webhook shapes | §18 |
 | Legal pages, service-worker page trap | §19 |
 | **What the server publishes** (allow-list) | §28 |
@@ -97,7 +98,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 366 Node tests + 91 Playwright tests, 43 smoke checks. On
+**All green:** 368 Node tests + 92 Playwright tests, 43 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -167,7 +168,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v38`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v39`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -3366,6 +3367,64 @@ the global skips them (body-parser sets `req._body` and later parsers bail) —
 the ordering is load-bearing and reversing it would cap a sync push at 64 KB.
 And `curl --data-binary` with a 200 KB argument dies with *"Argument list too
 long"*; write the body to a file first.
+
+### A restore switched off every webhook, silently
+
+Asked as a question — *"each time I restore, is the webhook lost? does everyone
+need to re-add?"* — and the answer was yes, on the operator path, for everybody
+at once, **with nothing anywhere saying so**.
+
+**Two restore mechanisms, and only one has this problem.** `scripts/restore.mjs`
+is whole-deployment: `deleteMany({})` across seven collections, no per-tenant
+filter. The owner's *Settings → Import backup* is one workspace and does not
+touch the hook at all — the client's export carries `settings`, `modules`,
+`records`, and never held the URL to begin with (no read-back, §38). So "can it
+be restored per account" is **yes, but by the owner, not the operator**.
+
+**The defect was the silence, not the loss.** The URL cannot come back — it is a
+credential and is never exported, which is correct. But `restore.mjs` **stripped**
+the `{ redacted: true }` marker before writing, so the information died in the
+operator's terminal: `publicHook()` then answered `{ configured: false }`, which
+is byte-identical to a workspace that never set one up. A recovery therefore
+turned off every customer's notifications and the only clue was a line the
+operator saw once, during an incident, weeks before anyone noticed a digest had
+stopped arriving.
+
+This file's recurring shape, in a new place: **the state that renders as
+nothing** (§36, §39).
+
+`{ needsReentry: true }` is written now instead of stripping. It carries no
+`url`, so `deliverToHook` and the digest gate both refuse it unchanged, and the
+Settings card says the destination needs re-entering rather than offering a
+blank field. **The digest gate needed its own branch**: both states land on
+"nothing configured", and *"set a webhook above first"* is advice for somebody
+who never did the work.
+
+**Not the host, and that was scope creep caught mid-change.** The first version
+exported `{ redacted: true, host }` so the notice could say *"you were sending
+to api.telegram.org"* — a better prompt, and it broke an existing assertion
+that the backup **must not name the webhook host**. That assertion is
+deliberate. Carrying the host would put which chat provider each tenant uses
+into an artifact §17 is already uneasy about, to save an owner from remembering
+a choice they made themselves. Reverted; the notice reads fine without it.
+
+**A test whose name was true and whose assertion was not.** *"the owner is told
+their notifications are off, rather than left to find out"* asserted
+`{ configured: false }` — precisely the state in which they are **not** told. The
+name described the intention and the assertion pinned the opposite, and it
+passed. It now asserts `needsReentry`, with a companion that a workspace which
+never had one is **not** told to re-enter anything — without which, marking every
+empty hook would satisfy the first test while telling people to restore
+something they never had. Both mutations checked: stripping the marker fails two
+tests, marking everyone fails the third.
+
+**The E2E half is injected, not real** — §20's precedent. The state only exists
+after `restore.mjs` has run over a deployment, and Playwright cannot restore its
+own server mid-run, so the journey intercepts `/api/org/reminders` (which carries
+the hook and the digest state together, which is why one interception moves
+both). The real export → restore → boot cycle is covered in
+`tests/backup.test.mjs`. Each UI branch was mutated separately and fails on its
+own.
 
 ### §30's audit table changes
 

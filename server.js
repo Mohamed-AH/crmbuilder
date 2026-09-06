@@ -3269,7 +3269,22 @@ async function getHook(wsId) {
  * persisted and rendered on a screen.
  */
 function publicHook(hook) {
-  if (!hook || !hook.url) return { configured: false };
+  /*
+   * THREE states, not two, and the third is why this shape exists.
+   *
+   * A restore cannot bring the URL back — it is a credential and never leaves
+   * the server (§38) — so `restore.mjs` writes `{ needsReentry: true, host }`
+   * in its place. Reporting that as `configured: false` would make a recovery
+   * that switched off a customer's notifications byte-identical to their never
+   * having set one up, which is the silent outage this distinction removes.
+   *
+   * The flag is all that travels — not the destination. The export does not
+   * name the host either (see redactMeta), so there is nothing here to leak.
+   */
+  if (!hook || !hook.url) {
+    if (hook && hook.needsReentry) return { configured: false, needsReentry: true };
+    return { configured: false };
+  }
   return {
     configured: true,
     host: hostOf(hook.url),
@@ -4032,6 +4047,14 @@ app.get('/api/admin/export', async (req, res) => {
   const redactMeta = (meta) => {
     if (!meta) return meta;
     if (!meta.hook || !meta.hook.url) return meta;
+    /*
+     * NOT EVEN THE HOST. Carrying it was considered when the re-entry notice
+     * was built — "you were sending to api.telegram.org" is a better prompt
+     * than "you had one" — and declined: it would put which chat provider each
+     * tenant uses into an artifact §17 is already uneasy about, to save an
+     * owner from remembering a choice they made themselves. The notice reads
+     * fine without it.
+     */
     return { ...meta, hook: { redacted: true } };
   };
 

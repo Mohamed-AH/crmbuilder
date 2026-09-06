@@ -2923,6 +2923,46 @@ test.describe('workspace notifications', () => {
     await expect(page.locator('#tg-results')).not.toContainText(/send your bot a message now/i);
   });
 
+  /*
+   * A webhook lost to a recovery says so, instead of looking untouched.
+   *
+   * INJECTED, NOT REAL, and §20 has the precedent: the state only exists after
+   * `scripts/restore.mjs` has run over a deployment, and Playwright's harness
+   * cannot restore its own server mid-run. The server half is covered properly
+   * in tests/backup.test.mjs, which performs a real export → restore → boot and
+   * asserts both directions (told / not told). What this covers is the half
+   * that lives in the browser: that the flag reaches the screen and changes
+   * what two different places say.
+   */
+  test('a webhook lost to a recovery is named, not left looking like one never set up', async ({ page }) => {
+    await onboard(page, { name: 'Recovered Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('hook-restored'));
+
+    // /api/org/reminders carries the hook and the digest state together, which
+    // is what the Settings screen reads — so one interception moves both.
+    await page.route('**/api/org/reminders*', async (route) => {
+      const res = await route.fetch();
+      const body = await res.json();
+      body.hook = { configured: false, needsReentry: true };
+      body.reminders = { ...(body.reminders || {}), enabled: true };
+      await route.fulfill({ response: res, json: body });
+    });
+
+    await page.goto('/#/settings');
+    await expect(page.locator('.note-restore')).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('.note-restore')).toContainText(/re-entering/i);
+
+    /*
+     * The digest gate is the second place, and it must not say "set a webhook
+     * above first" — that is advice for somebody who never did the work, and
+     * this owner did. Both branches land on "nothing configured", so a version
+     * that only fixed the card would still tell them the wrong thing here.
+     */
+    const digest = page.locator('.card', { hasText: 'Daily digest' });
+    await expect(digest).toContainText(/paused by a recovery/i);
+    await expect(digest).not.toContainText(/set a webhook above first/i);
+  });
+
   test('a member does not see the notifications card at all', async ({ page, browser }) => {
     await onboard(page, { name: 'Hooked Team', templates: ['Contacts'] });
     await signIn(page, uniqueEmail('hook-boss'));

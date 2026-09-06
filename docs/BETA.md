@@ -556,6 +556,13 @@ Admin → **Beta access**.
   back to the `SIGNUP_MODE` environment variable. Expected, and the reason step
   2 says so out loud.
 
+**If a workspace had a notification webhook, its Settings screen now says the
+destination needs re-entering.** That is correct, not a fault in the restore: a
+webhook URL is a credential and is never exported, so it cannot come back. The
+notice exists because the alternative — a blank field, identical to never having
+set one up — is how a recovery silently switches off a customer's notifications.
+Step 2 tells you how many workspaces are in that state.
+
 Deliberately **not** restored: the monthly egress counter and the alert state.
 A restored deployment starts its own count and will re-announce a threshold it
 is still over, rather than staying quiet because the dead deployment had

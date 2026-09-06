@@ -484,20 +484,58 @@ describe('a webhook URL does not travel in a backup', () => {
     assert.equal(ws.meta.settings !== undefined, true, 'the rest of the meta doc still travels');
   });
 
-  test('the restored deployment has no webhook at all, not a broken one', () => {
-    // The marker is stripped before writing, so publicHook() cannot report a
-    // hook as configured when there is no URL behind it.
-    assert.equal(restoredStore.data?.[hookWsId]?.hook, undefined);
+  test('the restored deployment carries the re-entry marker and no URL', () => {
+    /*
+     * The marker USED to be stripped, and that is what made the loss silent.
+     * What is stored now is a flag with nothing behind it: no url, so
+     * deliverToHook and the digest gate both refuse it, and no host, because
+     * the export does not carry one.
+     */
+    const hook = restoredStore.data?.[hookWsId]?.hook;
+    assert.deepEqual(hook, { needsReentry: true });
+    assert.equal(hook.url, undefined, 'a restored hook must never have a URL behind it');
   });
 
-  test('and the restore says so, because nothing else will', () => {
+  test('and the restore says so, because the owner is not watching the terminal', () => {
     assert.match(restoreOutput, /1 workspace\(s\) had a notification webhook configured/);
     assert.match(restoreOutput, /re-enter/i);
   });
 
+  /*
+   * THIS TEST'S NAME WAS TRUE AND ITS ASSERTION WAS NOT.
+   *
+   * It read "the owner is told their notifications are off, rather than left
+   * to find out", and asserted `{ configured: false }` — which is precisely
+   * the state in which they are NOT told, because it is byte-identical to a
+   * workspace that never set one up. The name described the intention; the
+   * assertion pinned the opposite and passed.
+   */
   test('the owner is told their notifications are off, rather than left to find out', async () => {
     const maya = await signIn(DST, 'maya@fixture.invalid');
     const { json } = await req(DST, '/api/org/hook', { cookies: maya });
+    assert.equal(json.hook.configured, false, 'nothing can be sent — there is no URL');
+    assert.equal(json.hook.needsReentry, true, 'and the owner is told why, rather than seeing a blank field');
+  });
+
+  test('a workspace that never had one is not told to re-enter anything', async () => {
+    // The other half of the distinction. Without this, marking every empty
+    // hook as needing re-entry would "pass" the test above while telling
+    // people to restore something they never had.
+    const nadia = await signIn(DST, 'nadia@fixture.invalid');
+    const { json } = await req(DST, '/api/org/hook', { cookies: nadia });
     assert.deepEqual(json.hook, { configured: false });
+  });
+
+  test('re-entering one clears the notice', async () => {
+    const maya = await signIn(DST, 'maya@fixture.invalid');
+    // Unresolvable on purpose: the save stores it and reports the delivery
+    // failure rather than refusing, because that is a property of the moment
+    // rather than of the URL (§38).
+    const saved = await req(DST, '/api/org/hook', {
+      method: 'PUT', cookies: maya, body: { url: 'https://hooks.replaced.invalid/services/T1/B1/XYZ' },
+    });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.json.hook.configured, true);
+    assert.equal(saved.json.hook.needsReentry, undefined, 'the notice must not outlive the fix');
   });
 });

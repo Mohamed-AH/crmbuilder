@@ -159,7 +159,15 @@
         : 'Off — nothing is sent until you switch it on.');
     }
     if (!org.hook || !org.hook.configured) {
-      return line('<strong>Nothing can be sent yet</strong> — set a webhook above first.');
+      /*
+       * The digest is ON and there is nowhere to send — but WHY differs, and
+       * the difference is the whole point of the needsReentry marker. "Set one
+       * up" is wrong advice for somebody who already had one and lost it to a
+       * recovery; it reads as though they never did the work.
+       */
+      return line(org.hook && org.hook.needsReentry
+        ? '<strong>Paused by a recovery</strong> — the webhook above has to be re-entered before anything can go out.'
+        : '<strong>Nothing can be sent yet</strong> — set a webhook above first.');
     }
     if (at.lastRunOn === r.dayKey) {
       return line(`Checked ${when}${at.lastCount ? ` — ${at.lastCount} item${at.lastCount === 1 ? '' : 's'}` : ', nothing was due'}. The next check is tomorrow, after ${hh}.`);
@@ -2840,6 +2848,19 @@
                exactly the audience that needed help looking for a button that
                does not exist. The Telegram half is set up below instead. -->
           <p class="settings-hint">Send alerts to a chat channel — it goes to your team's channel, not to us. <strong>Slack</strong> and <strong>Discord</strong> each give you a webhook URL to paste below. <strong>Telegram</strong> works differently and is set up further down.</p>
+          ${org.hook && org.hook.needsReentry ? `
+            <!-- A recovery cannot bring a webhook URL back: it is a credential
+                 and is never exported (§38). Before this, the card afterwards
+                 looked exactly like a workspace that had never configured one,
+                 so a restore switched off a customer's notifications and
+                 nothing anywhere said so. The host is safe to show and is what
+                 makes this an instruction rather than a riddle. -->
+            <div class="note-restore">
+              <strong>Your notification destination needs re-entering.</strong>
+              This workspace had one, but the address could not be restored from a backup — it works
+              like a password, so we never keep a copy we could give back. Notifications are off until
+              you paste it again below.
+            </div>` : ''}
           ${org.hook && org.hook.configured ? `
             <!-- A read view, not a filled-in input (§36 rule 2). There is no
                  read-back anywhere in this feature: the URL is a credential and

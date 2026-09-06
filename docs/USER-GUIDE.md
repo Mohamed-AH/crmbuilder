@@ -269,7 +269,9 @@ Three things worth knowing:
   you save it. You'll see enough to recognise which channel it points at. To
   change it, paste a new one; to switch it off, use **Turn off**.
 - **It is never included in a backup**, for the same reason. If your workspace
-  is ever restored from one, an owner has to paste the URL again.
+  is ever restored from one, an owner has to paste the URL again — and the
+  Notifications screen will say so, rather than looking as though nothing was
+  ever set up. Notifications stay off until it is re-entered.
 - **Only the owner** can see or change it — not members, and not view-only
   accounts.
 

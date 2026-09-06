@@ -93,12 +93,25 @@ const modules = workspaces.reduce((n, w) => n + (w.modules || []).length, 0);
  * this is why: the marker is the only thing that can tell an operator their
  * notifications are not coming back on their own.
  *
- * Stripped before writing, so the restored store holds no half-shaped hook for
- * publicHook() to report as configured.
+ * IT IS KEPT NOW, NOT STRIPPED, and that is the whole point of this shape.
+ *
+ * Stripping it made the loss invisible to the one person who has to act on it.
+ * The operator saw a count in their terminal during an incident; the OWNER's
+ * settings card afterwards showed no webhook configured — byte-identical to
+ * never having set one. So a recovery silently switched off every customer's
+ * notifications and nothing anywhere said so. That is this project's recurring
+ * defect: the state that renders as nothing (§36, §39).
+ *
+ * `{ needsReentry: true }` carries no credential and no destination — the
+ * export does not even name the host (server.js redactMeta says why) — and it
+ * is what lets the settings card say "your notification destination did not
+ * survive a recovery" rather than offering a blank field indistinguishable
+ * from one that was never filled in. `deliverToHook` and the digest gate both
+ * test `hook.url`, which is absent here, so nothing tries to send to it.
  */
 const redactedHooks = workspaces.filter((w) => w.meta && w.meta.hook && w.meta.hook.redacted).length;
 for (const ws of workspaces) {
-  if (ws.meta && ws.meta.hook && ws.meta.hook.redacted) delete ws.meta.hook;
+  if (ws.meta && ws.meta.hook && ws.meta.hook.redacted) ws.meta.hook = { needsReentry: true };
 }
 
 console.log(`Backup taken ${backup.exportedAt}`);
@@ -118,6 +131,7 @@ if (redactedHooks) {
   console.log(`\n  ${redactedHooks} workspace(s) had a notification webhook configured.`);
   console.log('  Webhook URLs are credentials and are never exported, so they do NOT come back.');
   console.log('  Each of those owners must re-enter theirs in Settings, or their notifications stay off.');
+  console.log('  Their Settings screen now says so — they do not have to be told individually.');
 }
 
 /*
