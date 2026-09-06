@@ -78,6 +78,7 @@ hosting plan is not the free tier they assume.
 | `REMIND_MAX_PER_PASS` | `25` | workspaces scanned per pass. A ceiling on what one `/health` ping can cost as tenant count grows; the ones it skips are picked up by the next ping the same day |
 | `RATE_HOOK_TEST_MAX` | `6` | webhook test sends per window per IP. Owner-only already, so this is not about the population — it is the one authenticated route that makes the server dial an address the caller chose. The block list in `lib/safe-fetch.js` is the control; this bounds what a compromised owner account can do with it |
 | `SYNC_BODY_LIMIT` | `8mb` | body limit for `/api/sync` and `/api/data` only. Every other route is capped at 64 KB |
+| `TELEGRAM_API_BASE` | `https://api.telegram.org` | **A test seam — do not set it on a real deployment.** It redirects the Telegram chat lookup at a fake, and setting it also stands the SSRF block list down for that one call so a local capture server is reachable. One variable rather than two on purpose: a deployment that does not redirect the host cannot reach the relaxed path. Same shape as `GOOGLE_TOKEN_URL` |
 
 **The rate limiter counts per instance, in memory.** On a single free-tier
 service that is the whole deployment. On a multi-instance one the effective

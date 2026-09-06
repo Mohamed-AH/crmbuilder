@@ -51,6 +51,7 @@ never change, because everything cross-references them.
 | **View-only**: what it must look like, and the hole | §36 · §14 |
 | **Dates**: the due filter, and the UTC parsing trap | §37 |
 | **Outbound webhooks**: the guard, and where the URL lives | §38 |
+| Telegram setup, and why `sendGuarded` hung | §38 |
 | **Daily digest**: the pass, its gates, mentions | §39 |
 | Why a "reminders are stale" alert cannot work | §39 |
 | Workspace time zone — and why the filter ignores it | §39 · §38 · §37 |
@@ -95,7 +96,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 348 Node tests + 89 Playwright tests, 43 smoke checks. On
+**All green:** 352 Node tests + 89 Playwright tests, 43 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -3117,6 +3118,95 @@ never trust it at use.
 somebody in Tokyo looking at the list should see *their* today. The workspace
 zone exists for the server, which has no viewer. Unifying the two reintroduces
 exactly the off-by-one `js/date-rules.js` exists to prevent.
+
+### Telegram setup, and the hang found under it (stage 1 of 3)
+
+Telegram is the one provider that hands you **no webhook URL**. It gives a bot
+token, and the chat id has to be excavated from a raw `getUpdates` response —
+four steps, of which the last three are where non-technical owners stop. The
+card also *said* Telegram "gives you" a URL, which is false for the one
+audience that needed the sentence.
+
+So: paste the token, press **Find my chat**, pick from a list. Stage 1 is the
+server half — the guard change and the lookup. The route and the UI follow.
+
+**Not a new SSRF sink, which is what makes it affordable.** The host is fixed
+and ours to choose; only the token varies, inside the path. It still goes
+through `sendGuarded`, so the block list, the DNS pin and refuse-redirects all
+still apply.
+
+#### `sendGuarded` hung for ever on an oversized reply, and had done since §38
+
+Found while raising the response cap, not by looking for it.
+
+`MAX_BODY_BYTES` is 2048 — right for a *notification*, where nothing on the far
+end has anything to say. `getUpdates` carries a full `from` + `chat` + `message`
+object per update, so two or three messages clear it. Hence `maxBytes`: the
+default is unchanged for every existing caller, and a caller that means to
+**read** the answer says how much it expects.
+
+Raising it exposed two defects in the branch underneath, and the second is the
+serious one:
+
+- **The silence.** Over the cap, the bytes that had arrived were handed back,
+  `JSON.parse` failed, and the caller saw `ok: true, json: null` —
+  indistinguishable from a provider that does not answer JSON. `deliverToHook`
+  decides *"a 2xx is not delivery"* by reading `json.ok === false`, so a
+  truncated Telegram refusal was recorded as a **successful delivery**.
+- **The hang.** `res.destroy()` mid-stream emits `close` and nothing else — no
+  `end`, no `error` — and the code settled only in `end`. So the promise was
+  **never resolved** for any oversized reply arriving in more than one chunk,
+  and nothing rescues it: a socket that has just been destroyed cannot fire its
+  own timeout. Downstream that is `/api/org/hook/test` never answering, and a
+  reminder pass stalling on one workspace whose destination is chatty.
+
+**Measured, not reasoned, and the measurement is the whole reason it was
+found.** A 9 KB body written with one `res.end()` gets `destroy,end,close`; the
+same volume written in twenty chunks gets `destroy,close`. So the obvious test
+— one big write — **passes against the hanging code**. The fixture writes in
+pieces on purpose, and the test races a deadline rather than awaiting, because
+on the unfixed code it does not fail, it hangs.
+
+Settled in the `data` handler now, before the destroy, rather than in a handler
+that will never run.
+
+#### The lookup
+
+`telegramChats(token)` returns `{ ok, chats: [{ id, title, kind }] }` and never
+throws. Four things in it that each stop a working setup reading as broken:
+
+- **No `offset`, deliberately.** Acknowledging one *consumes* the update
+  stream, so a second press would legitimately come back empty and read as a
+  broken button. This is a read; it must leave nothing changed.
+- **`allowed_updates: ['message', 'my_chat_member']`**, and the second is not in
+  the default set so it has to be asked for. It is the one that makes **groups**
+  work: group privacy mode is on by default, so a bot in a group never sees
+  ordinary messages — but being *added* to the group is a `my_chat_member`
+  update, which it does see. To be confirmed in the trial rather than assumed;
+  it decides how the on-screen instruction is worded, not whether this works.
+- **Every failure gets its own words.** 401 (wrong token), 409 (this bot already
+  has a webhook set elsewhere, so its messages cannot be read), `too_large`, and
+  an empty result — which is **not** an error and must not read as one, because
+  Telegram keeps updates for 24 hours and a bot messaged yesterday genuinely has
+  nothing to show. Collapsing any of these into "no chats found" is the same
+  dead end this feature exists to remove, reached from a different direction
+  (§36).
+- **The token is never logged, echoed back, or stored on its own.** It exists in
+  a request body and in memory until the `sendMessage` URL is assembled, and
+  what is persisted is the ordinary `hook.url` — no schema change, no sync
+  change, no export change.
+
+**`TELEGRAM_API_BASE` is the test seam, and the guard relaxation hangs off that
+same variable rather than a flag of its own.** A fixed host cannot be pointed at
+a capture server, and `sendGuarded` refuses loopback besides — so without a seam
+this is only testable against Telegram itself, which is how §30 found the OAuth
+callback had no test at all. Precedent and fix are exactly that one:
+`GOOGLE_TOKEN_URL` / `GOOGLE_USERINFO_URL`. One condition, because two
+independent switches is how the wrong one ends up set in production; a
+deployment that does not redirect the host cannot reach the relaxed path.
+
+`telegramChats` itself is exercised in stage 2, through its route — that is the
+only way to reach it, the same as `deliverToHook`.
 
 ### §30's audit table changes
 

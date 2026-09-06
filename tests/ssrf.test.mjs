@@ -317,6 +317,28 @@ describe('the transport', () => {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           return res.end('{"ok":false,"description":"chat not found"}');
         }
+        /*
+         * Oversized, and written in PIECES on purpose — that is the whole
+         * point of this fixture. A big body handed to res.end() in one go
+         * still emits 'end' after the destroy, so a single-chunk version of
+         * this test passes against the hanging code and proves nothing.
+         */
+        if (req.url === '/big-chunked') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          let i = 0;
+          const tick = setInterval(() => {
+            if (i++ >= 20) { clearInterval(tick); return res.end(); }
+            res.write(JSON.stringify({ filler: 'y'.repeat(1000) }));
+          }, 5);
+          return tick.unref();
+        }
+        // Comfortably over the 2 KB default and comfortably under 64 KB, so
+        // the same URL answers both "refused by default" and "read when the
+        // caller says how much it expects".
+        if (req.url === '/big-json') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: true, filler: 'z'.repeat(8000) }));
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end('{"ok":true}');
       });
@@ -418,6 +440,67 @@ describe('the transport', () => {
     assert.equal(out.ok, false);
     assert.ok(!out.error.includes('AAHsuperSecretToken'), `the token leaked: ${out.error}`);
     assert.ok(!out.error.includes(secret), `the URL leaked: ${out.error}`);
+  });
+
+  /*
+   * THE RESPONSE CAP. Three things, and the middle one was a live bug that had
+   * never been reached because nothing here read a reply worth reading.
+   */
+
+  test('an oversized reply that arrives in pieces SETTLES rather than hanging for ever', async () => {
+    /*
+     * The regression test for the real defect. `res.destroy()` mid-stream
+     * emits 'close' and nothing else — no 'end', no 'error' — and the old code
+     * settled only in 'end', so the promise was never resolved and nothing
+     * rescued it: a socket that has just been destroyed cannot fire its own
+     * timeout. On the unfixed code this test does not fail, it HANGS, which is
+     * why it races a deadline rather than simply awaiting.
+     *
+     * Downstream that hang is /api/org/hook/test never answering, and a
+     * reminder pass stalling on one workspace whose destination is chatty.
+     */
+    const out = await Promise.race([
+      sendGuarded(`http://127.0.0.1:${PORT}/big-chunked`, {}, OPEN),
+      new Promise((r) => setTimeout(() => r({ hung: true }), 4000).unref()),
+    ]);
+    assert.ok(!out.hung, 'sendGuarded never settled on an oversized chunked reply');
+    assert.equal(out.ok, false);
+    assert.equal(out.code, 'too_large');
+  });
+
+  test('an oversized reply is named, not handed back as an unparseable success', async () => {
+    /*
+     * It used to return the bytes that had arrived, so JSON.parse failed and
+     * the caller saw `ok: true, json: null` — indistinguishable from a
+     * provider that does not answer JSON. deliverToHook decides "a 2xx is not
+     * delivery" by reading `json.ok === false`, so a truncated Telegram
+     * refusal was being recorded as a successful delivery.
+     */
+    const out = await sendGuarded(`http://127.0.0.1:${PORT}/big-json`, {}, OPEN);
+    assert.equal(out.ok, false, 'an answer we could not read is not a success');
+    assert.equal(out.code, 'too_large');
+    assert.equal(out.json, null);
+    assert.match(out.error, /2048/, 'the message says what the limit was');
+  });
+
+  test('a caller that means to read the answer can raise the cap, and the default is untouched', async () => {
+    // Same URL, both ways round — so this cannot pass by the body having
+    // shrunk. The default is what every notification path still gets.
+    const refused = await sendGuarded(`http://127.0.0.1:${PORT}/big-json`, {}, OPEN);
+    assert.equal(refused.code, 'too_large');
+
+    const read = await sendGuarded(`http://127.0.0.1:${PORT}/big-json`, {}, { ...OPEN, maxBytes: 65536 });
+    assert.equal(read.ok, true);
+    assert.equal(read.json.ok, true);
+    assert.equal(read.json.filler.length, 8000, 'the whole body was read, not a prefix of it');
+  });
+
+  test('a reply inside the cap is still parsed normally', async () => {
+    // The boundary in the other direction: raising the ceiling for one caller
+    // must not have changed what a small answer does.
+    const out = await sendGuarded(`http://127.0.0.1:${PORT}/hook`, {}, OPEN);
+    assert.equal(out.ok, true);
+    assert.deepEqual(out.json, { ok: true });
   });
 });
 

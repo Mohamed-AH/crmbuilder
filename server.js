@@ -3230,7 +3230,7 @@ app.post('/api/org/leave', requireAuth, async (req, res) => {
  * never inside it — see the comment in pullChanges and §38. There is no
  * read-back anywhere: an owner who has lost the token re-enters it.
  */
-const { sendGuarded, maskUrl, hostOf } = require('./lib/safe-fetch');
+const { sendGuarded, maskUrl, hostOf, emptyBlockList } = require('./lib/safe-fetch');
 
 /*
  * The SAME file the browser loads and tests/dateRules.test.mjs evaluates —
@@ -3316,6 +3316,128 @@ async function deliverToHook(wsId, { rich, plain }) {
       : { ...hook, lastErrorAt: Date.now(), lastError: error },
   });
   return { ok, error: ok ? '' : error };
+}
+
+/* ---- Telegram: finding the chat, so nobody has to read raw JSON -----------
+ *
+ * Telegram is the one provider that hands you no webhook URL. It gives you a
+ * bot token, and the chat id has to be excavated from a getUpdates response —
+ * which is where non-technical owners stop. This turns four steps into paste,
+ * message the bot, press, pick.
+ *
+ * NOT A NEW SSRF SINK, and that is the reason this is affordable at all. The
+ * host is fixed and ours to choose; only the token varies, inside the path. It
+ * still goes out through sendGuarded, so the block list, the DNS pin and the
+ * refuse-redirects property all still apply — this widens no surface, it just
+ * dials a constant.
+ */
+const TELEGRAM_API_BASE = process.env.TELEGRAM_API_BASE || 'https://api.telegram.org';
+
+/*
+ * The test seam, and it is deliberately ONE condition rather than two.
+ *
+ * A fixed host cannot be pointed at a local capture server, and sendGuarded
+ * refuses loopback besides — so without a seam this whole helper is only
+ * testable against Telegram itself, which is how §30's OAuth callback went
+ * years with no test at all. The precedent is exactly that fix: GOOGLE_TOKEN_URL
+ * and GOOGLE_USERINFO_URL are overridable so tests/oauth.test.mjs can drive the
+ * REAL handler against a fake Google.
+ *
+ * The guard relaxation is tied to that same variable being set, not to a flag
+ * of its own. Two independent switches is how the wrong one ends up set in
+ * production; with one, a deployment that does not redirect the host cannot
+ * reach the relaxed path at all. Setting it needs environment access, which is
+ * already the bar for GOOGLE_CLIENT_SECRET.
+ */
+const TELEGRAM_OVERRIDDEN = Boolean(process.env.TELEGRAM_API_BASE);
+
+/*
+ * getUpdates replies are far bigger than a notification's "accepted" — a full
+ * from + chat + message object per update, so two or three of them clear the
+ * 2 KB default on their own. Raised here, and only here.
+ */
+const TELEGRAM_MAX_BYTES = 65536;
+
+function telegramChatLabel(chat) {
+  if (!chat) return '';
+  if (chat.title) return String(chat.title);
+  const name = [chat.first_name, chat.last_name].filter(Boolean).join(' ').trim();
+  if (name) return chat.username ? `${name} (@${chat.username})` : name;
+  return chat.username ? `@${chat.username}` : `Chat ${chat.id}`;
+}
+
+/*
+ * Which chats this bot can currently see. Never throws.
+ *
+ * Returns { ok, chats: [{ id, title, kind }] } or { ok: false, error } with a
+ * message written for the owner rather than for a log. Each failure gets its
+ * OWN wording: "no chats found" for a wrong token, an active webhook, or an
+ * oversized reply is the same dead end this feature exists to remove, reached
+ * from a different direction (§36 — a defect that renders as plausible).
+ */
+async function telegramChats(token) {
+  const clean = String(token || '').trim();
+  if (!clean || clean.length > 200 || /\s/.test(clean)) {
+    return { ok: false, error: 'That does not look like a bot token. Copy the whole line BotFather sent you.' };
+  }
+
+  const out = await sendGuarded(
+    `${TELEGRAM_API_BASE}/bot${encodeURIComponent(clean)}/getUpdates`,
+    {
+      /*
+       * NO `offset`, deliberately. Acknowledging one CONSUMES the update
+       * stream, so a second press would legitimately come back empty and read
+       * as a broken button. This is a read; it must leave nothing changed.
+       *
+       * `my_chat_member` is asked for explicitly because it is not in the
+       * default set — and it is the one that makes groups work. Group privacy
+       * mode is on by default, so a bot in a group never sees ordinary
+       * messages; being ADDED to the group is a my_chat_member update, which
+       * it does see.
+       */
+      allowed_updates: ['message', 'my_chat_member'],
+      limit: 100,
+      timeout: 0,
+    },
+    {
+      maxBytes: TELEGRAM_MAX_BYTES,
+      allowHttp: TELEGRAM_OVERRIDDEN,
+      blockList: TELEGRAM_OVERRIDDEN ? emptyBlockList() : undefined,
+    },
+  );
+
+  if (out.code === 'too_large') {
+    return { ok: false, error: 'Telegram sent back more than we can read. Try again in a few minutes, once the bot has fewer unread messages.' };
+  }
+  if (out.status === 401) {
+    return { ok: false, error: 'Telegram did not recognise that token. Check you copied all of it from BotFather.' };
+  }
+  if (out.status === 409) {
+    return { ok: false, error: 'This bot already has a webhook configured elsewhere, so its messages cannot be read here. Remove that webhook, or use a different bot.' };
+  }
+  if (!out.ok) {
+    return { ok: false, error: out.error || 'Telegram could not be reached just now.' };
+  }
+  if (!out.json || out.json.ok !== true || !Array.isArray(out.json.result)) {
+    return { ok: false, error: 'Telegram sent back something unexpected. Try again in a moment.' };
+  }
+
+  const seen = new Map();
+  for (const update of out.json.result) {
+    const chat = (update && ((update.message && update.message.chat) || (update.my_chat_member && update.my_chat_member.chat))) || null;
+    if (!chat || chat.id === undefined || chat.id === null) continue;
+    const id = String(chat.id);
+    // Last one wins: a group that was renamed should show its current name.
+    seen.set(id, { id, title: telegramChatLabel(chat), kind: String(chat.type || 'chat') });
+  }
+
+  /*
+   * Empty is not an error, and it must not be reported as one — but it does
+   * need its own words. Telegram keeps updates for 24 hours, so a bot messaged
+   * yesterday genuinely has nothing to show, and "no chats found" sends the
+   * owner looking for a fault that is not there.
+   */
+  return { ok: true, chats: [...seen.values()] };
 }
 
 /*
