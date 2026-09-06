@@ -179,8 +179,11 @@ inactivity**, silently, and a repo holding only this workflow goes quiet fast.
 
 **Setting it up:**
 
-1. Create a free check at healthchecks.io. Period **1 day**, grace **1 day** —
-   a nightly job that has not reported in 25 hours is worth a message.
+1. Create a free check at healthchecks.io. Period **1 day**, grace **6 hours** —
+   so a nightly job that has not reported in 30 hours raises a message. The
+   grace has to absorb GitHub's scheduled-workflow delay, which is routinely
+   tens of minutes and occasionally much more; 6 hours is comfortably past that
+   without letting a whole second night pass unnoticed.
 2. Point it at Telegram or email.
 3. Copy its ping URL into the backup repo's secrets as **`HEALTHCHECK_URL`**.
 
@@ -349,6 +352,12 @@ check goes green and its log shows a line like
 `scanned 0, sent 0, failed 0, 3ms`. Counts only: the ping body never carries a
 workspace or module name, because that log is one more place a customer's data
 must not appear.
+
+**In practice the ping arrives about every 14 minutes**, because that is
+UptimeRobot's interval and the pass rides on it — comfortably inside a 1-hour
+period. If **Last Ping** ever reads in hours rather than minutes while the
+check is still green, the deployment has gone to sleep and the grace period is
+the only thing not yet expired.
 
 **Green with `sent 0` is correct.** The check asserts that a pass *ran*, not
 that anything was sent — a quiet weekend, or a deployment where nobody has
