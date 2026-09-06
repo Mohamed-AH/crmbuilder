@@ -697,7 +697,14 @@
       <p>Click <strong>Save workspace</strong> to apply. All three are set by the team's <strong>owner</strong>; everyone else sees them as values rather than as a form.</p>
 
       <h3>Notifications (owners only)</h3>
-      <p>If your team uses Slack, Discord or Telegram, an owner can paste a <strong>webhook URL</strong> in Settings and send a test message to check it works. That test is all it does today — nothing sends on its own yet.</p>
+      <p>An owner can point the workspace at a team chat channel from Settings, and send a test message to check it works. What it sends on its own is the daily digest, below.</p>
+      <p><strong>Slack</strong> and <strong>Discord</strong> each give you a <strong>webhook URL</strong> to paste in. <strong>Telegram does not</strong> — it gives you a bot token instead, and the chat has to be looked up. Open <em>Using Telegram? Set it up here</em> under Notifications and:</p>
+      <ol>
+        <li>Message <strong>@BotFather</strong>, send <code>/newbot</code>, and copy the token.</li>
+        <li><strong>Send your new bot a message</strong> — a bot cannot start a conversation. For a group, add the bot to the group instead.</li>
+        <li>Paste the token, press <strong>Find my chat</strong>, and pick the chat from the list.</li>
+      </ol>
+      <p>If the list comes back empty, Telegram has simply forgotten — it only keeps the last day of activity. Message the bot again and press the button again.</p>
       <div class="note caution">
         <span class="note-label">Careful</span>
         <p>The webhook URL works like a password, so it is never shown to you again after you save it, and it is never included in a backup. If your workspace is restored from one, an owner has to paste it again.</p>

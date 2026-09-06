@@ -113,8 +113,10 @@ being wrong is expensive.
 
 By week 1 there is real data and a real due date to chase, so:
 
-1. **Settings → Notifications**, paste the webhook URL from their Slack,
-   Discord or Telegram channel, and press **Send a test message**. Watch it
+1. **Settings → Notifications**. For Slack or Discord, paste the webhook URL
+   from their channel. For **Telegram** there is no URL to paste — open *Using
+   Telegram? Set it up here*, and the screen walks through BotFather, the
+   token, and **Find my chat**. Then press **Send a test message** and watch it
    arrive in the channel before going further.
 2. Under **Daily digest**, set the look-ahead window and the earliest hour, and
    check the preview — the screen shows the exact message their team will get.

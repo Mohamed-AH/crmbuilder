@@ -227,9 +227,10 @@ regardless; a paid plan removes the wake-up entirely.
 
 **"Can it send email / integrate with X?"**
 No email — there is no mail plumbing at all, deliberately. What it *does* have
-is **outbound webhooks**: an owner pastes a Slack, Discord or Telegram webhook
-URL in Settings, and the workspace can post to that channel. CSV in and out is
-still the data integration surface.
+is **outbound webhooks**: an owner pastes a Slack or Discord webhook URL in
+Settings — or, for Telegram, pastes a bot token and picks the chat from a list
+the app looks up — and the workspace can post to that channel. CSV in and out
+is still the data integration surface.
 
 **"Can it chase me about things that are due?"**
 Yes, once a day. Turn on the **daily digest** in Settings and the workspace

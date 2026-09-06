@@ -356,6 +356,30 @@ a.stat-card:hover, .stat-card-add:hover { border-color: var(--border-strong); bo
   border: 1px solid var(--border); font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
+/* Telegram setup. Collapsed by default because it is one provider of three,
+   and an open block of instructions reads as work everybody has to do. */
+.tg-setup { margin-top: 16px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2); padding: 0 14px; }
+.tg-setup[open] { padding-bottom: 14px; }
+.tg-summary { cursor: pointer; padding: 11px 0; font-size: 13px; font-weight: 600; list-style-position: inside; }
+.tg-steps { margin: 0 0 14px; padding-left: 20px; max-width: 62ch; color: var(--text-soft); font-size: 13px; line-height: 1.7; }
+.tg-steps code {
+  padding: 1px 5px; border-radius: 5px; background: var(--surface);
+  border: 1px solid var(--border); font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+/* The chats a lookup found. Buttons rather than a select: each row carries a
+   kind ("group", "private") that a picker's single line would have to drop,
+   and that is what tells two similarly named chats apart. */
+.tg-chat-list { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 0; }
+.tg-chat {
+  display: flex; align-items: baseline; gap: 10px; width: 100%;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--text); cursor: pointer;
+  font: inherit; font-size: 13px; text-align: left;
+}
+.tg-chat:hover { border-color: var(--accent); }
+.tg-chat[disabled] { opacity: 0.6; cursor: default; }
+.tg-chat-kind { color: var(--text-soft); font-size: 12px; }
 .meter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin: 12px 0; }
 .meter { border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; background: var(--surface-2); }
 .meter-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; font-weight: 600; }

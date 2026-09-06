@@ -6,6 +6,9 @@ const fs = require('fs');
 const PORT = process.env.PORT || 8322;
 const BASE_URL = process.env.BASE_URL || `http://127.0.0.1:${PORT}`;
 const DATA_DIR = process.env.E2E_DATA_DIR || './data/e2e';
+// Below every node --test block (§9 starts at 8300), so a Playwright run and a
+// Node run cannot collide over it.
+const TELEGRAM_PORT = process.env.TELEGRAM_PORT || 8299;
 
 /*
  * Start every run from an empty store.
@@ -51,26 +54,51 @@ module.exports = defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } }],
   ...(process.env.BASE_URL ? {} : {
-    webServer: {
-      command: 'node server.js',
-      url: `http://127.0.0.1:${PORT}/healthz`,
-      timeout: 30000,
-      reuseExistingServer: false,
-      env: {
-        PORT: String(PORT),
-        ALLOW_DEV_LOGIN: '1',
-        DATA_DIR,
-        SESSION_SECRET: 'e2e-secret-not-for-production',
-        MONGODB_URI: '',
-        // Pin the admin account so the admin tests don't depend on which test
-        // happened to create the very first account.
-        ADMIN_EMAILS: 'e2e-admin@example.com',
-        // These journeys are about the app, not the signup gate — every one of
-        // them creates an account, and threading a beta code through all of
-        // them would test the harness. The gate has its own suite in
-        // tests/signup.test.mjs, with a server per mode.
-        SIGNUP_MODE: 'open',
+    /*
+     * Two servers: the app, and a stand-in for api.telegram.org.
+     *
+     * The Telegram chat lookup happens on the SERVER, so no amount of
+     * browser-side stubbing can cover it — the journey either dials the real
+     * Telegram (a network dependency, with a bogus token, in CI) or dials
+     * something of ours. tests/fake-telegram.mjs is the same fixture
+     * tests/api.test.mjs uses, so there is one copy to keep true (§29).
+     *
+     * Playwright starts these in order and waits on each URL.
+     */
+    webServer: [
+      {
+        command: 'node tests/fake-telegram.mjs',
+        url: `http://127.0.0.1:${TELEGRAM_PORT}/healthz`,
+        timeout: 15000,
+        reuseExistingServer: false,
+        env: { PORT: String(TELEGRAM_PORT) },
       },
-    },
+      {
+        command: 'node server.js',
+        url: `http://127.0.0.1:${PORT}/healthz`,
+        timeout: 30000,
+        reuseExistingServer: false,
+        env: {
+          PORT: String(PORT),
+          ALLOW_DEV_LOGIN: '1',
+          DATA_DIR,
+          SESSION_SECRET: 'e2e-secret-not-for-production',
+          MONGODB_URI: '',
+          // Pin the admin account so the admin tests don't depend on which test
+          // happened to create the very first account.
+          ADMIN_EMAILS: 'e2e-admin@example.com',
+          // These journeys are about the app, not the signup gate — every one of
+          // them creates an account, and threading a beta code through all of
+          // them would test the harness. The gate has its own suite in
+          // tests/signup.test.mjs, with a server per mode.
+          SIGNUP_MODE: 'open',
+          // Setting this also stands the SSRF block list down for that one
+          // call, which is what lets it reach loopback — one variable rather
+          // than two, so a deployment that does not redirect the host cannot
+          // reach the relaxed path (CLAUDE.md §38).
+          TELEGRAM_API_BASE: `http://127.0.0.1:${TELEGRAM_PORT}`,
+        },
+      },
+    ],
   }),
 });

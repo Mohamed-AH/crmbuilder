@@ -2833,7 +2833,13 @@
         ${authed && org && canEditSettings() ? `
         <div class="card">
           <div class="card-head"><h2>Notifications</h2></div>
-          <p class="settings-hint">Send alerts to a chat channel. Paste the webhook URL that Slack, Discord or Telegram gives you — it goes to your team's channel, not to us.</p>
+          <!-- This used to say "the webhook URL that Slack, Discord or Telegram
+               gives you", which is true for two of the three. Telegram gives
+               you no such thing — a bot token, and a chat id to dig out of a
+               raw API response — so the only affordance on the card sent
+               exactly the audience that needed help looking for a button that
+               does not exist. The Telegram half is set up below instead. -->
+          <p class="settings-hint">Send alerts to a chat channel — it goes to your team's channel, not to us. <strong>Slack</strong> and <strong>Discord</strong> each give you a webhook URL to paste below. <strong>Telegram</strong> works differently and is set up further down.</p>
           ${org.hook && org.hook.configured ? `
             <!-- A read view, not a filled-in input (§36 rule 2). There is no
                  read-back anywhere in this feature: the URL is a credential and
@@ -2857,6 +2863,33 @@
                    placeholder="https://hooks.slack.com/services/...">
           </div>
           <button class="btn btn-primary" id="hook-save">Save webhook</button>
+
+          <!-- Telegram, which cannot be done by pasting a URL.
+               Collapsed by default: it is one provider out of three, and an
+               open block of setup instructions would read as work everybody
+               has to do. -->
+          <details class="tg-setup">
+            <summary class="tg-summary">Using Telegram? Set it up here</summary>
+            <p class="settings-hint" style="margin-top:12px">Telegram does not hand out a webhook URL. Instead:</p>
+            <ol class="tg-steps">
+              <li>Message <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">@BotFather</a> on Telegram, send <code>/newbot</code>, and copy the token it gives you.</li>
+              <li><strong>Send your new bot a message</strong> — a bot cannot start a conversation. For a group, add the bot to it instead.</li>
+              <li>Paste the token below and press <strong>Find my chat</strong>.</li>
+            </ol>
+            <div class="form-row">
+              <label for="tg-token">Bot token</label>
+              <input class="input" id="tg-token" type="password" autocomplete="off" spellcheck="false"
+                     placeholder="1234567890:AA...">
+            </div>
+            <div class="btn-row">
+              <button class="btn" id="tg-find">${icon('search', 15)} Find my chat</button>
+            </div>
+            <!-- Filled in by the lookup rather than by a re-render: the token
+                 sits in the field above and a full renderSettings() would wipe
+                 it, making the owner paste it again to pick a chat. -->
+            <div id="tg-results"></div>
+            <p class="settings-hint" style="margin:12px 0 0">The token works like a password — anyone holding it can post as your bot. We store it only as the address we send to, and never show it again. <code>/revoke</code> in BotFather replaces it.</p>
+          </details>
 
           <hr class="hr">
           <h3 class="settings-sub">Daily digest</h3>
@@ -3000,6 +3033,79 @@
       if (Cloud.isAuthed) await Cloud.sync().catch(() => {});
       toast(SETTINGS.remind.enabled ? 'Daily digest on' : 'Daily digest off');
       await renderSettings();
+    });
+
+    /*
+     * Telegram: find the chat, then save it as an ordinary webhook.
+     *
+     * The results are painted into #tg-results rather than by re-rendering the
+     * card. A full renderSettings() would wipe the token field, so the owner
+     * would have to paste it again in order to pick a chat they had just been
+     * shown — and the token is the one thing on this screen they cannot
+     * recover from anywhere.
+     */
+    const tgFind = $('#tg-find');
+    if (tgFind) tgFind.addEventListener('click', async () => {
+      const token = $('#tg-token').value.trim();
+      const results = $('#tg-results');
+      if (!token) return toast('Paste the token BotFather gave you');
+      tgFind.disabled = true;
+      results.innerHTML = '<p class="settings-hint" style="margin:12px 0 0">Asking Telegram…</p>';
+      try {
+        const out = await Cloud.org.telegramChats(token);
+        if (!out.chats.length) {
+          /*
+           * Empty is not a failure and must not read as one. Telegram keeps
+           * updates for 24 hours, so a bot messaged yesterday genuinely has
+           * nothing to show, and the answer is "message it now" rather than
+           * "something is wrong".
+           */
+          results.innerHTML = '<p class="settings-hint" style="margin:12px 0 0">'
+            + 'No recent chats. Telegram only remembers the last day, so send your bot a message now '
+            + '(or add it to the group) and press <strong>Find my chat</strong> again.</p>';
+          return;
+        }
+        results.innerHTML = `<p class="settings-hint" style="margin:12px 0 0">Where should the messages go?</p>
+          <div class="tg-chat-list">
+            ${out.chats.map((c) => `
+              <button class="tg-chat" data-chat="${esc(c.id)}">
+                <span>${esc(c.title)}</span>
+                <span class="tg-chat-kind">${esc(c.kind)}</span>
+              </button>`).join('')}
+          </div>`;
+        results.querySelectorAll('.tg-chat').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            // Read the token again rather than closing over it: it belongs in
+            // the field the owner can see, not in a captured variable that
+            // outlives the lookup.
+            const live = $('#tg-token').value.trim();
+            if (!live) return toast('The token has gone — paste it and press Find my chat again');
+            results.querySelectorAll('.tg-chat').forEach((b) => { b.disabled = true; });
+            const url = `https://api.telegram.org/bot${encodeURIComponent(live)}/sendMessage`
+              + `?chat_id=${encodeURIComponent(btn.dataset.chat)}`;
+            try {
+              const saved = await Cloud.org.setHook(url);
+              // The same wording as pasting a URL, and for the same reason:
+              // "saved" alone is true and useless when the next thing that
+              // happens is silence.
+              toast(saved.delivered
+                ? 'Telegram connected, and a test message went through'
+                : `Saved, but nothing was delivered: ${(saved.hook && saved.hook.lastError) || 'no answer'}`);
+              await renderSettings();
+            } catch (err) {
+              toast(err.message || 'That chat could not be saved');
+              results.querySelectorAll('.tg-chat').forEach((b) => { b.disabled = false; });
+            }
+          });
+        });
+      } catch (err) {
+        // The server's refusal names the reason — a token Telegram rejected, a
+        // bot already wired to a webhook elsewhere — and each of those wants a
+        // different thing done about it.
+        results.innerHTML = `<p class="settings-hint" style="margin:12px 0 0">${esc(err.message || 'Telegram could not be reached')}</p>`;
+      } finally {
+        tgFind.disabled = false;
+      }
     });
 
     const hookClear = $('#hook-clear');

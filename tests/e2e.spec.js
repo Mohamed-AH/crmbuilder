@@ -2836,6 +2836,81 @@ test.describe('workspace notifications', () => {
     await expect(page.locator('.read-label', { hasText: 'Sending to' })).toHaveCount(0);
   });
 
+  /*
+   * Telegram, which cannot be set up by pasting a URL.
+   *
+   * Driven against tests/fake-telegram.mjs, which playwright.config.js starts
+   * as a second webServer: the lookup happens on the SERVER, so stubbing in
+   * the browser would prove nothing about the half that does the work.
+   */
+  test('an owner finds their Telegram chat instead of digging a chat id out of JSON', async ({ page }) => {
+    await onboard(page, { name: 'Telegram Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('tg-owner'));
+
+    await page.goto('/#/settings');
+    await expect(page.locator('#hook-url')).toBeVisible({ timeout: 20000 });
+
+    /*
+     * The copy fix is part of the feature, not decoration. The card used to
+     * say Telegram "gives you" a webhook URL, which sent exactly the audience
+     * that needed help looking for a button that does not exist.
+     */
+    const intro = page.locator('.card', { hasText: 'Notifications' }).locator('.settings-hint').first();
+    await expect(intro).toContainText(/set up further down/i);
+
+    await page.click('.tg-summary');
+    // Nothing is dialled without a token, and the message says what is missing.
+    await page.click('#tg-find');
+    await expect(page.locator('.toast').last()).toContainText(/token/i, { timeout: 20000 });
+
+    await page.fill('#tg-token', 'good-token');
+    await page.click('#tg-find');
+
+    // Both chats, and the group is the one that matters: it reaches the list
+    // only through my_chat_member, because a bot under group privacy mode
+    // never sees an ordinary message.
+    await expect(page.locator('.tg-chat')).toHaveCount(2, { timeout: 20000 });
+    await expect(page.locator('.tg-chat', { hasText: 'Sales team' })).toBeVisible();
+
+    await page.locator('.tg-chat', { hasText: 'Sales team' }).click();
+    await expect(page.locator('.toast').last()).toContainText(/saved|connected/i, { timeout: 20000 });
+
+    // Wait on the re-render before reading the DOM (§4), then check the
+    // destination is the masked Telegram form rather than the token.
+    await expect(page.locator('.read-label', { hasText: 'Sending to' })).toBeVisible({ timeout: 20000 });
+    const html = await page.content();
+    expect(html.includes('good-token'), 'the bot token is in the DOM after saving').toBe(false);
+    expect(html).toContain('api.telegram.org');
+  });
+
+  test('an empty Telegram lookup says what to do, rather than reading as a failure', async ({ page }) => {
+    /*
+     * The state this feature most needs to get right. Telegram keeps updates
+     * for 24 hours, so a bot messaged yesterday genuinely has nothing to show
+     * — and "no chats found" sends the owner looking for a fault at their end.
+     * Checked in both directions: a bad token must NOT produce this wording.
+     */
+    await onboard(page, { name: 'Quiet Bot Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('tg-quiet'));
+
+    await page.goto('/#/settings');
+    await expect(page.locator('#hook-url')).toBeVisible({ timeout: 20000 });
+    await page.click('.tg-summary');
+
+    await page.fill('#tg-token', 'empty-token');
+    await page.click('#tg-find');
+    await expect(page.locator('#tg-results')).toContainText(/send your bot a message now/i, { timeout: 20000 });
+    await expect(page.locator('.tg-chat')).toHaveCount(0);
+
+    // A token Telegram rejects is a different problem and gets different
+    // words. The 400 is deliberate, so the console error is declared.
+    test.info().expectedConsoleErrors = [/400/];
+    await page.fill('#tg-token', 'bad-token');
+    await page.click('#tg-find');
+    await expect(page.locator('#tg-results')).toContainText(/BotFather/i, { timeout: 20000 });
+    await expect(page.locator('#tg-results')).not.toContainText(/send your bot a message now/i);
+  });
+
   test('a member does not see the notifications card at all', async ({ page, browser }) => {
     await onboard(page, { name: 'Hooked Team', templates: ['Contacts'] });
     await signIn(page, uniqueEmail('hook-boss'));

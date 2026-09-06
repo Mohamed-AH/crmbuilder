@@ -96,7 +96,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 366 Node tests + 89 Playwright tests, 43 smoke checks. On
+**All green:** 366 Node tests + 91 Playwright tests, 43 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -166,7 +166,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v36`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v37`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -3246,6 +3246,64 @@ fails by name: dropping `my_chat_member` loses the group, adding an `offset`
 trips the request assertion, removing the 409 branch reports *"the destination
 answered HTTP 409"* instead of naming the webhook, and keying the de-duplication
 map by update id returns three chats where there are two.
+
+#### The screen (stage 3)
+
+A collapsed `<details>` under the webhook field: BotFather link, token field,
+**Find my chat**, then a list to pick from. Picking assembles the URL and goes
+through the ordinary `PUT /api/org/hook`, so the save probe, the refuse/warn
+split and the masked read view are all unchanged — **no schema change, no sync
+change, no export change.**
+
+**The copy fix is part of the feature, not decoration.** The card said *"paste
+the webhook URL that Slack, Discord or Telegram gives you"*, which is true for
+two of the three. Telegram gives you no such thing, so the only affordance on
+the card sent exactly the audience that needed help looking for a button that
+does not exist. It now names what each provider actually hands over.
+
+**Results are painted into `#tg-results`, never by re-rendering.** A full
+`renderSettings()` wipes the token field, so an owner would have to paste the
+token again in order to pick a chat they had just been shown — and the token is
+the one thing on that screen they cannot recover from anywhere. For the same
+reason the pick handler **re-reads** the field rather than closing over the
+value: the credential belongs in the input the owner can see, not in a captured
+variable that outlives the lookup.
+
+Collapsed by default because it is one provider of three, and an open block of
+setup instructions reads as work everybody has to do. `.tg-setup`, `.tg-steps`,
+`.tg-chat-list` and friends are **defined in `css/style.css`** — §27's
+invented-class trap, which is how `.note.warn` shipped looking fine and meaning
+nothing.
+
+**Buttons, not a `<select>`.** Each row carries the chat's kind — *group*,
+*private* — and a picker's single line would have to drop it. That label is
+what tells two similarly named chats apart.
+
+#### The fake Telegram is one file, shared by both suites
+
+`tests/fake-telegram.mjs` exports `createFakeTelegram()` for
+`tests/api.test.mjs`, and **`playwright.config.js` runs the same file directly
+as a second `webServer`**. The lookup happens on the *server*, so no amount of
+browser-side stubbing covers it, and the alternative — letting the E2E dial the
+real Telegram with a bogus token — puts a network dependency in CI.
+
+A second copy of the fixture would go stale in the direction that matters, with
+one suite quietly testing a shape the server no longer produces (§29). Port
+**8299**, below every `node --test` block so a Playwright run and a Node run
+cannot collide over it.
+
+Two E2E journeys, each checked against the state that breaks it: reverting the
+copy fix fails *"an owner finds their Telegram chat…"* on its first assertion,
+and collapsing the empty result into *"No chats found"* fails *"an empty
+Telegram lookup says what to do…"*. That second test asserts a bad token gets
+**different** words, so it cannot pass on a version that says one thing for
+every outcome.
+
+**A stale line in two user docs, found while editing them.** `USER-GUIDE.md`
+and `manual.html` both still said the webhook test *"is all it does — nothing
+sends on its own yet"*, two paragraphs above the section describing the daily
+digest that §39 shipped. §27's drift, in the exact pair of files §27 names as
+the easiest to forget.
 
 ### §30's audit table changes
 

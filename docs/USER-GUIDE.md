@@ -241,9 +241,22 @@ workspace for the whole team, so it stays with the person who owns it.
 
 ### Notifications (owners only)
 
-If your team uses Slack, Discord or Telegram, an owner can paste a **webhook
-URL** in Settings and send a test message to check it works. Right now that
-test is all it does — nothing sends on its own yet.
+An owner can point the workspace at a team chat channel from Settings, and
+send a test message to check it works. What it sends on its own is the daily
+digest, below.
+
+**Slack** and **Discord** each give you a **webhook URL** to paste in.
+
+**Telegram does not.** It gives you a bot token instead, and the chat has to be
+looked up. Open *Using Telegram? Set it up here* under Notifications and:
+
+1. Message **@BotFather**, send `/newbot`, and copy the token.
+2. **Send your new bot a message** — a bot cannot start a conversation. For a
+   group, add the bot to the group instead.
+3. Paste the token and press **Find my chat**, then pick the chat from the list.
+
+If the list comes back empty, Telegram has simply forgotten — it only keeps the
+last day of activity. Message the bot again and press the button again.
 
 Three things worth knowing:
 

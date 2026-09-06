@@ -73,7 +73,14 @@ setting to get wrong.
 **Discord** — Server Settings → Integrations → Webhooks → New Webhook, copy the
 URL. **Slack** — an Incoming Webhook app, copy the URL.
 
-**Telegram** takes two steps, because the Bot API needs to know which chat:
+**Telegram** takes two steps, because the Bot API needs to know which chat.
+
+> **In the app, you do not have to do any of this by hand.** Settings →
+> Notifications → *Using Telegram? Set it up here* takes the bot token, calls
+> `getUpdates` for you, and offers the chats it finds. The steps below are for
+> the **environment-supplied** `FEEDBACK_WEBHOOK_URL` — the operator's own
+> channel for problem reports and threshold alerts, which has no screen behind
+> it.
 
 1. Message [@BotFather](https://t.me/BotFather), `/newbot`, and keep the token
    it gives you.

@@ -11,12 +11,12 @@
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import http from 'node:http';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { createFakeTelegram } from './fake-telegram.mjs';
 
 // The same arithmetic the server and the browser use — js/date-rules.js ends
 // with a `typeof module` guard so there is one copy, not three (§39). Used
@@ -219,80 +219,26 @@ async function stopServer() {
   child = null;
 }
 
-/* ---- a fake Telegram ------------------------------------------------------
- *
- * The chat lookup dials a FIXED host, which is what keeps it from being a new
- * SSRF sink — and is also what makes it untestable without a seam. So the app
- * is booted with TELEGRAM_API_BASE pointed here, exactly the way
- * tests/oauth.test.mjs stands up a fake Google against GOOGLE_TOKEN_URL, and
- * for the same reason: §30 found the OAuth callback had gone years with no
- * test because it could not be driven without Google on the other end.
- *
- * One server, switching on the token in the path, so every failure mapping is
- * reachable without a server each. `telegramSeen` records what was actually
- * sent, which is how "no offset is ever acknowledged" is asserted against the
- * request rather than against the code that builds it.
+/*
+ * The fake Telegram lives in tests/fake-telegram.mjs, shared with the E2E run
+ * (playwright.config.js starts the same file as a second webServer). One
+ * fixture rather than two: a second copy would go stale in the direction that
+ * matters, with one suite quietly testing a shape the server no longer
+ * produces (§29).
  */
-let telegramServer = null;
-let telegramSeen = [];
-
-// Two updates naming the SAME chat, plus a group arriving only as a
-// my_chat_member — the two things the de-duplication and the group case turn
-// on. A group under privacy mode never produces a `message` update at all.
-const TELEGRAM_UPDATES = [
-  { update_id: 1, message: { chat: { id: 111, type: 'private', first_name: 'Maya', username: 'maya' } } },
-  { update_id: 2, message: { chat: { id: 111, type: 'private', first_name: 'Maya', username: 'maya' } } },
-  { update_id: 3, my_chat_member: { chat: { id: -900, type: 'group', title: 'Sales team' } } },
-];
-
-function startTelegram() {
-  telegramServer = http.createServer((req, res) => {
-    const chunks = [];
-    req.on('data', (c) => chunks.push(c));
-    req.on('end', () => {
-      let body = null;
-      try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* not json */ }
-      const token = decodeURIComponent((/^\/bot([^/]+)\//.exec(req.url) || [])[1] || '');
-      telegramSeen.push({ url: req.url, token, body });
-
-      const send = (status, payload) => {
-        res.writeHead(status, { 'Content-Type': 'application/json' });
-        res.end(typeof payload === 'string' ? payload : JSON.stringify(payload));
-      };
-
-      if (token === 'bad-token') return send(401, { ok: false, description: 'Unauthorized' });
-      if (token === 'busy-token') return send(409, { ok: false, description: 'terminated by other getUpdates request' });
-      if (token === 'empty-token') return send(200, { ok: true, result: [] });
-      if (token === 'huge-token') {
-        // Over the 64 KB the lookup asks for, written in pieces — a single
-        // large write still emits 'end' after the destroy and would pass
-        // against the hang this cap change fixed (§38).
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        let i = 0;
-        const tick = setInterval(() => {
-          if (i++ >= 80) { clearInterval(tick); return res.end(); }
-          res.write(JSON.stringify({ filler: 'q'.repeat(1000) }));
-        }, 2);
-        return tick.unref();
-      }
-      if (token === 'weird-token') return send(200, { ok: true, result: 'not an array' });
-      return send(200, { ok: true, result: TELEGRAM_UPDATES });
-    });
-  });
-  return new Promise((r) => telegramServer.listen(TELEGRAM_PORT, '127.0.0.1', r));
-}
+const telegram = createFakeTelegram();
 
 before(async () => {
   if (EXTERNAL) return;
   dataDir = await mkdtemp(join(tmpdir(), 'crmb-test-'));
-  // Before the app, because startServer() reads TELEGRAM_BASE into its env.
-  await startTelegram();
+  // Before the app, because startServer() puts its address into the env.
+  await telegram.listen(TELEGRAM_PORT);
   await startServer();
 });
 
 after(async () => {
   await stopServer();
-  if (telegramServer) await new Promise((r) => telegramServer.close(r));
+  await telegram.close();
   if (dataDir) await rm(dataDir, { recursive: true, force: true });
 });
 
@@ -2157,7 +2103,7 @@ describe('the Telegram chat lookup', () => {
     req('/api/org/hook/telegram/chats', { method: 'POST', body: { token }, cookies });
 
   test('lists the chats a bot can see, de-duplicated', async () => {
-    telegramSeen = [];
+    telegram.clear();
     const { status, json } = await look('good-token');
     assert.equal(status, 200);
     // Three updates, two of which name the same chat.
@@ -2182,12 +2128,12 @@ describe('the Telegram chat lookup', () => {
      * my_chat_member would find the private chat and silently lose the group,
      * which is the case owners actually want.
      */
-    telegramSeen = [];
+    telegram.clear();
     const { json } = await look('good-token');
     assert.ok(json.chats.some((c) => c.id === '-900'), 'the group was lost');
     assert.ok(
-      telegramSeen[0].body.allowed_updates.includes('my_chat_member'),
-      `my_chat_member was not requested: ${JSON.stringify(telegramSeen[0].body)}`,
+      telegram.seen[0].body.allowed_updates.includes('my_chat_member'),
+      `my_chat_member was not requested: ${JSON.stringify(telegram.seen[0].body)}`,
     );
   });
 
@@ -2198,11 +2144,11 @@ describe('the Telegram chat lookup', () => {
      * a second press would legitimately come back empty and read as a broken
      * button — a read that quietly mutates the thing it read.
      */
-    telegramSeen = [];
+    telegram.clear();
     const first = await look('good-token');
     const second = await look('good-token');
     assert.equal(second.json.chats.length, first.json.chats.length);
-    for (const seen of telegramSeen) {
+    for (const seen of telegram.seen) {
       assert.equal(seen.body.offset, undefined, `an offset was sent: ${JSON.stringify(seen.body)}`);
     }
   });
@@ -2249,22 +2195,22 @@ describe('the Telegram chat lookup', () => {
   });
 
   test('a token that is obviously not one is refused before anything is dialled', async () => {
-    telegramSeen = [];
+    telegram.clear();
     for (const bad of ['', '   ', 'has spaces in it']) {
       const { status } = await look(bad);
       assert.equal(status, 400, `"${bad}" should not have been accepted`);
     }
-    assert.equal(telegramSeen.length, 0, 'nothing should have been sent for a malformed token');
+    assert.equal(telegram.seen.length, 0, 'nothing should have been sent for a malformed token');
   });
 
   test('a non-string token cannot reach the URL', async () => {
     // §30 Phase 2's rule: a JSON body is the one place a non-string gets in.
-    telegramSeen = [];
+    telegram.clear();
     const { status } = await req('/api/org/hook/telegram/chats', {
       method: 'POST', body: { token: { $ne: null } }, cookies: owner,
     });
     assert.equal(status, 400);
-    assert.equal(telegramSeen.length, 0);
+    assert.equal(telegram.seen.length, 0);
   });
 
   test('the token never comes back in the response', async () => {
@@ -2285,10 +2231,10 @@ describe('the Telegram chat lookup', () => {
     // 403 rather than 404, matching the sibling settings routes: §5's
     // 404-not-403 rule is about CROSS-ORG access, and a member already knows
     // their own workspace exists.
-    telegramSeen = [];
+    telegram.clear();
     const { status } = await look('good-token', member);
     assert.equal(status, 403);
-    assert.equal(telegramSeen.length, 0, 'a refused caller must not make the server dial out');
+    assert.equal(telegram.seen.length, 0, 'a refused caller must not make the server dial out');
   });
 
   test('a signed-out caller is refused', async () => {
