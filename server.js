@@ -3281,6 +3281,91 @@ app.post('/api/org/leave', requireAuth, async (req, res) => {
   res.json({ ok: true, user: publicUser(updated) });
 });
 
+/* ---- deleting your own account -------------------------------------------
+ *
+ * The route §21 said would come. `wouldStrandDeployment()` lives inside
+ * `deleteAccount()` rather than at the admin call site precisely so that this
+ * one inherits the invariant instead of having to remember it — and it is the
+ * first caller for which that guard is actually reachable, because the admin
+ * route refuses any action on your own account.
+ *
+ * **No id in the path.** The account deleted is the session's, full stop —
+ * §5's rule that identity is what the server established, never what the
+ * caller claimed. A `DELETE /api/me/:id` would be one typo from an
+ * authorisation bug on the most destructive route in the product.
+ *
+ * **Leaving and deleting are different acts** and this is the one that
+ * destroys (§15). `deleteAccount()` takes the workspace only when nobody is
+ * left in the org, so a colleague deleting their account leaves the team's
+ * data standing — which is the same rule `DELETE /api/org/members/:id`
+ * already follows, arrived at from the other side.
+ */
+app.get('/api/me/deletion', requireAuth, async (req, res) => {
+  /*
+   * What deleting would cost, so the confirmation can name it.
+   *
+   * Computed on the SERVER rather than counted on the device, because the
+   * device holds a replica: a member who has never synced would be told their
+   * workspace is empty and then lose a team's records. The one number that
+   * matters most is the one a stale client is least able to give.
+   */
+  const members = req.user.orgId ? await store.listUsers(req.user.orgId) : [];
+  const alone = members.filter((m) => m.id !== req.user.id).length === 0;
+  const wsId = workspaceIdFor(req.user);
+  /*
+   * Counted live with `countItems`, not read off the meta doc's
+   * `recordCount`. That figure is refreshed by `refreshCounts()` on a push, so
+   * a workspace nobody has written to since a colleague's device synced can
+   * carry a stale one — and the number in a delete confirmation is the last
+   * place to show a figure that is merely usually right.
+   */
+  const [modules, records] = alone
+    ? await Promise.all([store.countItems('modules', wsId), store.countItems('records', wsId)])
+    : [0, 0];
+  res.json({
+    // Whether the workspace goes with the account, which is the difference
+    // between "you lose your login" and "the CRM is gone".
+    deletesWorkspace: alone,
+    records,
+    modules,
+    teamSize: members.length,
+    // Refusals are reported BEFORE the button is pressed rather than after, so
+    // the screen can say what to do instead of naming a rule at the last step.
+    blocked: (await wouldStrandDeployment(req.user)) ? 'lastPlatformAdmin'
+      : (await wouldStrandTeam(req.user)) ? 'lastOwner' : null,
+  });
+});
+
+app.delete('/api/me', requireAuth, async (req, res) => {
+  /*
+   * The last owner of a populated team may not delete, for §15's one reason:
+   * walking away leaves colleagues with a workspace nobody can administer.
+   * `wouldStrandTeam` is the same check leaving, self-demotion and joining
+   * already use — a fourth door onto the same room, not a fourth rule.
+   *
+   * Checked here rather than inside `deleteAccount()` because that function is
+   * also the ADMIN path, where an operator removing somebody is entitled to
+   * strand a team they are cleaning up. Same act, different authority.
+   */
+  if (await wouldStrandTeam(req.user)) {
+    return res.status(409).json({
+      error: 'You are the only owner of this team. Make someone else an owner before you delete your account.',
+      reason: 'lastOwner',
+    });
+  }
+  const out = await deleteAccount(req.user);
+  if (!out.ok) {
+    return res.status(409).json({
+      error: 'You are the only platform administrator on this deployment. Promote someone else first.',
+      reason: out.reason,
+    });
+  }
+  // The cookie names an account that no longer exists. Clearing it here means
+  // the next request is anonymous even if the client never gets to call logout.
+  res.clearCookie(COOKIE, { path: '/' });
+  return res.json({ ok: true, deletedWorkspace: out.deletedWorkspace });
+});
+
 /* ---- the workspace's outbound webhook -------------------------------------
  *
  * The destination is chosen by a CUSTOMER, which is the thing that makes this

@@ -1494,6 +1494,160 @@ describe('tenant isolation', () => {
   });
 });
 
+/*
+ * Deleting your own account — the route §21 said would come, and the first
+ * caller for which `wouldStrandDeployment()` inside `deleteAccount()` is
+ * actually reachable (the admin route refuses any action on your own account).
+ *
+ * Its own accounts throughout, because these tests destroy the ones they use.
+ */
+describe('deleting your own account', () => {
+  const solo = jar();
+  const owner = jar();
+  const mate = jar();
+  const admin = jar();
+  let orgId = null;
+  let mateId = null;
+
+  before(async () => {
+    await req('/auth/dev', { method: 'POST', body: { email: 'gone-solo@bye.test' }, cookies: solo });
+    await req('/api/sync', {
+      method: 'POST',
+      body: {
+        since: 0,
+        modules: [{ id: 'bye-m1', updatedAt: 10, doc: { id: 'bye-m1', name: 'Contacts', fields: [] } }],
+        records: [{ id: 'bye-r1', updatedAt: 11, doc: { id: 'bye-r1', moduleId: 'bye-m1', data: { name: 'Only Mine' } } }],
+      },
+      cookies: solo,
+    });
+
+    const o = await req('/auth/dev', { method: 'POST', body: { email: 'gone-owner@crew.test' }, cookies: owner });
+    orgId = o.json.user.orgId;
+    const m = await req('/auth/dev', { method: 'POST', body: { email: 'gone-mate@crew.test' }, cookies: mate });
+    mateId = m.json.user.id;
+    const inv = await req('/api/org/invites', { method: 'POST', body: {}, cookies: owner });
+    await req('/api/org/join', { method: 'POST', body: { code: inv.json.invite.code }, cookies: mate });
+    await req('/api/sync', {
+      method: 'POST',
+      body: {
+        since: 0,
+        modules: [{ id: 'bye-m2', updatedAt: 10, doc: { id: 'bye-m2', name: 'Deals', fields: [] } }],
+        records: [{ id: 'bye-r2', updatedAt: 11, doc: { id: 'bye-r2', moduleId: 'bye-m2', data: { title: 'Team work' } } }],
+      },
+      cookies: owner,
+    });
+    // The first-ever account is this deployment's platform admin.
+    await req('/auth/dev', { method: 'POST', body: { email: 'owner@example.com' }, cookies: admin });
+  });
+
+  /*
+   * The preview is computed on the SERVER, and that is the point of having one.
+   * A device holds a replica: a member who has never synced would be told the
+   * workspace is empty and then lose a team's records.
+   */
+  test('the preview says whether the workspace goes, and what is in it', async () => {
+    const alone = await req('/api/me/deletion', { cookies: solo });
+    assert.equal(alone.status, 200);
+    assert.equal(alone.json.deletesWorkspace, true);
+    assert.equal(alone.json.records, 1);
+    assert.equal(alone.json.modules, 1);
+    assert.equal(alone.json.blocked, null);
+
+    // A colleague deleting their account takes nothing with them, so the
+    // confirmation must not offer to count a team's records at them.
+    const inTeam = await req('/api/me/deletion', { cookies: mate });
+    assert.equal(inTeam.json.deletesWorkspace, false);
+    assert.equal(inTeam.json.records, 0);
+    assert.equal(inTeam.json.teamSize, 2);
+  });
+
+  /*
+   * Refused BEFORE the button rather than after it. A rule named at the last
+   * step is a rule somebody meets holding a confirmation they already typed.
+   */
+  test('the last owner of a populated team is told in advance, and refused', async () => {
+    const preview = await req('/api/me/deletion', { cookies: owner });
+    assert.equal(preview.json.blocked, 'lastOwner');
+
+    const attempt = await req('/api/me', { method: 'DELETE', cookies: owner });
+    assert.equal(attempt.status, 409);
+    assert.equal(attempt.json.reason, 'lastOwner');
+    assert.match(attempt.json.error, /only owner/i);
+    // Still there, still where they were.
+    const still = await req('/api/me', { cookies: owner });
+    assert.equal(still.json.authenticated, true);
+    assert.equal(still.json.user.orgId, orgId);
+  });
+
+  test('the last platform admin is warned, and this deployment still has one', async () => {
+    /*
+     * Asserted through the preview rather than by pressing the button: the
+     * whole rest of this file signs in as `owner@example.com` to exercise the
+     * admin surface, so a test that proved the guard by deleting it would
+     * prove it once and break everything after. `wouldStrandDeployment()` is
+     * the same function `deleteAccount()` consults, so the preview is reading
+     * the real answer rather than a copy of the rule.
+     */
+    const preview = await req('/api/me/deletion', { cookies: admin });
+    assert.equal(preview.json.blocked, 'lastPlatformAdmin');
+  });
+
+  /*
+   * §15's distinction, from the self-service side: deleting an account is not
+   * removing a member, and a colleague leaving by this door must not take the
+   * team's records.
+   */
+  test('a colleague deleting their account leaves the team standing', async () => {
+    const before = await req('/api/sync?since=0', { cookies: owner });
+    const gone = await req('/api/me', { method: 'DELETE', cookies: mate });
+    assert.equal(gone.status, 200);
+    assert.equal(gone.json.deletedWorkspace, false);
+
+    const after = await req('/api/sync?since=0', { cookies: owner });
+    assert.deepEqual(
+      after.json.records.map((r) => r.id),
+      before.json.records.map((r) => r.id),
+      'a member deleting their own account is not a way to delete a team\u2019s data',
+    );
+    const team = await req('/api/org/members', { cookies: owner });
+    assert.equal(team.json.members.length, 1);
+    assert.ok(!team.json.members.some((m) => m.id === mateId));
+  });
+
+  test('deleting a solo account takes the workspace, and the session with it', async () => {
+    const gone = await req('/api/me', { method: 'DELETE', cookies: solo });
+    assert.equal(gone.status, 200);
+    assert.equal(gone.json.deletedWorkspace, true);
+
+    // The cookie named an account that no longer exists, so the route clears
+    // it: the very next request is anonymous even if the client never gets to
+    // call logout.
+    const after = await req('/api/me', { cookies: solo });
+    assert.equal(after.json.authenticated, false);
+
+    /*
+     * And the data really went, proved by coming back rather than by trusting
+     * the response. Signing in with the same address is a NEW account — email
+     * is the identity (§4), so this is the strongest available check that the
+     * old workspace is not simply orphaned somewhere.
+     */
+    const again = jar();
+    await req('/auth/dev', { method: 'POST', body: { email: 'gone-solo@bye.test' }, cookies: again });
+    const fresh = await req('/api/sync?since=0', { cookies: again });
+    assert.equal(fresh.json.records.length, 0);
+    assert.equal(fresh.json.modules.length, 0);
+  });
+
+  test('there is no way to aim the route at somebody else', async () => {
+    // No id in the path, so this is not a route at all rather than a route
+    // with a check somebody could get wrong later (§5: identity is what the
+    // server established, never what the caller claimed).
+    const aimed = await req(`/api/me/${mateId}`, { method: 'DELETE', cookies: owner });
+    assert.ok([404, 405].includes(aimed.status), `expected no such route, got ${aimed.status}`);
+    assert.equal((await req('/api/me', { method: 'DELETE' })).status, 401, 'and it needs a session at all');
+  });
+});
+
 describe('admin surface', () => {
   const admin = jar();
   const user = jar();

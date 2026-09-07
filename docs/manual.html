@@ -709,6 +709,26 @@
       <p><strong>Settings → Export data (JSON)</strong> gives you the complete workspace: all modules, all records, and your settings. It's the format the importer on the same page expects, and it's how you move a workspace between devices without an account.</p>
 
       <p>Your data is yours. There is no lock-in and no export limit.</p>
+
+      <h3>When someone asks what you hold about them</h3>
+      <p>Settings → <strong>Data requests</strong>. Type their name — or part of it, or their email address — and press Search. It looks in every text field of every record, and reports three things worth knowing:</p>
+      <ul>
+        <li><strong>Where they appear</strong>, module by module, so you can go and look.</li>
+        <li><strong>Names that only appear as a link.</strong> If a Deal points at a contact, that person is found even though their name is nowhere in the Deal's own fields.</li>
+        <li><strong>Values under fields you removed.</strong> Deleting a column offers to delete what was in it; if you chose <em>Keep the data</em>, those values are still in the workspace and still in every backup. They show here marked <em>removed field</em>.</li>
+      </ul>
+
+      <div class="note caution">
+        <span class="note-label">Careful</span>
+        <p><strong>Read the results before you send anything.</strong> A search matches text, so it can catch a different person with a similar name — and a record that mentions two people holds data about both. The screen shows what it found first; the download button is underneath.</p>
+      </div>
+
+      <p>The file is JSON, and it carries the limits of the search inside it, because whoever reads it next probably did not run it. The search does not find a different spelling or a nickname, a number stored in a <strong>Number</strong> or <strong>Currency</strong> field, anything on a colleague's device that has not synced, or deleted records — a deletion discards the contents, so there is nothing left to find.</p>
+
+      <h3>Closing your account</h3>
+      <p>Settings → Danger zone → <strong>Delete my account</strong>. Anyone can close their own account, whatever their role. You are told what it costs before anything happens, and the numbers come from the server rather than from this device: on your own, your workspace goes with the account and the confirmation says how many records and modules that is; on a team, the team keeps its workspace and you lose your access to it.</p>
+      <p>Two cases are refused, and you are told in advance rather than at the last step: you cannot close your account while you are the only owner of a team that still has other people in it — make someone else an owner first — or the only administrator of the whole deployment.</p>
+      <p>It cannot be undone, and it clears the workspace off this device too. Export a backup first if you might want your records.</p>
     </section>
 
     <!-- 9 -->

@@ -404,6 +404,37 @@ a.stat-card:hover, .stat-card-add:hover { border-color: var(--border-strong); bo
 .tg-chat:hover { border-color: var(--accent); }
 .tg-chat[disabled] { opacity: 0.6; cursor: default; }
 .tg-chat-kind { color: var(--text-soft); font-size: 12px; }
+/* Subject-access search. Defined here rather than assumed: an undefined class
+   renders as an unstyled box that still looks plausible in a screenshot, which
+   is how `.note.warn` shipped meaning nothing (§27). */
+.dsar-search { display: flex; gap: 8px; align-items: center; margin: 12px 0; max-width: 62ch; }
+/* The input carries `.input`, which is `width: 100%` and sits later in this
+   file — so the button would be squeezed to nothing without a flex basis of
+   its own here. §4's cascade trap, in the shape it usually takes. */
+.dsar-search .input { flex: 1 1 auto; min-width: 0; }
+.dsar-search .btn { flex: 0 0 auto; }
+.dsar-list { list-style: none; margin: 12px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-width: 62ch; }
+.dsar-hit {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);
+}
+.dsar-where { font-size: 13px; font-weight: 600; }
+.dsar-fields { font-size: 12px; color: var(--text-soft); }
+.dsar-tag {
+  display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 99px;
+  background: var(--border); color: var(--text-soft); font-size: 11px; font-weight: 600;
+}
+/* A flat tint rather than `color-mix`, which appears nowhere else in this file
+   and would be the one rule that silently does nothing on an older browser —
+   leaving the "removed field" tag looking identical to the neutral one, which
+   is the distinction it exists to draw. */
+.dsar-tag-warn { background: #fdf1e3; color: #b54708; }
+/* This file selects dark with the media query and nothing else — there is no
+   `data-theme` attribute and no `.dark` class to hang a rule on, so writing
+   one would be the invented-class trap wearing a selector. */
+@media (prefers-color-scheme: dark) {
+  .dsar-tag-warn { background: #3a2408; color: #f5b678; }
+}
 .meter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin: 12px 0; }
 .meter { border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; background: var(--surface-2); }
 .meter-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; font-weight: 600; }

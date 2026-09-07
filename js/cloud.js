@@ -340,6 +340,12 @@ const Cloud = (() => {
     // cannot record agreement to text the deployment is not serving.
     acceptTerms: () => api('/api/me/terms-accepted', { method: 'POST', body: '{}' }, TIMEOUT.auth),
 
+    // Closing your own account. The preview is a separate call because the
+    // confirmation has to name what will go BEFORE anything does, and only the
+    // server can count a workspace this device may be a stale replica of.
+    deletionPreview: () => api('/api/me/deletion', {}, TIMEOUT.auth),
+    deleteAccount: () => api('/api/me', { method: 'DELETE' }, TIMEOUT.auth),
+
     feedback: {
       send: (message, context) => api('/api/feedback', { method: 'POST', body: JSON.stringify({ message, context }) }, TIMEOUT.admin),
     },

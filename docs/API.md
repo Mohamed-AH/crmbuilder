@@ -7,7 +7,7 @@
 > and every section here points at the relevant one rather than restating it —
 > one fact, one home (`CLAUDE.md` §27).
 
-48 routes over six boundaries. All JSON unless noted. All authenticated routes
+52 routes over six boundaries. All JSON unless noted. All authenticated routes
 take the session cookie; there is no bearer token anywhere except
 `/api/admin/export`, which is deliberately different (see §5).
 
@@ -480,7 +480,35 @@ GET  /healthz                   older liveness probe
 POST /api/feedback              a problem report
 POST /api/access-request        reads ASK_COOKIE, never req.body.email
 POST /api/me/beta-accepted      stamps betaAcceptedAt
+POST /api/me/terms-accepted     stamps termsAcceptedVersion — the SERVER's, never the body's
+GET  /api/me/deletion           what closing this account would cost, and whether it is refused
+DELETE /api/me                  close this account — no id in the path, ever
 ```
+
+### Closing your own account
+
+Two routes, and the split is the point: the preview says what will go **before**
+anything does, so a refusal is reported in advance rather than after somebody
+has confirmed.
+
+```
+GET    /api/me/deletion  → { deletesWorkspace, records, modules, teamSize, blocked }
+DELETE /api/me           → { ok, deletedWorkspace }   409 { reason } when refused
+```
+
+- **`blocked`** is `null`, `'lastOwner'` or `'lastPlatformAdmin'`. It is
+  computed by the same `wouldStrandTeam()` / `wouldStrandDeployment()` the
+  DELETE consults, so it reports the real answer rather than a copy of the rule.
+- **`records` and `modules` are counted live** (`countItems`), not read off the
+  meta doc's cached `recordCount`, and they are `0` unless the account is the
+  last one in its org — a colleague's deletion takes nothing.
+- **There is no id in the path**, so the route cannot be aimed at anybody:
+  §5's rule that identity is what the server established. `DELETE /api/me/:id`
+  is not a route.
+- The DELETE clears the session cookie, because it names an account that no
+  longer exists.
+- Reasoning: `CLAUDE.md` §43, and §15 for why deleting and leaving are
+  different acts.
 
 ### `/health` and the alert loop
 

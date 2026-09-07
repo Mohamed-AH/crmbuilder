@@ -66,6 +66,8 @@ never change, because everything cross-references them.
 | **A modal button that settled as a dismissal** | §41 · §22 |
 | **Consent & lawful basis template** | §42 |
 | **CSV date import** — the day it lost, and DD/MM | §42 · §37 |
+| **Subject access requests**: the search, and what it cannot find | §43 |
+| **Closing your own account** — and what it takes with it | §43 · §15 |
 | Workspace time zone — and why the filter ignores it | §39 · §38 · §37 |
 | E2E suite slow or "flaky" | §32 |
 | **What tombstones cost**, and reading storage figures | §33 · §26 |
@@ -94,6 +96,7 @@ js/scope.js           whose data is this — storage scopes (see §11)
 js/db.js              IndexedDB wrapper, one database per scope
 js/csv.js             RFC 4180 CSV reader/writer
 js/date-rules.js      calendar-day arithmetic for the due filter (see §37)
+js/dsar.js            finds every place one person appears (see §43)
 js/templates.js       prebuilt module templates
 js/demo-data.js       fictional business (generated — see §6)
 js/tour.js            guided walkthrough engine (no dependencies)
@@ -108,7 +111,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 381 Node tests + 98 Playwright tests, 43 smoke checks. On
+**All green:** 398 Node tests + 101 Playwright tests, 44 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -155,6 +158,11 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
   set aside: it needs per-module filtering in sync, or a member receives rows
   they cannot see.
 - **Undoing a delete** — a tombstone discards the body (§26). Costed, not built.
+- **A date-format control on the CSV import screen.** `03/04/2026` is read
+  American-style whatever the browser's locale, so a UK spreadsheet imports
+  some rows wrong and some blank (§42). **Open work, not a closed decision** —
+  §42 explains why picking a convention silently is the wrong fix and what the
+  right one is. The docs carry the `YYYY-MM-DD` workaround meanwhile.
 
 ---
 
@@ -178,7 +186,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v41`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v42`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -4473,3 +4481,164 @@ which is the assertion. Left alone. If this recurs, start from the joiner's
 console rather than from the timeout — `Could not join that team` in it would
 mean `reconcileWorkspace` threw after a server-side join that did succeed, and
 that is a different bug from the one the timeout suggests.
+
+
+---
+
+## 43. Subject access requests, and closing your own account
+
+Phase 4 of the UK launch (`docs/archive/UK-LAUNCH.md`), in the two stages the
+plan sized it at. Both are controller-side tools: a tenant answering a request
+about *their* customer, and a tenant leaving. Neither makes the obligation ours.
+
+### Stage 1 — the search, and why it is a search
+
+**This data model has no concept of a data subject**, which the plan named and
+which is the whole shape of the feature. A person is a record in Contacts, but
+their name may equally sit in a Notes body, in a relation on a Deal, or in a
+field somebody invented last year. So the answer to "what do you hold about me"
+is a **text search across every stored value**, and the output is a list of
+places to go and look rather than an automatic extract.
+
+Client-only, no endpoint, nothing the server can refuse — §37's due-filter
+shape. `js/dsar.js` is pure and carries the matching rules; `tests/dsar.test.mjs`
+requires it through §39's seam, so what is unit-tested is what the browser runs.
+
+**Four decisions inside the matching, and each is a way the search could have
+answered wrongly:**
+
+- **Relations are matched on the resolved NAME, never the stored id.** A person
+  appears on a Deal without their name being anywhere in that Deal's values —
+  the field holds a uuid. Searching raw values finds nothing, and "we hold
+  nothing about you" is the one answer a subject access request must never get
+  wrong. `relationNameMap()` builds names for **every** record in the
+  workspace, rather than reusing `primeRelationCache`, which fills lazily per
+  module for rendering: a module it never primed is a person the answer
+  silently does not mention.
+- **It walks `record.data`, not `mod.fields`.** §22: removing a field leaves
+  its values in place unless the user chose to purge them, and they travel in
+  every export. Walking the schema would miss data the workspace genuinely
+  holds. A key with no field is reported as `orphan` and shown as *removed
+  field* — the single most useful thing this search can tell a controller,
+  because it is data they had stopped being able to see.
+- **Accent- and case-folded on both sides.** "Jose" has to find "José". Cheap,
+  and without it the tool is confidently wrong about exactly the names a UK/EU
+  customer base contains.
+- **Sample rows are included and flagged, never filtered.** Editing a seeded row
+  keeps `_demo` (§11), so a row can be fictional in origin and hold something
+  real typed over it. Hiding them makes the bundle quietly incomplete; naming
+  them lets the reviewer discard them at a glance.
+
+**Two characters minimum**, not one and not three: one matches most of a
+workspace and buries the answer, three refuses "Li" and "Ng".
+
+**Available to every role, deliberately** — the same reasoning §36 records for
+Export: it reads and writes nothing, and it returns strictly *less* than the
+export button directly above it already hands anybody. Gating the subset while
+allowing the whole would be theatre.
+
+**Results are shown before anything is downloadable, and that is the design.**
+A substring search over-matches — "Ali" finds "Alison" — and a record naming two
+people holds data about both. Sending that on is itself a disclosure, so the
+review happens on screen and the download button sits underneath it.
+
+**The limits travel inside the file.** The bundle is read by somebody who did
+not run the search and never saw the warning: a colleague, a solicitor, the
+subject. So `limits` is part of the JSON — different spellings, numbers in a
+Number field, a colleague's device that has never synced, and the instruction to
+review. A file that reads as a complete answer to a question it only partly
+answers is the failure mode here.
+
+**It syncs first, and says when it could not.** This device holds a replica;
+answering a legal question from yesterday's copy is §39's stale-preview problem
+with a much larger bill. When the pull fails the result says which rows it was
+able to look at rather than quietly meaning less.
+
+**Painted into `#dsar-results`, never re-rendered** — a full `renderSettings()`
+would wipe the query the reviewer just typed. §38's Telegram rule, second
+occurrence.
+
+### Stage 2 — closing your own account
+
+The route §21 said would come, and **the first caller for which
+`wouldStrandDeployment()` is actually reachable**: it lives inside
+`deleteAccount()` rather than at the admin call site precisely so this one
+inherits it, and the admin route refuses any action on your own account.
+
+**Two routes, and the split is the point.** `GET /api/me/deletion` says what
+would go and whether it is refused; `DELETE /api/me` does it. A rule named at
+the last step is a rule somebody meets holding a confirmation they have already
+agreed to, so `blocked` is reported *in advance* — computed by the same
+`wouldStrandTeam()` / `wouldStrandDeployment()` the DELETE consults, so it is
+the real answer rather than a copy of the rule.
+
+**No id in the path, ever.** §5: identity is what the server established.
+`DELETE /api/me/:id` is not a route, which is stronger than a route with a
+check somebody could later get wrong on the most destructive endpoint here.
+
+**The strand check sits on the ROUTE, not inside `deleteAccount()`**, and that
+asymmetry is deliberate: `deleteAccount()` is also the admin path, where an
+operator cleaning up is entitled to strand a team. Same act, different
+authority.
+
+**Counted live, not read off the meta doc.** `refreshCounts()` maintains
+`recordCount` on a push, so a workspace nobody has written to since a
+colleague's device synced carries a stale one — and a delete confirmation is
+the last place for a figure that is merely usually right.
+
+**The client pushes before asking what is there**, and this was found by the
+E2E rather than reasoned: `persist()` only schedules a *debounced* push (§39),
+so the confirmation said **"0 records"** to somebody looking at a row they had
+just typed. Uploading rows that are about to be destroyed looks odd for one
+line and is right both ways — the number becomes complete, and a cancel leaves
+the work safely on the server.
+
+**Deleting wipes the local replica; signing out does not.** §11 states it as a
+guarantee — "signing out hides a workspace, it never destroys one" — so the
+delete path has to do something the sign-out path deliberately does not, or
+closing your account leaves the workspace in IndexedDB for the next person to
+use that browser. `DB.wipeScope(scope)` + `Scope.clearKeys(scope)`, with the
+scope read **before** `switchScopeTo(ANON)` moves it.
+
+**`Scope.current` is a getter, not a method.** Calling it throws, and the throw
+would land after the account is already gone on the server.
+
+### The test that passed on the bug, and how it was caught
+
+The first version of the E2E asserted the replica was gone by signing back in
+with the same address and checking `DB.getAll('records')` was empty. **It passed
+against a build with the wipe removed entirely**, because a new account gets a
+new id and therefore a new scope — so the stale database was never in view. The
+assertion was measuring the wrong store.
+
+It reads `Scope.dbName(Scope.current)` *before* the deletion and then asserts
+`indexedDB.databases()` no longer lists it. That fails on the mutation, naming
+the leftover workspace. §9's rule caught it: a test checked against the broken
+state, and this one had to be rewritten rather than merely re-run.
+
+### Two things found in the shared helpers
+
+- **`onboard()` matched a template card by `:has-text`**, so asking for
+  "Deals" resolved to two cards — Leads' description says "before they become
+  deals" — and threw a strict-mode violation. Latent since the helper was
+  written; it surfaced the first time a test asked for the one colliding name.
+  Matched on `.template-name:text-is()` now.
+- **Deals opens as a board**, so a `tr:` assertion on a new Deal times out
+  saying only that it found nothing. `.kanban-card` is the row there.
+
+### Blast radius
+
+`js/dsar.js` is a new served file, so all four places had to agree (§3):
+`index.html`, `sw.js` APP_SHELL, the smoke test's `ASSETS`, and
+`CACHE_VERSION` → `crmbuilder-v42`. `ASSET_DIRS` already allow-lists `js/`, so
+no server change — and the smoke count going 43 → 44 is what proves it.
+
+`docs/API.md` carries the two new routes and its route count is **52**, checked
+against `grep -cE "^app\.(get|post|put|patch|delete)\(" server.js` rather than
+incremented by hand — §29 records that number going stale twice already.
+
+`privacy.html` said *"if you want your account removed and cannot do it
+yourself, contact us"*, which is now false in the ordinary case; `terms.html`'s
+DSAR-assistance clause said the export was usually enough, which undersold what
+is now on the screen. Both updated, and `USER-GUIDE.md` and `manual.html` carry
+the whole of both features including what the search cannot find.

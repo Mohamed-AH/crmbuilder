@@ -255,6 +255,55 @@ workspace between devices without an account.
 
 Your data is yours. There is no lock-in and no export limit.
 
+### When someone asks what you hold about them
+
+Settings → **Data requests**. Type their name — or part of it, or their email
+address — and press Search. It looks in every text field of every record, and
+it reports three things worth knowing:
+
+- **Where they appear**, module by module, so you can go and look.
+- **Names that only appear as a link.** If a Deal points at a contact, that
+  person is found even though their name is nowhere in the Deal's own fields.
+- **Values under fields you removed.** Deleting a column offers to delete what
+  was in it; if you chose *Keep the data*, those values are still in the
+  workspace and still in every backup. They show here marked *removed field* —
+  which is usually the moment to decide whether to keep them at all.
+
+**Read the results before you send anything.** A search matches text, so it can
+catch a different person with a similar name, and a record that mentions two
+people holds data about both. The screen shows what it found first, and the
+download button appears underneath.
+
+The file is JSON, and it carries the limits of the search inside it — because
+whoever reads it next probably did not run it. What the search cannot find:
+
+- a different spelling, a nickname, or an abbreviation;
+- a number stored in a **Number** or **Currency** field (text fields are
+  searched, including a number typed into one);
+- anything on a colleague's device that has not synced yet;
+- deleted records — a deletion discards the contents, so there is nothing left.
+
+### Closing your account
+
+Settings → Danger zone → **Delete my account**. Anyone can close their own
+account, whatever their role.
+
+You are told what it costs before anything happens, and the numbers come from
+the server rather than from this device:
+
+- **On your own** — your workspace goes with the account, and the confirmation
+  says how many records and modules that is.
+- **On a team** — the team keeps its workspace and you lose your access to it.
+  Your colleagues' data is not yours to delete.
+
+Two cases are refused, and you are told in advance rather than at the last
+step: you cannot close your account while you are the **only owner of a team**
+that still has other people in it — make someone else an owner first — or the
+only administrator of the whole deployment.
+
+It cannot be undone, and it clears the workspace off this device too. Export a
+backup first if you might want your records.
+
 ---
 
 ## 9. Workspace settings

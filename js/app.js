@@ -2,7 +2,7 @@
  * app.js — routing, views, and interactions for CRM Builder.
  * Depends on DB (db.js), TEMPLATES (templates.js), icon() (icons.js), Cloud (cloud.js).
  */
-/* global DB, TEMPLATES, icon, LUCIDE, Cloud, Scope */
+/* global DB, TEMPLATES, icon, LUCIDE, Cloud, Scope, DSAR */
 (() => {
   'use strict';
 
@@ -3106,6 +3106,25 @@
               <input type="file" id="import-file" accept="application/json,.json" class="hidden">` : ''}
           </div>
         </div>
+        <!--
+          Data requests.
+
+          Available to EVERY role, deliberately, and for the same reason Export
+          is (§36): this reads the workspace and writes nothing, and it returns
+          strictly LESS than the export button directly above it already hands
+          anybody. Gating the subset while allowing the whole would be theatre.
+        -->
+        <div class="card">
+          <div class="card-head"><h2>Data requests</h2></div>
+          <p class="settings-hint">If someone asks what you hold about them, search their name here. It looks in every text field of every record — including values left behind by fields you have since removed, and names that only appear as a link on another record.</p>
+          <div class="dsar-search">
+            <input class="input" id="dsar-q" type="search" placeholder="A name, an email address, part of either" aria-label="Search for a person">
+            <button class="btn" id="dsar-go">${icon('search', 15)} Search</button>
+          </div>
+          <!-- Painted into, never re-rendered: a full renderSettings() would
+               wipe the query the reviewer just typed (§38's Telegram rule). -->
+          <div id="dsar-results"></div>
+        </div>
         <div class="card">
           <div class="card-head"><h2>App</h2></div>
           <div class="btn-row">
@@ -3119,12 +3138,20 @@
           </div>
           ${canEditRecords() ? '<p class="settings-hint" style="margin:12px 0 0">Demo data fills every module with a sample business so you can explore or present without entering records first. It is added alongside anything you already have.</p>' : ''}
         </div>
-        ${canDeleteRecords() ? `
+        ${canDeleteRecords() || Cloud.isAuthed ? `
         <div class="card danger-zone">
           <div class="card-head"><h2>Danger zone</h2></div>
           <div class="btn-row">
-            <button class="btn btn-danger-ghost" id="reset-btn">${icon('trash-2', 15)} Delete all data</button>
+            ${canDeleteRecords() ? `<button class="btn btn-danger-ghost" id="reset-btn">${icon('trash-2', 15)} Delete all data</button>` : ''}
+            <!--
+              Deleting your own account is not gated on a role. It is YOUR
+              account rather than the team's data, so a viewer may close it
+              exactly as an owner may — and what it takes with it is decided by
+              the server, which refuses if it would strand a team (§15).
+            -->
+            ${Cloud.isAuthed ? `<button class="btn btn-danger-ghost" id="delete-account-btn">${icon('ban', 15)} Delete my account</button>` : ''}
           </div>
+          ${Cloud.isAuthed ? '<p class="settings-hint" style="margin:12px 0 0">Deleting your account cannot be undone. Export a backup first if you might want your records.</p>' : ''}
         </div>` : ''}
       </div>`;
 
@@ -3294,6 +3321,7 @@
     if (reportBtn) reportBtn.addEventListener('click', openProblemReport);
     bindTeamActions();
     $('#export-btn').addEventListener('click', exportData);
+    bindDataRequests();
     // Each of these is now conditional on role, so every bind is guarded: an
     // addEventListener on null throws and takes the whole screen down with it,
     // not just the button that is missing.
@@ -3314,6 +3342,8 @@
       location.hash = '#/';
       route();
     });
+    const deleteAccountBtn = $('#delete-account-btn');
+    if (deleteAccountBtn) deleteAccountBtn.addEventListener('click', deleteMyAccount);
     const installBtn = $('#settings-install');
     if (installBtn) installBtn.addEventListener('click', promptInstall);
     const addTemplate = $('#add-template-btn');
@@ -3535,6 +3565,254 @@
     a.click();
     URL.revokeObjectURL(url);
     toast('Backup downloaded');
+  }
+
+  /*
+   * Closing your own account.
+   *
+   * **The cost is asked for, never assumed.** This device holds a replica, so
+   * counting records locally would tell a member who has never synced that
+   * their workspace is empty and then delete a team's. `/api/me/deletion`
+   * answers from the server, and it also reports a refusal BEFORE the button
+   * is pressed — a rule named at the last step is a rule somebody meets
+   * holding a confirmation they have already agreed to.
+   */
+  async function deleteMyAccount() {
+    let plan;
+    try {
+      /*
+       * Push first, then ask what is there.
+       *
+       * `persist()` only schedules a DEBOUNCED push (§39), so a record typed a
+       * moment ago is still on the device — and the preview counts the
+       * server's copy. Without this the confirmation says "0 records" to
+       * somebody looking at a row they can see, which reads as the count being
+       * broken at the exact moment it most needs to be believed.
+       *
+       * Uploading rows that are about to be destroyed looks odd for one line
+       * and is right in both directions: the number becomes complete, and if
+       * they cancel their work is safely on the server rather than pending.
+       */
+      await Cloud.pushNow().catch(() => {});
+      plan = await Cloud.deletionPreview();
+    } catch {
+      toast('Could not reach the server — try again when you are back online');
+      return;
+    }
+
+    if (plan.blocked === 'lastOwner') {
+      alert('You are the only owner of this team.\n\nMake someone else an owner on the Team screen first — otherwise your colleagues would be left with a workspace nobody can administer.');
+      return;
+    }
+    if (plan.blocked === 'lastPlatformAdmin') {
+      alert('You are the only administrator of this deployment.\n\nPromote someone else before closing your account.');
+      return;
+    }
+
+    /*
+     * One confirm, and it names what goes — §21's rule from the restore path:
+     * a destructive control states its cost first. Two dialogs would also walk
+     * into §21's other trap, where a second armed handler throws on the first.
+     */
+    const cost = plan.deletesWorkspace
+      ? `Your workspace goes with it: ${plan.records} record${plan.records === 1 ? '' : 's'} in ${plan.modules} module${plan.modules === 1 ? '' : 's'}.`
+      : `Your team keeps its workspace — ${plan.teamSize - 1} other ${plan.teamSize - 1 === 1 ? 'person' : 'people'} still have it. You lose your access to it.`;
+    if (!confirm(`Delete your account?\n\n${cost}\n\nThis cannot be undone. Export a backup first if you might want your records.`)) return;
+
+    let out;
+    try {
+      out = await Cloud.deleteAccount();
+    } catch (err) {
+      toast(err && err.message ? err.message : 'Could not delete the account');
+      return;
+    }
+
+    /*
+     * The account is gone on the server; the replica is still on this device.
+     *
+     * Signing out would only HIDE it (§11: "signing out hides a workspace, it
+     * never destroys one"), and the whole point of this act is that the data
+     * goes. So the scope is wiped rather than left — otherwise closing your
+     * account leaves the workspace sitting in IndexedDB for the next person to
+     * use this browser, which is exactly what scopes exist to prevent.
+     */
+    // `Scope.current` is a GETTER, not a method — calling it throws, and the
+    // throw would land after the account is already gone on the server.
+    const scope = Scope.current;
+    await Cloud.logout().catch(() => {});
+    await switchScopeTo(Scope.ANON);
+    await DB.wipeScope(scope).catch(() => {});
+    Scope.clearKeys(scope);
+    toast(out && out.deletedWorkspace ? 'Account and workspace deleted' : 'Account deleted');
+    renderSidebar();
+    location.hash = '#/';
+    route();
+  }
+
+  /* ------------------------------------------------ subject access requests
+   *
+   * A person asks what you hold about them; this finds every place they
+   * appear. The matching rules live in `js/dsar.js` with their own unit tests
+   * — what is here is the screen, the sync-before-search, and the bundle.
+   *
+   * **Client-only, on purpose.** No endpoint, nothing the server can refuse,
+   * and no new route to reason about — the same shape as §37's due filter. It
+   * reads rows this device already holds.
+   */
+  function bindDataRequests() {
+    const go = $('#dsar-go');
+    const q = $('#dsar-q');
+    if (!go || !q) return;
+    go.addEventListener('click', () => runDataRequest());
+    // Enter is what somebody types after a name, and a search box that ignores
+    // it reads as broken before they find the button.
+    q.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); runDataRequest(); } });
+  }
+
+  // id -> display name for EVERY record in the workspace, so a relation can be
+  // matched by the name it shows rather than the uuid it stores.
+  // `primeRelationCache` fills lazily per module for rendering; a search has to
+  // see all of it at once, and a missed module here is a person the answer
+  // silently does not mention.
+  function relationNameMap(mods, recs) {
+    const byModule = new Map(mods.map((m) => [m.id, m]));
+    const names = new Map();
+    for (const r of recs) {
+      const mod = byModule.get(r.moduleId);
+      if (mod) names.set(r.id, recordName(mod, r));
+    }
+    return names;
+  }
+
+  let lastDataRequest = null;
+
+  async function runDataRequest() {
+    const box = $('#dsar-results');
+    const term = ($('#dsar-q').value || '').trim();
+    if (!box) return;
+    if (term.length < DSAR.MIN_QUERY) {
+      box.innerHTML = `<p class="settings-hint">Type at least ${DSAR.MIN_QUERY} characters — a single letter matches most of a workspace and buries the answer.</p>`;
+      return;
+    }
+
+    box.innerHTML = '<p class="settings-hint">Searching…</p>';
+    /*
+     * Sync before searching, and say so when it could not.
+     *
+     * This device holds a replica. Answering a legal question from a replica
+     * that is a day behind is the §39 preview problem with a much larger bill,
+     * so the search waits for the pull — and when it fails, the result says
+     * which rows it was able to look at rather than quietly meaning less.
+     */
+    let stale = false;
+    if (Cloud.isAuthed) {
+      const out = await Cloud.sync().catch(() => ({ ok: false }));
+      stale = !out || !out.ok;
+    }
+
+    const mods = await DB.getAll('modules');
+    const recs = await DB.getAll('records');
+    const result = DSAR.search({
+      modules: mods,
+      records: recs,
+      query: term,
+      relationNames: relationNameMap(mods, recs),
+    });
+    lastDataRequest = { result, stale, at: Date.now() };
+    renderDataRequest(box, result, stale);
+  }
+
+  // How many matching records to draw. The bundle carries every one; this is
+  // only what fits on a screen somebody is reading rather than scrolling past.
+  const DSAR_SHOWN = 100;
+
+  function renderDataRequest(box, result, stale) {
+    if (!result.total) {
+      box.innerHTML = `
+        <p class="settings-hint"><strong>No records mention “${esc(result.query)}”.</strong> That covers the text in every field, including values under fields you have removed. It does not cover a different spelling, a nickname, or a number stored in a Number field.</p>
+        ${stale ? '<p class="settings-hint">This device could not reach the server, so it searched the copy it already had.</p>' : ''}`;
+      return;
+    }
+
+    const shown = result.matches.slice(0, DSAR_SHOWN);
+    box.innerHTML = `
+      <p class="settings-hint"><strong>${result.total} record${result.total === 1 ? '' : 's'} mention${result.total === 1 ? 's' : ''} “${esc(result.query)}”</strong> — ${result.byModule.map((b) => `${esc(b.moduleName)} ${b.count}`).join(' · ')}</p>
+      ${stale ? '<p class="settings-hint">This device could not reach the server, so it searched the copy it already had.</p>' : ''}
+      <!--
+        The warning is the point of showing this at all rather than downloading
+        straight away. A substring search over-matches — "Ali" finds "Alison" —
+        and a record naming two people contains somebody else's data as well.
+        Sending that on is itself a disclosure, so the review happens here.
+      -->
+      <p class="settings-hint">Read these before you send anything. A search matches text, so it can catch a different person with a similar name — and a record that mentions two people holds data about both.</p>
+      <ul class="dsar-list">
+        ${shown.map((m) => `
+          <li class="dsar-hit">
+            <span class="dsar-where">${esc(m.moduleName)} · ${esc(recordLabel(m))}${m.demo ? ' <span class="dsar-tag">sample data</span>' : ''}</span>
+            <span class="dsar-fields">${m.fields.map((f) => `${esc(f.label)}${f.orphan ? ' <span class="dsar-tag dsar-tag-warn">removed field</span>' : ''}`).join(' · ')}</span>
+          </li>`).join('')}
+      </ul>
+      ${result.total > shown.length ? `<p class="settings-hint">Showing the first ${shown.length}. The file below carries all ${result.total}.</p>` : ''}
+      ${result.matches.some((m) => m.fields.some((f) => f.orphan)) ? `
+        <p class="settings-hint"><strong>Some matches are under fields you removed.</strong> The values stayed in the workspace when the column went (§ deleting a field offers to purge them). They are in this file, and in every backup, until they are deleted.</p>` : ''}
+      <div class="btn-row">
+        <button class="btn" id="dsar-download">${icon('download', 15)} Download these ${result.total} record${result.total === 1 ? '' : 's'}</button>
+      </div>`;
+
+    const dl = $('#dsar-download');
+    if (dl) dl.addEventListener('click', downloadDataRequest);
+  }
+
+  // The record's own display name, worked out from the module it belongs to —
+  // the search result carries `data` rather than a rendered title, because the
+  // matching module has no business knowing how this app labels a row.
+  function recordLabel(match) {
+    const mod = getModule(match.moduleId);
+    return mod ? recordName(mod, { data: match.data }) : '(untitled)';
+  }
+
+  function downloadDataRequest() {
+    if (!lastDataRequest) return;
+    const { result, stale } = lastDataRequest;
+    const payload = {
+      app: 'crmbuilder',
+      kind: 'subject-access-search',
+      version: 1,
+      searchedFor: result.query,
+      producedAt: new Date().toISOString(),
+      workspace: SETTINGS.businessName || '',
+      /*
+       * What this file is NOT, written into the file itself.
+       *
+       * The bundle leaves here and is read by somebody who did not run the
+       * search — a colleague, a solicitor, the subject. Every limit that was
+       * on screen has to travel with it, or the file reads as a complete
+       * answer to a question it only partly answers.
+       */
+      method: 'Text search across every stored value, including values under fields that have been removed. Names linked from other records are matched on the name they display.',
+      limits: [
+        'A different spelling, a nickname or an abbreviation is not matched.',
+        'Numbers stored in a Number or Currency field are not searched.',
+        'Deleted records are gone rather than hidden: a deletion discards the contents, so there is nothing left to find.',
+        'Records that have never reached this device — from a colleague who is offline — are not included.',
+        'Matches may include a different person with a similar name, and a record may hold data about somebody else as well. Review before sending.',
+      ],
+      searchedRecords: result.total,
+      byModule: result.byModule,
+      matches: result.matches.map((m) => ({
+        module: m.moduleName,
+        record: recordLabel(m),
+        recordId: m.recordId,
+        sampleData: m.demo || undefined,
+        matchedFields: m.fields.map((f) => ({ field: f.label, key: f.key, removedField: f.orphan || undefined, value: f.value })),
+        record_data: m.data,
+      })),
+    };
+    if (stale) payload.warning = 'This device could not reach the server, so the search ran against the copy it already had.';
+    const stamp = new Date().toISOString().slice(0, 10);
+    const safe = result.query.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'search';
+    downloadFile(`data-request-${safe}-${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
+    toast(`Downloaded ${result.total} record${result.total === 1 ? '' : 's'}`);
   }
 
   async function importData(e) {

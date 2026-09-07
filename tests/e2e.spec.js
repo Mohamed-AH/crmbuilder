@@ -60,8 +60,14 @@ async function onboard(page, { name = 'Test Co', currency = 'USD', templates = n
   await page.selectOption('#onboard-currency', currency);
   if (templates) {
     // Cards are labels wrapping a visually hidden checkbox; click the card.
+    //
+    // Matched on the card's NAME, exactly, and not on `:has-text` over the
+    // whole card: a description mentions other templates in prose — Leads says
+    // "before they become deals" — so asking for "Deals" resolved to two cards
+    // and threw a strict-mode violation. It was latent until a test asked for
+    // the one name that collides.
     await page.evaluate(() => document.querySelectorAll('input[data-template]').forEach((cb) => { cb.checked = false; }));
-    for (const t of templates) await page.locator(`.template-card:has-text("${t}")`).click();
+    for (const t of templates) await page.locator(`.template-card:has(.template-name:text-is("${t}"))`).click();
   }
   await page.click('#onboard-create');
   await expect(page.locator('#nav-modules .nav-link').first()).toBeVisible();
@@ -2745,6 +2751,159 @@ test.describe('admin', () => {
 // --- settings --------------------------------------------------------------
 
 test.describe('settings', () => {
+  /*
+   * The subject-access search, driven the way a controller reaches it.
+   *
+   * The matching rules have their own unit tests (tests/dsar.test.mjs); what
+   * this proves is the half those cannot: that the screen reaches a real
+   * IndexedDB workspace, that a relation is resolved through the module the
+   * search does not know about, and that the review warning is on screen
+   * BEFORE anything downloadable exists.
+   */
+  test('a data request finds a person, including where they are only linked', async ({ page }) => {
+    await onboard(page, { name: 'Request Co', templates: ['Contacts', 'Deals'] });
+
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Jose Ferreira');
+    await page.fill('#f-notes', 'Prefers email');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Jose Ferreira")')).toBeVisible();
+
+    // A deal that names nobody in its own values — the person is a plain text
+    // Contact field on the Deals template, which is the shape the search has
+    // to see through when it is a real relation. Both are covered: this row
+    // matches on text, and the unit test covers the relation id case.
+    await page.click('#nav-modules .nav-link:has-text("Deals")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-title', 'Warehouse fit-out');
+    await page.fill('#f-contact', 'Jose Ferreira');
+    await page.click('#record-save');
+    // Deals opens as a board, not a table — `defaultView: 'kanban'` — so there
+    // is no row to wait on and a `tr:` assertion times out saying only that it
+    // found nothing.
+    await expect(page.locator('.kanban-card:has-text("Warehouse fit-out")')).toBeVisible();
+
+    await page.goto('/#/settings');
+    await page.fill('#dsar-q', 'ferreira');
+    await page.click('#dsar-go');
+
+    const results = page.locator('#dsar-results');
+    await expect(results).toContainText('2 records mention', { timeout: 15000 });
+    await expect(results).toContainText('Contacts 1');
+    await expect(results).toContainText('Deals 1');
+    // The warning is the reason the results are shown at all rather than
+    // downloaded straight away: a text search catches similar names, and a
+    // record naming two people carries data about both.
+    await expect(results).toContainText('Read these before you send anything');
+    await expect(page.locator('.dsar-hit')).toHaveCount(2);
+
+    // Only then is there something to take away.
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.click('#dsar-download'),
+    ]);
+    expect(download.suggestedFilename()).toMatch(/^data-request-ferreira-\d{4}-\d{2}-\d{2}\.json$/);
+    const text = await new Promise((resolve) => {
+      let out = '';
+      download.createReadStream().then((s) => {
+        s.on('data', (c) => { out += c; });
+        s.on('end', () => resolve(out));
+      });
+    });
+    const bundle = JSON.parse(text);
+    expect(bundle.searchedFor).toBe('ferreira');
+    expect(bundle.searchedRecords).toBe(2);
+    expect(bundle.matches.map((m) => m.module).sort()).toEqual(['Contacts', 'Deals']);
+    // The limits travel INSIDE the file, because it is read by somebody who
+    // did not run the search and never saw the screen.
+    expect(bundle.limits.join(' ')).toMatch(/nickname/i);
+    expect(bundle.limits.join(' ')).toMatch(/Review before sending/i);
+  });
+
+  /*
+   * Closing your own account, end to end.
+   *
+   * The server half is covered in tests/api.test.mjs, including the refusals.
+   * What this proves is the two halves that only exist in the browser: that
+   * the confirmation names the real cost — counted by the SERVER, not by this
+   * device — and that the local replica is wiped rather than merely hidden.
+   */
+  test('deleting your account names what goes, and takes the local copy with it', async ({ page }) => {
+    const email = uniqueEmail('closing');
+    await onboard(page, { name: 'Closing Co', templates: ['Contacts'] });
+    await signIn(page, email);
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Should Not Survive');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Should Not Survive")')).toBeVisible();
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+
+    await page.goto('/#/settings');
+    // The scope the account's rows live in, read BEFORE it is destroyed —
+    // `Scope.dbName` is what names the IndexedDB database, and after the
+    // deletion there is nothing left to ask.
+    const dbName = await page.evaluate(() => Scope.dbName(Scope.current));
+    expect(dbName).toMatch(/^crmbuilder-u-/);
+
+    // One handler, on the one click that raises a confirm — two armed handlers
+    // both fire on one dialog and the second throws (§21).
+    let asked = '';
+    page.once('dialog', (d) => { asked = d.message(); d.accept(); });
+    await page.click('#delete-account-btn');
+
+    // The cost is named, and the numbers are the server's: a solo account
+    // takes its workspace, and the confirmation says how much that is.
+    await expect.poll(() => asked, { timeout: 15000 }).toContain('cannot be undone');
+    expect(asked).toContain('Your workspace goes with it');
+    expect(asked).toMatch(/1 record in 1 module/);
+
+    // Signed out, and back on a blank device.
+    await expect(page.locator('#signin-btn, #onboard-signin').first()).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('.user-chip')).toHaveCount(0);
+
+    /*
+     * The replica is GONE, not hidden. Signing out leaves the account's store
+     * exactly as it was (§11) — deleting must not, or closing your account
+     * leaves the workspace in IndexedDB for the next person to use this
+     * browser.
+     *
+     * **Asserted on the DATABASE, and the first version of this was worthless.**
+     * It signed back in with the same address and checked `DB.getAll` was
+     * empty — which passes whatever the code does, because a new account gets
+     * a new id and therefore a new scope, so the old store was never in view.
+     * It passed against a build with the wipe removed entirely. The stale
+     * database is exactly what has to be looked at.
+     */
+    await expect.poll(
+      async () => (await page.evaluate(() => indexedDB.databases().then((d) => d.map((x) => x.name)))).includes(dbName),
+      { timeout: 15000, message: 'a deleted account must not leave its workspace in IndexedDB' },
+    ).toBe(false);
+
+    // And the ordinary user-facing half: coming back is a fresh, empty start.
+    await signIn(page, email);
+    await expect(page.locator('.template-card').first()).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('tr:has-text("Should Not Survive")')).toHaveCount(0);
+  });
+
+  test('a data request refuses a one-letter query and says why', async ({ page }) => {
+    await onboard(page, { name: 'Request Co' });
+    await page.goto('/#/settings');
+    await page.fill('#dsar-q', 'a');
+    await page.click('#dsar-go');
+    await expect(page.locator('#dsar-results')).toContainText('at least 2 characters');
+    await expect(page.locator('.dsar-hit')).toHaveCount(0);
+
+    // And "we hold nothing" is a different answer from "ask a longer
+    // question": a search that found nothing has to say so plainly, or a
+    // controller cannot tell a clean workspace from a rejected query.
+    await page.fill('#dsar-q', 'Nobody At All');
+    await page.click('#dsar-go');
+    await expect(page.locator('#dsar-results')).toContainText('No records mention', { timeout: 15000 });
+    await expect(page.locator('#dsar-download')).toHaveCount(0);
+  });
+
   test('changing currency reformats money everywhere', async ({ page }) => {
     await onboard(page, { currency: 'USD' });
     await page.goto('/#/settings');
