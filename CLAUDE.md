@@ -60,6 +60,7 @@ never change, because everything cross-references them.
 | Alerts and digests silently never running | §40 |
 | Expected refusals in the production log | §40 |
 | **Restoring into a new or existing database** | §40 · [`docs/BETA.md`](docs/BETA.md) |
+| **Decrypting a backup artifact** — command, passphrase, failures | [`docs/BETA.md`](docs/BETA.md) · §40 |
 | Invites and beta codes a restore cannot carry | §40 |
 | Workspace time zone — and why the filter ignores it | §39 · §38 · §37 |
 | E2E suite slow or "flaky" | §32 |
@@ -871,7 +872,8 @@ second is the one that would have hurt:
   `git log -- .github/workflows/backup.yml`.
 
 **The dead-man's switch is the other half.** The job's last step pings
-healthchecks.io, and only when a *validated backup was fetched and stored* —
+healthchecks.io, and only when a *validated backup was fetched, encrypted,
+proved to decrypt, and stored* —
 gated on the same `ready == 'true'` that the skip fails, so an unconfigured run
 cannot report health. Without it the 60-day inactivity rule silently disables
 the schedule on a repo that holds one file and therefore goes quiet fast.
@@ -4032,3 +4034,34 @@ stored on GitHub and says nothing about encryption, which is currently correct
 same paragraph asserting backups *"are encrypted"* when they were not, caught
 before the commit. The sentence goes in when the encrypted job has actually
 run, not when it has been handed over.
+
+**`docs/BETA.md` § *"Decrypting a backup"* is the operator-facing half**, and
+it is written for the person doing this during an incident rather than as a
+feature description:
+
+- **The command twice** — once with `--passphrase "$BACKUP_PASSPHRASE"` for
+  scripting, once prompting, because the second is the better habit on a shared
+  machine and the first is what you reach for when tired.
+- **A table of the four things that go wrong**, because
+  `decryption failed: Bad session key` names a session key and means *you typed
+  the wrong passphrase*, and a sub-1 KB `.json` is not an encryption problem at
+  all — it is the export having returned an error page, which is a
+  `BACKUP_TOKEN` fault two systems away.
+- **Decrypting is called half the drill.** The workflow proves the round trip
+  on the runner before deleting the plaintext, but *the runner proving it* and
+  *you proving it* are different claims and only the second helps at 2am. Same
+  distinction as §39's push-versus-pull staleness split.
+- **Cleanup names the decrypted file specifically.** A `.json` left in
+  Downloads is plaintext customer data on a laptop — the exact state the
+  encryption exists to prevent, recreated by hand at the end of a drill that
+  was meant to increase safety.
+- **`MONGODB_URI=` was missing from the new-cluster step-1 command** and is
+  there now. Every drill command already carries it; the migration path had one
+  that did not, and that is the line where a stray `.env` reaches a real
+  database.
+
+The secrets table sits in § *"Knowing the backup ran"* rather than in
+`DEPLOYMENT.md`'s environment matrix, deliberately: these are **GitHub Actions
+secrets in a different repository**, not service environment variables, and
+listing them beside `MONGODB_URI` would invite somebody to set
+`BACKUP_PASSPHRASE` on Render where it does nothing at all.

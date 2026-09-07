@@ -174,6 +174,20 @@ minutes against a 15-minute timeout is one missed check away from a cold start.
 
 ### Knowing the backup ran
 
+The nightly job lives in the **private** repo `Mohamed-AH/crmback`, not the app
+repo — a backup is every customer's data, and this repo's artifacts are public.
+Its secrets:
+
+| Secret | Required? | What it is |
+|---|---|---|
+| `BACKUP_URL` | yes | the deployment, e.g. `https://crmbuilder-v1.onrender.com` |
+| `BACKUP_TOKEN` | yes | the same value as `BACKUP_TOKEN` on the service |
+| `BACKUP_PASSPHRASE` | **yes** | what the artifact is encrypted with — see *Decrypting a backup* |
+| `HEALTHCHECK_URL` | strongly recommended | the dead-man's switch, below |
+
+Without the first two the job **skips**. Without `BACKUP_PASSPHRASE` it
+**fails**, deliberately — it will not fall back to writing plaintext.
+
 The nightly job pings **Healthchecks.io** as its last step, and Healthchecks
 alerts you when a ping does not arrive.
 
@@ -407,6 +421,75 @@ the pass signals them differently rather than just going quiet.
 has no dead-man's switch, exactly as the backup did before its own check
 existed.
 
+### Decrypting a backup
+
+Every nightly artifact is **encrypted**. The workflow runs
+`gpg --symmetric --cipher-algo AES256` before uploading, so what GitHub holds
+is `crmbuilder-backup-YYYY-MM-DD.json.gpg` and nothing can read it without the
+passphrase.
+
+That is the point: a build artifact is downloadable by **anyone with read
+access to the repository**, and a backup is every customer's records, every
+account, and the addresses of people who asked for access and were declined.
+Encryption is what stops "read access to the repo" meaning "read access to
+every customer's CRM".
+
+#### The command
+
+```sh
+gpg --batch --decrypt \
+    --passphrase "$BACKUP_PASSPHRASE" \
+    -o crmbuilder-backup-2026-09-06.json \
+    crmbuilder-backup-2026-09-06.json.gpg
+```
+
+Or without putting the passphrase in your shell history — prompts for it
+instead, which is the better habit on a shared machine:
+
+```sh
+gpg --output crmbuilder-backup-2026-09-06.json \
+    --decrypt crmbuilder-backup-2026-09-06.json.gpg
+```
+
+`gpg` is preinstalled on macOS and every mainstream Linux. On Windows use
+**Gpg4win**, or run the command inside WSL.
+
+**What you should see:** `gpg: AES256.CFB encrypted data` and a
+`.json` file of tens to hundreds of kilobytes beside the `.gpg`. A few hundred
+*bytes* means the export returned an error page rather than a backup — that is
+a `BACKUP_TOKEN` problem on the service, not a decryption one.
+
+#### The passphrase
+
+It lives in the private backup repo's secrets as **`BACKUP_PASSPHRASE`**, and
+it is the one thing here with no recovery path.
+
+> **Losing the passphrase loses every backup.** There is no reset, by design —
+> that is what encryption means. Store it where you store the thing you would
+> use it to recover: **not only** in GitHub secrets, and **not only** on the
+> laptop whose failure you are insuring against. A password manager that syncs,
+> or paper in a drawer, or both.
+
+The workflow **fails** rather than falling back to plaintext when the secret is
+missing. That is deliberate: *"encrypted unless it wasn't"* is the worst of the
+three states, because you would believe the artifact was safe and nothing would
+ever contradict you.
+
+#### What can go wrong, and what each one means
+
+| What you see | What it is |
+|---|---|
+| `decryption failed: Bad session key` | Wrong passphrase. The file is fine. |
+| `gpg: command not found` | Install Gpg4win, or use WSL. |
+| `no valid OpenPGP data found` | You decrypted the wrong file — check you are on the `.gpg`, not something already decrypted. |
+| A `.json` under ~1 KB | Not an encryption problem. The export failed and the job stored the failure. Check `BACKUP_TOKEN`. |
+
+**Prove you can decrypt one, separately from the drill.** The workflow already
+verifies the round trip on the runner before it deletes the plaintext — but the
+runner proving it and *you* proving it are different claims, and only the second
+one helps at 2am. Download one artifact and open it by hand after any change to
+the passphrase, and once when you first set this up.
+
 ### Drilling the backup
 
 **An untested backup is a rumour.** This proves that a *real* nightly artifact
@@ -440,16 +523,29 @@ are done (step 6).
 
 ---
 
-#### Step 1 — Get an artifact
+#### Step 1 — Get an artifact and decrypt it
 
 In the **private** repo `Mohamed-AH/crmback` — not the app repo — go to
 **Actions** → **Nightly backup** → the newest green run → download
 **`crmbuilder-backup`** from the Artifacts section, and unzip it. You get a file
-named `crmbuilder-backup-YYYY-MM-DD.json`.
+named `crmbuilder-backup-YYYY-MM-DD.json.gpg`.
 
-**What you should see:** a file of tens to hundreds of kilobytes. A file of a
+Decrypt it before anything else can read it — see *Decrypting a backup* above
+for what the passphrase is and what each failure means:
+
+```sh
+gpg --output crmbuilder-backup-2026-09-06.json \
+    --decrypt crmbuilder-backup-2026-09-06.json.gpg
+```
+
+**What you should see:** a `.json` of tens to hundreds of kilobytes. A file of a
 few hundred *bytes* means the export returned an error page instead of a
 backup — stop and check `BACKUP_TOKEN` on the service.
+
+**Decrypting is half the drill.** An artifact you cannot open is not a backup,
+and this is the step that proves *you* can open it rather than that the runner
+could. If this fails, nothing below matters and the deployment has no recovery
+path at all.
 
 > Artifacts expire after 30 days, so there is nothing older than that to test.
 
@@ -572,10 +668,13 @@ already mentioned it.
 
 ```sh
 rm -rf ./data/drill
+rm -f crmbuilder-backup-*.json crmbuilder-backup-*.json.gpg
 ```
 
-And delete the downloaded artifact. It is a full copy of every customer's data
-and it does not belong in a Downloads folder.
+**The decrypted `.json` is the one that matters.** It is a full copy of every
+customer's data in plaintext, sitting in a Downloads folder — which is exactly
+the state the encryption exists to prevent, recreated by hand. Delete it as
+soon as the drill is done. The `.gpg` is less urgent and should go too.
 
 ---
 
@@ -617,8 +716,12 @@ This is the migration case — a new Atlas cluster, a new region, a new project.
 It is the safe one: there is nothing to overwrite.
 
 ```sh
-# 1. Get the artifact and check it before pointing it at anything.
-BACKUP_FILE=crmbuilder-backup-2026-09-06.json \
+# 0. Decrypt. The artifact is ciphertext; restore.mjs cannot read a .gpg.
+gpg --output crmbuilder-backup-2026-09-06.json \
+    --decrypt crmbuilder-backup-2026-09-06.json.gpg
+
+# 1. Check it before pointing it at anything.
+MONGODB_URI= BACKUP_FILE=crmbuilder-backup-2026-09-06.json \
   DATA_DIR=./data/scratch node scripts/restore.mjs
 
 # 2. Same file, now into the new cluster. NO RESTORE_OVERWRITE needed:
@@ -630,7 +733,12 @@ BACKUP_FILE=crmbuilder-backup-2026-09-06.json \
 
 Step 1 is not optional politeness. It is the same file, into a throwaway
 directory, and it costs seconds — a corrupt or truncated artifact fails there
-instead of halfway through writing your new cluster.
+instead of halfway through writing your new cluster. `MONGODB_URI=` on that
+line clears the variable for that one process, including anything a `.env`
+would have supplied, so step 1 cannot reach a database by accident.
+
+Delete the decrypted `.json` when you are finished. It is plaintext customer
+data on a laptop, which is the state the encryption exists to prevent.
 
 **Restore BEFORE you point the deployment at the new database.** Any account
 that signs in against an empty `users` collection becomes the deployment's
@@ -658,6 +766,9 @@ are recovering.
 It refuses by default. Saying so twice is the point:
 
 ```sh
+gpg --output crmbuilder-backup-2026-09-06.json \
+    --decrypt crmbuilder-backup-2026-09-06.json.gpg
+
 BACKUP_FILE=crmbuilder-backup-2026-09-06.json \
   MONGODB_URI="mongodb+srv://…/crmbuilder" \
   RESTORE_OVERWRITE=1 node scripts/restore.mjs
