@@ -350,8 +350,22 @@ GET  /api/admin/access-requests     POST /:email/decide
 GET  /api/admin/feedback            PATCH /:id
 POST /api/admin/alerts/test
 POST /api/admin/reminders/run       force one reminder pass now
+POST /api/admin/restore-notice/dismiss
 GET  /api/admin/export              ← Bearer token, NOT a session
 ```
+
+**The export is `version: 3`.** The number is informational — `restore.mjs`
+tolerates an older body rather than branching on it — and says which shape the
+file is: 2 added `accessRequests` and `platform`, 3 added `outstanding`.
+
+**`outstanding` is `{ invites, betaCodes }`: counts, never codes.** Neither
+collection is exported, because an unspent invite grants membership of an org
+and a beta code grants an account — both bearer credentials, and a nightly
+artifact is downloadable by anyone with repo read access. Only *valid* rows are
+counted; a spent, revoked or expired one is already dead and would inflate what
+an operator has to reissue. `restore.mjs` turns a non-zero count into
+`platform.restoreNotice`, which `GET /api/admin/platform` returns and
+`POST /api/admin/restore-notice/dismiss` clears. See `CLAUDE.md` §40.
 
 **`rejected.settings`** is the third rejection channel, beside `modules` and
 `records`. The workspace name and currency are owner-only (`CLAUDE.md` §14), and

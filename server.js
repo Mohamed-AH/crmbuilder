@@ -437,6 +437,9 @@ class FileStore {
   }
   async getInvite(code) { return (this.s.invites || []).find((i) => i.code === code) || null; }
   async listInvites(orgId) { return (this.s.invites || []).filter((i) => i.orgId === orgId); }
+  // Deployment-wide, for counting what a backup cannot carry. Never used to
+  // serve a request: an invite code is a bearer credential (§13).
+  async listAllInvites() { return [...(this.s.invites || [])]; }
   async updateInvite(code, patch) {
     const i = await this.getInvite(code);
     if (i) { Object.assign(i, patch); this.save(); }
@@ -920,6 +923,7 @@ class MongoStore {
   async createInvite(invite) { await this.invites.insertOne({ ...invite }); return invite; }
   async getInvite(code) { return this.invites.findOne({ code }, { projection: { _id: 0 } }); }
   async listInvites(orgId) { return this.invites.find({ orgId }, { projection: { _id: 0 } }).toArray(); }
+  async listAllInvites() { return this.invites.find({}, { projection: { _id: 0 } }).toArray(); }
   async updateInvite(code, patch) {
     await this.invites.updateOne({ code }, { $set: patch });
     return this.getInvite(code);
@@ -4091,16 +4095,52 @@ app.get('/api/admin/export', async (req, res) => {
    * repo read access. §18 records that a Telegram webhook URL contains a bot
    * token; that class of value belongs in the environment, not in here.
    */
+  /*
+   * How many invites and beta codes are outstanding — a COUNT, never a code.
+   *
+   * Neither collection is exported, and neither should be: an unspent invite
+   * grants membership of an org and a beta code grants an account, so both are
+   * bearer credentials of exactly the class §17's rule keeps out of this file
+   * ("NEVER PUT A CREDENTIAL IN `platform`" — a build artifact is downloadable
+   * by anyone with repo read access).
+   *
+   * But leaving them out silently is the §38 defect again. After a restore an
+   * invite link already in a colleague's inbox is dead, and §13 makes every
+   * invite failure answer identically on purpose — so they see "invite-only"
+   * and cannot tell a lost migration from a bad code, during a recovery. The
+   * count is what lets `restore.mjs` say how much was dropped without leaking
+   * anything: two integers, and the operator who must reissue them is the one
+   * running the script.
+   *
+   * Only the VALID ones. A spent, revoked or expired invite is already dead,
+   * so counting it would inflate the number an operator has to act on, which
+   * is the same noise §25 records for an alert that fires when nothing is
+   * wrong.
+   */
+  const [allInvites, allBetaCodes] = await Promise.all([
+    store.listAllInvites().catch(() => []),
+    store.listBetaCodes().catch(() => []),
+  ]);
+  const outstanding = {
+    invites: allInvites.filter((i) => inviteState(i) === 'valid').length,
+    betaCodes: allBetaCodes.filter((c) => betaCodeState(c) === 'valid').length,
+  };
+
   const body = {
     app: 'crmbuilder',
     kind: 'backup',
-    version: 2,
+    // 3 adds `outstanding`. Informational, like 2 before it — restore.mjs
+    // tolerates its absence rather than branching on the number, because the
+    // file on disk is older than the code reading it far more often than the
+    // other way round.
+    version: 3,
     exportedAt: new Date().toISOString(),
     storage: store.kind(),
     orgs: await store.listOrgs(),
     users: await store.listUsers(),
     accessRequests: await store.listAccessRequests(),
     platform: await store.getPlatformSettings(),
+    outstanding,
     workspaces,
   };
   console.log(`Backup export: ${workspaces.length} workspace(s), ${body.users.length} account(s)`);
@@ -4685,6 +4725,18 @@ app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, re
      * never run one should say so rather than report a zero-hour-old success.
      */
     reminders: platformSettings.reminders || null,
+    /*
+     * What the last restore could not bring back, until the operator says they
+     * have dealt with it.
+     *
+     * Dismissible rather than permanent, and rather than self-clearing. There
+     * is no single event that means "everything needed has been reissued" —
+     * minting one invite does not say the beta codes were handled — so guessing
+     * would clear it while the work was half done. And leaving it forever turns
+     * a line that matters once into furniture, which is §25's lesson about an
+     * alert that fires when nothing is wrong.
+     */
+    restoreNotice: platformSettings.restoreNotice || null,
     orgs: rows,
     orgCreation: await orgCreation(),
     // A deployment constant, so it is sent once rather than on every row. The
@@ -4694,6 +4746,25 @@ app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, re
   };
   platformCache = { at: now, body };
   res.json({ ...body, cached: false });
+});
+
+/*
+ * "I have reissued what was needed."
+ *
+ * Only an operator knows that, which is why nothing infers it. Setting the key
+ * to null rather than deleting it works identically on both stores — FileStore
+ * spreads the patch, MongoStore `$set`s it — and the read is
+ * `restoreNotice || null` either way, so there is no `$unset` special case to
+ * get wrong on one backend and not the other (§25's FileStore/MongoStore
+ * divergence is the standing example of that costing an afternoon).
+ *
+ * The cache has to go with it, for the same reason suspending an org
+ * invalidates it (§24): the panel it feeds is showing exactly this line.
+ */
+app.post('/api/admin/restore-notice/dismiss', requireAuth, requirePlatformAdmin, async (req, res) => {
+  await store.updatePlatformSettings({ restoreNotice: null });
+  platformCache = { at: 0, body: null };
+  res.json({ ok: true });
 });
 
 // ---- admin: accounts + analytics

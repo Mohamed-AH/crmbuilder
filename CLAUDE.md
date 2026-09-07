@@ -59,6 +59,8 @@ never change, because everything cross-references them.
 | **`/health` vs `/healthz`** — which one runs anything | §40 |
 | Alerts and digests silently never running | §40 |
 | Expected refusals in the production log | §40 |
+| **Restoring into a new or existing database** | §40 · [`docs/BETA.md`](docs/BETA.md) |
+| Invites and beta codes a restore cannot carry | §40 |
 | Workspace time zone — and why the filter ignores it | §39 · §38 · §37 |
 | E2E suite slow or "flaky" | §32 |
 | **What tombstones cost**, and reading storage figures | §33 · §26 |
@@ -101,7 +103,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 368 Node tests + 92 Playwright tests, 43 smoke checks. On
+**All green:** 374 Node tests + 92 Playwright tests, 43 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -3863,3 +3865,115 @@ Three things now said, and the distinctions are the substance:
 **No `CACHE_VERSION` bump.** `privacy.html` is in `sw.js`'s `STANDALONE_PAGES`
 and goes straight to the network, never precached (§19) — checked rather than
 assumed, including that it is absent from `APP_SHELL`.
+
+### Invites and beta codes: the third thing a restore cannot bring back
+
+Found while answering "what is next", by reading the export rather than the
+code that consumes it. `GET /api/admin/export` carried `orgs`, `users`,
+`accessRequests`, `platform`, `workspaces` — and **not `invites`, not
+`betaCodes`.** Nothing in §17 or in the route's own comments mentions either;
+the version-2 note explains why `accessRequests` and `platform` were added and
+never considers them. So this is a third collection lost by the same export, of
+the same class §17 records as *"found by running the drill, not by reading it"*,
+still undiscovered because no drill had ever exercised an outstanding invite.
+
+It was already live: after the Frankfurt migration every invite link a
+colleague was holding was dead, and the beta codes were gone. That is why
+"mint fresh beta codes" had been sitting on the to-do list with no explanation
+attached.
+
+**They should stay out of the export, and that is the whole design.** An unspent
+invite grants membership of an org; a beta code grants an account. Both are
+bearer credentials of exactly the class §17's rule keeps out of the artifact
+("NEVER PUT A CREDENTIAL IN `platform`"), and a GitHub build artifact is
+downloadable by anyone with repo read access. Exporting them to make a restore
+lossless would put org membership into a file whose audience §17 is already
+uneasy about.
+
+So the fix is the §38 shape again, one level up: **carry a count, not a code.**
+
+- The export gains `outstanding: { invites, betaCodes }` — two integers.
+  `version: 3`, informational as before.
+- **Only the VALID ones.** A spent, revoked or expired invite is already dead,
+  so counting it inflates the number an operator has to act on — §25's noise
+  problem in a new place. Guarded: swap `inviteState`/`betaCodeState` for a
+  bare `.length` and the fixture's dead pair makes it report 2 and 2.
+- `restore.mjs` turns a non-zero count into `platform.restoreNotice` and says
+  so in the terminal.
+- **Admin → Deployment shows it until dismissed.** Not the terminal alone —
+  §38's entire lesson is that a line read once during an incident is not a
+  record, and the digest that stopped was noticed weeks later.
+
+**Why dismissible rather than self-clearing.** There is no event that means
+"everything needed has been reissued": minting one invite says nothing about
+the beta codes. Inferring it would clear the notice with the work half done,
+and leaving it forever turns a line that matters once into furniture. So an
+operator says so explicitly, and nothing guesses.
+
+**Setting the key to `null` rather than deleting it** works identically on both
+stores — FileStore spreads the patch, MongoStore `$set`s it, and the read is
+`restoreNotice || null` either way. A `$unset` would be a special case on one
+backend and not the other, which is §25's FileStore/MongoStore divergence: the
+standing example of that costing an afternoon.
+
+**The rejection wording is NOT changed, deliberately.** §13 makes every invite
+failure answer identically so codes cannot be enumerated, and that is a
+security property, not an oversight. The consequence is that the person
+clicking a dead link cannot tell a lost migration from a wrong code — which is
+precisely why the *operator* has to be told, since they are the only one who
+can reissue and the only one who would otherwise never find out.
+
+**Traps, and two of them were in my own tests:**
+
+- **The version-1 clone kept `outstanding`.** `a backup from before this change
+  still restores` builds its legacy file by deleting `accessRequests` and
+  `platform` from a current one — so it was a v1 shape carrying a v3 key, and
+  the restore correctly wrote a notice into a platform the test required to be
+  empty. Deleting `outstanding` too is what makes it a real v1 file, and it
+  pins the honest answer for an old artifact: it genuinely does not know how
+  many invites were live, so it claims nothing.
+- **`doesNotMatch(/do NOT come back/)` matched the WEBHOOK block.** Both
+  notices use that phrase, so the companion test failed against correct code
+  for a reason that had nothing to do with invites. Matched on
+  `/unused team invite|unspent beta code/` now — wording unique to this notice.
+- **The leak assertion searches the whole artifact**, not a named field.
+  `invites` and `betaCodes` are absent as *keys*, so a field-by-field check
+  would pass on a version that smuggled them somewhere else entirely. Same rule
+  as §38's webhook assertion.
+- **Dismissing must invalidate `platformCache`**, or the panel goes on showing
+  the line for another 30 seconds and the button reads as having done nothing
+  (§24's rule, from suspending an org).
+
+Four mutations checked, each failing by name: marking every restore fails *"a
+deployment with nothing outstanding is not told to reissue anything"*; never
+marking fails *"the restore records what it could not bring back"*; counting
+dead rows fails the count assertion; dropping the cache invalidation fails the
+panel test.
+
+### The restore runbook was a drill and not a procedure
+
+Reported directly: the backup drill in `docs/BETA.md` was fine, but there were
+no steps for putting a backup into a **new** or an **existing** database —
+which is the thing you actually do, and the thing you do while something is on
+fire.
+
+§ *"Restoring for real"* now covers both, and the parts worth having written
+down before you need them:
+
+- **Which of the two restores you want.** `scripts/restore.mjs` is
+  whole-deployment; *Settings → Import backup* is one workspace. If one
+  customer deleted something, the script would take every *other* tenant back
+  to the state in the file with them.
+- **Into a new database, restore BEFORE pointing the deployment at it** —
+  §21's first-account-becomes-`platformAdmin` bypass is a wide-open door for
+  the minutes a fresh cluster sits empty, whatever `ADMIN_EMAILS` says.
+  `RESTORE_OVERWRITE=1` is **not** needed there; the script refuses only when
+  the target already has accounts.
+- **Into an existing one it is destructive**, and the gap is
+  `exportedAt` against now — for every tenant, not just the one being
+  recovered. Take a fresh export of the broken state first: a damaged database
+  still holds rows the backup does not.
+- **Verify in the order that catches real failures.** Counts pass happily when
+  rows land in the wrong workspace (§17's wsId collision: 174 of 180 records
+  lost, every total plausible), so the sequence ends with signing in as a named
+  account and then as a *second* tenant.

@@ -3661,6 +3661,22 @@
             <strong>Reminder pass</strong> ran ${esc(fmtWhen(platform.reminders.at))} — ${platform.reminders.scanned} workspace${platform.reminders.scanned === 1 ? '' : 's'} scanned, ${platform.reminders.sent} digest${platform.reminders.sent === 1 ? '' : 's'} sent${platform.reminders.failed ? `, ${platform.reminders.failed} failed` : ''}${platform.reminders.capped ? ' (capped — the rest go on the next ping)' : ''}.
             It runs off the keep-warm ping, so if that stops, so does this — and nothing here can tell you, because the same ping is what would.` : `
             <strong>No reminder pass has run yet.</strong> It happens on the keep-warm ping to <code>/health</code>, and only for workspaces that have switched the daily digest on.`}</p>
+          <!-- What a recovery could not bring back. Invites and beta codes are
+               bearer credentials and are never exported, so a restore leaves
+               every outstanding one dead — and §13 makes an invite failure
+               answer identically to a wrong code, so the person clicking a
+               dead link cannot tell which happened. The operator can fix it by
+               reissuing, and is the one who would otherwise never find out. -->
+          ${platform.restoreNotice ? `
+          <div class="note note-restore">
+            <p><strong>The last restore could not carry ${[
+    platform.restoreNotice.invites ? `${platform.restoreNotice.invites} unused team invite${platform.restoreNotice.invites === 1 ? '' : 's'}` : '',
+    platform.restoreNotice.betaCodes ? `${platform.restoreNotice.betaCodes} unspent beta code${platform.restoreNotice.betaCodes === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(' and ')}.</strong></p>
+            <p>Invite and beta codes are credentials, so a backup never holds them. Any link already sent is dead, and whoever clicks it is told the same thing a wrong code gets — deliberately, so codes cannot be guessed. Reissue the ones still needed.</p>
+            <p class="muted">Restored ${esc(fmtWhen(platform.restoreNotice.at))}${platform.restoreNotice.exportedAt ? ` from a backup taken ${esc(fmtWhen(Date.parse(platform.restoreNotice.exportedAt)))}` : ''}.</p>
+            <button class="btn" id="dismiss-restore-notice">I have reissued what was needed</button>
+          </div>` : ''}
           <div class="mode-switch">
             <span class="settings-hint" style="margin:0;align-self:center">New organisations:</span>
             ${[['open', 'Allowed'], ['closed', 'Capped']].map(([value, label]) => `
@@ -3868,6 +3884,21 @@
         toast(armed.length
           ? `Sent. Currently over a threshold: ${armed.join(', ')}`
           : 'Sent. Nothing is over a threshold right now.');
+      } catch (err) {
+        toast(err.message);
+      }
+    });
+
+    // Guarded, like every other bind on a conditional template (§36): the
+    // notice only exists after a restore, and an unguarded addEventListener on
+    // an absent element takes the whole Admin screen down rather than one
+    // button with it.
+    const dismissRestore = $('#dismiss-restore-notice');
+    if (dismissRestore) dismissRestore.addEventListener('click', async () => {
+      try {
+        await Cloud.admin.dismissRestoreNotice();
+        toast('Restore notice cleared');
+        renderAdmin();
       } catch (err) {
         toast(err.message);
       }

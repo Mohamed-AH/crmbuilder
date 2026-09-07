@@ -38,6 +38,15 @@ const DST = `http://127.0.0.1:${DST_PORT}`;
 const TOKEN = 'backup-drill-token';
 const MAYA_CANARY = 'CANARY-7Q4X';
 const NADIA_CANARY = 'CANARY-N2M8';
+// Invite and beta codes are bearer credentials too (§13, §16) — an unspent
+// invite grants membership of an org. Distinctive on purpose: the leak
+// assertions search the whole artifact for these strings rather than a named
+// field, because `invites` and `betaCodes` are absent as keys, so a
+// field-by-field check would pass on a version that smuggled them elsewhere.
+const INVITE_LIVE = 'CANARY-INVITE-LIVE-4RT7';
+const INVITE_SPENT = 'CANARY-INVITE-SPENT-9WQ2';
+const BETA_LIVE = 'CANARY-BETA-LIVE-K3ZD';
+const BETA_REVOKED = 'CANARY-BETA-REVOKED-P8XM';
 // A webhook URL is a credential (§18: a Telegram URL contains the bot token)
 // and a backup artifact is downloadable by anyone with read access to the
 // private repo the nightly job runs in. Distinctive enough that searching the
@@ -177,6 +186,25 @@ before(async () => {
     ...(store.data[hookWsId] || {}),
     hook: { url: HOOK_URL, addedAt: DECIDED_AT, addedBy: 'maya@fixture.invalid', lastOkAt: DECIDED_AT },
   };
+  /*
+   * Two live credentials and two dead ones, in the collections the export does
+   * not carry at all.
+   *
+   * The dead pair is what makes the count mean something: `outstanding` must be
+   * what an operator has to REISSUE, not how many rows exist. A spent invite
+   * and a revoked beta code are already dead, so counting them would inflate
+   * the number and send somebody chasing links nobody is holding — §25's noise
+   * problem in a new place. Swap `inviteState`/`betaCodeState` for a bare
+   * length and the assertion below reports 2 and 2.
+   */
+  store.invites = [
+    { code: INVITE_LIVE, orgId: mayaUser.orgId, role: 'member', createdBy: mayaUser.id, createdAt: DECIDED_AT, expiresAt: Date.now() + 7 * 86400000 },
+    { code: INVITE_SPENT, orgId: mayaUser.orgId, role: 'member', createdBy: mayaUser.id, createdAt: DECIDED_AT, expiresAt: Date.now() + 7 * 86400000, usedBy: 'someone', usedAt: DECIDED_AT },
+  ];
+  store.betaCodes = [
+    { code: BETA_LIVE, label: 'drill', maxUses: 5, useCount: 1, createdAt: DECIDED_AT, expiresAt: null },
+    { code: BETA_REVOKED, label: 'drill', maxUses: 5, useCount: 0, createdAt: DECIDED_AT, expiresAt: null, revokedAt: DECIDED_AT },
+  ];
   writeFileSync(storeFile, JSON.stringify(store));
 
   srcChild = await boot(SRC_PORT, srcDir);
@@ -436,6 +464,12 @@ describe('what a restore brings back, and what it deliberately does not', () => 
     const legacy = JSON.parse(JSON.stringify(backup));
     delete legacy.accessRequests;
     delete legacy.platform;
+    // A real version 1 file has no `outstanding` either, and leaving it on
+    // would not be a version 1 shape. Deleting it also pins the honest answer
+    // for an old artifact: it genuinely does not know how many invites were
+    // live, so it must claim nothing rather than guess zero OR carry a count
+    // from a newer export it never had.
+    delete legacy.outstanding;
     legacy.version = 1;
 
     const file = path.join(srcDir, 'legacy.json');
@@ -537,5 +571,103 @@ describe('a webhook URL does not travel in a backup', () => {
     assert.equal(saved.status, 200);
     assert.equal(saved.json.hook.configured, true);
     assert.equal(saved.json.hook.needsReentry, undefined, 'the notice must not outlive the fix');
+  });
+});
+
+/*
+ * The two collections a backup does not carry AT ALL.
+ *
+ * Invites and beta codes are bearer credentials (§13, §16), so they are absent
+ * from the export by design — an unspent invite grants membership of an org,
+ * and a build artifact is downloadable by anyone with repo read access. The
+ * defect this covers is not the loss. It is that the loss said nothing.
+ *
+ * After a restore, an invite link already in a colleague's inbox is dead, and
+ * §13 makes every invite failure answer identically so codes cannot be
+ * enumerated — so the person clicking cannot tell a lost migration from a wrong
+ * code, during a recovery. The operator can fix it by reissuing, and is the one
+ * who would otherwise never find out.
+ */
+describe('invites and beta codes are counted, never carried', () => {
+  test('the artifact names how many were outstanding and holds none of them', () => {
+    // Only the live ones. The spent invite and the revoked code are already
+    // dead, so counting them would send an operator chasing links nobody holds.
+    assert.deepEqual(backup.outstanding, { invites: 1, betaCodes: 1 });
+
+    // Searched across the WHOLE artifact, not a named field: `invites` and
+    // `betaCodes` are absent as keys, so a field-by-field check would pass on
+    // a version that smuggled them somewhere else entirely.
+    const raw = readFileSync(backupFile, 'utf8');
+    for (const secret of [INVITE_LIVE, INVITE_SPENT, BETA_LIVE, BETA_REVOKED]) {
+      assert.equal(raw.includes(secret), false, `${secret} must never reach a backup artifact`);
+    }
+    assert.equal(backup.invites, undefined, 'the collection itself must not be exported');
+    assert.equal(backup.betaCodes, undefined);
+  });
+
+  test('the restore records what it could not bring back', () => {
+    const notice = restoredStore.platform?.restoreNotice;
+    assert.ok(notice, 'a restore that dropped live credentials must leave a marker');
+    assert.equal(notice.invites, 1);
+    assert.equal(notice.betaCodes, 1);
+    assert.equal(typeof notice.at, 'number');
+    // The restored store must still hold no codes — the marker is a count.
+    assert.deepEqual(restoredStore.invites, []);
+    assert.deepEqual(restoredStore.betaCodes, []);
+  });
+
+  test('and it says so in the terminal too, because that is where the operator is', () => {
+    assert.match(restoreOutput, /1 unused team invite/);
+    assert.match(restoreOutput, /1 unspent beta code/);
+    assert.match(restoreOutput, /do NOT come back/);
+    for (const secret of [INVITE_LIVE, BETA_LIVE]) {
+      assert.equal(restoreOutput.includes(secret), false, 'the script must not print a credential either');
+    }
+  });
+
+  test('the panel shows it until the operator says they have dealt with it', async () => {
+    const ops = await signIn(DST, 'ops@fixture.invalid');
+    const shown = await req(DST, '/api/admin/platform?fresh=1', { cookies: ops });
+    assert.equal(shown.status, 200, 'ops@fixture.invalid must be the platform admin for this to mean anything');
+    assert.equal(shown.json.restoreNotice.invites, 1);
+
+    const cleared = await req(DST, '/api/admin/restore-notice/dismiss', { method: 'POST', cookies: ops, body: {} });
+    assert.equal(cleared.status, 200);
+
+    // Without ?fresh: dismissing has to invalidate the cache, or the panel goes
+    // on showing the line the operator just cleared for another 30 seconds and
+    // reads as a button that did nothing (§24).
+    const after = await req(DST, '/api/admin/platform', { cookies: ops });
+    assert.equal(after.json.restoreNotice, null, 'dismissing must clear it, and clear the cache with it');
+  });
+
+  test('a deployment with nothing outstanding is not told to reissue anything', () => {
+    /*
+     * The companion, and the one that stops the feature being noise.
+     *
+     * Without it, writing the marker unconditionally would satisfy every test
+     * above while telling every operator to reissue invites that never existed
+     * — exactly the mistake the webhook notice needed its own test to avoid.
+     */
+    const quiet = JSON.parse(JSON.stringify(backup));
+    quiet.outstanding = { invites: 0, betaCodes: 0 };
+
+    const file = path.join(srcDir, 'quiet.json');
+    const into = path.join(srcDir, 'quiet-out');
+    writeFileSync(file, JSON.stringify(quiet));
+
+    const run = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'restore.mjs')], {
+      cwd: ROOT,
+      env: { ...process.env, BACKUP_FILE: file, DATA_DIR: into, MONGODB_URI: '' },
+      encoding: 'utf8',
+    });
+    assert.equal(run.status, 0, `restore failed:\n${run.stdout}\n${run.stderr}`);
+
+    const store = JSON.parse(readFileSync(path.join(into, 'store.json'), 'utf8'));
+    assert.equal(store.platform.restoreNotice, undefined, 'nothing was lost, so nothing must be claimed');
+    // Matched on wording unique to THIS notice. The first version asserted
+    // "do NOT come back", which the webhook block also prints — so it failed
+    // against correct code, for a reason that had nothing to do with invites.
+    assert.doesNotMatch(run.stdout, /unused team invite|unspent beta code/);
   });
 });

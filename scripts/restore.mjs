@@ -114,6 +114,45 @@ for (const ws of workspaces) {
   if (ws.meta && ws.meta.hook && ws.meta.hook.redacted) ws.meta.hook = { needsReentry: true };
 }
 
+/*
+ * The same shape again, for the two collections a backup does not carry at all.
+ *
+ * Invites and beta codes are bearer credentials (§13, §16), so they are not in
+ * the export and should not be — an unspent invite grants membership of an org,
+ * and a build artifact is downloadable by anyone with repo read access. The
+ * defect was never the loss; it was that the loss said nothing.
+ *
+ * After a restore, an invite link already in somebody's inbox is dead. §13
+ * makes every invite failure answer identically so codes cannot be enumerated,
+ * which is right — and it means the person clicking sees "invite-only" and
+ * cannot tell a lost migration from a wrong code. The operator is the one who
+ * can fix that, by reissuing, and the operator is the one who will not find out.
+ *
+ * So the count rides into `platform` and the panel shows it. NOT the terminal
+ * alone: §38's whole lesson is that a line the operator read once during an
+ * incident is not a record, and the digest that stopped was noticed weeks later.
+ *
+ * Written ONLY when something was actually outstanding. A deployment with no
+ * live invites must not be told to reissue invites it never had — the exact
+ * companion assertion the webhook notice needed, and without it "mark
+ * everything" would satisfy the first test while telling people to restore
+ * something that never existed.
+ *
+ * `outstanding` is absent from a version 1 or 2 backup, which reads as zero.
+ * That is the honest answer: those files genuinely do not know.
+ */
+const outstanding = backup.outstanding || {};
+const lostInvites = Number(outstanding.invites) || 0;
+const lostBetaCodes = Number(outstanding.betaCodes) || 0;
+if (lostInvites || lostBetaCodes) {
+  platform.restoreNotice = {
+    at: Date.now(),
+    invites: lostInvites,
+    betaCodes: lostBetaCodes,
+    exportedAt: backup.exportedAt || null,
+  };
+}
+
 console.log(`Backup taken ${backup.exportedAt}`);
 console.log(`  ${orgs.length} organisation(s), ${users.length} account(s)`);
 console.log(`  ${workspaces.length} workspace(s), ${modules} module(s), ${records} record(s)`);
@@ -132,6 +171,18 @@ if (redactedHooks) {
   console.log('  Webhook URLs are credentials and are never exported, so they do NOT come back.');
   console.log('  Each of those owners must re-enter theirs in Settings, or their notifications stay off.');
   console.log('  Their Settings screen now says so — they do not have to be told individually.');
+}
+if (lostInvites || lostBetaCodes) {
+  const parts = [];
+  if (lostInvites) parts.push(`${lostInvites} unused team invite(s)`);
+  if (lostBetaCodes) parts.push(`${lostBetaCodes} unspent beta code(s)`);
+  console.log(`\n  ${parts.join(' and ')} were outstanding when this backup was taken.`);
+  console.log('  Invite and beta codes are credentials and are never exported, so they do NOT come back.');
+  console.log('  Any link already sent is now dead, and the person clicking it is told only "invite-only" —');
+  console.log('  the same answer a wrong code gets, deliberately, so codes cannot be enumerated.');
+  console.log('  Reissue the ones still needed. Admin -> Deployment repeats this until you dismiss it.');
+} else if (backup.outstanding) {
+  console.log('  nothing was outstanding: no invites or beta codes to reissue');
 }
 
 /*

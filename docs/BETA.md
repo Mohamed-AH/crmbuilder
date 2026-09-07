@@ -590,6 +590,126 @@ If any step fails, the artifact is not a recovery path and the deployment is
 running without a safety net. That is worth knowing on a quiet Tuesday rather
 than during an incident.
 
+### Restoring for real
+
+The drill above proves the artifact. This is putting it back into a database
+people will use. **The tool is the same one the drill exercises on every push;
+what changes is the target and the blast radius.**
+
+#### Which of the two restores you want
+
+They are not the same act and the difference is not obvious under pressure.
+
+| | `scripts/restore.mjs` | Settings → Import backup |
+|---|---|---|
+| Who runs it | you, on a terminal | a workspace owner, in the app |
+| Scope | **the whole deployment** — every tenant | one workspace |
+| Effect | wipes seven collections and rewrites them | merges by default; `replace` broadcasts deletions |
+| Use it when | the database is gone, or you are moving it | one customer needs their own data back |
+
+If one customer deleted something, **do not reach for the script.** Have them
+import their own export. The script would take every other tenant back to the
+state in the file with them.
+
+#### Into a NEW, empty database
+
+This is the migration case — a new Atlas cluster, a new region, a new project.
+It is the safe one: there is nothing to overwrite.
+
+```sh
+# 1. Get the artifact and check it before pointing it at anything.
+BACKUP_FILE=crmbuilder-backup-2026-09-06.json \
+  DATA_DIR=./data/scratch node scripts/restore.mjs
+
+# 2. Same file, now into the new cluster. NO RESTORE_OVERWRITE needed:
+#    the script only refuses when the target already has accounts.
+BACKUP_FILE=crmbuilder-backup-2026-09-06.json \
+  MONGODB_URI="mongodb+srv://user:pass@newcluster.mongodb.net/crmbuilder" \
+  node scripts/restore.mjs
+```
+
+Step 1 is not optional politeness. It is the same file, into a throwaway
+directory, and it costs seconds — a corrupt or truncated artifact fails there
+instead of halfway through writing your new cluster.
+
+**Restore BEFORE you point the deployment at the new database.** Any account
+that signs in against an empty `users` collection becomes the deployment's
+`platformAdmin` — that bypass exists so a fresh deployment is not bricked, and
+it is a wide-open door for the minutes a new cluster sits empty. Restoring
+first means the app never comes up against an empty collection at all, whatever
+`ADMIN_EMAILS` says.
+
+Order, then:
+
+1. Restore into the new cluster.
+2. Change `MONGODB_URI` on the service.
+3. Redeploy.
+4. Sign in and check your own record count, not just that the app loads.
+5. Delete the old cluster **only after** step 4 — not the same day, ideally.
+
+#### Into an EXISTING database that already has data
+
+This is the recovery case, and it is destructive. The script does
+`deleteMany({})` across `users`, `orgs`, `data`, `modules`, `records`,
+`accessRequests` and `platform`, then writes the file. **Everything created
+since that backup was taken is gone**, for every tenant, not just the one you
+are recovering.
+
+It refuses by default. Saying so twice is the point:
+
+```sh
+BACKUP_FILE=crmbuilder-backup-2026-09-06.json \
+  MONGODB_URI="mongodb+srv://…/crmbuilder" \
+  RESTORE_OVERWRITE=1 node scripts/restore.mjs
+```
+
+Before you type that:
+
+- **Take a fresh export of the current state first**, even if you believe it is
+  broken. `curl -H "Authorization: Bearer $BACKUP_TOKEN" …/api/admin/export`.
+  A damaged database still holds rows the backup does not.
+- **Work out the gap.** The artifact's `exportedAt` against now is how much
+  work you are about to discard.
+- **Tell people afterwards.** Anything they typed inside that window is gone
+  from the server, and their device will not push it back — a row stamped
+  before the last successful push is invisible to every push after it
+  (`CLAUDE.md` §31).
+
+#### What a restore cannot bring back, and what now says so
+
+Three things are deliberately absent from every artifact because they are
+credentials, and a build artifact is downloadable by anyone with read access to
+the private repo:
+
+| | Comes back? | What happens |
+|---|---|---|
+| Workspace webhook URLs | no | the owner's Settings card says it needs re-entering |
+| Team invite codes | no | **outstanding ones are dead** — the panel says how many |
+| Beta codes | no | same |
+
+The script prints all three when it finishes, and the invite and beta-code
+counts also land on **Admin → Deployment**, where they stay until you press *I
+have reissued what was needed*. That is deliberate: a line you read once during
+an incident is not a record.
+
+The person clicking a dead invite link is told the beta is invite-only — the
+same answer a wrong code gets, on purpose, so codes cannot be enumerated. They
+cannot tell that a restore happened, so **you have to reissue rather than wait
+to be told.**
+
+#### Verifying, in the order that catches real failures
+
+Counts pass happily when rows land in the *wrong* workspace — that is a real
+failure this project has measured, 174 of 180 records lost with every total
+still looking plausible. So:
+
+1. The script's own count table, which must show no `<- expected` markers.
+2. Sign in as a **named account** and look at their records.
+3. Sign in as a **second tenant** and confirm they see theirs and not the
+   first one's.
+4. Admin → Organisations: the tenant list and byte sizes look like the
+   deployment you remember.
+
 ### If something goes wrong
 
 | Symptom | First thing to check |
