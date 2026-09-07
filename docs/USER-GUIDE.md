@@ -226,15 +226,25 @@ list in Excel, Numbers or Google Sheets.
 - Dropdown values matched to your existing options regardless of capitalisation
 - Completely blank rows are skipped rather than imported as empty records
 
-**Dates written as numbers are read American-style.** `03/04/2026` is imported
-as **4 March**, not 3 April, because that's how the underlying date reader
-works — and `13/04/2026` isn't read at all, because there's no 13th month, so
-that cell arrives empty. This bites anyone outside the US, and there's no
-setting for it yet.
+**Dates written as numbers: you say which way round they are.** `03/04/2026`
+is 3 April in the UK and 4 March in the US, and nothing in the file says which.
+So when your import contains dates like that, the mapping screen asks:
 
-The fix takes ten seconds in your spreadsheet and is worth doing every time:
-**format the date column as `YYYY-MM-DD`** before exporting — `2026-04-03`.
-That form is unambiguous, and the importer takes it exactly as written.
+> Dates in **Due date** are written  `[ Day first — 31/12/2026 ]`
+
+- **If the file settles it, that's already chosen for you**, and the screen
+  says why — a `31/12/2026` anywhere in the file can only be day-first, so it
+  picks day-first and shows you the value it read that from.
+- **If the file could be either**, nothing is chosen and the import waits for
+  you. Better one click than half your dates quietly landing in the wrong
+  month.
+- **You see what your answer does before importing** — *"`03/04/2026` will be
+  imported as 3 April 2026"* — and it warns you if some values can't be read
+  the way you picked (`13/04/2026` isn't a month-first date, so it would come
+  in empty).
+
+Dates already written as `2026-04-03`, or spelled out as `12 September 2026`,
+say which number is the month by themselves. Those ask you nothing.
 
 **Before a big import:** run it on a copy of your data first, or export a
 backup (Settings → Export data), so you can undo it in one step.

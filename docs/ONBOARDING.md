@@ -74,7 +74,14 @@ Same treatment for Lead statuses and Task priorities if they use them.
 2. Save as CSV.
 3. Module → **upload** icon → check the mapping screen carefully.
 4. Map anything unmatched, or create new fields for columns worth keeping.
-5. Import, then spot-check five records against the spreadsheet.
+5. **If it asks which way round the dates are written, answer it with them
+   looking.** `03/04/2026` is 3 April or 4 March and the file does not say;
+   the screen preselects an answer when the file proves one and names the
+   value it read that from. Check that value is really theirs — a file
+   assembled from two sources can carry both conventions, and the screen says
+   so when it does.
+6. Import, then spot-check five records against the spreadsheet — **dates
+   first**, because a wrong one still looks like a date.
 
 Do this **with them**, not for them — the mapping screen is the part they'll
 need to repeat, and it's easy once they've seen it once.

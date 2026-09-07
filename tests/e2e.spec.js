@@ -702,6 +702,98 @@ test.describe('CSV', () => {
       });
       expect(stored).toEqual(['2026-09-12']);
     });
+
+    /*
+     * The date-format control (§45), driven as the UK user it exists for.
+     *
+     * On the old code this exact file stored 4 March for the first row (`new
+     * Date` reads slashed numerics month-first whatever the locale) and left
+     * BOTH of the others blank — 31/12 and 13/04 are Invalid Date under that
+     * reading. Two rows silently wrong, one silently right, and nothing said.
+     */
+    test('a UK sheet is read day-first, because the file itself proves it', async ({ page }) => {
+      await onboard(page, { templates: ['Tasks'] });
+      await page.click('#nav-modules .nav-link:has-text("Tasks")');
+
+      await page.setInputFiles('#import-csv-file', {
+        name: 'tasks.csv',
+        mimeType: 'text/csv',
+        buffer: Buffer.from([
+          'Task,Due date',
+          'Renew insurance,03/04/2026',   // ambiguous on its own
+          'File accounts,31/12/2026',     // can only be day-first
+          'Pay VAT,13/04/2026',           // used to arrive EMPTY
+        ].join('\n'), 'utf8'),
+      });
+
+      // Preselected from evidence, and the evidence is named rather than
+      // asserted — a bare "day-first" is something the reader has to trust.
+      await expect(page.locator('#csv-date-order')).toHaveValue('dmy');
+      await expect(page.locator('.csv-format')).toContainText('31/12/2026');
+      await expect(page.locator('.csv-format')).toContainText('can only be day-first');
+
+      await page.click('#csv-import-go');
+      await expect(page.locator('tr:has-text("Pay VAT")')).toBeVisible();
+
+      const stored = await page.evaluate(async () => {
+        const rows = await DB.getAll('records');
+        return rows.map((r) => r.data.due).sort();
+      });
+      expect(stored).toEqual(['2026-04-03', '2026-04-13', '2026-12-31']);
+    });
+
+    test('a file that proves nothing makes you choose, rather than choosing for you', async ({ page }) => {
+      await onboard(page, { templates: ['Tasks'] });
+      await page.click('#nav-modules .nav-link:has-text("Tasks")');
+
+      await page.setInputFiles('#import-csv-file', {
+        name: 'tasks.csv',
+        mimeType: 'text/csv',
+        // Every value here is a valid date both ways round, so any
+        // preselection would be a coin flip wearing an answer's clothes.
+        buffer: Buffer.from('Task,Due date\nRenew insurance,03/04/2026\nFile accounts,01/02/2026\n', 'utf8'),
+      });
+
+      await expect(page.locator('#csv-date-order')).toHaveValue('');
+      // The import is blocked, not defaulted. This is the assertion that fails
+      // if anybody puts a fallback order back in.
+      await expect(page.locator('#csv-import-go')).toBeDisabled();
+
+      await page.locator('#csv-date-order').selectOption('mdy');
+      await expect(page.locator('#csv-import-go')).toBeEnabled();
+      // The preview answers in the file's own values, before anything is written.
+      await expect(page.locator('#csv-date-preview')).toContainText('03/04/2026');
+
+      // …and changing the answer changes what will be stored, which is the
+      // whole point of the control being a control.
+      await page.locator('#csv-date-order').selectOption('dmy');
+      await page.click('#csv-import-go');
+      await expect(page.locator('tr:has-text("Renew insurance")')).toBeVisible();
+
+      const stored = await page.evaluate(async () => {
+        const rows = await DB.getAll('records');
+        return rows.map((r) => r.data.due).sort();
+      });
+      expect(stored).toEqual(['2026-02-01', '2026-04-03']);
+    });
+
+    test('a sheet whose dates name their own month asks no question at all', async ({ page }) => {
+      await onboard(page, { templates: ['Tasks'] });
+      await page.click('#nav-modules .nav-link:has-text("Tasks")');
+
+      await page.setInputFiles('#import-csv-file', {
+        name: 'tasks.csv',
+        mimeType: 'text/csv',
+        buffer: Buffer.from('Task,Due date\nRenew insurance,2026-09-12\nFile accounts,2026-12-31\n', 'utf8'),
+      });
+
+      // §36's rule 1: a control with one possible answer is noise. There is
+      // nothing to decide about an ISO date, so nothing is asked.
+      await expect(page.locator('.csv-format')).toHaveCount(0);
+      await expect(page.locator('#csv-import-go')).toBeEnabled();
+      await page.click('#csv-import-go');
+      await expect(page.locator('tr:has-text("Renew insurance")')).toBeVisible();
+    });
   });
 
   test('imports with column mapping, type coercion and new fields', async ({ page }) => {

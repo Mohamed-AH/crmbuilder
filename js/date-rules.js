@@ -224,7 +224,137 @@ const DateRules = (() => {
     return d.getTime();
   }
 
-  return { parseDay, daysUntil, isDueWithin, watchedDateField, today, resolveZone, zoneParts, dayKey, monthsAgo };
+  /*
+   * ---------------------------------------------------------------------
+   * Importing a day out of a spreadsheet.
+   *
+   * `03/04/2026` is 3 April to most of the world and 4 March to the United
+   * States, and NOTHING IN THE VALUE SAYS WHICH. `new Date` picks month-first
+   * whatever the browser's locale, so a UK sheet used to import some rows
+   * silently wrong (`03/04` became 4 March) and some silently blank (`13/04`
+   * has no thirteenth month, so `new Date` returned Invalid Date and the cell
+   * arrived empty).
+   *
+   * The fix cannot be a better guess. Preferring day-first would re-date every
+   * US import by the same mechanism in the other direction, and inferring per
+   * file still coin-flips on a file where every day happens to be 12 or under.
+   * So the ORDER IS AN INPUT: `scanDayOrder` reports what the data can prove,
+   * the import screen shows it and lets the person change it, and a file that
+   * proves nothing makes them choose rather than being decided for.
+   * ---------------------------------------------------------------------
+   */
+
+  const NUMERIC_DAY = /^(\d{1,4})[/.-](\d{1,2})[/.-](\d{1,4})$/;
+
+  /*
+   * The orders this understands, as a FUNCTION rather than an exported array —
+   * `tests/dateRules.test.mjs` requires every key on this object to be
+   * callable, which is what makes a partial or stale `require()` fail rather
+   * than pass a shape check (§39). The import screen pairs each of these with
+   * a human label; it must not invent a fourth.
+   */
+  function dayOrders() { return ['dmy', 'mdy', 'ymd']; }
+
+  /*
+   * The three numbers of a `12/09/2026`-shaped value, or null for anything
+   * else — a month name, a blank, a sentence. Order is NOT applied here: this
+   * only says "these are the components", which is what lets the scan reason
+   * about them before anybody has chosen.
+   */
+  function numericParts(value) {
+    const m = NUMERIC_DAY.exec(String(value ?? '').trim());
+    if (!m) return null;
+    return [Number(m[1]), Number(m[2]), Number(m[3])];
+  }
+
+  /*
+   * Two digits are a year only by convention, and the convention is POSIX's:
+   * 69–99 are 1900s, 00–68 are 2000s. Written down because a birthday column
+   * is exactly where somebody meets it, and 1969 vs 2069 is not a rounding
+   * error.
+   */
+  function fullYear(n) {
+    if (n >= 100) return n;
+    return n >= 69 ? 1900 + n : 2000 + n;
+  }
+
+  /*
+   * A stored `YYYY-MM-DD`, or null.
+   *
+   * `order` is one of 'dmy' | 'mdy' | 'ymd' and governs NUMERIC values only.
+   * Two kinds of value ignore it entirely, and that is deliberate:
+   *   - a four-digit leading component is year-first whatever was chosen,
+   *     because no other reading of `2026/09/12` exists;
+   *   - anything with a month NAME says which number is the month, so it is
+   *     handed to `new Date` and read back with LOCAL getters — never
+   *     `toISOString`, which converts local midnight to UTC and loses a day
+   *     everywhere east of Greenwich (the trap this whole file exists for).
+   */
+  function parseImportedDay(value, order) {
+    const raw = String(value ?? '').trim();
+    if (!raw) return null;
+
+    const parts = numericParts(raw);
+    if (parts) {
+      const [a, b, c] = parts;
+      let y;
+      let mo;
+      let d;
+      if (String(raw).match(/^\d{4}/) || order === 'ymd') { [y, mo, d] = [a, b, c]; }
+      else if (order === 'mdy') { [mo, d, y] = [a, b, c]; }
+      else { [d, mo, y] = [a, b, c]; }
+      const pad = (n) => String(n).padStart(2, '0');
+      const iso = `${String(fullYear(y)).padStart(4, '0')}-${pad(mo)}-${pad(d)}`;
+      // parseDay round-trips through Date.UTC, so 31/02 and 13/13 are refused
+      // rather than rolling over into the next month.
+      return parseDay(iso) === null ? null : iso;
+    }
+
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return null;
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  /*
+   * What a column of values can PROVE about its own order.
+   *
+   * `31/12/2026` can only be day-first; `12/31/2026` can only be month-first;
+   * `03/04/2026` proves nothing. So the report separates evidence from
+   * ambiguity rather than returning a guess, and carries the sample value that
+   * is the evidence — a screen saying "31/12/2026 in this file can only be
+   * day-first" is checkable by the person reading it, and a bare "day-first"
+   * is something they have to take on trust.
+   *
+   * Year-first values and month names are counted as `plain`: they need no
+   * decision, so a file made only of those asks no question at all.
+   */
+  function scanDayOrder(values) {
+    const out = { ambiguous: 0, plain: 0, unreadable: 0, dayFirstSample: '', monthFirstSample: '' };
+    for (const value of values || []) {
+      const raw = String(value ?? '').trim();
+      if (!raw) continue;
+      const parts = numericParts(raw);
+      if (!parts) {
+        out[Number.isNaN(new Date(raw).getTime()) ? 'unreadable' : 'plain'] += 1;
+        continue;
+      }
+      const [a, b] = parts;
+      if (raw.match(/^\d{4}/)) { out.plain += 1; continue; }
+      const aIsDayOnly = a > 12 && a <= 31;
+      const bIsDayOnly = b > 12 && b <= 31;
+      if (aIsDayOnly && !bIsDayOnly) { out.dayFirstSample = out.dayFirstSample || raw; }
+      else if (bIsDayOnly && !aIsDayOnly) { out.monthFirstSample = out.monthFirstSample || raw; }
+      else if (a <= 12 && b <= 12) { out.ambiguous += 1; }
+      else { out.unreadable += 1; }   // 32/40/2026 — neither reading is a day
+    }
+    return out;
+  }
+
+  return {
+    parseDay, daysUntil, isDueWithin, watchedDateField, today, resolveZone, zoneParts, dayKey,
+    monthsAgo, parseImportedDay, scanDayOrder, dayOrders,
+  };
 })();
 
 /*

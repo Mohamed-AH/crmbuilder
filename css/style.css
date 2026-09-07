@@ -496,6 +496,20 @@ a.stat-card:hover, .stat-card-add:hover { border-color: var(--border-strong); bo
 }
 .map-col, .map-sample { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .import-mode { margin-top: 4px; }
+/* The date-format control on the CSV import screen (§45). Bordered rather
+   than plain, because it is a question that must be answered rather than a
+   line to skim past. */
+.csv-format {
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; margin-bottom: 14px; background: var(--surface-2);
+}
+.csv-format-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.csv-format-row .input { width: auto; min-width: 190px; }
+.csv-format .settings-hint { margin: 6px 0 0; }
+.csv-format .settings-hint:empty { display: none; }
+/* A required-but-unanswered question disables the import. Without this the
+   button looks pressable and simply does nothing, which reads as a bug. */
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 @media (max-width: 760px) {
   .map-row { grid-template-columns: 1fr; gap: 4px; }
   .map-head { display: none; }

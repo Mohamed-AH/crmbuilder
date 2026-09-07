@@ -686,9 +686,11 @@
         <li>Completely blank rows are skipped rather than imported as empty records</li>
       </ul>
 
-      <div class="note caution">
-        <span class="note-label">Careful</span>
-        <p><strong>Dates written as numbers are read American-style.</strong> <code>03/04/2026</code> is imported as <strong>4 March</strong>, not 3 April, because that's how the underlying date reader works — and <code>13/04/2026</code> isn't read at all, because there's no 13th month, so that cell arrives empty. This bites anyone outside the US, and there's no setting for it yet. The fix takes ten seconds in your spreadsheet: format the date column as <code>YYYY-MM-DD</code> before exporting — <code>2026-04-03</code>. That form is unambiguous, and the importer takes it exactly as written.</p>
+      <div class="note tip">
+        <span class="note-label">Dates written as numbers</span>
+        <p><strong>You say which way round they are.</strong> <code>03/04/2026</code> is 3 April in the UK and 4 March in the US, and nothing in the file says which — so when your import contains dates like that, the mapping screen asks. If the file settles the question, the answer is already chosen and the screen says why: a <code>31/12/2026</code> anywhere in the file can only be day-first. If the file could genuinely be either, nothing is chosen and the import waits for you — one click beats half your dates quietly landing in the wrong month.</p>
+        <p>You see what your answer does before anything is imported (<em>"<code>03/04/2026</code> will be imported as 3 April 2026"</em>), and it warns you when some values can't be read the way you picked — <code>13/04/2026</code> isn't a month-first date, so it would arrive empty.</p>
+        <p>Dates already written as <code>2026-04-03</code>, or spelled out as <code>12 September 2026</code>, say which number is the month by themselves. Those ask you nothing.</p>
       </div>
 
       <div class="note caution">

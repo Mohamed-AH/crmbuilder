@@ -973,11 +973,6 @@ beta* button — we work through those by hand.
   says *how many* rather than *which*, and a day with nothing due sends nothing
   at all. Only an owner can set it, and the URL is never shown back to you
   after you save it — treat it like a password.
-- **Importing dates from a UK spreadsheet.** A CSV column of `03/04/2026` is
-  read American-style — 4 March, not 3 April — and `13/04/2026` is not read at
-  all, so that cell arrives empty. There is no date-format control on the
-  import screen yet. Format the column as `YYYY-MM-DD` before you export it and
-  the importer takes it exactly as written.
 - The guided tour needs sample data, and offers to load it. Settings → Remove
   sample data takes it back out and keeps anything you added.
 

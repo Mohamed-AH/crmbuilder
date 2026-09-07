@@ -65,7 +65,8 @@ never change, because everything cross-references them.
 | **Terms acceptance**: the version, and asking again | §41 |
 | **A modal button that settled as a dismissal** | §41 · §22 |
 | **Consent & lawful basis template** | §42 |
-| **CSV date import** — the day it lost, and DD/MM | §42 · §37 |
+| **CSV date import** — the day it lost, and DD/MM | §42 · §37 · §45 |
+| **A question with no correct default** — how to ask one | §45 |
 | **Subject access requests**: the search, and what it cannot find | §43 |
 | **Closing your own account** — and what it takes with it | §43 · §15 |
 | **Retention**: what has gone quiet, and why nothing deletes it | §44 |
@@ -114,7 +115,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 402 Node tests + 102 Playwright tests, 44 smoke checks. On
+**All green:** 416 Node tests + 105 Playwright tests, 44 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -152,6 +153,9 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
   approval lets them straight in with nothing to email — see §20
 - **Per-workspace webhooks** behind an SSRF guard, and a **daily digest** of
   what is due or overdue — off by default, counts only — see §38, §39
+- **A date-format control on the CSV import screen** — the order is an input,
+  preselected from what the file proves and required when it proves nothing;
+  never guessed — see §45
 - **Controller-side data protection tools**: a Consent & lawful basis template
   (§42), a subject-access search and self-serve account deletion (§43), and a
   retention review of what nothing has touched (§44). All three report or act
@@ -165,11 +169,6 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
   set aside: it needs per-module filtering in sync, or a member receives rows
   they cannot see.
 - **Undoing a delete** — a tombstone discards the body (§26). Costed, not built.
-- **A date-format control on the CSV import screen.** `03/04/2026` is read
-  American-style whatever the browser's locale, so a UK spreadsheet imports
-  some rows wrong and some blank (§42). **Open work, not a closed decision** —
-  §42 explains why picking a convention silently is the wrong fix and what the
-  right one is. The docs carry the `YYYY-MM-DD` workaround meanwhile.
 
 ---
 
@@ -193,7 +192,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v43`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v44`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -4441,6 +4440,11 @@ Stated instead, in both user docs, with the ten-second workaround: format the
 column as `YYYY-MM-DD` before exporting, which the importer takes exactly as
 written. Every example in those paragraphs was **run** before it was written.
 
+> **Now built — see §45.** The analysis above is what shaped it and stands:
+> the order became an *input* rather than a better guess. The workaround
+> paragraphs it describes are gone from the user docs, replaced by the
+> control.
+
 ### And one more default that is wrong for this launch, reported not changed
 
 `DEFAULT_SETTINGS.currency` is `'USD'`, so a UK business sees USD preselected
@@ -4793,8 +4797,173 @@ covers the export list either way.
 
 ### Still open, and carried forward deliberately
 
-**The CSV date-format control** (§42). `03/04/2026` still imports as 4 March
-and `13/04/2026` still imports as nothing, and picking a convention silently is
-the wrong fix in either direction. It is the one piece of the UK launch that is
-open work rather than a closed decision, and the tester note now names it with
-the `YYYY-MM-DD` workaround so nobody meets it cold.
+**The CSV date-format control** (§42) — the one piece of the UK launch that was
+open work rather than a closed decision. **Built in §45**, which is the section
+to read; this paragraph is left as the pointer.
+
+
+---
+
+## 45. The CSV date format, and a question that has no correct default
+
+§42 found this, costed it, and deliberately left it: `03/04/2026` imported as
+4 March for everybody, and `13/04/2026` imported as **nothing** — `new Date`
+reads slashed numerics month-first whatever the browser's locale, and there is
+no thirteenth month, so a UK spreadsheet arrived with some rows silently wrong
+and some silently blank. Two failure modes, both invisible, on the bulk path
+where nobody re-reads every row.
+
+### The fix is not a better guess, and that is the whole section
+
+Every guess is wrong for somebody:
+
+| | Breaks |
+|---|---|
+| keep month-first | every non-US import, which is the launch |
+| prefer day-first | every US import, by the same mechanism reversed |
+| infer per file | files where nothing happens to exceed 12 — a coin flip presented as an answer |
+| browser locale | a UK laptop opening a sheet a US colleague exported |
+
+So **the order is an input**. `js/date-rules.js` gains `parseImportedDay(value,
+order)` and `scanDayOrder(values)`, and the import screen asks.
+
+### What the data can prove, separated from what it cannot
+
+`scanDayOrder` returns evidence, never a decision:
+
+- `31/12/2026` **can only be day-first**, and the sample comes back with the
+  verdict. The screen quotes it — *"`31/12/2026` in this file can only be
+  day-first, so that is preselected"* — because a bare "day-first" is
+  something the reader has to take on trust, and a quoted value is something
+  they can check against their own spreadsheet.
+- `03/04/2026` proves nothing and is counted as **ambiguous**.
+- `2026-09-12` and `12 September 2026` name their own month, so they are
+  `plain` and ask nothing at all. A control over a sheet of ISO dates is a
+  question with one answer, which is noise (§36's rule 1) — so it is absent.
+- `32/40/2026` is `unreadable`: no order fixes it, so asking would not help.
+  Reporting it as ambiguous would request an answer that changes nothing.
+
+Then the screen, and the three states are the substance:
+
+| The file | The control |
+|---|---|
+| evidence for one order | preselected, with the value that proves it named |
+| evidence for **both** | nothing preselected, and it says some rows were written the other way whichever is picked |
+| only ambiguous values | nothing preselected, and **the import is blocked until answered** |
+
+**A required-but-unanswered question disables the import button, and that is
+the feature rather than friction.** A default here *is* the bug — it is exactly
+what the old code did. The cost is one click, and only on a file that genuinely
+cannot be read: in practice any sheet with a couple of dozen dates has a day
+over 12 somewhere, so evidence exists and nothing is asked.
+
+Guarded by `#csv-import-go` being `toBeDisabled`, which fails the moment a
+fallback order is reintroduced.
+
+### The preview answers in the file's own values
+
+*"`03/04/2026` will be imported as 3 April 2026"*, plus — the half that
+matters — *"4 values cannot be read as month-first and will be imported
+empty"*. That second line is the old defect named **before** the import rather
+than discovered in the table afterwards, and the import's toast repeats the
+count for anything that still landed empty.
+
+### Traps and decisions inside it
+
+- **It scans every row, not a sample.** The one value that settles the question
+  can sit anywhere in the file, and a cap would leave the control asking
+  something the data had already answered. It is a regex over strings already
+  in memory.
+- **It re-runs when the mapping changes**, because which columns are dates is
+  something the person on this screen is still choosing.
+- **An explicit answer outranks a preselection** (`userChose`). Without that
+  flag the harmless `'ymd'` from the no-decision branch leaks into an ambiguous
+  file on a re-paint and sits there looking like an answer nobody gave — the
+  exact defect, rebuilt by accident. It is cleared rather than carried.
+- **A four-digit leading component is year-first whatever was chosen**, so the
+  control cannot corrupt an ISO column that happens to share the import.
+- **A month NAME bypasses the order entirely** and goes through `new Date` with
+  **local getters** — never `toISOString`, which is §42's own bug and the
+  reason this whole file exists.
+- **Two-digit years follow POSIX**: 69–99 are 1900s, 00–68 are 2000s. Written
+  down because a birthday column is where somebody meets it, and 1969 against
+  2069 is not a rounding error.
+- **A day that does not exist is refused, never rolled over.** `31/02/2026`
+  through `Date.UTC` becomes 2 or 3 March — a plausible value in the cell,
+  which is this file's recurring failure shape. `parseDay` already round-trips,
+  so the new parser reuses it rather than repeating the check.
+- **`dayOrders()` is a function, not an exported array.**
+  `tests/dateRules.test.mjs` requires every key on `DateRules` to be callable —
+  that is what makes a stale or partial `require()` fail rather than pass a
+  shape check (§39) — so a bare array would have broken a real invariant to
+  save a pair of brackets.
+
+### Where the parsing lives, and why not a new file
+
+In `js/date-rules.js`, which is already the one place calendar-day arithmetic
+happens without a date library, is already unit-tested through both the
+`new Function` harness and `require()`, and is already the file whose header
+explains the UTC trap this is another face of. A new `js/csv-dates.js` would
+have cost §3's four-places dance and a smoke-count bump to separate two
+functions from the ones they lean on.
+
+**`server.js` requires this file** (§39), so it has a consumer no browser test
+covers. Both additions are pure and the server calls neither; the shared-surface
+test covers the export list either way.
+
+### Checked against the broken state, four ways
+
+Per §9, and each fails by name:
+
+| Mutation | Fails |
+|---|---|
+| parser ignores the order (`new Date` for everything) | 5 of the `parseImportedDay` tests |
+| scan "helpfully" guesses month-first on ambiguous values | 3 scan tests, including *"a file that proves nothing returns NO suggestion"* |
+| coercion hard-codes `'mdy'` | the UK journey, on the stored values |
+| the import button is never disabled | *"a file that proves nothing makes you choose"* |
+
+The E2E journeys run in **`Europe/London`**, in §42's existing describe: the
+container and CI are UTC, so a date test that does not pin a zone passes on
+several of these bugs.
+
+The UK journey is the one to keep. On the old code its file stored **4 March**
+for the first row and left the other two **blank** — 31/12 and 13/04 are both
+Invalid Date read month-first. Two rows wrong, one right, nothing said.
+
+### The demo file now contains the question
+
+`docs/demo-data/demo-deals.csv` had no slashed dates, so the strongest thirty
+seconds of the import demo could not happen. It now carries `03/04/2026` and a
+`31/12/2026`, which is the good version of the story rather than the awkward
+one: the screen works the answer out, says what it read it from, and shows what
+it will do. Anyone who has migrated a CRM and found half their dates three
+months out recognises it immediately. `DEMO-SCRIPT.md` carries the words.
+
+### Docs walked (§27)
+
+| | Needed |
+|---|---|
+| `USER-GUIDE.md`, `docs/manual.html` | the workaround paragraphs **replaced** — they described a limitation that no longer exists |
+| `docs/BETA.md` tester note | the rough-edge bullet §44 added, removed |
+| `docs/ONBOARDING.md` | a step, and *spot-check dates first — a wrong one still looks like a date* |
+| `docs/DEMO-SCRIPT.md` | the messy-CSV table, and the thirty seconds above |
+| `docs/product-tour.html` | the import aside, which claimed "dates in whatever format the file happens to use" |
+| `docs/API.md` | nothing — no route, no wire change |
+
+**A stale workaround is worse than a stale feature description.** "Format the
+column as `YYYY-MM-DD` first" was good advice for a real limitation, and left
+in place it would have had people doing pointless work while distrusting a
+control that now handles it. Removed rather than softened.
+
+### Blast radius
+
+`js/app.js`, `js/date-rules.js` and `css/style.css` are all in `APP_SHELL`, so
+`CACHE_VERSION` → `crmbuilder-v44`. No new served file, so the smoke count
+stays **44**. `.csv-format`, `.csv-format-row` and `.btn:disabled` are defined
+in `css/style.css` — §27's invented-class trap, and `.btn:disabled` in
+particular, without which a blocked import button looks pressable and reads as
+a bug rather than as a question.
+
+`.mode-switch .btn[disabled]` (specificity 0,3,0) still beats the new
+`.btn:disabled` (0,2,0), so the admin mode switch is unaffected — checked,
+because §4's cascade trap has now cost time twice in this file.

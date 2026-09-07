@@ -110,7 +110,21 @@ clean:
 | `(450)` | `-450` — accounting-style negative |
 | `proposal`, `QUALIFIED`, `won` | matched to the real Stage options |
 | `Oct 3 2026`, `15 Nov 2026` | proper dates, sortable |
+| `03/04/2026` | 3 April — because you told it, see below |
 | `Probability` | a column Deals doesn't have — create it inline |
+
+**The date question is the strongest thirty seconds in this section**, and it
+is worth slowing down for. The file contains `03/04/2026`, which is 3 April to
+them and 4 March to an American spreadsheet, and the mapping screen says so:
+
+> "It's asking which way round the dates are — and it's already worked out the
+> answer, because there's a `31/12/2026` further down the file that can only be
+> day-first. It tells me what it read that from, and it shows me what my answer
+> does: `03/04/2026` will be imported as 3 April. If the file hadn't settled
+> it, it would have asked me rather than guessing."
+
+Most tools guess here, and guess American. Anyone who has migrated a CRM and
+found half their dates three months out will recognise it immediately.
 
 ### 5:30 — Table craft *(45 seconds)*
 

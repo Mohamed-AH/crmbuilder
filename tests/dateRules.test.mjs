@@ -215,6 +215,127 @@ describe('DateRules.monthsAgo', () => {
   });
 });
 
+/*
+ * Importing a day out of a spreadsheet (§45).
+ *
+ * The defect these replace: `new Date('03/04/2026')` answers 4 March for
+ * everybody whatever the browser's locale, so a UK sheet imported some rows
+ * silently wrong — and `13/04/2026` was Invalid Date, so those arrived blank.
+ * The fix is not a better guess; it is taking the order as an INPUT. These
+ * assertions are therefore mostly about what the parser refuses to decide.
+ */
+describe('DateRules.parseImportedDay', () => {
+  test('the same value reads differently under each order, which is the point', () => {
+    assert.equal(DateRules.parseImportedDay('03/04/2026', 'dmy'), '2026-04-03');
+    assert.equal(DateRules.parseImportedDay('03/04/2026', 'mdy'), '2026-03-04');
+  });
+
+  test('the day that used to arrive blank now imports, when the order allows it', () => {
+    // There is no thirteenth month, so `new Date` returned Invalid Date and
+    // the cell was silently dropped. Day-first reads it; month-first still
+    // cannot, and says null rather than inventing a date.
+    assert.equal(DateRules.parseImportedDay('13/04/2026', 'dmy'), '2026-04-13');
+    assert.equal(DateRules.parseImportedDay('13/04/2026', 'mdy'), null);
+  });
+
+  test('a four-digit leading component is year-first whatever was chosen', () => {
+    // No other reading of 2026/09/12 exists, so the control cannot corrupt it.
+    for (const order of DateRules.dayOrders()) {
+      assert.equal(DateRules.parseImportedDay('2026-09-12', order), '2026-09-12', order);
+      assert.equal(DateRules.parseImportedDay('2026/09/12', order), '2026-09-12', order);
+    }
+  });
+
+  test('a month NAME says which number is the month, so the order is not consulted', () => {
+    for (const order of DateRules.dayOrders()) {
+      assert.equal(DateRules.parseImportedDay('12 September 2026', order), '2026-09-12', order);
+      assert.equal(DateRules.parseImportedDay('Sep 12, 2026', order), '2026-09-12', order);
+    }
+  });
+
+  test('dots and hyphens separate as well as slashes', () => {
+    assert.equal(DateRules.parseImportedDay('31.12.2026', 'dmy'), '2026-12-31');
+    assert.equal(DateRules.parseImportedDay('31-12-2026', 'dmy'), '2026-12-31');
+  });
+
+  test('a two-digit year follows the POSIX convention, and it is not a rounding error', () => {
+    // 69-99 are 1900s, 00-68 are 2000s. A birthday column is exactly where
+    // somebody meets this, and 1969 against 2069 is a century.
+    assert.equal(DateRules.parseImportedDay('03/04/26', 'dmy'), '2026-04-03');
+    assert.equal(DateRules.parseImportedDay('03/04/69', 'dmy'), '1969-04-03');
+    assert.equal(DateRules.parseImportedDay('03/04/68', 'dmy'), '2068-04-03');
+  });
+
+  test('a day that does not exist is refused, never rolled over', () => {
+    // Date.UTC would turn 31 February into 2 or 3 March — a plausible-looking
+    // value in the cell, which is the failure shape this file exists for.
+    assert.equal(DateRules.parseImportedDay('31/02/2026', 'dmy'), null);
+    assert.equal(DateRules.parseImportedDay('29/02/2026', 'dmy'), null);
+    assert.equal(DateRules.parseImportedDay('29/02/2028', 'dmy'), '2028-02-29');
+  });
+
+  test('nothing at all is null rather than today', () => {
+    assert.equal(DateRules.parseImportedDay('', 'dmy'), null);
+    assert.equal(DateRules.parseImportedDay(null, 'dmy'), null);
+    assert.equal(DateRules.parseImportedDay('not a date', 'dmy'), null);
+  });
+});
+
+describe('DateRules.scanDayOrder reports evidence, never a guess', () => {
+  test('a day over 12 can only be day-first, and the sample proving it comes back', () => {
+    const out = DateRules.scanDayOrder(['03/04/2026', '31/12/2026', '01/02/2026']);
+    assert.equal(out.dayFirstSample, '31/12/2026');
+    assert.equal(out.monthFirstSample, '');
+    // The two that prove nothing are still counted, because they are what the
+    // choice actually decides.
+    assert.equal(out.ambiguous, 2);
+  });
+
+  test('and the mirror image is month-first', () => {
+    const out = DateRules.scanDayOrder(['03/04/2026', '12/31/2026']);
+    assert.equal(out.monthFirstSample, '12/31/2026');
+    assert.equal(out.dayFirstSample, '');
+  });
+
+  test('a file that proves nothing returns NO suggestion, rather than a default', () => {
+    // This is the assertion that fails if anybody makes this function pick.
+    // Every value here is valid both ways, so a returned order would be a coin
+    // flip presented as an answer.
+    const out = DateRules.scanDayOrder(['03/04/2026', '01/02/2026', '12/12/2026']);
+    assert.equal(out.dayFirstSample, '');
+    assert.equal(out.monthFirstSample, '');
+    assert.equal(out.ambiguous, 3);
+  });
+
+  test('a file carrying evidence for BOTH says so, instead of picking one', () => {
+    // A sheet somebody edited by hand, or two exports concatenated. Whichever
+    // order is chosen, some rows were written the other way — the screen has
+    // to be able to say that, so both samples survive.
+    const out = DateRules.scanDayOrder(['31/12/2026', '12/31/2026']);
+    assert.equal(out.dayFirstSample, '31/12/2026');
+    assert.equal(out.monthFirstSample, '12/31/2026');
+  });
+
+  test('year-first values and month names ask no question at all', () => {
+    // A control that appeared over a sheet of 2026-09-12 would be a question
+    // with one answer, which is noise (§36's rule 1).
+    const out = DateRules.scanDayOrder(['2026-09-12', '12 September 2026', '', null]);
+    assert.equal(out.ambiguous, 0);
+    assert.equal(out.dayFirstSample, '');
+    assert.equal(out.monthFirstSample, '');
+    assert.equal(out.plain, 2);
+  });
+
+  test('a value no order can read is counted apart from an ambiguous one', () => {
+    // 32/40 is not a date under any convention, so it is not a thing the
+    // choice can fix — reporting it as ambiguous would ask for an answer that
+    // would not help.
+    const out = DateRules.scanDayOrder(['32/40/2026', 'whenever']);
+    assert.equal(out.unreadable, 2);
+    assert.equal(out.ambiguous, 0);
+  });
+});
+
 describe('the same arithmetic reaches the browser, the server and these tests', () => {
   test('require() returns the same surface as the global', () => {
     assert.deepEqual(Object.keys(required).sort(), Object.keys(DateRules).sort());

@@ -2079,7 +2079,7 @@
     toast(`Exported ${records.length} ${records.length === 1 ? 'row' : 'rows'}`);
   }
 
-  function coerceForField(field, raw) {
+  function coerceForField(field, raw, opts) {
     const v = String(raw ?? '').trim();
     if (v === '') return '';
     switch (field.type) {
@@ -2092,31 +2092,22 @@
       }
       case 'checkbox':
         return /^(yes|y|true|1|done|x|✓)$/i.test(v);
-      case 'date': {
-        if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
-        const d = new Date(v);
-        if (Number.isNaN(d.getTime())) return '';
-        /*
-         * Read the calendar day back with LOCAL getters, never `toISOString`.
-         *
-         * `new Date("12 September 2026")` is local midnight, and
-         * `.toISOString()` converts that to UTC — so anywhere east of
-         * Greenwich it lands on the previous day and `.slice(0, 10)` stores
-         * **11 September**. Measured, not reasoned: Europe/London and
-         * Europe/Berlin both shift, America/New_York and UTC do not, which is
-         * exactly §37's signature — correct for whoever wrote it, wrong for
-         * the half of the world the UK launch is aimed at.
-         *
-         * Silent, too. The cell shows a plausible date one day out, on the
-         * bulk path where nobody re-reads every row — §36's shape again.
-         *
-         * §37 fixed this class of bug in `js/date-rules.js` and swept the
-         * filter; this call site was never in that sweep because it is a
-         * *write*, not a comparison.
-         */
-        const pad = (n) => String(n).padStart(2, '0');
-        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-      }
+      /*
+       * The order comes from the IMPORT SCREEN, never from the locale and
+       * never from a guess in here.
+       *
+       * `03/04/2026` is 3 April or 4 March and the value does not say which;
+       * `new Date` used to answer month-first for everybody, so a UK sheet
+       * imported some rows silently wrong and some silently blank. All the
+       * reasoning, and the UTC trap underneath it, lives in
+       * `js/date-rules.js` — this is one call into it so the browser, the
+       * server and the unit tests read the same parser (§39).
+       *
+       * `dayOrder` is absent only where no date column was mapped, in which
+       * case nothing reaches this branch anyway.
+       */
+      case 'date':
+        return DateRules.parseImportedDay(v, (opts && opts.dayOrder) || 'ymd') || '';
       case 'select': {
         // Match an existing option case-insensitively; otherwise keep the raw
         // text so nothing is silently dropped.
@@ -2193,6 +2184,7 @@
               </select>
             </div>`).join('')}
         </div>
+        <div id="csv-date-format"></div>
         <label class="checkbox-line import-mode"><input type="checkbox" id="csv-replace"> Replace all existing ${esc(mod.name.toLowerCase())} instead of adding</label>
       </div>
       <div class="modal-foot">
@@ -2204,6 +2196,129 @@
       </div>`, { wide: true });
 
     $$('[data-close]', modal).forEach((b) => b.addEventListener('click', closeModal));
+
+    /*
+     * ------------------------------------------------------------------
+     * The date-format control (§45).
+     *
+     * It exists because there is no correct guess. `03/04/2026` is 3 April
+     * or 4 March depending on who exported the sheet, and the file does not
+     * say — so this reports what the data can PROVE, preselects that, and
+     * makes the person choose when it proves nothing rather than deciding
+     * for them and being wrong on half the rows in silence.
+     *
+     * Three properties worth keeping:
+     *
+     *  - **It scans every row, not a sample.** The one value that settles the
+     *    question can sit anywhere in the file; a cap would leave the control
+     *    asking a question the data had already answered. It is a regex over
+     *    strings already in memory, so the cost is nothing.
+     *  - **It is absent when there is nothing to decide** (§36's rule 1) — a
+     *    sheet of `2026-09-12` or of `12 September 2026` names its own month
+     *    and asks no question.
+     *  - **It re-runs when the mapping changes**, because which columns are
+     *    dates is a thing the person on this screen is still choosing.
+     * ------------------------------------------------------------------
+     */
+    const ORDER_LABELS = { dmy: 'Day first — 31/12/2026', mdy: 'Month first — 12/31/2026', ymd: 'Year first — 2026-12-31' };
+    const ORDER_NAMES = { dmy: 'day-first', mdy: 'month-first', ymd: 'year-first' };
+    let dayOrder = 'ymd';        // irrelevant until a date column is mapped
+    let orderNeeded = false;     // true once the file asks a question
+    let userChose = false;       // an explicit answer outranks any preselection
+
+    const dateColumns = () => $$('.map-select', modal)
+      .map((sel) => ({ col: Number(sel.dataset.col), field: mod.fields.find((f) => f.key === sel.value) }))
+      .filter((m) => m.field && m.field.type === 'date');
+
+    function paintDateFormat() {
+      const box = $('#csv-date-format', modal);
+      const cols = dateColumns();
+      const values = cols.flatMap(({ col }) => dataRows.map((r) => r[col]));
+      const scan = DateRules.scanDayOrder(values);
+      const evidence = [scan.dayFirstSample && 'dmy', scan.monthFirstSample && 'mdy'].filter(Boolean);
+
+      // Nothing numeric and ambiguous anywhere: the order is never consulted.
+      if (!scan.ambiguous && !evidence.length) {
+        orderNeeded = false;
+        dayOrder = 'ymd';
+        box.innerHTML = scan.unreadable
+          ? `<p class="settings-hint">${scan.unreadable} value${scan.unreadable === 1 ? '' : 's'} in the date column${cols.length === 1 ? '' : 's'} could not be read as a date and will be imported empty.</p>`
+          : '';
+        setImportEnabled();
+        return;
+      }
+
+      orderNeeded = true;
+      /*
+       * Evidence preselects; ANYTHING ELSE LEAVES IT BLANK. Carrying the
+       * harmless 'ymd' from the no-decision branch into an ambiguous file
+       * would re-create the exact defect this control exists to remove — a
+       * default nobody chose, applied in silence — so it is cleared here
+       * rather than left to look like an answer.
+       */
+      if (!userChose) dayOrder = evidence.length === 1 ? evidence[0] : '';
+
+      const why = evidence.length === 1
+        ? `<strong>${esc(evidence[0] === 'dmy' ? scan.dayFirstSample : scan.monthFirstSample)}</strong> in this file can only be ${ORDER_NAMES[evidence[0]]}, so that is preselected.`
+        : evidence.length === 2
+          ? `This file contains both <strong>${esc(scan.dayFirstSample)}</strong> and <strong>${esc(scan.monthFirstSample)}</strong>, so whichever you pick, some rows were written the other way round. Check them after importing.`
+          : `Dates like <strong>${esc(firstAmbiguous(values))}</strong> could be either. Nothing in the file says which, so this is yours to answer.`;
+
+      box.innerHTML = `
+        <div class="csv-format">
+          <label class="csv-format-row">
+            <span>Dates in <strong>${cols.map((c) => esc(headers[c.col] || `column ${c.col + 1}`)).join('</strong>, <strong>')}</strong> are written</span>
+            <select class="input" id="csv-date-order">
+              ${evidence.length === 1 ? '' : '<option value="">— choose —</option>'}
+              ${DateRules.dayOrders().map((o) => `<option value="${o}" ${o === dayOrder ? 'selected' : ''}>${esc(ORDER_LABELS[o])}</option>`).join('')}
+            </select>
+          </label>
+          <p class="settings-hint">${why}</p>
+          <p class="settings-hint" id="csv-date-preview"></p>
+        </div>`;
+
+      $('#csv-date-order', modal).addEventListener('change', (e) => {
+        dayOrder = e.target.value;
+        userChose = !!dayOrder;
+        paintDatePreview(values);
+        setImportEnabled();
+      });
+      paintDatePreview(values);
+      setImportEnabled();
+    }
+
+    const firstAmbiguous = (values) => values.map((v) => String(v ?? '').trim())
+      .find((v) => DateRules.scanDayOrder([v]).ambiguous) || '';
+
+    /*
+     * What the choice actually does to this file, in this file's own values.
+     * The second half is the one that matters: under month-first, `13/04/2026`
+     * has no thirteenth month and imports EMPTY — which is precisely the
+     * failure that used to happen with nothing said, so it is named here
+     * before the import rather than discovered in the table afterwards.
+     */
+    function paintDatePreview(values) {
+      const el = $('#csv-date-preview', modal);
+      if (!el) return;
+      if (!dayOrder) { el.textContent = ''; return; }
+      const sample = firstAmbiguous(values);
+      const lost = values.filter((v) => String(v ?? '').trim() && !DateRules.parseImportedDay(v, dayOrder)).length;
+      const shown = sample ? `<strong>${esc(sample)}</strong> will be imported as <strong>${esc(fmtDate(DateRules.parseImportedDay(sample, dayOrder)))}</strong>.` : '';
+      const warn = lost ? ` ${lost} value${lost === 1 ? '' : 's'} cannot be read as ${ORDER_NAMES[dayOrder]} and will be imported empty.` : '';
+      el.innerHTML = shown + warn;
+    }
+
+    // A required-but-unanswered question blocks the import rather than being
+    // resolved by a default. That IS the feature: a default here is the bug.
+    function setImportEnabled() {
+      const go = $('#csv-import-go', modal);
+      go.disabled = orderNeeded && !dayOrder;
+      go.title = go.disabled ? 'Choose how the dates in this file are written' : '';
+    }
+
+    $$('.map-select', modal).forEach((sel) => sel.addEventListener('change', paintDateFormat));
+    paintDateFormat();
+
     $('#csv-import-go', modal).addEventListener('click', async () => {
       const mapping = $$('.map-select', modal).map((sel) => ({ col: Number(sel.dataset.col), target: sel.value }));
       const active = mapping.filter((m) => m.target);
@@ -2239,13 +2354,18 @@
       const fieldByKey = new Map(getModule(mod.id).fields.map((f) => [f.key, f]));
       let imported = 0;
       let skipped = 0;
+      let unreadableDates = 0;
       for (const row of dataRows) {
         const data = {};
         let hasValue = false;
         active.forEach(({ col, target }) => {
           const field = fieldByKey.get(target);
           if (!field) return;
-          const value = coerceForField(field, row[col]);
+          const value = coerceForField(field, row[col], { dayOrder });
+          // A date the chosen order cannot read arrives EMPTY, which is
+          // exactly how this used to lose `13/04/2026` without saying so.
+          // Counted here so the toast can say it happened.
+          if (field.type === 'date' && value === '' && String(row[col] ?? '').trim()) unreadableDates += 1;
           if (value !== '' && value !== false) hasValue = true;
           data[target] = value;
         });
@@ -2259,7 +2379,7 @@
       closeModal();
       renderSidebar();
       await renderModule(mod.id);
-      toast(`Imported ${imported} row${imported === 1 ? '' : 's'}${skipped ? ` · skipped ${skipped} blank` : ''}`);
+      toast(`Imported ${imported} row${imported === 1 ? '' : 's'}${skipped ? ` · skipped ${skipped} blank` : ''}${unreadableDates ? ` · ${unreadableDates} date${unreadableDates === 1 ? '' : 's'} left empty` : ''}`);
     });
   }
 
