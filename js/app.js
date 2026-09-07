@@ -1570,7 +1570,7 @@
     /*
      * TEMPLATES first, then whatever modules the demo brings of its own.
      *
-     * The dataset used to be limited to the six prebuilt templates, because
+     * The dataset used to be limited to the prebuilt templates, because
      * this loop walked TEMPLATES and nothing else — so the demo could never
      * show a custom module, which is half of what the product does. A demo
      * module is shaped exactly like a template, so createFromTemplate takes
@@ -2095,7 +2095,27 @@
       case 'date': {
         if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
         const d = new Date(v);
-        return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+        if (Number.isNaN(d.getTime())) return '';
+        /*
+         * Read the calendar day back with LOCAL getters, never `toISOString`.
+         *
+         * `new Date("12 September 2026")` is local midnight, and
+         * `.toISOString()` converts that to UTC — so anywhere east of
+         * Greenwich it lands on the previous day and `.slice(0, 10)` stores
+         * **11 September**. Measured, not reasoned: Europe/London and
+         * Europe/Berlin both shift, America/New_York and UTC do not, which is
+         * exactly §37's signature — correct for whoever wrote it, wrong for
+         * the half of the world the UK launch is aimed at.
+         *
+         * Silent, too. The cell shows a plausible date one day out, on the
+         * bulk path where nobody re-reads every row — §36's shape again.
+         *
+         * §37 fixed this class of bug in `js/date-rules.js` and swept the
+         * filter; this call site was never in that sweep because it is a
+         * *write*, not a comparison.
+         */
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
       }
       case 'select': {
         // Match an existing option case-insensitively; otherwise keep the raw

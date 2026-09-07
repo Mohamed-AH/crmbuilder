@@ -31,9 +31,24 @@ const DEMO = (() => {
     // from here: three literal 6s, an 18 and a 40 were all really saying "what
     // the demo seeded", and every one of them broke when the dataset grew.
     countFor: (key) => (DEMO_DATA.records[key] || []).length,
-    // A module the six TEMPLATES do not provide — the demo's own.
+    // A module TEMPLATES does not provide — the demo's own.
     customModule: (DEMO_DATA.modules || [])[0],
   };
+})();
+
+/*
+ * How many cards the onboarding grid offers — read from `js/templates.js`,
+ * for the same reason `DEMO` above is read from the dataset.
+ *
+ * §34 kept this as a literal `6` on the grounds that it "really is about
+ * TEMPLATES" rather than about the demo, which was true and still left it
+ * stale the first time a seventh template was added. The assertion is "every
+ * template gets a card with a real icon"; the count is templates.js's business.
+ */
+const TEMPLATE_COUNT = (() => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'js', 'templates.js'), 'utf8');
+  // eslint-disable-next-line no-new-func
+  return new Function(`${src}; return TEMPLATES;`)().length;
 })();
 
 // --- helpers ---------------------------------------------------------------
@@ -178,9 +193,13 @@ test.afterEach(async ({ page }, testInfo) => {
 test.describe('boot', () => {
   test('renders the onboarding screen with real icons and fonts', async ({ page }) => {
     await page.goto('/');
-    await expect(page.locator('.template-card')).toHaveCount(6);
-    // Every template tile draws a real Lucide SVG, not an emoji fallback.
-    await expect(page.locator('.template-icon svg.lucide')).toHaveCount(6);
+    await expect(page.locator('.template-card')).toHaveCount(TEMPLATE_COUNT);
+    // Every template tile draws a real Lucide SVG, not an emoji fallback — and
+    // this is also what catches an icon name templates.js invented. The card
+    // renders `LUCIDE[t.icon] ? icon(...) : esc(t.icon)`, so an unknown name
+    // paints its own text where the glyph should be: legible, wrong, and
+    // nothing else in the suite would say so.
+    await expect(page.locator('.template-icon svg.lucide')).toHaveCount(TEMPLATE_COUNT);
     await expect(page.locator('.template-icon svg.lucide').first()).toBeVisible();
     const font = await page.evaluate(() => getComputedStyle(document.body).fontFamily);
     expect(font).toContain('Inter');
@@ -565,6 +584,54 @@ test.describe('module builder', () => {
     await page.click('.seg-btn[data-view="kanban"]');
     await expect(page.locator('.kanban-col[data-col="Active"] .kanban-card:has-text("Website revamp")')).toBeVisible();
   });
+
+  /*
+   * The consent template, driven the way a UK tenant reaches it.
+   *
+   * Worth a journey rather than a unit assertion because the interesting part
+   * is what a template's `samples` become once `createFromTemplate` has run:
+   * real rows, in a real workspace, flagged `_demo` so they can be taken back
+   * out (§11). Nothing tested that path for any template before — the demo
+   * loader has its own, and it does not touch `samples` at all.
+   */
+  test('the consent template arrives usable, and its samples can be removed', async ({ page }) => {
+    await onboard(page, { templates: ['Consent & lawful basis'] });
+    await page.click('#nav-modules .nav-link:has-text("Consent")');
+
+    // Both samples, and the two different bases — one of each is the whole
+    // point of shipping two rows rather than one.
+    await expect(page.locator('tr:has-text("Amira Hassan")')).toBeVisible();
+    await expect(page.locator('tr:has-text("Okafor Supplies")')).toBeVisible();
+    await expect(page.locator('tr:has-text("Amira Hassan")')).toContainText('Consent');
+    await expect(page.locator('tr:has-text("Okafor Supplies")')).toContainText('Contract');
+
+    /*
+     * The six statutory names reached the module as real options.
+     *
+     * A select whose options did not survive `createFromTemplate` renders an
+     * empty dropdown — which looks like a field waiting to be configured
+     * rather than a broken one (§36's plausible-failure shape), and the table
+     * above would still be perfectly readable because the values are stored
+     * strings.
+     */
+    await page.click('#add-record-btn');
+    // Every select carries an em-dash placeholder as its first option — "not
+    // chosen" is a real state and a required field needs somewhere to start
+    // from. It is the app's, not the template's, so it is dropped here.
+    const bases = (await page.locator('#f-basis option').allTextContents()).filter((v) => v && v !== '—');
+    expect(bases).toEqual(['Consent', 'Contract', 'Legal obligation', 'Legitimate interests', 'Vital interests', 'Public task']);
+    await page.click('.modal [data-close]');
+
+    /*
+     * The rows are OURS, not the user's. The module is their choice and stays,
+     * the samples carry `_demo` and go — and the label has to name what it is
+     * about to take (§33), which here is two records and no modules.
+     */
+    await page.goto('/#/settings');
+    const remove = page.locator('#remove-demo-btn');
+    await expect(remove).toContainText('2 records');
+    await expect(remove).not.toContainText('module');
+  });
 });
 
 // --- CSV -------------------------------------------------------------------
@@ -586,6 +653,49 @@ test.describe('CSV', () => {
     });
     expect(text).toContain('Full name');
     expect(text).toContain('Amira Hassan');
+  });
+
+  /*
+   * The import date bug, driven from a zone where it actually happens.
+   *
+   * `new Date("12 September 2026")` is LOCAL midnight and `.toISOString()`
+   * converts to UTC, so east of Greenwich the stored day was the one before.
+   * The container and CI both run UTC, which is why nothing had ever seen it:
+   * this test would pass on the broken code without `timezoneId`, and that is
+   * the whole reason the zone is pinned here rather than assumed.
+   *
+   * Its own describe so the zone covers one test. Setting it suite-wide would
+   * move every date assertion in the file (§9's blast radius) for the sake of
+   * one.
+   */
+  test.describe('importing dates from a non-UTC browser', () => {
+    test.use({ timezoneId: 'Europe/London' });
+
+    test('a spelled-out date keeps its day east of Greenwich', async ({ page }) => {
+      await onboard(page, { templates: ['Tasks'] });
+      await page.click('#nav-modules .nav-link:has-text("Tasks")');
+
+      await page.setInputFiles('#import-csv-file', {
+        name: 'tasks.csv',
+        mimeType: 'text/csv',
+        // September is BST (+1), which is what makes local midnight land on
+        // the previous UTC day. A January date would pass on the broken code.
+        buffer: Buffer.from('Task,Due date\nRenew insurance,12 September 2026\n', 'utf8'),
+      });
+      await page.click('#csv-import-go');
+      await expect(page.locator('tr:has-text("Renew insurance")')).toBeVisible();
+
+      // Asserted on the STORED value, not the rendered one. `fmtDate` is
+      // locale-formatted, so "11 Sept 2026" and "12 Sept 2026" differ by one
+      // character in a string nobody reads carefully.
+      const stored = await page.evaluate(async () => {
+        // `DB` is a bare global, not `window.DB` (§39), and the reader is
+        // `getAll` — `all` does not exist and would fail naming the wrong thing.
+        const rows = await DB.getAll('records');
+        return rows.map((r) => r.data.due).filter(Boolean);
+      });
+      expect(stored).toEqual(['2026-09-12']);
+    });
   });
 
   test('imports with column mapping, type coercion and new fields', async ({ page }) => {
@@ -1253,7 +1363,7 @@ test.describe('sample data', () => {
   });
 
   /*
-   * Promotion, on a module the six TEMPLATES do not provide.
+   * Promotion, on a module TEMPLATES does not provide.
    *
    * The test above covers a template module, which is the easy half: that
    * module also exists in onboarding, so a bug that spared template-named

@@ -599,6 +599,32 @@
         <span class="note-label">Careful</span>
         <p><strong>Renaming a field keeps its data.</strong> The label is what you see; the underlying key stays put, so renaming "Phone" to "Mobile" doesn't empty the column. <strong>Deleting</strong> a field, however, removes that field's values from every record in the module.</p>
       </div>
+
+      <h3>Recording why you hold someone's details</h3>
+      <p>If you're in the UK or the EU, data protection law asks you to be able to say <em>why</em> you're allowed to hold each person's details, and to show it if asked. That's your call to make, not ours — but there's a starting point built in.</p>
+      <p>Pick <strong>Consent &amp; lawful basis</strong> on the onboarding screen, or add it later from <strong>Add module → from a template</strong>. One row per person or company: who they are, why you hold them, what you use it for, where they came from, and — if the answer is consent — when they gave it and when they took it back.</p>
+      <p>The <strong>Lawful basis</strong> dropdown uses the six official names, so you can match a row against the ICO's own guidance. In plain terms:</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Basis</th><th>You'd pick this when</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Consent</strong></td><td>They actively agreed — ticked a box, signed up. They can withdraw it, and you must let them.</td></tr>
+            <tr><td><strong>Contract</strong></td><td>You need their details to do the thing they asked for: deliver an order, send an invoice, quote a job.</td></tr>
+            <tr><td><strong>Legal obligation</strong></td><td>The law makes you keep it — tax records, for example.</td></tr>
+            <tr><td><strong>Legitimate interests</strong></td><td>You have a genuine business reason <em>and</em> you've considered whether they'd object. This one asks the most of you; the ICO expects you to have weighed it.</td></tr>
+            <tr><td><strong>Vital interests</strong></td><td>Someone's life is at stake. Rare outside healthcare.</td></tr>
+            <tr><td><strong>Public task</strong></td><td>You're carrying out an official function. Rare outside the public sector.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Most small businesses use the first three, and <em>Contract</em> covers more than people expect — you don't need consent to invoice a customer.</p>
+
+      <div class="note tip">
+        <span class="note-label">Tip</span>
+        <p>This is a place to write things down, not advice about what to write: if you're unsure which basis applies, the ICO's website is free and plain-spoken. And nothing links these rows to your Contacts automatically — you name the person in text, the same way Deals names a contact.</p>
+      </div>
     </section>
 
     <!-- 6 -->
@@ -659,6 +685,11 @@
         <li>Dropdown values matched to your existing options regardless of capitalisation</li>
         <li>Completely blank rows are skipped rather than imported as empty records</li>
       </ul>
+
+      <div class="note caution">
+        <span class="note-label">Careful</span>
+        <p><strong>Dates written as numbers are read American-style.</strong> <code>03/04/2026</code> is imported as <strong>4 March</strong>, not 3 April, because that's how the underlying date reader works — and <code>13/04/2026</code> isn't read at all, because there's no 13th month, so that cell arrives empty. This bites anyone outside the US, and there's no setting for it yet. The fix takes ten seconds in your spreadsheet: format the date column as <code>YYYY-MM-DD</code> before exporting — <code>2026-04-03</code>. That form is unambiguous, and the importer takes it exactly as written.</p>
+      </div>
 
       <div class="note caution">
         <span class="note-label">Before a big import</span>

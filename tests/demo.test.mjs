@@ -31,17 +31,43 @@ function loadDemo() {
 }
 
 const { DEMO_DATA: DEMO, resolveDemoDates } = loadDemo();
-const TEMPLATE_KEYS = ['contacts', 'companies', 'deals', 'tasks', 'leads', 'notes'];
-// The loader's real order: TEMPLATES first, then the demo's own modules.
-const SEED_ORDER = [...TEMPLATE_KEYS, ...DEMO.modules.map((m) => m.key)];
 
-// Module definitions by key: the six templates plus the demo's own. The demo
-// seeds into whichever it finds, so both have to be checked against the data.
+// Module definitions by key: the templates plus the demo's own. The demo seeds
+// into whichever it finds, so both have to be checked against the data.
 const { TEMPLATES } = (() => {
   const src = readFileSync(path.join(ROOT, 'js', 'templates.js'), 'utf8');
   // eslint-disable-next-line no-new-func
   return new Function(`${src}; return { TEMPLATES };`)();
 })();
+
+/*
+ * Derived from TEMPLATES, never listed here.
+ *
+ * This was a hand-written array of six keys, which is §29's thesis in one
+ * line: a number — or a list — written in a second place is one that goes
+ * stale. Adding a seventh template would have left this test walking six and
+ * saying nothing about the new one, which is the quiet half of the failure.
+ */
+const TEMPLATE_KEYS = TEMPLATES.map((t) => t.key);
+// The loader's real order: TEMPLATES first, then the demo's own modules.
+const SEED_ORDER = [...TEMPLATE_KEYS, ...DEMO.modules.map((m) => m.key)];
+
+/*
+ * Templates the demo business deliberately does NOT fill.
+ *
+ * `loadDemoData` skips any template with no rows, so an unseeded one simply
+ * never appears in the demo. `consent` is the only one, and it is a decision
+ * rather than an omission: a consent register covering six of the demo's forty
+ * contacts would read as compliance half-done, which is worse than absent, and
+ * covering all forty would double a third of the dataset to demonstrate a
+ * module most workspaces will not pick. Its own two samples teach it at the
+ * point somebody chooses it.
+ *
+ * **Named here rather than inferred from `DEMO.records`.** Deriving the
+ * exception from the data makes the assertion below vacuous — it would pass
+ * just as happily on a dataset that had quietly lost Contacts.
+ */
+const DEMO_SKIPS = new Set(['consent']);
 const MODULE_BY_KEY = new Map([...TEMPLATES, ...DEMO.modules].map((m) => [m.key, m]));
 
 describe('the shipped demo dataset', () => {
@@ -49,7 +75,15 @@ describe('the shipped demo dataset', () => {
     assert.ok(DEMO.businessName, 'a demo with no business name has nothing to put in the sidebar');
     assert.ok(DEMO.currency, 'currency drives every money column');
     for (const key of SEED_ORDER) {
+      if (DEMO_SKIPS.has(key)) continue;
       assert.ok((DEMO.records[key] || []).length > 0, `${key} has no records, so the module would seed empty`);
+    }
+    // And the exception has to still be an exception: a key listed there that
+    // the demo actually fills is a stale note, and one that is not a template
+    // at all is a typo nothing else would catch.
+    for (const key of DEMO_SKIPS) {
+      assert.ok(TEMPLATE_KEYS.includes(key), `DEMO_SKIPS names "${key}", which is not a template`);
+      assert.equal((DEMO.records[key] || []).length, 0, `DEMO_SKIPS names "${key}", but the demo seeds it`);
     }
   });
 
@@ -130,6 +164,55 @@ describe('the shipped demo dataset', () => {
         if (f.type !== 'select' || !f.options) continue;
         for (const v of new Set(rows.map((r) => r[f.key]).filter(Boolean))) {
           if (!f.options.includes(v)) problems.push(`${key}.${f.key}: "${v}" is not one of its options`);
+        }
+      }
+    }
+    assert.deepEqual(problems, [], `\n  ${problems.join('\n  ')}\n`);
+  });
+
+  /*
+   * The same check, one step over, on the rows nobody was testing.
+   *
+   * A template's `samples` are seeded into its own module by
+   * `createFromTemplate` whenever somebody ticks "Include a few sample
+   * records" at onboarding — so they carry exactly the ghost-data and
+   * impossible-option hazards the test above exists for, on rows that reach a
+   * real user's first workspace rather than a demo they asked for.
+   *
+   * Nothing covered them until now. The existing five were checked before this
+   * was written and were all clean, so this is a guard rather than a fix — but
+   * it is the guard that a seventh template with six select options wanted.
+   *
+   * The "never filled" direction is deliberately NOT asserted here. A sample is
+   * illustrative, not exhaustive: Contacts leaves `notes` empty on purpose, and
+   * requiring every field would push filler into the first rows a new user sees.
+   */
+  test('template samples match the template they are seeded into', () => {
+    const problems = [];
+    for (const t of TEMPLATES) {
+      const rows = t.samples || [];
+      if (!rows.length) continue;
+      const fields = new Map(t.fields.map((f) => [f.key, f]));
+
+      for (const k of new Set(rows.flatMap((r) => Object.keys(r)))) {
+        if (!fields.has(k)) problems.push(`${t.key}: sample key "${k}" is not a field — ghost data in a real workspace`);
+      }
+      for (const f of t.fields) {
+        if (f.type !== 'select' || !f.options) continue;
+        for (const v of new Set(rows.map((r) => r[f.key]).filter(Boolean))) {
+          if (!f.options.includes(v)) problems.push(`${t.key}.${f.key}: sample value "${v}" is not one of its options`);
+        }
+      }
+      /*
+       * A `{ __rel }` or `{ __ref }` placeholder is resolved by `loadDemoData`
+       * and by nothing else — `createFromTemplate` spreads the sample verbatim
+       * (`data: { ...data }`), so one here is stored as a raw object and
+       * renders as `[object Object]` in a cell. Cheap to write by habit from
+       * demo-data.js, and invisible until somebody looks at the row.
+       */
+      for (const row of rows) {
+        for (const [k, v] of Object.entries(row)) {
+          if (v && typeof v === 'object') problems.push(`${t.key}.${k}: a sample cannot carry a placeholder — createFromTemplate does not resolve one`);
         }
       }
     }

@@ -142,6 +142,37 @@ value, you're told how many and offered a choice:
 Deleting is the default, because that's usually what removing a column means.
 Pick *Keep* if you're reorganising and expect to put the field back.
 
+### Recording why you hold someone's details
+
+If you're in the UK or the EU, data protection law asks you to be able to say
+*why* you're allowed to hold each person's details, and to show it if asked.
+That's your call to make, not ours — but there's a starting point built in.
+
+Pick **Consent & lawful basis** on the onboarding screen, or add it later from
+**Add module → from a template**. One row per person or company: who they are,
+why you hold them, what you use it for, where they came from, and — if the
+answer is consent — when they gave it and when they took it back.
+
+The **Lawful basis** dropdown uses the six official names, so you can match a
+row against the ICO's own guidance. In plain terms:
+
+| Basis | You'd pick this when |
+|---|---|
+| **Consent** | They actively agreed — ticked a box, signed up. They can withdraw it, and you must let them. |
+| **Contract** | You need their details to do the thing they asked for: deliver an order, send an invoice, quote a job. |
+| **Legal obligation** | The law makes you keep it — tax records, for example. |
+| **Legitimate interests** | You have a genuine business reason *and* you've considered whether they'd object. This one asks the most of you; the ICO expects you to have weighed it. |
+| **Vital interests** | Someone's life is at stake. Rare outside healthcare. |
+| **Public task** | You're carrying out an official function. Rare outside the public sector. |
+
+Most small businesses use the first three, and *Contract* covers more than
+people expect — you don't need consent to invoice a customer.
+
+Two honest notes. This is a place to write things down, not advice about what
+to write: if you're unsure which basis applies, the ICO's website is free and
+plain-spoken. And nothing links these rows to your Contacts automatically —
+you name the person in text, the same way Deals names a contact.
+
 ---
 
 ## 6. Field types
@@ -194,6 +225,16 @@ list in Excel, Numbers or Google Sheets.
 - Most written date formats → a proper date
 - Dropdown values matched to your existing options regardless of capitalisation
 - Completely blank rows are skipped rather than imported as empty records
+
+**Dates written as numbers are read American-style.** `03/04/2026` is imported
+as **4 March**, not 3 April, because that's how the underlying date reader
+works — and `13/04/2026` isn't read at all, because there's no 13th month, so
+that cell arrives empty. This bites anyone outside the US, and there's no
+setting for it yet.
+
+The fix takes ten seconds in your spreadsheet and is worth doing every time:
+**format the date column as `YYYY-MM-DD`** before exporting — `2026-04-03`.
+That form is unambiguous, and the importer takes it exactly as written.
 
 **Before a big import:** run it on a copy of your data first, or export a
 backup (Settings → Export data), so you can undo it in one step.

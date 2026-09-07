@@ -107,4 +107,64 @@ const TEMPLATES = [
     ],
     samples: [],
   },
+  /*
+   * The one template that exists for a legal reason rather than a workflow one.
+   *
+   * A tenant storing their customers here is the data CONTROLLER — lawful
+   * basis, consent and retention are their duties, not ours (§41). This gives
+   * them somewhere to record it; it does not make the obligation ours.
+   *
+   * **A module, not three fields on Contacts, and that is deliberate.** Adding
+   * them to the Contacts template would put three pieces of UK/EU jargon in
+   * front of every new workspace in the world, change nothing for a workspace
+   * that already exists (fields are per module, and only an owner may edit
+   * them — §14), and force `js/demo-data.js` to be regenerated to fill them or
+   * fail the "field is never filled" assertion (§34). A separate module opts
+   * in, costs nothing to anyone who does not pick it, and is skipped by the
+   * demo loader because it seeds no records.
+   *
+   * **No relation field, and this is a real constraint rather than a choice.**
+   * `createFromTemplate` copies fields verbatim and does NOT bind
+   * `relatedModuleName` to a runtime `relatedModule` id — only the demo loader
+   * does that. A relation here would create a picker pointing at nothing,
+   * which renders as plausible and empty (§36's recurring shape). The person
+   * is named in text, exactly as `Deals.contact` already does.
+   *
+   * **Options are short because option text becomes record data.** Every row
+   * stores the string and carries it into every CSV and JSON export, so
+   * "Contract — needed to do business with them" would be 42 bytes per row and
+   * an unreadable table cell. These are the statutory names, which is also
+   * what lets somebody match a row against the ICO's own guidance. The plain
+   * words live in `docs/USER-GUIDE.md`, where there is room for them.
+   */
+  {
+    key: 'consent',
+    name: 'Consent & lawful basis',
+    icon: 'shield-check',
+    color: '#475467',
+    description: 'Why you may hold each person’s details, and where they came from.',
+    fields: [
+      { key: 'person', label: 'Person or company', type: 'text', required: true, showInList: true },
+      { key: 'basis', label: 'Lawful basis', type: 'select', options: ['Consent', 'Contract', 'Legal obligation', 'Legitimate interests', 'Vital interests', 'Public task'], showInList: true },
+      { key: 'purpose', label: 'What you use it for', type: 'text', showInList: true },
+      { key: 'source', label: 'Where it came from', type: 'select', options: ['They contacted us', 'Website form', 'Referral', 'Event or meeting', 'Bought or rented list', 'Public register', 'Other'], showInList: true },
+      { key: 'consentDate', label: 'Date consent given', type: 'date', showInList: true },
+      { key: 'withdrawnOn', label: 'Consent withdrawn', type: 'date' },
+      { key: 'notes', label: 'Notes', type: 'textarea' },
+    ],
+    /*
+     * Two rows, on two different bases, because confusing consent with
+     * contract is the single most common mistake here — one sample of each
+     * teaches the distinction that a list of six words cannot.
+     *
+     * No dates: `createFromTemplate` copies samples verbatim and does not
+     * resolve `{ __rel: n }` (only `loadDemoData` does), so a date here would
+     * have to be hard-coded and would go stale. Every other template avoids
+     * dates in samples for the same reason.
+     */
+    samples: [
+      { person: 'Amira Hassan', basis: 'Consent', purpose: 'Monthly newsletter', source: 'Website form' },
+      { person: 'Okafor Supplies', basis: 'Contract', purpose: 'Invoicing and deliveries', source: 'They contacted us' },
+    ],
+  },
 ];

@@ -64,6 +64,8 @@ never change, because everything cross-references them.
 | Invites and beta codes a restore cannot carry | §40 |
 | **Terms acceptance**: the version, and asking again | §41 |
 | **A modal button that settled as a dismissal** | §41 · §22 |
+| **Consent & lawful basis template** | §42 |
+| **CSV date import** — the day it lost, and DD/MM | §42 · §37 |
 | Workspace time zone — and why the filter ignores it | §39 · §38 · §37 |
 | E2E suite slow or "flaky" | §32 |
 | **What tombstones cost**, and reading storage figures | §33 · §26 |
@@ -106,7 +108,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 380 Node tests + 96 Playwright tests, 43 smoke checks. On
+**All green:** 381 Node tests + 98 Playwright tests, 43 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -176,7 +178,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v40`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v41`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -4273,3 +4275,201 @@ privacy roster). Recorded so the omission reads as checked rather than missed.
 `STANDALONE_PAGES` and go straight to the network, never precached (§19),
 checked rather than assumed. The bump to `crmbuilder-v40` is for `js/app.js`
 and `js/cloud.js`, which are in `APP_SHELL`.
+
+
+---
+
+## 42. The consent template, and a date import that lost a day east of Greenwich
+
+Phase 3 of the UK launch (`docs/archive/UK-LAUNCH.md`), which the plan sized at
+*hours* and described as "a module template seeding lawful basis, consent date
+and source… check `fmtDate` and move on." The template is that. The rest of
+this section is what checking found.
+
+### Why it is a module and not three fields on Contacts
+
+The obvious shape is `lawfulBasis` / `consentDate` / `source` on the Contacts
+template, and it is wrong three ways:
+
+- **It changes the default for everybody.** Contacts is what almost every
+  workspace picks first, so three pieces of UK/EU jargon would land in front of
+  a sole trader in Ohio who will never need them.
+- **It reaches nobody who already exists.** Fields belong to a module, not to a
+  template, and only an owner may edit them (§14) — so every current workspace
+  would be untouched while every new one changed. The worst of both.
+- **It breaks the demo.** `tests/demo.test.mjs` asserts every field of a seeded
+  module is filled — "an empty column in the demo" (§34) — so three new
+  Contacts fields would mean regenerating `js/demo-data.js` to invent consent
+  records for forty fictional people.
+
+A seventh template opts in, costs nothing to anyone who does not pick it, and
+is skipped by the demo loader for free: `loadDemoData` and
+`scripts/seed-fixture.mjs` both `continue` on a template with no rows.
+
+**No relation field, and that is a constraint rather than a preference.**
+`createFromTemplate` copies fields verbatim and does **not** bind
+`relatedModuleName` to a runtime `relatedModule` id — only the demo loader does
+that, in its own pass. A relation in a template would therefore create a picker
+pointing at nothing: an empty dropdown that reads as "not configured yet"
+rather than as broken (§36 again). The person is named in text, exactly as
+`Deals.contact` already does.
+
+**Option text is record data, so the options are short.** The six statutory
+names, not glossed sentences — every row stores the string, carries it into
+every CSV and JSON export, and renders it in a table cell.
+"Contract — needed to do business with them" is 42 bytes per row and an
+unreadable column. The plain-English table lives in `docs/USER-GUIDE.md` and
+`docs/manual.html`, where there is room and where nobody pays for it per record.
+
+### Two lists that had gone stale the moment a seventh template existed
+
+Both are §29's thesis — a list written in a second place is a list that goes
+stale — and both are derived now:
+
+- **`TEMPLATE_KEYS` in `tests/demo.test.mjs`** was six keys typed by hand. Left
+  alone it would have walked six templates and said nothing at all about the
+  new one, which is the quiet half of the failure.
+- **`.template-card` count in `tests/e2e.spec.js`** was a literal `6`. §34
+  explicitly kept it as a literal on the grounds that it "really is about
+  TEMPLATES rather than the demo" — true, and it still went stale the first
+  time TEMPLATES grew. It reads `templates.js` now, like `DEMO` beside it.
+
+**The exception the demo makes is NAMED, not inferred.** `consent` seeds no
+demo records, so "every module has records" needed an escape — and deriving
+that escape from `DEMO.records` would make the assertion vacuous, passing just
+as happily on a dataset that had quietly lost Contacts. `DEMO_SKIPS` is a
+one-key set with the reason attached, and it is itself asserted: a key that is
+not a template, or one the demo actually fills, fails.
+
+Why the demo does not carry it: a consent register covering six of the demo's
+forty contacts reads as compliance half-done, which is worse than absent, and
+covering all forty doubles a third of the dataset to show a module most
+workspaces will not pick.
+
+### A test for a hazard nobody had covered: template samples
+
+`createFromTemplate` seeds a template's `samples` into a real workspace whenever
+somebody leaves "Include a few sample records" ticked. Those rows carry exactly
+the ghost-data and impossible-option hazards `demo.test.mjs` already checks for
+the demo — **on rows that reach a new user's first screen** rather than a demo
+they asked for — and nothing tested them.
+
+The five existing templates were clean when checked, so this is a guard rather
+than a fix. It also covers a placeholder: `{ __rel: n }` and `{ __ref: … }` are
+resolved by `loadDemoData` and by nothing else, so one written into a template
+sample out of habit is stored as a raw object and renders `[object Object]`.
+
+The "never filled" direction is deliberately **not** asserted for samples. A
+sample is illustrative, not exhaustive — Contacts leaves `notes` empty on
+purpose, and requiring every field would push filler into the first rows a new
+user sees.
+
+### The plan's second half: checked, and one claim held
+
+*"GBP is already in `CURRENCIES`. Dates store `YYYY-MM-DD` and
+`<input type="date">` renders in the browser's locale… check `fmtDate` and move
+on."* Measured rather than accepted:
+
+| Claim | Verdict |
+|---|---|
+| GBP available and renders as `£` | true — `£2,400`, and in `en-US` too |
+| `fmtDate` is locale-aware | true — `12 Sept 2026` in `en-GB`, `Sep 12, 2026` in `en-US` |
+| The stored day never shifts on display | true — `new Date("2026-09-12T00:00:00")` is local midnight, so only the calendar parts are formatted |
+| Date fields are native `<input type="date">` | true — `js/app.js` line 2275 |
+
+### The bug the plan did not anticipate, and it is a UK one
+
+**The CSV importer stored the wrong day for every non-ISO date, everywhere east
+of Greenwich.**
+
+```js
+const d = new Date(v);            // "12 September 2026" → LOCAL midnight
+return d.toISOString().slice(0, 10);   // …converted to UTC → "2026-09-11"
+```
+
+Measured across four zones: `Europe/London` and `Europe/Berlin` shift,
+`America/New_York` and `UTC` do not. That is §37's signature exactly — correct
+for whoever wrote it, wrong for the half of the world this launch is aimed at —
+and §37's own sweep missed this call site because it swept *comparisons* and
+this is a **write**.
+
+Silent, too: the cell shows a plausible date one day out, on the bulk path where
+nobody re-reads every row.
+
+Fixed by reading the calendar day back with local getters. Guarded by an E2E
+test in its **own `test.describe` with `timezoneId: 'Europe/London'`** — the
+container and CI both run UTC, so the test would pass on the broken code
+without it, and that is the entire reason the zone is pinned rather than
+assumed. Scoped to one describe because setting it suite-wide would move every
+date assertion in the file (§9). The date is in **September**, deliberately:
+BST is what makes local midnight cross the UTC boundary, and a January date
+passes on the bug. Checked against the broken state: `2026-09-11` against
+`2026-09-12`, named in the diff.
+
+### What was NOT fixed, and why it is a decision rather than an oversight
+
+**`03/04/2026` imports as 4 March, not 3 April.** `new Date` reads slashed
+numeric dates American-style whatever the browser's locale, and `13/04/2026`
+is not read at all — there is no 13th month, so that cell arrives **empty**.
+So a UK spreadsheet imports with some rows silently wrong and some silently
+blank.
+
+Not fixed here, because the fix is not a bug fix — it is a **choice**, and
+choosing wrong breaks the users who work today. Preferring DD/MM would silently
+re-date every US import; inferring per column from "is any first component
+above 12" guesses on the ambiguous rows, which is the same class of silent
+wrongness in the other direction. The honest answer is a format control on the
+mapping screen, which is real UI with real tests and is not the "hours" this
+phase was sized at.
+
+Stated instead, in both user docs, with the ten-second workaround: format the
+column as `YYYY-MM-DD` before exporting, which the importer takes exactly as
+written. Every example in those paragraphs was **run** before it was written.
+
+### And one more default that is wrong for this launch, reported not changed
+
+`DEFAULT_SETTINGS.currency` is `'USD'`, so a UK business sees USD preselected
+at onboarding and must notice. Getting it wrong is not free later: §23 records
+that changing currency **relabels** rather than converts, for the whole team,
+behind a confirmation.
+
+Not changed, because there is no API that maps a locale to a currency — only a
+hand-written table, which is the second source §29 exists to warn about — and
+because the better signal (the device time zone, which the digest picker
+already reads) needs a second table of its own. It is one dropdown on a screen
+the user is already reading, so the cost is small and the fix is a real design
+decision rather than a line.
+
+### Blast radius
+
+`js/templates.js` is in `APP_SHELL`, so `CACHE_VERSION` → `crmbuilder-v41`.
+No server change: `ASSET_DIRS` already allow-lists `js/` and the smoke test
+already names `/js/templates.js`, so the count stays 43.
+
+### One failure in one run, and what is known about it
+
+*"unsynced work from a previous workspace never lands in the new team"* failed
+once, on the first full run, timing out after 25s waiting for the joiner's
+`/api/me` to report the new org. Recorded rather than dismissed, because §32
+and §35 are both about not writing "flaky" over a defect — but also not
+inflated, because the evidence says what it says:
+
+- **5 of 5 in isolation**, 7.4–8.4s each, and **98 of 98 on the next full run**
+  at 4.9m. The suite is not getting slower (5.0 → 5.2 → 4.9), so §32's
+  accumulating-resource signature is absent, and `data/e2e` was checked at 8 KB.
+- **Nothing this phase changed sits between the click and the join.** §41 moved
+  `showTermsIfNeeded()` ahead of `redeemPendingInvite()`, but both are after the
+  sync, the terms check returns immediately for an account that already agreed,
+  and `[data-join]` had appeared — so the redeem path ran.
+- **The race is the test's subject, not a fault in it.** It clicks *Join* and
+  then un-blocks `/api/sync`, because that is precisely the window in which a
+  flush aimed at the old workspace would go out. `redeemPendingInvite` pushes
+  before joining (§13) and the push is `.catch()`-ed, so it cannot stop the
+  join — but under load the whole sequence can run long.
+
+**The 25s budget is the only lever, and widening it is the wrong move**: it is
+what makes "the join did not happen" distinguishable from "the join was slow",
+which is the assertion. Left alone. If this recurs, start from the joiner's
+console rather than from the timeout — `Could not join that team` in it would
+mean `reconcileWorkspace` threw after a server-side join that did succeed, and
+that is a different bug from the one the timeout suggests.
