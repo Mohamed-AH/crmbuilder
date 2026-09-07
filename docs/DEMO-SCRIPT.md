@@ -255,6 +255,23 @@ No. The webhook posts from the deployment to *their* chat service, using a URL
 they supply and that is never shown back to them. The digest carries counts and
 module names, never record contents.
 
+**"What about GDPR?"**
+Answer the part a tool can answer and hand back the part it cannot. Three
+things are on the screen: a **Consent & lawful basis** template that records
+why they may hold each person's details and where those came from; **Data
+requests**, which answers "what do you hold about me" by searching every text
+field of every record — including names that only appear as a link, and values
+under fields they have since removed — and hands them a file to review before
+they send anything; and **Data you have stopped using**, which lists what
+nothing has touched in a window they pick, so a retention policy is something
+they can act on. It reports; it never deletes for them.
+
+What it does not do is make anyone compliant. Which lawful basis, and how long
+to keep a record, are their decisions. The written half — what we do with their
+customers' data as processor, who else touches it, the 72-hour breach notice —
+is on the [terms page](/terms), and pointing at it is a better answer than
+improvising one.
+
 ---
 
 ## Don't do these

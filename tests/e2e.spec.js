@@ -2887,6 +2887,88 @@ test.describe('settings', () => {
     await expect(page.locator('tr:has-text("Should Not Survive")')).toHaveCount(0);
   });
 
+  /*
+   * The retention review.
+   *
+   * Anonymous on purpose: signed out there is no sync, so a backdated row
+   * stays backdated and the test is measuring the report rather than racing a
+   * push. The month arithmetic behind the cutoff has its own timezone-swept
+   * unit tests in tests/dateRules.test.mjs.
+   */
+  test('the retention review lists what has gone quiet, and offers no way to delete it', async ({ page }) => {
+    await onboard(page, { name: 'Retention Co', templates: ['Contacts'] });
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    for (const name of ['Recently Touched', 'Long Forgotten']) {
+      await page.click('#add-record-btn');
+      await page.fill('#f-name', name);
+      await page.click('#record-save');
+      await expect(page.locator(`tr:has-text("${name}")`)).toBeVisible();
+    }
+
+    // Age one row by three years. `DB` is a bare global, not `window.DB` (§39).
+    await page.evaluate(async () => {
+      const rows = await DB.getAll('records');
+      const old = rows.find((r) => r.data.name === 'Long Forgotten');
+      const at = new Date();
+      at.setFullYear(at.getFullYear() - 3);
+      await DB.put('records', { ...old, updatedAt: at.getTime() });
+    });
+
+    await page.goto('/#/settings');
+    await page.selectOption('#stale-window', '24');
+    await page.click('#stale-go');
+
+    const box = page.locator('#stale-results');
+    await expect(box).toContainText('1 record unchanged for over 2 years', { timeout: 15000 });
+    await expect(page.locator('.dsar-hit')).toHaveCount(1);
+    await expect(page.locator('.dsar-hit')).toContainText('Long Forgotten');
+    await expect(page.locator('.dsar-hit')).not.toContainText('Recently Touched');
+
+    /*
+     * The framing is the feature. Automated retention deletion is the most
+     * dangerous thing on the plan and is deliberately out of scope, so the
+     * screen has to say that old is not the same as unwanted — and there must
+     * be no button that acts on the list.
+     */
+    await expect(box).toContainText('not a bin');
+    await expect(page.locator('#stale-results button')).toHaveCount(1);
+    await expect(page.locator('#stale-download')).toBeVisible();
+
+    // The window is live, not decorative: at five years the same row is recent.
+    await page.selectOption('#stale-window', '60');
+    await page.click('#stale-go');
+    await expect(box).toContainText('Nothing has been sitting untouched for 5 years', { timeout: 15000 });
+    await expect(page.locator('#stale-download')).toHaveCount(0);
+
+    await page.selectOption('#stale-window', '24');
+    await page.click('#stale-go');
+    await expect(page.locator('#stale-download')).toBeVisible({ timeout: 15000 });
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.click('#stale-download'),
+    ]);
+    expect(download.suggestedFilename()).toMatch(/^retention-review-\d{4}-\d{2}-\d{2}\.json$/);
+    const text = await new Promise((resolve) => {
+      let out = '';
+      download.createReadStream().then((s) => {
+        s.on('data', (c) => { out += c; });
+        s.on('end', () => resolve(out));
+      });
+    });
+    const report = JSON.parse(text);
+    expect(report.unchangedForMonths).toBe(24);
+    expect(report.records.map((r) => r.record)).toEqual(['Long Forgotten']);
+    expect(report.recordsFound).toBe(1);
+    // Checked MORE than it found — the report is a filter rather than a dump.
+    // Not pinned to a number: the Contacts template seeds its own samples, so
+    // a literal here would really be "what the seed produced" (§34) and would
+    // break the next time that changes.
+    expect(report.recordsChecked).toBeGreaterThan(report.recordsFound);
+    // The caveats travel inside the file, for the reader who did not run it.
+    expect(report.notes.join(' ')).toMatch(/not a deletion/i);
+    expect(report.notes.join(' ')).toMatch(/Old is not the same as unwanted/i);
+  });
+
   test('a data request refuses a one-letter query and says why', async ({ page }) => {
     await onboard(page, { name: 'Request Co' });
     await page.goto('/#/settings');

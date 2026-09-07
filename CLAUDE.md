@@ -68,6 +68,8 @@ never change, because everything cross-references them.
 | **CSV date import** — the day it lost, and DD/MM | §42 · §37 |
 | **Subject access requests**: the search, and what it cannot find | §43 |
 | **Closing your own account** — and what it takes with it | §43 · §15 |
+| **Retention**: what has gone quiet, and why nothing deletes it | §44 |
+| Calendar months backwards, and the overflow that skips one | §44 |
 | Workspace time zone — and why the filter ignores it | §39 · §38 · §37 |
 | E2E suite slow or "flaky" | §32 |
 | **What tombstones cost**, and reading storage figures | §33 · §26 |
@@ -95,7 +97,8 @@ js/boot-icons.js      fills static icon placeholders — a file, not inline (§3
 js/scope.js           whose data is this — storage scopes (see §11)
 js/db.js              IndexedDB wrapper, one database per scope
 js/csv.js             RFC 4180 CSV reader/writer
-js/date-rules.js      calendar-day arithmetic for the due filter (see §37)
+js/date-rules.js      calendar-day arithmetic for the due filter (§37) and the
+                      retention window (§44) — also required by server.js (§39)
 js/dsar.js            finds every place one person appears (see §43)
 js/templates.js       prebuilt module templates
 js/demo-data.js       fictional business (generated — see §6)
@@ -111,7 +114,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 398 Node tests + 101 Playwright tests, 44 smoke checks. On
+**All green:** 402 Node tests + 102 Playwright tests, 44 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -149,6 +152,10 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
   approval lets them straight in with nothing to email — see §20
 - **Per-workspace webhooks** behind an SSRF guard, and a **daily digest** of
   what is due or overdue — off by default, counts only — see §38, §39
+- **Controller-side data protection tools**: a Consent & lawful basis template
+  (§42), a subject-access search and self-serve account deletion (§43), and a
+  retention review of what nothing has touched (§44). All three report or act
+  on the tenant's own workspace; none of them make anybody compliant.
 - Docs: see `docs/README.md` — the map, and which are frozen
 
 ### Not built yet
@@ -186,7 +193,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v42`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v43`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -417,7 +424,7 @@ prompted writing this down.
 node --test tests/signup.test.mjs                       # one file
 node --test --test-name-pattern "egress is counted" …   # one test
 npx playwright test -g "the demo can be kept on purpose"
-npm run test:smoke                                      # 41 checks, seconds
+npm run test:smoke                                      # 44 checks, seconds
 ```
 
 **Port blocks are disjoint per file**, because `node --test` runs files in
@@ -4642,3 +4649,152 @@ yourself, contact us"*, which is now false in the ordinary case; `terms.html`'s
 DSAR-assistance clause said the export was usually enough, which undersold what
 is now on the screen. Both updated, and `USER-GUIDE.md` and `manual.html` carry
 the whole of both features including what the search cannot find.
+
+
+---
+
+## 44. The retention review, and the delete button that is missing on purpose
+
+Phase 5 of the UK launch (`docs/archive/UK-LAUNCH.md`), and the last of them.
+A controller has to be able to answer *"how long do you keep this?"*, and the
+honest state before this was that the app kept everything for ever and gave
+nobody a way to see what that meant. Settings → **Data you have stopped using**
+lists the records nothing has touched in a window the owner picks — 12 months,
+2 years (the default), 3 years, 5 years — grouped by module, oldest first.
+
+Client-only, no endpoint, nothing the server can refuse. Same shape as §37's
+due filter and §43's search, and the same reason: it reads rows the device
+already holds, so there is no new surface and no new thing to permission.
+
+### It reports and never deletes, and that is the feature
+
+Automated retention deletion is the most dangerous thing that was on the plan.
+**A quiet record is not an unwanted one**: a closed matter may be one somebody
+is legally required to hold for six years, and nothing in this data model can
+tell that from an abandoned lead. A schedule that acted on the list would
+destroy the second kind along with the first, and §26 records that a delete
+takes the body with it — there is nothing to fish back out.
+
+So the screen says *"a list to review, not a bin"*, and there is no control
+that acts on it. The E2E pins that structurally rather than by wording:
+
+```js
+await expect(page.locator('#stale-results button')).toHaveCount(1);
+await expect(page.locator('#stale-download')).toBeVisible();
+```
+
+One button, and it is the download. A "delete these" added later fails that
+line by name, which is the point — it is a decision, and it should have to be
+taken again rather than slipped in.
+
+### `setMonth(m - n)` overflows rather than clamping, silently
+
+`DateRules.monthsAgo` is the one function in that file that returns an instant
+rather than a day coordinate, because it ages `updatedAt`, which is a
+millisecond stamp.
+
+The naive version is wrong twice a year and wrong in the direction that hides
+it: JavaScript rolls a date over rather than clamping, so **31 August with
+`setMonth(-6)` asks for 31 February and lands on 2 or 3 March** — "six months
+ago" jumping *forward* past the month it was aiming at. Same for 29 February
+minus 24 months. Nothing throws; the cutoff is just quietly a few days out, and
+a few days at the edge of a two-year window is a handful of records that appear
+or do not.
+
+Parked at the 1st before the month moves, then clamped to the last day that
+month actually has. Guarded by four tests in `tests/dateRules.test.mjs`, and
+**three of the four fail on the naive version** — checked, per §9.
+
+Local getters and setters throughout, deliberately: the time of day survives
+the shift, so a DST boundary moves the instant by an hour rather than moving
+the calendar day. For a 24-month window an hour is immaterial and a day is not.
+
+### `updatedAt`, not `createdAt`, and rows with no clock are counted separately
+
+"Stopped using" is about the last time somebody touched it, so it keys on
+`updatedAt`. A row whose clock is missing or zero cannot be aged at all —
+usually something restored from a hand-edited file — and it is **counted and
+named rather than silently dropped or silently included**. Either of those
+would make the total a number nobody can reconcile against the record count
+they are looking at, which is §33's adjacent-and-wrong figure in a new place.
+
+Orphaned rows (a `moduleId` no module answers to) are skipped: there is nothing
+to name them by, and §12's rule is that a migration never deletes an orphan, so
+they legitimately exist.
+
+### What travels in the file
+
+100 rows on screen, all of them in the JSON — a two-year window over a real
+workspace is plausibly hundreds, and a list that long stops being reviewable
+while the file stays useful.
+
+The caveats are **inside the download**, exactly as §43's bundle does it,
+because whoever opens it next did not run it and never saw the screen: that it
+is a report and nothing was changed, that old is not the same as unwanted, that
+importing or restoring a record resets its last-changed date, and that rows
+which have never reached this device — a colleague who is offline — are not
+included. A file that reads as a complete answer to a question it only partly
+answers is the failure mode here.
+
+It syncs first and says when it could not, same as the DSAR search.
+
+### `ONBOARDING.md` contradicted its own rollout section
+
+Found while walking §27's six documents, and it is §27's own drift in the file
+§27 audited. *"Rolling out to a team"* had been corrected in that pass and
+reads properly — one shared workspace, four roles, per-record and per-field
+merge. Forty lines below it, under *"Common objections"*:
+
+> **"Can several of us use it at once?"**
+> Each person gets their own account and workspace. A single shared workspace
+> edited simultaneously by several people isn't what the sync model is built
+> for.
+
+Two answers to one question, in one file, forty lines apart, and the wrong one
+is the one a person reads when a client asks. §27's lesson was that the
+easy-to-forget documents are the HTML ones nothing greps; this adds that **a
+document can be half-updated and read as done**, because the section somebody
+went looking for was correct.
+
+### Which documents this walked, and what each needed
+
+| | Needed |
+|---|---|
+| `USER-GUIDE.md`, `docs/manual.html` | a *Finding data you have stopped using* section |
+| `docs/ONBOARDING.md` | the objection above, and a "does this help with GDPR" answer |
+| `docs/DEMO-SCRIPT.md` | the same question, in the list of ones to expect |
+| `docs/product-tour.html` | a tile and a `<details>`, both naming the limit |
+| `docs/BETA.md` tester note | the three tools, and §42's CSV date trap |
+| `terms.html` | retention is the controller's decision, and we set no period |
+| `privacy.html` | nothing — it describes **our** retention as processor |
+| `docs/API.md` | nothing — no route was added |
+
+**The privacy/terms split is the one worth keeping.** *"We keep your workspace
+for as long as your account exists"* is a statement about what the processor
+does and is still true. How long a tenant keeps *their* customers' records is a
+controller duty, so it belongs in `terms.html` — and it is written as a tool
+offered, never as a period we set, because setting one would be us making the
+tenant's decision for them.
+
+All four public-facing answers say the same two sentences: here is what the
+tool does, and it does not make you compliant. Claiming otherwise is the
+fastest way to be quoted back at.
+
+### Blast radius
+
+`js/date-rules.js` and `js/app.js` are both in `APP_SHELL`, so `CACHE_VERSION`
+→ `crmbuilder-v43`. No new served file, so the smoke count stays **44** — and
+running it is what proves that, per §9.
+
+`server.js` requires `js/date-rules.js` (§39), so a change there has a second
+consumer that no browser test would catch. `monthsAgo` is additive and the
+server does not call it; the shared-surface test in `tests/dateRules.test.mjs`
+covers the export list either way.
+
+### Still open, and carried forward deliberately
+
+**The CSV date-format control** (§42). `03/04/2026` still imports as 4 March
+and `13/04/2026` still imports as nothing, and picking a convention silently is
+the wrong fix in either direction. It is the one piece of the UK launch that is
+open work rather than a closed decision, and the tester note now names it with
+the `YYYY-MM-DD` workaround so nobody meets it cold.

@@ -3125,6 +3125,22 @@
                wipe the query the reviewer just typed (§38's Telegram rule). -->
           <div id="dsar-results"></div>
         </div>
+        <!--
+          Retention review. A REPORT and never a purge — see the note on
+          staleReport(). Every role, like Data requests above it: reading the
+          workspace writes nothing.
+        -->
+        <div class="card">
+          <div class="card-head"><h2>Data you have stopped using</h2></div>
+          <p class="settings-hint">Holding personal data longer than you need it is the rule most small businesses drift past without noticing. This lists records nobody has changed in a while, so you can decide what still earns its place. It changes nothing by itself.</p>
+          <div class="dsar-search">
+            <select class="input" id="stale-window" aria-label="Unchanged for">
+              ${RETENTION_WINDOWS.map(([m, label]) => `<option value="${m}" ${m === 24 ? 'selected' : ''}>Unchanged for ${esc(label)}</option>`).join('')}
+            </select>
+            <button class="btn" id="stale-go">${icon('search', 15)} Review</button>
+          </div>
+          <div id="stale-results"></div>
+        </div>
         <div class="card">
           <div class="card-head"><h2>App</h2></div>
           <div class="btn-row">
@@ -3322,6 +3338,7 @@
     bindTeamActions();
     $('#export-btn').addEventListener('click', exportData);
     bindDataRequests();
+    bindRetention();
     // Each of these is now conditional on role, so every bind is guarded: an
     // addEventListener on null throws and takes the whole screen down with it,
     // not just the button that is missing.
@@ -3813,6 +3830,176 @@
     const safe = result.query.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'search';
     downloadFile(`data-request-${safe}-${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
     toast(`Downloaded ${result.total} record${result.total === 1 ? '' : 's'}`);
+  }
+
+  /* ------------------------------------------------------ retention review
+   *
+   * "What have we stopped using?" — a REPORT, and deliberately never a purge.
+   *
+   * Automated retention deletion was the most dangerous thing on the UK-launch
+   * list and is out of scope on purpose. §12: *deleting data during a
+   * migration is not a decision to make automatically*, and §34 records
+   * `--clean` matching orgs by name and removing a real customer's workspace
+   * and its 174 rows while reporting success. A list the owner acts on gets
+   * the same compliance story at a fraction of the risk, so there is no
+   * delete button here and adding one is not a small change.
+   *
+   * Client-only, like §37's filter and §43's search: no endpoint, nothing the
+   * server can refuse.
+   */
+  const RETENTION_WINDOWS = [[12, '12 months'], [24, '2 years'], [36, '3 years'], [60, '5 years']];
+  const RETENTION_SHOWN = 100;
+
+  function bindRetention() {
+    const go = $('#stale-go');
+    if (go) go.addEventListener('click', () => runRetentionReview());
+  }
+
+  let lastRetention = null;
+
+  async function runRetentionReview() {
+    const box = $('#stale-results');
+    if (!box) return;
+    const months = Number($('#stale-window').value) || 24;
+    box.innerHTML = '<p class="settings-hint">Checking…</p>';
+
+    // Same reason as §43's search: this device holds a replica, and a review
+    // run against yesterday's copy answers the wrong question.
+    let stale = false;
+    if (Cloud.isAuthed) {
+      const out = await Cloud.sync().catch(() => ({ ok: false }));
+      stale = !out || !out.ok;
+    }
+
+    const mods = await DB.getAll('modules');
+    const recs = await DB.getAll('records');
+    lastRetention = { ...staleReport(mods, recs, months), stale, months };
+    renderRetention(box, lastRetention);
+  }
+
+  /*
+   * Group untouched records by module.
+   *
+   * **`updatedAt`, not `createdAt`.** "Untouched" is the question a retention
+   * policy asks, and a record created three years ago and edited last week is
+   * in use. A row nobody has ever edited carries its creation stamp as
+   * `updatedAt`, so that case is covered without a second clock.
+   *
+   * **Rows with no clock are counted separately, never silently dropped.**
+   * `undefined < cutoff` is false, so an un-stamped row would quietly leave
+   * the report — and "nothing is old" would be the answer for a workspace
+   * whose rows all came from a hand-edited backup. Reported as unknown
+   * instead, which is a different fact from "recent".
+   */
+  function staleReport(mods, recs, months) {
+    const cutoff = DateRules.monthsAgo(Date.now(), months);
+    const byId = new Map(mods.map((m) => [m.id, m]));
+    const rows = [];
+    let undated = 0;
+
+    for (const r of recs) {
+      const mod = byId.get(r.moduleId);
+      if (!mod) continue;                       // orphaned row: nothing to name
+      const at = Number(r.updatedAt);
+      if (!Number.isFinite(at) || at <= 0) { undated += 1; continue; }
+      if (at >= cutoff) continue;
+      rows.push({
+        moduleId: mod.id,
+        moduleName: mod.name,
+        recordId: r.id,
+        name: recordName(mod, r),
+        updatedAt: at,
+        demo: !!r._demo,
+      });
+    }
+
+    rows.sort((a, b) => a.updatedAt - b.updatedAt);   // oldest first: the ones to look at
+    const counts = new Map();
+    for (const row of rows) {
+      const seen = counts.get(row.moduleId);
+      if (!seen) counts.set(row.moduleId, { moduleName: row.moduleName, count: 1, oldest: row.updatedAt });
+      else { seen.count += 1; seen.oldest = Math.min(seen.oldest, row.updatedAt); }
+    }
+    const byModule = [...counts.values()].sort((a, b) => b.count - a.count || a.moduleName.localeCompare(b.moduleName));
+    return { cutoff, total: rows.length, rows, byModule, undated, checked: recs.length };
+  }
+
+  function renderRetention(box, out) {
+    const window = (RETENTION_WINDOWS.find(([m]) => m === out.months) || [])[1] || `${out.months} months`;
+    const staleNote = out.stale ? '<p class="settings-hint">This device could not reach the server, so it checked the copy it already had.</p>' : '';
+    const undatedNote = out.undated
+      ? `<p class="settings-hint">${out.undated} record${out.undated === 1 ? '' : 's'} carr${out.undated === 1 ? 'ies' : 'y'} no last-changed date and could not be aged — usually rows restored from a hand-edited file.</p>`
+      : '';
+
+    if (!out.total) {
+      box.innerHTML = `
+        <p class="settings-hint"><strong>Nothing has been sitting untouched for ${esc(window)}.</strong> Checked ${out.checked} record${out.checked === 1 ? '' : 's'}.</p>
+        ${undatedNote}${staleNote}`;
+      return;
+    }
+
+    const shown = out.rows.slice(0, RETENTION_SHOWN);
+    box.innerHTML = `
+      <p class="settings-hint"><strong>${out.total} record${out.total === 1 ? '' : 's'} unchanged for over ${esc(window)}</strong>, out of ${out.checked} — ${out.byModule.map((b) => `${esc(b.moduleName)} ${b.count}`).join(' · ')}</p>
+      ${undatedNote}${staleNote}
+      <!--
+        No delete button, and that is the feature. Nothing here decides what to
+        keep: a quiet record may be a closed matter you are required to hold
+        for six years, and the app cannot tell that from an abandoned one.
+      -->
+      <p class="settings-hint">This is a list to review, not a bin. Old is not the same as unwanted — some records have to be kept for years — so open the ones that matter and decide. Deleting cannot be undone, and on a team it deletes for everybody.</p>
+      <ul class="dsar-list">
+        ${shown.map((r) => `
+          <li class="dsar-hit">
+            <span class="dsar-where">${esc(r.moduleName)} · ${esc(r.name)}${r.demo ? ' <span class="dsar-tag">sample data</span>' : ''}</span>
+            <span class="dsar-fields">Last changed ${esc(fmtWhen(r.updatedAt))}</span>
+          </li>`).join('')}
+      </ul>
+      ${out.total > shown.length ? `<p class="settings-hint">Showing the ${shown.length} oldest. The file below carries all ${out.total}.</p>` : ''}
+      <div class="btn-row">
+        <button class="btn" id="stale-download">${icon('download', 15)} Download the list (${out.total})</button>
+      </div>`;
+
+    const dl = $('#stale-download');
+    if (dl) dl.addEventListener('click', downloadRetention);
+  }
+
+  function downloadRetention() {
+    if (!lastRetention) return;
+    const out = lastRetention;
+    const payload = {
+      app: 'crmbuilder',
+      kind: 'retention-review',
+      version: 1,
+      producedAt: new Date().toISOString(),
+      workspace: SETTINGS.businessName || '',
+      unchangedForMonths: out.months,
+      unchangedBefore: new Date(out.cutoff).toISOString(),
+      recordsChecked: out.checked,
+      recordsFound: out.total,
+      recordsWithNoDate: out.undated,
+      /*
+       * Same rule as §43's bundle: the limits travel inside the file, because
+       * whoever reads it next did not run it and never saw the screen.
+       */
+      notes: [
+        'A report, not a deletion. Nothing here has been changed or removed.',
+        'Old is not the same as unwanted — some records must be kept for years.',
+        '"Unchanged" means the last edit recorded on this workspace. Importing or restoring a record can reset that date.',
+        'Records that have never reached this device — from a colleague who is offline — are not included.',
+      ],
+      byModule: out.byModule,
+      records: out.rows.map((r) => ({
+        module: r.moduleName,
+        record: r.name,
+        recordId: r.recordId,
+        lastChanged: new Date(r.updatedAt).toISOString(),
+        sampleData: r.demo || undefined,
+      })),
+    };
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadFile(`retention-review-${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
+    toast(`Downloaded ${out.total} record${out.total === 1 ? '' : 's'}`);
   }
 
   async function importData(e) {

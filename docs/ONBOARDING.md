@@ -195,6 +195,20 @@ hosting the *server* sleeps after 15 minutes idle and takes up to a minute to
 wake; that affects sync, not the app. Upgrading the hosting plan removes it.
 
 **"Can several of us use it at once?"**
-Each person gets their own account and workspace. A single shared workspace
-edited simultaneously by several people isn't what the sync model is built for —
-be straight about that up front rather than after they've discovered it.
+Yes — one shared workspace, each person on their own account, with roles
+deciding what they may do. Two people editing different records both keep their
+work, and so do two people editing different *fields* of the same record. The
+one honest limit is two people typing into the *same* field at the same moment:
+that is last-write-wins. State that up front rather than after they find it.
+
+**"Does this help us with GDPR?"**
+With the parts a tool can help with, yes; it does not make anyone compliant on
+its own, and saying otherwise is the fastest way to be quoted back at.
+Concretely: the **Consent & lawful basis** template records why they may hold
+each person's details and where they came from; Settings → **Data requests**
+answers "what do you hold about me" by searching every text field, including
+values under fields they have since removed; Settings → **Data you have stopped
+using** shows what nothing has touched in a window they choose, so a retention
+policy is something they can act on rather than only write down. The decisions —
+which lawful basis, how long to keep it — are theirs. [terms.html](/terms)
+carries the processor half in writing.

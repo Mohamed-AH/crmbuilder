@@ -945,6 +945,16 @@ details attached, so you do not have to describe what browser you are on. Small
 irritations are as useful as crashes — those are the things that never get
 reported and never get fixed.
 
+**If you keep other people's details in it**, three things are there for you.
+The **Consent & lawful basis** template (Add module → from a template) records
+why you may hold each person's details and where they came from. Settings →
+**Data requests** searches every text field of every record for one person —
+including names that only appear as a link, and values under fields you have
+since removed — and gives you a file to review before you send anything on.
+Settings → **Data you have stopped using** lists what nothing has touched in a
+window you choose. That last one reports only; nothing on that screen deletes
+anything.
+
 **Pass it on if you like.** Anyone can open the site and use it without an
 account. If they want one, signing in with Google shows them a *Ask to join the
 beta* button — we work through those by hand.
@@ -963,6 +973,11 @@ beta* button — we work through those by hand.
   says *how many* rather than *which*, and a day with nothing due sends nothing
   at all. Only an owner can set it, and the URL is never shown back to you
   after you save it — treat it like a password.
+- **Importing dates from a UK spreadsheet.** A CSV column of `03/04/2026` is
+  read American-style — 4 March, not 3 April — and `13/04/2026` is not read at
+  all, so that cell arrives empty. There is no date-format control on the
+  import screen yet. Format the column as `YYYY-MM-DD` before you export it and
+  the importer takes it exactly as written.
 - The guided tour needs sample data, and offers to load it. Settings → Remove
   sample data takes it back out and keeps anything you added.
 

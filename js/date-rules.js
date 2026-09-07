@@ -192,7 +192,39 @@ const DateRules = (() => {
     return dates.find((f) => f.showInList) || dates[0];
   }
 
-  return { parseDay, daysUntil, isDueWithin, watchedDateField, today, resolveZone, zoneParts, dayKey };
+  /*
+   * The instant N calendar months before `now`, as a timestamp.
+   *
+   * Used by the retention report to age a record's `updatedAt`, which is a
+   * millisecond stamp rather than a stored calendar day — so this is the one
+   * function here that returns an instant rather than a day coordinate.
+   *
+   * **`setMonth(m - n)` alone is wrong, and it is wrong silently.** JavaScript
+   * overflows rather than clamping: 31 August with `setMonth(-6)` asks for
+   * 31 February and lands on 2 or 3 March, so "six months ago" jumps forward
+   * over the month it was aiming at. Same for a leap day — 29 February minus
+   * 24 months has no 29th to land on.
+   *
+   * So the day is parked at the 1st before the month moves, and then clamped
+   * to the last day that month actually has. That is what a person means by
+   * "two years ago today" on the 31st, and it is what every date library does.
+   *
+   * Local getters and setters throughout, deliberately: the time of day is
+   * preserved across the shift, so a DST boundary moves the instant by an hour
+   * rather than moving the calendar day. For a 24-month retention window an
+   * hour is immaterial and a day is not.
+   */
+  function monthsAgo(now, months) {
+    const d = new Date(now);
+    const wanted = d.getDate();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - months);
+    const lastOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    d.setDate(Math.min(wanted, lastOfMonth));
+    return d.getTime();
+  }
+
+  return { parseDay, daysUntil, isDueWithin, watchedDateField, today, resolveZone, zoneParts, dayKey, monthsAgo };
 })();
 
 /*

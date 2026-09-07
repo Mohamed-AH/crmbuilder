@@ -170,6 +170,51 @@ describe('the same day means the same thing everywhere', () => {
  * ends with a `typeof module` guard, so the browser gets a global, server.js
  * gets a require, and the `new Function` harness above is untouched.
  */
+/*
+ * monthsAgo — the retention report's cutoff.
+ *
+ * The only function here that returns an INSTANT rather than a day
+ * coordinate, because it ages `updatedAt`, which is a millisecond stamp.
+ */
+describe('DateRules.monthsAgo', () => {
+  const at = (y, m, d, h = 12) => new Date(y, m - 1, d, h, 0, 0).getTime();
+
+  test('walks back whole calendar months, not 30-day blocks', () => {
+    assert.equal(DateRules.monthsAgo(at(2026, 9, 12), 24), at(2024, 9, 12));
+    assert.equal(DateRules.monthsAgo(at(2026, 9, 12), 12), at(2025, 9, 12));
+    assert.equal(DateRules.monthsAgo(at(2026, 9, 12), 1), at(2026, 8, 12));
+    // 24 × 30 days would land in October 2024 and quietly widen the window by
+    // a fortnight — the arithmetic somebody reaches for first.
+    assert.notEqual(DateRules.monthsAgo(at(2026, 9, 12), 24), at(2026, 9, 12) - 24 * 30 * 86400000);
+  });
+
+  /*
+   * The overflow, which is the whole reason this is a function.
+   * `new Date(2026, 7, 31).setMonth(1)` asks for 31 February and lands on
+   * 2 or 3 March — six months back jumps FORWARD past the month it aimed at.
+   */
+  test('clamps to the last day of a shorter month rather than overflowing', () => {
+    assert.equal(DateRules.monthsAgo(at(2026, 8, 31), 6), at(2026, 2, 28));
+    assert.equal(DateRules.monthsAgo(at(2026, 5, 31), 1), at(2026, 4, 30));
+    assert.equal(DateRules.monthsAgo(at(2026, 3, 30), 1), at(2026, 2, 28));
+  });
+
+  test('a leap day lands on the 28th of a non-leap February', () => {
+    assert.equal(DateRules.monthsAgo(at(2028, 2, 29), 24), at(2026, 2, 28));
+    // …and on the 29th when the target year has one.
+    assert.equal(DateRules.monthsAgo(at(2028, 2, 29), 48), at(2024, 2, 29));
+  });
+
+  test('the time of day survives the shift', () => {
+    // The cutoff is compared against a millisecond stamp, so an hour matters
+    // less than a day — but silently moving to midnight would shift every
+    // boundary record by up to a day in the direction nobody asked for.
+    const out = new Date(DateRules.monthsAgo(at(2026, 9, 12, 9), 24));
+    assert.equal(out.getHours(), 9);
+    assert.equal(out.getMinutes(), 0);
+  });
+});
+
 describe('the same arithmetic reaches the browser, the server and these tests', () => {
   test('require() returns the same surface as the global', () => {
     assert.deepEqual(Object.keys(required).sort(), Object.keys(DateRules).sort());

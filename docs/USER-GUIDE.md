@@ -283,6 +283,28 @@ whoever reads it next probably did not run it. What the search cannot find:
 - anything on a colleague's device that has not synced yet;
 - deleted records — a deletion discards the contents, so there is nothing left.
 
+### Finding data you have stopped using
+
+Settings → **Data you have stopped using**. Pick a window — 12 months, 2 years,
+3 years or 5 years — and press Review. It lists records nobody has changed in
+that time, oldest first, with a count per module and a file you can download.
+
+Holding personal data for longer than you need it is the rule most small
+businesses drift past without noticing, and this is the review that answers it.
+
+**It is a list, not a bin.** There is no delete button here, deliberately:
+
+- **Old is not the same as unwanted.** A closed matter you are required to keep
+  for six years looks exactly like an abandoned one, and nothing in the app can
+  tell them apart. That decision is yours.
+- **Deleting cannot be undone**, and on a team it deletes for everybody. Open
+  the records that matter and decide about them one at a time.
+
+Two things about the dates. *Unchanged* means the last edit recorded on this
+workspace — importing or restoring a record resets it, so a bulk import last
+month makes everything in it look new. And records that have never reached this
+device, from a colleague who is offline, are not counted.
+
 ### Closing your account
 
 Settings → Danger zone → **Delete my account**. Anyone can close their own
