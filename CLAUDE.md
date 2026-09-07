@@ -3819,3 +3819,47 @@ handler at the `Unhandled error` assertion.
 The cost of a log that shouts at its own working guards is the one §25 already
 names for alerts, in a new place: it trains the reader to skim, and the lines
 worth reading are the ones that get skimmed.
+
+### The privacy page said "complete list" and was not, again
+
+Both notification channels were verified live after the monitor fix, and the
+operator channel's own history is what showed it: a problem report sitting in
+Telegram carrying a beta tester's **email address** and what they wrote.
+
+`privacy.html` named Render, Atlas, Google and GitHub, said *"If a problem
+report is sent, we may receive a notification containing your email address and
+what you wrote"* — and then closed the section with **"That is the complete
+list."** It never said *where* that notification goes. Telegram holds real
+personal data for this deployment and was not on a list that declares itself
+complete, which makes the sentence false rather than merely brief.
+
+**Exactly the GitHub omission from earlier in §38, in the same paragraph, found
+the same way** — by looking at a live artifact instead of at the code. The rule
+that section states ("a privacy page is the last place an intention should be
+written as a fact") has a second half now: *a page that claims completeness has
+to be re-checked against what the deployment is actually doing, not against
+what the code could do.*
+
+**`docs/archive/UK-LAUNCH.md` had it right and the shipped page did not.** Its
+roster reads "…and whatever `FEEDBACK_WEBHOOK_URL` points at. A tenant's *own*
+workspace webhook is their choice and not ours to declare." That is the correct
+analysis, written in a frozen plan, never carried across to the page a regulator
+reads. A plan being right is not the same as a product being right.
+
+Three things now said, and the distinctions are the substance:
+
+- **Telegram is named**, because it genuinely receives personal data.
+- **UptimeRobot and healthchecks.io are described but not listed as recipients
+  of data**, because they receive none — one asks whether the site answers, the
+  other is told `scanned N, sent N, failed N` (§39's counts-only ping). Listing
+  them beside Telegram would imply they hold something. Padding a roster is its
+  own kind of inaccuracy.
+- **The workspace digest is disclosed and explicitly excluded from our list.**
+  The destination is the *owner's* choice, so on the controller/processor split
+  the tenant owns it — but a team member deserves to know their workspace can
+  send counts somewhere their owner picked. §39's counts-only rule is what makes
+  that sentence short enough to be reassuring.
+
+**No `CACHE_VERSION` bump.** `privacy.html` is in `sw.js`'s `STANDALONE_PAGES`
+and goes straight to the network, never precached (§19) — checked rather than
+assumed, including that it is absent from `APP_SHELL`.
