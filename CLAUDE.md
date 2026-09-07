@@ -3977,3 +3977,58 @@ down before you need them:
   rows land in the wrong workspace (§17's wsId collision: 174 of 180 records
   lost, every total plausible), so the sequence ends with signing in as a named
   account and then as a *second* tenant.
+
+### Phase 1 of the UK launch: encrypt the artifact, and KEEP `accessRequests`
+
+The nightly job lives in the private repo `Mohamed-AH/crmback` (§17), so the
+workflow was written out and handed over rather than committed here. What
+changed, and the two decisions inside it:
+
+**Encrypted with `gpg --symmetric --cipher-algo AES256`.** The artifact is
+every customer's records plus `accessRequests`, and a GitHub build artifact is
+downloadable by anyone with read access to the repository. Encryption is what
+makes "read access to the repo" stop meaning "read access to every customer's
+CRM". Symmetric rather than asymmetric on purpose: asymmetric is stronger and
+means key management, and a key managed badly is worse than a passphrase you
+can actually find during an incident. Say that rather than implying the
+stronger option was overlooked.
+
+Three properties the workflow needs and would be worthless without:
+
+- **A missing `BACKUP_PASSPHRASE` fails the job**, rather than falling back to
+  plaintext. *"Encrypted unless it wasn't"* is the worst of the three states —
+  you would believe the artifact was safe and nothing would ever contradict
+  you. That is §17's no-op-that-reports-success in a new costume.
+- **It proves the ciphertext decrypts BEFORE deleting the only readable copy.**
+  An artifact that cannot be opened is not a backup, and finding that out
+  during an incident is the exact failure the job exists to prevent.
+- **The shape check still runs on the plaintext**, before encryption. You
+  cannot check the shape of a thing you have already sealed, and catching an
+  error page or a truncated body is the whole reason that step exists.
+
+**`accessRequests` stays in, against the plan's own line.** `docs/archive/UK-LAUNCH.md`
+Phase 1 says to omit it. Checked rather than executed (§21's treatment), and
+the omission is the worse of the two options:
+
+- **Approval IS the allowlist** (§20). Dropping the collection means every
+  approved person has to ask again after a recovery — restoring the exact
+  failure §17 records for the two collections that *were* missing.
+- **Encryption already closes the exposure it was reaching for.** The concern
+  was personal data about people who never became users, readable by anyone
+  with repo access. Once the artifact is ciphertext, that audience is gone.
+
+So the two changes are not independent: doing the first is what makes the
+second unnecessary. Doing the second *instead* would have degraded recovery to
+solve a problem the first one already solved.
+
+**The frozen plan is left saying the opposite, on purpose.** §29's rule —
+editing a plan's premises after the fact loses the reason the plan was shaped
+that way. `docs/archive/README.md` carries the correction in its known-false
+list instead, which is the mechanism that exists for exactly this.
+
+**Not yet claimed on `privacy.html`.** The page says the nightly backup is
+stored on GitHub and says nothing about encryption, which is currently correct
+— the workflow is written but not merged. §38 records a first draft of that
+same paragraph asserting backups *"are encrypted"* when they were not, caught
+before the commit. The sentence goes in when the encrypted job has actually
+run, not when it has been handed over.

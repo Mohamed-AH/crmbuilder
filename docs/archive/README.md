@@ -49,6 +49,20 @@ now describes the future more accurately than the present. That is what
 patching a historical document in place does, and it is why these are frozen
 instead.
 
+`UK-LAUNCH.md` has one line that was **decided against when it came to be
+built**. Phase 1 reads *"Encrypt the nightly artifact at rest; omit
+`accessRequests` from the routine build."* The encryption shipped. The omission
+did not, and deliberately: approval **is** the allowlist (`CLAUDE.md` §20), so
+dropping the collection means everyone approved has to ask again after a
+recovery — and encryption already closes the exposure the omission was reaching
+for. Keeping the artifact readable to a recovery and unreadable to everyone
+else is the better trade. Reasoning in `CLAUDE.md` §40.
+
+The plan line is left standing rather than edited, which is this directory's
+whole point: it records what was believed at the time, and the fact that
+building it changed the answer is more useful than a plan retconned to agree
+with the code.
+
 ## The rule
 
 Adding a document here means it has stopped being maintained. Say so in its own
