@@ -12,7 +12,11 @@
   <header>
     <a class="back" href="/">← CRM Builder</a>
     <h1>Terms of use</h1>
-    <p class="updated">Last updated 24 August 2026 · applies to the free beta at this address</p>
+    <!-- The date here and TERMS_VERSION in server.js are the same fact in two
+         places, and they have to be changed together — see CLAUDE.md §41.
+         The text on this page is the source of truth; the constant is how the
+         app knows to ask again. -->
+    <p class="updated">Last updated 7 September 2026 · applies to the free beta at this address</p>
   </header>
 
   <div class="callout">
@@ -49,6 +53,76 @@
     contacts — that remains your responsibility, including under whatever data
     protection law applies to you.</li>
   </ul>
+
+  <h2>Handling your customers' data on your behalf</h2>
+
+  <div class="callout">
+    <p><strong>The short version.</strong> The records you put in are
+    <em>yours</em>: you decide what goes in and why, and we only ever handle it
+    to run the service for you. This section is the detail — what we will and
+    will not do with it, who else touches it, and what happens when you leave.</p>
+  </div>
+
+  <p>Where your records contain personal information about other people, UK and
+  EU data protection law calls <strong>you the controller</strong> and
+  <strong>us the processor</strong>. In plain terms: it is your data and your
+  decision; we are the people who keep the machine running.</p>
+
+  <h3>What we do with it</h3>
+  <p>We process your records <strong>only to provide the service</strong> — to
+  store them, sync them between your devices, show them to the people you have
+  invited, and back them up. We do not sell it, mine it, train anything on it,
+  or use it to build any other product. If we ever needed to process it for
+  some other reason, we would ask you first.</p>
+  <p>Everyone with access to the systems is bound to keep what they see
+  confidential. Today that is one person.</p>
+
+  <h3>Where it is, and how it is protected</h3>
+  <ul>
+    <li>Servers and database are in the <strong>EU (Frankfurt)</strong>.</li>
+    <li>Everything travels over <strong>HTTPS</strong>. The database is hosted
+    by MongoDB Atlas, which encrypts its storage.</li>
+    <li>The nightly backup is <strong>encrypted before it is stored</strong>,
+    with a passphrase held separately from the backup itself.</li>
+    <li>Access to a workspace is scoped to its own organisation, and roles
+    limit what each person on a team can do.</li>
+  </ul>
+  <p>No system is perfectly secure, and this is a small operation rather than a
+  large one. We would rather say that than imply otherwise.</p>
+
+  <h3>Who else touches it</h3>
+  <p>We use a small number of other companies to run the service — hosting, the
+  database, sign-in, and backup storage. They are <strong>named individually on
+  the <a href="/privacy">privacy page</a></strong>, which is the current list.
+  If we add or change one, we will update that page and tell you before it
+  starts handling your data, so that you have the chance to object.</p>
+
+  <h3>If something goes wrong</h3>
+  <p>If we become aware of a breach affecting your data, we will tell you
+  <strong>without undue delay and in any case within 72 hours</strong>, with
+  what we know at the time: what happened, what data was involved, and what we
+  are doing about it. We will not wait until we have the full picture to tell
+  you that there is one.</p>
+
+  <h3>Getting it back, and getting it deleted</h3>
+  <ul>
+    <li><strong>Any time:</strong> Settings → Export backup gives you
+    everything, as a file, without asking us.</li>
+    <li><strong>On request:</strong> we will help you answer an access,
+    correction or deletion request from one of your own contacts. Usually the
+    export and the app itself are enough to do it yourself.</li>
+    <li><strong>When you leave:</strong> deleting your account deletes your
+    workspace. Two honest caveats. Deleted records leave a small marker behind —
+    an id and a date, no content — for up to <strong>180 days</strong>, so that
+    a device that has been offline learns the record is gone rather than
+    restoring it. And a backup taken before you left still exists until it
+    ages out of the backup retention window.</li>
+  </ul>
+
+  <h3>Showing our working</h3>
+  <p>Ask, and we will tell you what you need to satisfy yourself that this is
+  accurate. We are too small to host formal audits, and saying so is more useful
+  than promising one we could not deliver.</p>
 
   <h2>What you should expect from a beta</h2>
   <ul>

@@ -37,6 +37,11 @@ header a.back { color: var(--accent); text-decoration: none; font-size: 14px; }
 header a.back:hover { text-decoration: underline; }
 h1 { font-size: 30px; line-height: 1.2; margin: 12px 0 6px; letter-spacing: -0.02em; }
 h2 { font-size: 19px; margin: 34px 0 10px; letter-spacing: -0.01em; }
+/* The processor terms are the one section long enough to need a second level.
+   Without this an h3 falls to the browser default, which is LARGER than the
+   19px h2 above it — the heading would read as more important than the section
+   containing it. §27's invented-class trap, arrived at through a plain tag. */
+h3 { font-size: 16px; margin: 24px 0 8px; letter-spacing: -0.01em; }
 p, li { color: var(--ink-soft); }
 li { margin-bottom: 6px; }
 strong { color: var(--ink); }

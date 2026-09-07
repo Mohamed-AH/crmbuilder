@@ -336,6 +336,9 @@ const Cloud = (() => {
     },
 
     acceptBeta: () => api('/api/me/beta-accepted', { method: 'POST', body: '{}' }, TIMEOUT.auth),
+    // No version in the body on purpose — the server stamps its own, so this
+    // cannot record agreement to text the deployment is not serving.
+    acceptTerms: () => api('/api/me/terms-accepted', { method: 'POST', body: '{}' }, TIMEOUT.auth),
 
     feedback: {
       send: (message, context) => api('/api/feedback', { method: 'POST', body: JSON.stringify({ message, context }) }, TIMEOUT.admin),

@@ -1120,6 +1120,122 @@
     }
   }
 
+  /*
+   * Ask again when the terms change, and record WHICH version was agreed to.
+   *
+   * Compared with `!==`, deliberately, not `<`. The question is "did they
+   * agree to the text we are serving", not "have they agreed to something at
+   * least this new" — so a version that goes BACKWARDS (a bad publish pulled
+   * and replaced) re-asks rather than silently counting everyone as accepted.
+   * It also means the version never has to be orderable, which is what lets it
+   * be a date somebody can look up rather than a counter nobody can.
+   *
+   * Absence is not an answer (§19). Offline, `/api/me` never resolves and
+   * `termsVersion` is simply missing — reading that as "they have not accepted
+   * the current terms" would put a contract in front of somebody working with
+   * the connection down, and then fail to record their answer. So this asks
+   * only when the server positively said which version it wants.
+   */
+  async function showTermsIfNeeded() {
+    if (!Cloud.isAuthed || !Cloud.user) return;
+    const wanted = Cloud.me.termsVersion;
+    if (!wanted) return;
+    if (Cloud.user.termsAcceptedVersion === wanted) return;
+
+    // Their first sight of it, or a changed document they already agreed to
+    // once. The wording has to say which, or an update reads as the app having
+    // forgotten.
+    const isUpdate = !!Cloud.user.termsAcceptedVersion;
+
+    const agreed = await new Promise((resolve) => {
+      const modal = openModal(`
+        <div class="modal-head"><h2>${isUpdate ? 'The terms have changed' : 'Before you start'}</h2></div>
+        <div class="modal-body">
+          <p class="settings-hint">${isUpdate
+    ? 'We have updated the terms of use since you last agreed to them. The change worth knowing about is the section on how we handle the personal data you put in — what we do with it, who else touches it, and what happens when you leave.'
+    : 'One thing to agree to before you put real work in. It covers what this is, what your data is used for, and how we handle the personal information you put into it on your customers behalf.'}</p>
+          <p class="settings-hint"><strong>Please read them.</strong> They are short and they are written to be read:
+            <a href="/terms" target="_blank" rel="noopener">Terms of use</a> ·
+            <a href="/privacy" target="_blank" rel="noopener">Privacy</a></p>
+        </div>
+        <div class="modal-foot claim-actions">
+          <button class="btn" id="terms-out">Sign out</button>
+          <button class="btn btn-primary" id="terms-ok">I agree</button>
+        </div>`);
+      /*
+       * Escape and a backdrop click resolve as "not now", and the app is NOT
+       * blocked behind this.
+       *
+       * A modal that cannot be dismissed is one render bug away from locking
+       * somebody out of their own CRM, which this file's whole §3 exists to
+       * prevent. Nothing is recorded when it is dismissed, so nothing is
+       * falsely claimed — it simply asks again next time, which is the same
+       * §19 already chose for the beta notice.
+       *
+       * **The listener must be detached BEFORE the button closes the modal**,
+       * because `closeModal()` fires `crmb:modal-closed` synchronously — so a
+       * handler that closes first and resolves second has already settled the
+       * promise as a dismissal, and "I agree" records nothing at all. This is
+       * the pattern `askAboutRemovedFields` already uses, and writing it the
+       * other way round is what the first version of this did.
+       */
+      let answered = false;
+      const onDismiss = () => { if (!answered) { answered = true; resolve(false); } };
+      $('#modal-root').addEventListener('crmb:modal-closed', onDismiss, { once: true });
+      const settle = (value) => {
+        answered = true;
+        $('#modal-root').removeEventListener('crmb:modal-closed', onDismiss);
+        closeModal();
+        resolve(value);
+      };
+      /*
+       * A way to decline, and it has to be here.
+       *
+       * An "I agree" with no alternative is not agreement, it is a door with
+       * one handle — and the stored row is supposed to be evidence that
+       * somebody chose. Signing out destroys nothing: the workspace stays on
+       * the server and on the device.
+       */
+      $('#terms-out', modal).addEventListener('click', () => settle('signout'));
+      $('#terms-ok', modal).addEventListener('click', () => settle(true));
+    });
+
+    if (agreed === 'signout') {
+      /*
+       * The same exit the Settings button uses, for the same reason: push
+       * first, then drop to the anonymous scope. Signing out hides a
+       * workspace, it never destroys one — theirs is on the server and still
+       * in its own local store when they come back and agree.
+       */
+      await Cloud.pushNow().catch(() => {});
+      await Cloud.logout().catch(() => {});
+      await switchScopeTo(Scope.ANON);
+      toast('Signed out — you can sign back in whenever you are ready to agree');
+      renderSidebar();
+      route();
+      return;
+    }
+
+    if (!agreed) {
+      // Dismissed with Escape or the backdrop: left where they are, asked
+      // again next time. Only the explicit Sign out ends the session.
+      return;
+    }
+
+    try {
+      await Cloud.acceptTerms();
+      // Mirror what the server just stored, so a second sync in this session
+      // does not ask again. The server's copy is still the record.
+      if (Cloud.user) {
+        Cloud.user.termsAcceptedVersion = wanted;
+        Cloud.user.termsAcceptedAt = Date.now();
+      }
+    } catch {
+      // Offline, or the server is asleep. Asked again next time rather than
+      // treated as agreed — recorded-but-never-sent is a false record (§19).
+    }
+  }
+
   // Whatever the signup gate needs to see, in one place so the two entry
   // points cannot drift apart.
   function authQuery(overrideCode) {
@@ -4669,6 +4785,26 @@
     // Tombstones the whole account has long since seen. Best-effort and never
     // in the way of the sync itself.
     DB.pruneTombstones().catch(() => {});
+    /*
+     * Three prompts, and the ORDER is the decision.
+     *
+     * Terms first, before the invite is redeemed. Joining a team is an act
+     * with consequences — it swaps the local replica out and can drop unsynced
+     * work — and asking somebody to agree to the terms of the service *after*
+     * they have been moved into somebody else's workspace has the agreement
+     * arriving too late to be one. Whoever signs out at the terms modal has
+     * simply not joined yet; the invite is still pending and still theirs.
+     *
+     * Then the invite, then the beta notice: the terms are a thing to agree
+     * to and the notice is a thing to be told, so agreeing comes before being
+     * briefed. Each is awaited, so only one modal is ever on screen.
+     *
+     * **A prompt added ahead of the terms would sit in front of it**, which is
+     * how the colleague journeys deadlocked when the invite ran first — the
+     * terms modal could not appear until the join prompt was answered, and the
+     * test signing that colleague in was waiting for the terms modal.
+     */
+    await showTermsIfNeeded().catch(() => { /* never block the app on a notice */ });
     // After the workspace has settled, never before: joining swaps the replica
     // out, and doing that mid-sync would race the pull that is still landing.
     await redeemPendingInvite().catch((err) => console.warn('Invite could not be handled:', err));

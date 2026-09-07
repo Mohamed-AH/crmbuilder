@@ -918,6 +918,14 @@ and use it from your phone or laptop. It works offline and installs like an app.
 **Getting in.** Open the link we sent — it carries your access code — and sign
 in with Google. The code is only needed once, to create the account.
 
+**You will be asked to agree to the terms once.** They are short, and the
+section worth actually reading is *Handling your customers' data on your
+behalf* — what we do with the records you put in, who else touches them, and
+what happens when you leave. If we change that document you will be asked
+again, and told that it changed rather than being shown the same box twice.
+There is a **Sign out** beside the *I agree*: nothing is deleted if you use it,
+and your workspace is still there when you come back.
+
 **You don't need an account to look around.** The whole thing works without
 signing in; your data just stays on that one device. Signing in is what lets you
 use it on your phone as well, and share a workspace with colleagues.

@@ -71,6 +71,52 @@ async function signIn(page, email, { claim = 'work' } = {}) {
   await page.click('#dev-login-form button[type=submit]');
   await expect(page.locator('.user-chip')).toBeVisible({ timeout: 15000 });
   await answerClaimPrompt(page, claim);
+  await acceptTermsIfShown(page);
+}
+
+/*
+ * Every fresh account now meets the terms modal after its first sync, so the
+ * helper every test signs in through has to walk past it — the same way it
+ * already answers the claim prompt.
+ *
+ * Accepted rather than dismissed, deliberately. A real user agrees, and
+ * agreeing is what stops it returning on the reloads several of these journeys
+ * do. Dismissing would leave a modal over the app at the next sync and the
+ * failure would surface as an unrelated click timing out, three tests away.
+ *
+ * **It waits for the acceptance to be RECORDED, not merely clicked, and that
+ * is the whole reason this is not four lines.** The modal closes the instant
+ * the button is pressed and `Cloud.acceptTerms()` resolves some time after
+ * that; returning in between leaves the POST in flight, so the next
+ * `page.reload()` fetches an `/api/me` that still says nothing was accepted
+ * and the modal comes back — over a page the test is now clicking on. Written
+ * the naive way first, and it cost seven multi-device journeys, every one
+ * failing on a `modal-backdrop` intercepting a click many steps later.
+ *
+ * The client mirrors the version onto `Cloud.user` only after the request
+ * resolves, so that mirror is the signal that the server has it.
+ *
+ * Nothing here is a fixed wait. Whether the modal is coming at all is decided
+ * from the state the app itself decides on — `Cloud.me.termsVersion` against
+ * `Cloud.user.termsAcceptedVersion` — so a slow container cannot make "no
+ * modal appeared in N seconds" mean "there was no modal".
+ */
+const TERMS_SETTLED = () => typeof Cloud !== 'undefined' && Cloud.me && Cloud.user
+  && !!Cloud.me.termsVersion && Cloud.user.termsAcceptedVersion === Cloud.me.termsVersion;
+
+async function acceptTermsIfShown(page) {
+  const pending = await page.waitForFunction(() => {
+    if (typeof Cloud === 'undefined' || !Cloud.me || !Cloud.user) return null;
+    // The server never said which version it wants (offline, or an older
+    // deployment): nothing to agree to, and nothing to wait for.
+    if (!Cloud.me.termsVersion) return { needed: false };
+    return { needed: Cloud.user.termsAcceptedVersion !== Cloud.me.termsVersion };
+  }, null, { timeout: 20000 }).then((h) => h.jsonValue());
+  if (!pending.needed) return;
+
+  await page.locator('#terms-ok').click();
+  await expect(page.locator('#terms-ok')).toHaveCount(0);
+  await page.waitForFunction(TERMS_SETTLED, null, { timeout: 20000 });
 }
 
 async function answerClaimPrompt(page, claim = 'work') {
@@ -2118,6 +2164,177 @@ test.describe('beta access', () => {
     // Nothing to ask for twice, and nothing to watch an inbox for.
     await expect(page.locator('#ask-send')).toHaveCount(0);
     await expect(page.locator('.modal-body')).toContainText('nothing to wait for in your inbox');
+  });
+});
+
+/*
+ * Agreeing to the terms, and being asked again when they change.
+ *
+ * These sign in by hand rather than through `signIn()`, because that helper's
+ * whole job is to walk PAST this modal so the other 92 journeys are not about
+ * it. Driving the raw steps is what lets these look at it.
+ */
+test.describe('terms acceptance', () => {
+  // The steps `signIn()` takes before it answers anything, so a test can look
+  // at what the app puts in front of a brand-new account.
+  async function rawSignIn(page, email) {
+    const trigger = page.locator('#signin-btn, #onboard-signin').first();
+    await trigger.waitFor({ state: 'visible', timeout: 15000 });
+    await trigger.click();
+    await page.fill('#dev-email', email);
+    await page.click('#dev-login-form button[type=submit]');
+    await expect(page.locator('.user-chip')).toBeVisible({ timeout: 15000 });
+  }
+
+  test('a new account agrees once, and is not asked again', async ({ page }) => {
+    const email = uniqueEmail('terms-first');
+    await page.goto('/');
+    await rawSignIn(page, email);
+
+    // First sight of it: not "we changed something", which would be a lie to
+    // somebody who has never seen the document.
+    await expect(page.locator('.modal-head h2')).toHaveText('Before you start', { timeout: 20000 });
+    // The point of the modal is that the text is reachable, not that a button
+    // was pressed. Both pages open in their own tab so the app is not lost.
+    await expect(page.locator('.modal-body a[href="/terms"]')).toHaveAttribute('target', '_blank');
+    await expect(page.locator('.modal-body a[href="/privacy"]')).toBeVisible();
+    // An "I agree" with nothing beside it is not a choice.
+    await expect(page.locator('#terms-out')).toBeVisible();
+
+    await page.click('#terms-ok');
+    await expect(page.locator('#terms-ok')).toHaveCount(0);
+    // Closing the modal is not the same as having recorded anything — the
+    // request is still in flight at that point. Reading `/api/me` here without
+    // this wait is what the first version of this test did, and it reported an
+    // empty version against perfectly correct code.
+    await page.waitForFunction(TERMS_SETTLED, null, { timeout: 20000 });
+
+    // Recorded on the server, and WHICH version — a bare timestamp cannot
+    // answer "did they agree to the text we are serving".
+    const me = await page.evaluate(async () => {
+      const r = await fetch('/api/me');
+      return r.json();
+    });
+    expect(me.termsVersion).toBeTruthy();
+    expect(me.user.termsAcceptedVersion).toBe(me.termsVersion);
+    expect(me.user.termsAcceptedAt).toBeGreaterThan(0);
+
+    // And it does not come back on the next sync.
+    await page.reload();
+    await expect(page.locator('.user-chip')).toBeVisible({ timeout: 20000 });
+    // `Cloud` is a bare global, not `window.Cloud` — a top-level `const` in a
+    // classic script is lexical, so the property form is undefined for ever
+    // and this would time out for a reason that has nothing to do with terms.
+    await page.waitForFunction(() => typeof Cloud !== 'undefined' && Cloud.me && !!Cloud.me.termsVersion);
+    await expect(page.locator('#terms-ok')).toHaveCount(0);
+  });
+
+  /*
+   * The version changing is the whole reason this stores a version rather than
+   * a flag.
+   *
+   * Faked by moving the SERVER's answer, not the stored row — that is the
+   * direction a real publish moves in, and it needs no seam in `server.js`
+   * (§30's rule: an override that lets a deployment claim acceptance of text
+   * it is not serving would be worse than the thing it tests).
+   */
+  test('a changed version asks again, and says it has changed', async ({ page }) => {
+    const email = uniqueEmail('terms-bump');
+    await page.goto('/');
+    await rawSignIn(page, email);
+    await page.click('#terms-ok');
+    await expect(page.locator('#terms-ok')).toHaveCount(0);
+    // The bump below only means anything once the first acceptance is stored:
+    // without this the reload finds nothing accepted and correctly shows the
+    // first-time wording, and the test fails naming the right string for the
+    // wrong reason.
+    await page.waitForFunction(TERMS_SETTLED, null, { timeout: 20000 });
+
+    await page.route('**/api/me', async (route) => {
+      const res = await route.fetch();
+      const body = await res.json();
+      body.termsVersion = '2099-01-01';
+      await route.fulfill({ response: res, json: body });
+    });
+    await page.reload();
+
+    // Different words, because an update that reads like a first request makes
+    // the app look as though it forgot.
+    await expect(page.locator('.modal-head h2')).toHaveText('The terms have changed', { timeout: 20000 });
+    await page.click('#terms-ok');
+    await expect(page.locator('#terms-ok')).toHaveCount(0);
+
+    // The version stamped is the SERVER's own, never the one the client was
+    // told about — so an intercepted answer cannot write a version into the
+    // row that no published document matches.
+    const me = await page.evaluate(async () => {
+      const r = await fetch('/api/me');
+      return r.json();
+    });
+    expect(me.user.termsAcceptedVersion).not.toBe('2099-01-01');
+  });
+
+  /*
+   * §19's rule, in the place it was written for: absence is not an answer.
+   *
+   * Offline, `/api/me` never resolves and `termsVersion` is simply missing.
+   * Reading that as "they have not agreed" would put a contract in front of
+   * somebody working with the connection down and then fail to record their
+   * answer.
+   *
+   * The second half is what makes the first half mean anything: with the
+   * interception dropped the modal DOES appear, so the silence was caused by
+   * the missing field rather than by an account that had already agreed.
+   */
+  test('a server that never says which version asks for nothing', async ({ page }) => {
+    const email = uniqueEmail('terms-absent');
+    await page.route('**/api/me', async (route) => {
+      const res = await route.fetch();
+      const body = await res.json();
+      delete body.termsVersion;
+      await route.fulfill({ response: res, json: body });
+    });
+    await page.goto('/');
+    await rawSignIn(page, email);
+
+    // Wait for the server's answer to have actually landed — otherwise "no
+    // modal" is true because nothing has happened yet, which is §4's
+    // sample-the-previous-render trap wearing a different hat.
+    await page.waitForFunction(() => typeof Cloud !== 'undefined' && Cloud.me
+      && !!Cloud.me.signupMode && !Cloud.me.termsVersion);
+    await expect(page.locator('#terms-ok')).toHaveCount(0);
+    await expect(page.locator('.modal-backdrop')).toHaveCount(0);
+
+    await page.unroute('**/api/me');
+    await page.reload();
+    await expect(page.locator('#terms-ok')).toBeVisible({ timeout: 20000 });
+  });
+
+  /*
+   * Declining, which has to cost nothing.
+   *
+   * Signing out hides a workspace and never destroys one, and nothing is
+   * recorded — so the row stays honest evidence that somebody chose, rather
+   * than a value written by the only button on screen.
+   */
+  test('declining signs out and records nothing', async ({ page }) => {
+    const email = uniqueEmail('terms-decline');
+    await page.goto('/');
+    await rawSignIn(page, email);
+    await expect(page.locator('#terms-out')).toBeVisible({ timeout: 20000 });
+    await page.click('#terms-out');
+
+    // Signed out, asserted on the chip rather than on a sign-in button: a
+    // brand-new account has no modules, so the app lands on onboarding, where
+    // the affordance is `#onboard-signin` and not the sidebar's `#signin-btn`.
+    await expect(page.locator('.user-chip')).toHaveCount(0, { timeout: 20000 });
+    await expect(page.locator('#signin-btn, #onboard-signin').first()).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('#terms-ok')).toHaveCount(0);
+
+    // Nothing was agreed to, so signing back in asks again — and asks as a
+    // first request, because they never accepted anything to be updated from.
+    await rawSignIn(page, email);
+    await expect(page.locator('.modal-head h2')).toHaveText('Before you start', { timeout: 20000 });
   });
 });
 

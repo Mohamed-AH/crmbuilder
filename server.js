@@ -972,12 +972,42 @@ const store = process.env.MONGODB_URI
   // DATA_DIR lets tests point the file store at a throwaway directory.
   : new FileStore(path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'store.json'));
 
+/*
+ * Which version of `terms.html` the app is currently asking people to accept.
+ *
+ * A DATE, not a counter, because "which version did they agree to" is a
+ * question somebody may have to answer about a real person years later, and a
+ * date answers it against the published page without a lookup table.
+ *
+ * **Change this and the `Last updated` line in `terms.html` together.** They
+ * are the same fact in two places — the page is the source of truth and this
+ * is how the app knows to ask again. Bumping one without the other either
+ * re-prompts everybody for a document that did not change, or changes the
+ * document without telling anybody.
+ *
+ * Deliberately NOT an environment variable. A seam here would let a deployment
+ * claim acceptance of text it is not serving, and unlike `GOOGLE_TOKEN_URL`
+ * (§30) there is nothing to point it at — the E2E half fakes the version by
+ * intercepting `/api/me`, which needs no override at all.
+ */
+const TERMS_VERSION = '2026-09-07';
+
 // ------------------------------------------------------------------ auth
 function publicUser(u) {
   return {
     id: u.id, email: u.email, name: u.name, picture: u.picture || '',
     role: u.role, orgId: u.orgId || null, createdAt: u.createdAt,
     betaAcceptedAt: u.betaAcceptedAt || 0,
+    /*
+     * WHICH version they accepted, not merely that they did.
+     *
+     * A bare timestamp cannot answer "did they agree to the terms as they
+     * stand", which is the only question that matters once the text changes.
+     * The two travel together: the version is what the client compares, the
+     * date is what makes the record evidence.
+     */
+    termsAcceptedVersion: u.termsAcceptedVersion || '',
+    termsAcceptedAt: u.termsAcceptedAt || 0,
   };
 }
 
@@ -2645,6 +2675,10 @@ app.get('/api/me', async (req, res) => {
     googleEnabled: !!GOOGLE_CLIENT_ID,
     devLoginEnabled: DEV_LOGIN,
     signupMode: await signupMode(),
+    // What the deployment is currently asking people to accept. The client
+    // compares it against the user's own `termsAcceptedVersion`; it never
+    // decides for itself what the current version is.
+    termsVersion: TERMS_VERSION,
     storage: store.kind(),
   });
 });
@@ -2760,6 +2794,31 @@ app.put('/api/data', requireAuth, async (req, res) => {
 app.post('/api/me/beta-accepted', requireAuth, async (req, res) => {
   const user = await store.updateUser(req.user.id, { betaAcceptedAt: Date.now() });
   res.json({ ok: true, betaAcceptedAt: user.betaAcceptedAt });
+});
+
+/*
+ * Recording that somebody agreed to the terms as they currently stand.
+ *
+ * **The version comes from the SERVER, never from the request.** A client that
+ * chose its own would be recording agreement to a document nobody can produce
+ * — and the whole value of this row is that it names text that exists at a
+ * URL. Identical rule to `req.scopeOrgId` and `workspaceIdFor()` (§5): what is
+ * stored is what the server established, not what the caller claimed.
+ *
+ * There is deliberately no body to read at all, so there is nothing to coerce
+ * and nothing to validate — the shape §30's Phase 2 sweep would otherwise have
+ * to walk.
+ */
+app.post('/api/me/terms-accepted', requireAuth, async (req, res) => {
+  const user = await store.updateUser(req.user.id, {
+    termsAcceptedVersion: TERMS_VERSION,
+    termsAcceptedAt: Date.now(),
+  });
+  res.json({
+    ok: true,
+    termsAcceptedVersion: user.termsAcceptedVersion,
+    termsAcceptedAt: user.termsAcceptedAt,
+  });
 });
 
 app.get('/api/org', requireAuth, async (req, res) => {

@@ -62,6 +62,8 @@ never change, because everything cross-references them.
 | **Restoring into a new or existing database** | §40 · [`docs/BETA.md`](docs/BETA.md) |
 | **Decrypting a backup artifact** — command, passphrase, failures | [`docs/BETA.md`](docs/BETA.md) · §40 |
 | Invites and beta codes a restore cannot carry | §40 |
+| **Terms acceptance**: the version, and asking again | §41 |
+| **A modal button that settled as a dismissal** | §41 · §22 |
 | Workspace time zone — and why the filter ignores it | §39 · §38 · §37 |
 | E2E suite slow or "flaky" | §32 |
 | **What tombstones cost**, and reading storage figures | §33 · §26 |
@@ -104,7 +106,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 374 Node tests + 92 Playwright tests, 43 smoke checks. On
+**All green:** 380 Node tests + 96 Playwright tests, 43 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -174,7 +176,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v39`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v40`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -4065,3 +4067,209 @@ The secrets table sits in § *"Knowing the backup ran"* rather than in
 secrets in a different repository**, not service environment variables, and
 listing them beside `MONGODB_URI` would invite somebody to set
 `BACKUP_PASSPHRASE` on Render where it does nothing at all.
+
+
+---
+
+## 41. Versioned terms, and the button that settled as a dismissal
+
+Phase 2 of the UK launch (`docs/archive/UK-LAUNCH.md`). `terms.html` gained the
+processor half — what we do with the records a customer puts in on *their*
+customers' behalf, who else touches it, the 72-hour breach notice, what
+survives a deletion — and the app now asks people to agree to it and records
+**which version** they agreed to.
+
+### A version, not a flag, and `!==` rather than `<`
+
+§19 already stamps `betaAcceptedAt`, and a bare timestamp cannot answer the
+only question that matters once the text moves: *did they agree to the terms as
+they stand?* So the row carries `termsAcceptedVersion` **and**
+`termsAcceptedAt` — the version is what the client compares, the date is what
+makes the record evidence.
+
+**Compared with `!==`, deliberately.** "Have they agreed to something at least
+this new" would let a version that goes *backwards* — a bad publish pulled and
+replaced — count everybody as already accepted. `!==` re-asks. It also means
+the version never has to be orderable, which is what lets it be **a date
+somebody can look up** against the published page rather than a counter nobody
+can.
+
+**`TERMS_VERSION` in `server.js` and the `Last updated` line in `terms.html`
+are the same fact in two places and must move together.** That is exactly the
+shape §29 warns about, and it is accepted here because the alternative — the
+server parsing its own HTML at boot — is worse than the duplication. Both ends
+carry a comment naming the other. Bump one alone and you either re-prompt
+everybody for a document that did not change, or change the document without
+telling anybody.
+
+**Deliberately NOT an environment variable.** A seam there would let a
+deployment claim acceptance of text it is not serving, and unlike
+`GOOGLE_TOKEN_URL` (§30) there is nothing legitimate to point it at — the E2E
+half fakes a bumped version by intercepting `/api/me`, which needs no override.
+
+**The server stamps its own version; the POST has no body at all.** Same rule
+as `req.scopeOrgId` and `workspaceIdFor()` (§5): what is stored is what the
+server established. Guarded by *"the version is the SERVER's, never the
+caller's"*, which posts `termsAcceptedVersion: '1999-01-01'` and requires it
+not to reach the row — and by an E2E half that intercepts `/api/me` to claim
+`2099-01-01` and asserts the stored version is not that either. With nothing to
+read there is nothing to coerce, so §30's Phase 2 sweep gains no new call site.
+
+### Absence is not an answer, again
+
+Offline, `/api/me` never resolves and `termsVersion` is simply missing. Reading
+that as "they have not accepted" would put a contract in front of somebody
+working with the connection down and then fail to record their answer — §19's
+beta-notice bug, in a new place. It asks only when the server **positively
+said** which version it wants.
+
+Guarded, and the guard is the interesting half: asserting the modal is absent
+proves nothing on its own, because an account that already agreed is also
+silent. So the test drops the interception and reloads, and the modal **does**
+appear — which is what shows the silence came from the missing field.
+
+### Declining has to exist, and dismissing must not
+
+Two different things, and collapsing them was the first draft's mistake:
+
+- **Sign out** is the decline. An "I agree" with no alternative is not
+  agreement, and the stored row is supposed to be evidence that somebody
+  *chose*. It destroys nothing — the workspace stays on the server and in its
+  own local store — and it takes the same `pushNow` → `logout` →
+  `switchScopeTo(ANON)` exit the Settings button uses.
+- **Escape or a backdrop click** is "not now": nothing recorded, asked again
+  next time, app not blocked. A modal that cannot be dismissed is one render
+  bug away from locking somebody out of their own CRM, which §3 exists to
+  prevent.
+
+`Cloud.acceptTerms()` failing leaves the version unset, so it returns next
+time. Shown twice is an annoyance; recorded-but-never-sent is a false record
+(§19).
+
+### `legal.css` had no `h3`
+
+The processor section is the first on either legal page long enough to need a
+second heading level, and `legal.css` defined `h1` and `h2` only. An `h3` falls
+to the browser default — **larger than the 19px `h2` above it** — so the
+subheading would have read as more important than the section containing it.
+§27's invented-class trap arrived at through a plain tag rather than a class
+name, which is why grepping for `.note.warn`-style mistakes would not have
+found it.
+
+### "I agree" recorded nothing, and the E2E suite is the only thing that knew
+
+The one worth remembering, and it is a product bug rather than a test one.
+
+```js
+$('#terms-ok', modal).addEventListener('click', () => {
+  closeModal();      // fires crmb:modal-closed SYNCHRONOUSLY
+  resolve(true);     // …by which time the promise has already settled false
+});
+```
+
+`closeModal()` dispatches `crmb:modal-closed` on `#modal-root`, and the
+dismissal listener resolves the promise on it. So pressing **I agree** settled
+as *dismissed*, `Cloud.acceptTerms()` was never called, and nothing was ever
+written. **Sign out lost the same race**, which is worse: the button that
+exists so declining is possible did nothing at all.
+
+`askAboutRemovedFields` (§22) already had the right shape — set `answered`,
+detach the listener, *then* close — and this was written without looking at it.
+The fix is a single `settle()` that does those three in that order, which is
+also what makes the ordering hard to reintroduce by editing one handler.
+
+**The Node tests could not have caught it.** `POST /api/me/terms-accepted` was
+covered six ways and every one passed, because they call the endpoint. The
+defect was that nothing in the browser ever called it — the same shape as §30's
+"the UI is not the boundary" turned around: here the endpoint was not the
+product.
+
+**And the blast radius was almost entirely elsewhere.** 13 failures on the full
+run; **only 3 were terms tests**. The other ten reported
+`<div class="modal-backdrop"> … intercepts pointer events` on a click many
+steps later — multi-device sync journeys, four team-workspace journeys, the
+admin panel, a restore test — because nothing had been recorded, so the modal
+came back on the next reload and sat over a page the test was clicking on. Not
+one of those failures names terms anywhere in its message. §9's blast-radius
+rule, arrived at from a modal.
+
+Checked against the broken state: restoring the close-then-resolve order fails
+**3 of the 4** terms journeys, including *"declining signs out and records
+nothing"* — which is the assertion that shows the decline path was broken too,
+and that a test written only around the happy path would have missed.
+
+### Agreeing now comes before the invite is redeemed
+
+Found by the second full run, after the ordering bug was fixed: eight team
+journeys still failed, all of them on a **colleague** signing in with an invite
+in hand. `redeemPendingInvite()` ran first and put its own *join* prompt on
+screen, so the terms modal could not appear until that was answered — and the
+helper signing that colleague in was waiting for the terms modal. A deadlock,
+reported as a 45s timeout on `#terms-ok`.
+
+**Fixed in the app rather than in the helper, because the app's order was
+wrong.** Joining a team swaps the local replica out and can drop unsynced work;
+asking somebody to agree to the terms of the service *after* they have been
+moved into somebody else's workspace has the agreement arriving too late to be
+one. Terms → invite → beta notice, each awaited, so only one modal is ever up.
+
+Signing out at the terms modal now simply leaves the invite unredeemed:
+`redeemPendingInvite()` already guards on `Cloud.isAuthed` and holds the code,
+toasting *"Sign in to join the team you were invited to"*. Nothing is spent and
+nothing is lost.
+
+The general rule, and it is the reusable part: **a prompt added ahead of the
+terms will sit in front of them.** Anything inserted into that sequence has to
+be placed against the two facts above rather than appended.
+
+### The helper still has to wait for the record, not the click
+
+Separate from the bug above, and still load-bearing. `signIn()` — which 64
+tests go through — has to walk past this modal, and the naive version waited
+for `#terms-ok`, clicked, and returned. The modal closes the instant the button
+is pressed; `Cloud.acceptTerms()` resolves after that. Returning in between
+leaves the POST in flight, so a `page.reload()` can still fetch an `/api/me`
+that says nothing was accepted.
+
+So it waits on the state the app itself decides on — `Cloud.me.termsVersion`
+against `Cloud.user.termsAcceptedVersion`, the client mirror being set only
+once the request resolves. That also removed the guess about whether a modal
+was coming at all: **no fixed timeout anywhere in it**, because "no modal
+appeared in six seconds" is exactly the assertion a slow machine turns into a
+lie (§32).
+
+**And `Cloud` is a bare global, not `window.Cloud`** — §39 records this for
+`DB` and it cost a first draft here too. A top-level `const` in a classic
+script is lexical, so the property form is `undefined` for ever and a
+`waitForFunction` on it times out naming the wrong thing.
+
+### `privacy.html` can now say the backup is encrypted
+
+§40 deferred that sentence: *"it goes in when the encrypted job has actually
+run, not when it has been handed over."* It has — the artifact was downloaded,
+decrypted and restored end to end — so the page now says the nightly backup is
+encrypted before it is stored, with the passphrase held separately, **and says
+what that buys**: being able to download the file is not the same as being able
+to read it. Scoped to *read* access on purpose, which is the claim that is
+actually true (§40).
+
+Its `Last updated` line moved with it. That page is not versioned by
+`TERMS_VERSION` and deliberately does not prompt — a privacy notice is
+information, not a contract to accept, and §36's rule about not nagging applies.
+
+### Which user-facing docs this touched, and which it did not
+
+§27's rule is that a change to *what a user can do* gets walked through six
+documents. Walked, and only one of them needed anything: **`docs/BETA.md`'s
+tester note**, which now says the prompt exists, names the section worth
+reading, and says a *Sign out* sits beside the *I agree* and deletes nothing.
+
+`USER-GUIDE.md` and `manual.html` do not narrate the sign-in flow step by step
+— they say "signing in adds sync" and move on — so a new step in it makes
+neither stale. Padding them to look thorough is its own inaccuracy (§40, on the
+privacy roster). Recorded so the omission reads as checked rather than missed.
+
+**No `CACHE_VERSION` bump for the legal pages** — both are in `sw.js`'s
+`STANDALONE_PAGES` and go straight to the network, never precached (§19),
+checked rather than assumed. The bump to `crmbuilder-v40` is for `js/app.js`
+and `js/cloud.js`, which are in `APP_SHELL`.

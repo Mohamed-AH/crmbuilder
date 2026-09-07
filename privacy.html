@@ -12,7 +12,7 @@
   <header>
     <a class="back" href="/">← CRM Builder</a>
     <h1>Privacy</h1>
-    <p class="updated">Last updated 24 August 2026 · applies to the free beta at this address</p>
+    <p class="updated">Last updated 7 September 2026 · applies to the free beta at this address</p>
   </header>
 
   <div class="callout">
@@ -53,7 +53,9 @@
   <strong>MongoDB Atlas</strong> (database). Both hold the data on our behalf in
   order to run the service. Sign-in is provided by <strong>Google</strong>. The
   daily backup is stored on <strong>GitHub</strong>, in a private repository we
-  control.</p>
+  control. That backup is <strong>encrypted (AES-256) before it is stored</strong>,
+  with the passphrase held separately, so being able to download the file is not
+  the same as being able to read it.</p>
 
   <p>If a problem report is sent, we receive a notification through
   <strong>Telegram</strong> containing <strong>your email address and what you
@@ -108,8 +110,8 @@
 
   <p>Daily backups are held separately, and are the one place deleted data
   persists for a short while after you remove it — a backup taken before a
-  deletion still contains it until that backup is discarded. Backups are kept
-  only to recover from a failure and are not used for anything else.</p>
+  deletion still contains it until that backup is discarded. They are encrypted
+  and are kept only to recover from a failure — never used for anything else.</p>
 
   <div class="callout">
     <p><strong>This is a free beta, and backups are limited.</strong> The

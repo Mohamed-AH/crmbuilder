@@ -122,6 +122,27 @@ async function readHook(wsId) {
   return (raw.data[wsId] || {}).hook;
 }
 
+/*
+ * Age somebody's terms acceptance, the same stop-edit-start way `plantHook`
+ * does and for the same reason (§12: FileStore rewrites the whole file on
+ * save, so an edit under a running server is clobbered).
+ *
+ * There is no endpoint that can produce this state — accepting always stamps
+ * the CURRENT version — so the only way to test "they agreed to the old text"
+ * is to write it.
+ */
+async function plantTermsVersion(email, version) {
+  await stopServer();
+  const file = join(dataDir, 'store.json');
+  const raw = JSON.parse(await readFile(file, 'utf8'));
+  const user = raw.users.find((u) => u.email === email);
+  if (!user) throw new Error(`no such user: ${email}`);
+  user.termsAcceptedVersion = version;
+  user.termsAcceptedAt = 1756000000000;
+  await writeFile(file, JSON.stringify(raw));
+  await startServer();
+}
+
 async function waitForServer(url, timeoutMs = 20000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -2478,5 +2499,78 @@ describe('reminder preview', () => {
     assert.equal(reminders.days, 7, 'a nonsense window falls back to the default');
     assert.equal(reminders.hour, 23, 'an out-of-range hour is clamped, not stored as 99');
     assert.equal(reminders.enabled, false, 'only a real boolean true enables sending');
+  });
+});
+
+/*
+ * Agreeing to the terms, and being asked again when they change.
+ *
+ * The point of storing a VERSION rather than a timestamp is that "have they
+ * agreed to the text we are currently serving" is answerable. A bare
+ * `termsAcceptedAt` answers "they agreed to something, once" — which is the
+ * wrong question the moment the document is edited, and the only question
+ * anybody will ask about a real person later.
+ */
+describe('versioned terms acceptance', () => {
+  const cookies = jar();
+
+  before(async () => {
+    await req('/auth/dev', { method: 'POST', body: { email: 'terms@example.com' }, cookies });
+  });
+
+  test('the deployment says which version it wants, and a new account has accepted none', async () => {
+    const { json } = await req('/api/me', { cookies });
+    assert.match(json.termsVersion, /^\d{4}-\d{2}-\d{2}$/, 'a date, so it can be looked up against the published page');
+    assert.equal(json.user.termsAcceptedVersion, '', 'nothing agreed to yet');
+    assert.equal(json.user.termsAcceptedAt, 0);
+  });
+
+  test('accepting records WHICH version, not merely that they did', async () => {
+    const before = Date.now();
+    const { status, json } = await req('/api/me/terms-accepted', { method: 'POST', body: {}, cookies });
+    assert.equal(status, 200);
+
+    const me = await req('/api/me', { cookies });
+    assert.equal(json.termsAcceptedVersion, me.json.termsVersion, 'the stamp must name the version being served');
+    assert.ok(json.termsAcceptedAt >= before, 'and when');
+    // Read back through /api/me rather than trusting the write's own echo:
+    // the client compares these two fields and nothing else.
+    assert.equal(me.json.user.termsAcceptedVersion, me.json.termsVersion);
+    assert.ok(me.json.user.termsAcceptedAt > 0);
+  });
+
+  test('the version is the SERVER\'s, never the caller\'s', async () => {
+    /*
+     * The one that matters. A client choosing its own version would record
+     * agreement to a document that does not exist at any URL, which is the
+     * whole value of the row — the same rule as req.scopeOrgId (§5).
+     */
+    await req('/api/me/terms-accepted', {
+      method: 'POST',
+      body: { termsAcceptedVersion: '1999-01-01', termsVersion: '1999-01-01', version: '1999-01-01' },
+      cookies,
+    });
+    const { json } = await req('/api/me', { cookies });
+    assert.equal(json.user.termsAcceptedVersion, json.termsVersion, 'a body value must not reach the stored row');
+    assert.notEqual(json.user.termsAcceptedVersion, '1999-01-01');
+  });
+
+  test('somebody who agreed to older text is reported as such, so the app can ask again', async () => {
+    await plantTermsVersion('terms@example.com', '2020-01-01');
+    const { json } = await req('/api/me', { cookies });
+    assert.equal(json.user.termsAcceptedVersion, '2020-01-01');
+    assert.notEqual(json.user.termsAcceptedVersion, json.termsVersion,
+      'the two fields must be reported separately, or the client cannot tell stale from agreed');
+  });
+
+  test('accepting again brings them up to date', async () => {
+    await req('/api/me/terms-accepted', { method: 'POST', body: {}, cookies });
+    const { json } = await req('/api/me', { cookies });
+    assert.equal(json.user.termsAcceptedVersion, json.termsVersion);
+  });
+
+  test('signed out, there is nothing to accept', async () => {
+    const { status } = await req('/api/me/terms-accepted', { method: 'POST', body: {} });
+    assert.equal(status, 401);
   });
 });
