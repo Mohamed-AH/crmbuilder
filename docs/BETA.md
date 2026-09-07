@@ -397,7 +397,7 @@ it.
 
 | What you see | What it means |
 |---|---|
-| **No ping** (the check just goes down) | The deployment is asleep, or the pass is throwing before it finishes. Check that UptimeRobot is still pinging `/health`. |
+| **No ping** (the check just goes down) | The deployment is asleep, the pass is throwing before it finishes — or **the uptime monitor is pointed at the wrong URL**. Check the monitor's address character by character: `/healthz` answers `{"ok":true}` and keeps the service warm while running *nothing*, so the monitor reads 100% green and no pass ever happens. That is a real outage this deployment had, and neither the tests nor the uptime monitor can see it. Only `/health` evaluates the alert rules and runs the digest. |
 | **An explicit failure** (a `/fail` ping) | The deployment is fine and *running*; one or more workspaces could not have their digest delivered. Admin → Deployment shows the last pass, and each owner's Notifications card shows their own reason. |
 
 Silence and `/fail` are opposite problems with opposite responses, which is why

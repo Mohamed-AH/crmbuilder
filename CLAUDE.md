@@ -56,6 +56,9 @@ never change, because everything cross-references them.
 | **UK launch, Frankfurt, and a smoke check that passed on its own bug** | §38 · [`docs/archive/UK-LAUNCH.md`](docs/archive/UK-LAUNCH.md) |
 | **Daily digest**: the pass, its gates, mentions | §39 |
 | Why a "reminders are stale" alert cannot work | §39 |
+| **`/health` vs `/healthz`** — which one runs anything | §40 |
+| Alerts and digests silently never running | §40 |
+| Expected refusals in the production log | §40 |
 | Workspace time zone — and why the filter ignores it | §39 · §38 · §37 |
 | E2E suite slow or "flaky" | §32 |
 | **What tombstones cost**, and reading storage figures | §33 · §26 |
@@ -3706,3 +3709,113 @@ branch at 23:00 rather than faking it. Checked against the broken state: the
 old card fails on the very first assertion, because *off* said nothing either.
 
 `CACHE_VERSION` bumped to `crmbuilder-v35`.
+
+
+---
+
+## 40. The keep-warm ping was on the wrong URL, and six documents said otherwise
+
+Reported as two log lines and an outage, and they turned out to be three
+unrelated things: one expected refusal logged as a fault, one real mechanism
+that had never run, and one deployment that was never down.
+
+### `/healthz` is not `/health`, and only one of them does anything
+
+```js
+app.get('/healthz', (req, res) => res.json({ ok: true, storage: store.kind() }));   // 2349
+app.get('/health',  async (req, res) => { …                                        // 2351
+  evaluateAlerts()…                                                                // 2390
+  remindPass()…                                                                    // 2398
+```
+
+The live UptimeRobot monitor was on **`/healthz`** — the original liveness
+probe, kept byte-compatible on purpose (`render.yaml` calls it "the older" one)
+and doing nothing but answering. So the §25 alert rules and the §39 reminder
+pass, both of which are documented as running "off the keep-warm ping", had
+**never once run off it.** The monitor predates `/health` and was never moved.
+
+**The service was warm the whole time**, because any request wakes a Render
+instance. That is what makes this invisible: the thing the monitor was created
+for kept working perfectly, and the two things later bolted onto the same ping
+did not.
+
+### Both monitors were telling the truth, about different things
+
+| | Said | Correct? |
+|---|---|---|
+| UptimeRobot | 100% over 7 days, 0 incidents | yes — the app was never down |
+| Healthchecks `reminders` | DOWN 14h39m, UP at 09:44 | yes — no pass had run |
+
+The only live caller of `/health` is the **CI smoke test** (`tests/smoke.mjs`'s
+*sync model* check). So a reminder pass happened when, and only when, somebody
+pushed to the repository. The check went UP at 09:44 because a deploy landed
+and CI ran the live smoke against production; it had gone down overnight
+because nobody pushed for longer than its 1-hour period. Read as an outage,
+which is the obvious reading and the wrong one.
+
+### What actually caught it, and what could not
+
+§39's **outbound Healthchecks ping** — the "push" half, built because a
+"reminders are stale" alert *rule* cannot work when the rule and the engine
+share a trigger. That reasoning turned out to describe this exact failure, one
+step earlier in the chain than it was written for: a dead ping stops the pass
+**and** the rule, and only a machine that is not ours can notice the silence.
+
+Nothing else could have. The suite proves `/health` runs the pass; **nothing
+proves that anything calls `/health`**, and nothing can — the caller is a row
+in somebody's UptimeRobot account. That is the general shape worth keeping:
+
+> **A mechanism that hangs off a URL configured somewhere else has a failure
+> mode no test in this repository can see.** The further the trigger lives from
+> the code, the more the documentation has to be checked against the
+> configuration rather than against the source.
+
+Six places asserted the ping was on `/health` — §17, §24, §25, §39,
+`DEPLOYMENT.md` and `docs/BETA.md` — and all six were describing the intent.
+Every one was written by reading `server.js`. None was written by opening the
+monitor. `DEPLOYMENT.md` and the BETA runbook now say to check the monitor's
+address, and say what a monitor on `/healthz` looks like: green, warm, and
+silent.
+
+### Why `/healthz` was NOT changed to run the pass too
+
+It is the obvious fix and it is the wrong one. **Eight test files poll
+`/healthz` in their boot-wait loop**, so alert evaluation and reminder passes
+would start firing during startup in suites written to control exactly when a
+pass runs (§39's whole design). That is §9's blast-radius rule: the edit is one
+line and the damage is in files that do not mention it.
+
+The alternative — firing it from `/healthz` only when `IS_PROD` — is worse
+still: production would then be the one environment running a path no test
+covers. The fix is one field in the monitor, and it is the operator's, not the
+code's.
+
+### The other log line: an expected refusal, reported as a fault
+
+```
+Unhandled error on POST /api/feedback: PayloadTooLargeError: request entity too large
+    at readStream (…/raw-body/index.js:163:17)
+    …
+```
+
+Correct behaviour, mislabelled. The error handler logged **before** it
+classified, so a body over the 64 KB limit — the guard working — was written
+out as an unhandled error with a full stack trace. And it is not rare: the live
+smoke test posts a 200 KB body on **every run** (§38), so every deploy check
+left one of these in the production log.
+
+Classification moved above the log. An expected refusal is now one line on
+`console.warn` (`Refused 413 POST /api/feedback: entity.too.large`); anything
+unclassified keeps the stack trace on `console.error`. Expected is not the same
+as uninteresting — a burst of them is still worth seeing — so it stays on
+stderr rather than being swallowed.
+
+**Asserted on the server's own output, not on the status code**, because the
+status was already right on the broken version: 413, every time. The defect
+lived only in the log, so only the log can catch it. *"a refused oversized body
+is logged as a refusal, not as an unhandled error"* fails on the pre-fix
+handler at the `Unhandled error` assertion.
+
+The cost of a log that shouts at its own working guards is the one §25 already
+names for alerts, in a new place: it trains the reader to skim, and the lines
+worth reading are the ones that get skimmed.

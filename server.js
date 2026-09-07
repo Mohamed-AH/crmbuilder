@@ -4885,16 +4885,33 @@ app.get('*', (req, res) => {
  * the operator can already read it.
  */
 app.use((err, req, res, _next) => {
-  console.error(`Unhandled error on ${req.method} ${req.path}:`, err && err.stack ? err.stack : err);
+  /*
+   * Classify BEFORE logging, not after.
+   *
+   * A body over the limit and a body that is not JSON are the caller's
+   * mistakes, answered correctly, by a guard doing exactly its job. Logging
+   * them as "Unhandled error" with a full stack trace is a lie about what
+   * happened, and it is not a harmless one: the live smoke test provokes one
+   * 413 on every run (§38), so the production log carries a stack trace
+   * labelled unhandled on every deploy check. A log that cries wolf at its
+   * own working guards teaches the reader to skim past the lines that are
+   * not expected, which is the only thing the log is for.
+   *
+   * One line, no stack, and still on stderr — expected is not the same as
+   * uninteresting, and a burst of them is worth seeing.
+   */
+  const expected = err && (err.type === 'entity.too.large' || err.status === 413) ? 413
+    : err && err.type === 'entity.parse.failed' ? 400
+      : 0;
+
+  if (expected) console.warn(`Refused ${expected} ${req.method} ${req.path}: ${err.type || err.message}`);
+  else console.error(`Unhandled error on ${req.method} ${req.path}:`, err && err.stack ? err.stack : err);
+
   if (res.headersSent) return;
   // A body that overran the limit is the caller's problem, not a server fault,
   // and saying so is more useful than a blanket 500.
-  if (err && (err.type === 'entity.too.large' || err.status === 413)) {
-    return res.status(413).json({ error: 'That request was too large.' });
-  }
-  if (err && err.type === 'entity.parse.failed') {
-    return res.status(400).json({ error: 'That request body was not valid JSON.' });
-  }
+  if (expected === 413) return res.status(413).json({ error: 'That request was too large.' });
+  if (expected === 400) return res.status(400).json({ error: 'That request body was not valid JSON.' });
   res.status(500).json({ error: 'Something went wrong.' });
 });
 

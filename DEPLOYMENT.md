@@ -220,7 +220,17 @@ uptime checker at `/health`.
 **Currently configured: UptimeRobot, every 14 minutes.** That is inside the
 idle window, so the service stays up continuously.
 
-Two things to know about that:
+> **Point it at `/health`, not `/healthz`, and check the existing monitor.**
+> `/healthz` is the older liveness probe: it answers `{"ok":true,"storage":…}`
+> and does **nothing else**. `/health` is the one that evaluates the alert
+> rules and runs the daily-digest pass after its response. A monitor left on
+> `/healthz` keeps the service warm and reports 100% uptime while every alert
+> and every digest silently never runs — which is exactly what this deployment
+> did, for as long as the monitor had existed, because it was created before
+> `/health` was. Nothing in the test suite can catch that: the suite proves
+> `/health` runs the pass, and nothing proves anything calls `/health`.
+
+Two more things to know about it:
 
 - **It uses your whole free allowance.** Render gives 750 instance-hours a month
   across the account, and a 31-day month is 744 hours. Continuous keep-warm

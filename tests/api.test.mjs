@@ -284,6 +284,40 @@ describe('health and public surface', () => {
     assert.equal(status, 200);
     assert.match(text, /id="app"/);
   });
+
+  /*
+   * An oversized body is the 64 KB limit working. It must not be logged as an
+   * unhandled error.
+   *
+   * This is not cosmetic. The live smoke test posts a 200 KB body on every run
+   * (§38), so before this the production log carried a full stack trace headed
+   * "Unhandled error" after every deploy check — a working guard reported as a
+   * server fault. A log that shouts at its own correct refusals trains the
+   * reader to skim, and the lines worth reading are the ones that get skimmed.
+   *
+   * Asserted on the SERVER's own output rather than on the status code,
+   * because the status was already right on the broken version. What was wrong
+   * was only ever visible in the log.
+   */
+  test('a refused oversized body is logged as a refusal, not as an unhandled error', async () => {
+    const before = serverLog.length;
+    const { status } = await req('/api/feedback', { method: 'POST', body: { message: 'x'.repeat(200_000) } });
+    assert.equal(status, 413, 'the global 64kb parser must refuse this before any route sees it');
+
+    // stdout/stderr arrive over a pipe, so the line lands a tick after the
+    // response does. Poll rather than sleep a fixed amount.
+    const deadline = Date.now() + 3000;
+    let written = '';
+    while (Date.now() < deadline) {
+      written = serverLog.slice(before);
+      if (written.includes('/api/feedback')) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+
+    assert.match(written, /Refused 413 POST \/api\/feedback/, 'the refusal has to say what it was');
+    assert.ok(!written.includes('Unhandled error'), `an expected refusal must not read as a fault:\n${written}`);
+    assert.ok(!written.includes('at readStream'), `no stack trace for a working guard:\n${written}`);
+  });
 });
 
 describe('authentication', () => {
