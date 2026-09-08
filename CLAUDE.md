@@ -83,6 +83,7 @@ never change, because everything cross-references them.
 | **How the docs are organised**, and what is frozen | §29 |
 | **Own domain / pricing** — everything a launch has to change | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) · §48 |
 | **Sweeping for what is live and unnoticed** — how, and what it found | §48 |
+| **Chaser, renewal tracker, dormancy report** — the spec, before any code | [`docs/CHASER-AND-TRACKERS.md`](docs/CHASER-AND-TRACKERS.md) |
 
 ---
 
