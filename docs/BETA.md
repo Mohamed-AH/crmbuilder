@@ -421,6 +421,63 @@ the pass signals them differently rather than just going quiet.
 has no dead-man's switch, exactly as the backup did before its own check
 existed.
 
+### Rotating either ping URL
+
+Both checks are dead-man's switches, so **the moment you rotate one is the
+moment it can quietly stop watching anything**. The two URLs are
+interchangeable-looking UUIDs living in two different systems, and neither is
+in this repository:
+
+| Check | Its URL goes in | Where |
+|---|---|---|
+| backup | `HEALTHCHECK_URL` | a secret in the private backup repo |
+| reminders | `REMINDER_HEALTHCHECK_URL` | Render → the service → Environment, then redeploy |
+
+**Rotate one at a time and prove each before starting the next.** Doing both
+at once is what makes the failure below possible, and it saves nothing.
+
+**Prove the reminders one immediately** rather than waiting a quarter of an
+hour for the keep-warm ping. There is no button for this — the route is
+API-only — so sign in as a platform admin and, in the browser's console on the
+deployment's own page:
+
+```js
+await (await fetch('/api/admin/reminders/run', { method: 'POST' })).json()
+```
+
+A forced pass skips the gap between passes but **not** the once-per-local-day
+rule, so it cannot send a second digest to anybody's channel — it exists to
+prove the wiring. It answers with the pass itself
+(`{"ok":true,"pass":{"scanned":0,"sent":0,...}}`) and the check goes green
+within seconds, its log showing `scanned 0, sent 0, failed 0, 0ms`.
+
+**Prove the backup one** by running the nightly workflow manually. The ping is
+the last step and it is gated on a backup that was actually fetched, encrypted
+and proved to decrypt, so a green check here means the whole job worked and
+not merely that the URL resolves.
+
+#### The failure that leaves both checks green
+
+**Swap the two URLs and nothing ever contradicts you.** The backup job would
+ping the reminders check once a night, the reminder pass would ping the backup
+check every fourteen minutes, and both would sit there green — each one
+faithfully reporting a mechanism it is not watching. That is the shape this
+runbook keeps meeting: a no-op that reports success is worse than a failure,
+because nothing will ever argue with it.
+
+**The frequency tells them apart, and it needs nothing from either repo:**
+
+| Check | Healthy **Last Ping** |
+|---|---|
+| reminders | minutes ago — roughly every 14 |
+| backup | hours ago — once a day |
+
+So after rotating, look at both checks' logs rather than only at their colour.
+A backup check pinging every fourteen minutes, or a reminders check that has
+pinged once since yesterday, means the two are crossed — even though both are
+green. The reminders body is the other tell: it carries
+`scanned N, sent N, failed N` and the backup's does not.
+
 ### Decrypting a backup
 
 Every nightly artifact is **encrypted**. The workflow runs

@@ -60,6 +60,7 @@ never change, because everything cross-references them.
 | Alerts and digests silently never running | §40 |
 | Expected refusals in the production log | §40 |
 | **Restoring into a new or existing database** | §40 · [`docs/BETA.md`](docs/BETA.md) |
+| **Rotating a Healthchecks ping URL** — and the swap that leaves both green | [`docs/BETA.md`](docs/BETA.md) · §39 |
 | **Decrypting a backup artifact** — command, passphrase, failures | [`docs/BETA.md`](docs/BETA.md) · §40 |
 | Invites and beta codes a restore cannot carry | §40 |
 | **Terms acceptance**: the version, and asking again | §41 |
