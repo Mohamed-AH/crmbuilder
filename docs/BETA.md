@@ -1028,6 +1028,13 @@ look-ahead to 30 days and you hear about a lapse a month out. Keep *Expires* as
 the only date column shown in the table: the digest watches one date field per
 module, so a second one can change what it counts.
 
+**If you want the list of customers nobody has called**, Settings → *Data you
+have stopped using* and switch the first dropdown to *People nobody has
+contacted*. It ages on a date field you pick rather than on the record's last
+edit — so it needs a *Last contacted* date somebody actually fills in, and it
+says so when the module has none. Records with that field empty are counted
+separately rather than folded in: they are not dormant, they are unlogged.
+
 **If you keep other people's details in it**, three things are there for you.
 The **Consent & lawful basis** template (Add module → from a template) records
 why you may hold each person's details and where they came from. Settings →

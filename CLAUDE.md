@@ -85,6 +85,7 @@ never change, because everything cross-references them.
 | **Sweeping for what is live and unnoticed** — how, and what it found | §48 |
 | **Chaser, renewal tracker, dormancy report** — the spec, before any code | [`docs/CHASER-AND-TRACKERS.md`](docs/CHASER-AND-TRACKERS.md) |
 | **Tracking what expires** — the template, and the one date field | §49 · §37 · §39 |
+| **Dormancy vs retention** — two questions, two clocks | §50 · §44 |
 
 ---
 
@@ -125,7 +126,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 418 Node tests + 118 Playwright tests, and the smoke audit at
+**All green:** 421 Node tests + 119 Playwright tests, and the smoke audit at
 **45 passing locally / 50 against production** — the same checks either way,
 with five of them informational on a local file-store HTTP deployment and real
 assertions against a live one (§46). On Windows one Node test skips itself —
@@ -165,6 +166,9 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
   approval lets them straight in with nothing to email — see §20
 - **Per-workspace webhooks** behind an SSRF guard, and a **daily digest** of
   what is due or overdue — off by default, counts only — see §38, §39
+- **A dormancy report** beside the retention one — same card, same scan, a
+  different clock: who nobody has *contacted*, aged on a date field you pick
+  rather than on the record's last edit. Reports and never deletes — see §50
 - **A `Renewals` template** — a register of certificates, licences and
   inspections that expire. No new machinery: the due filter and the digest
   already count a date field, so this is the columns plus the wiring — see §49
@@ -207,7 +211,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v48`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v49`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -5973,3 +5977,175 @@ putting it in the parenthetical too would be padding (§40, §41).
 because that is where `consent` lives. Renewals is operational, not a data
 protection tool, and filing it there would imply a compliance claim the
 template does not make.
+
+
+---
+
+## 50. Dormancy is retention's question with a different clock
+
+Part 2 of [`docs/CHASER-AND-TRACKERS.md`](docs/CHASER-AND-TRACKERS.md). §44's
+retention review already scanned every record, grouped by module, sorted oldest
+first and downloaded the list. **The scan was right and the clock was wrong**,
+and that is the whole of this section:
+
+| Question | Right clock |
+|---|---|
+| what have we stopped **touching**? | `updatedAt` — correct since §44 |
+| who have we stopped **talking to**? | **not `updatedAt`** |
+
+A customer whose address you corrected last month reads as active. One you
+emailed last week without logging reads as dormant. Shipping dormancy on
+`updatedAt` would have produced a confidently wrong list — this file's
+recurring failure shape rather than a rough edge.
+
+### The field is an input, not a better guess
+
+The obvious move is `DateRules.watchedDateField`, the convention §37's filter
+and §39's digest already share. **It does not work here**, and the reason is
+worth keeping: that helper returns *one* date field per module, so on an
+Invoices module carrying `dueDate` and `lastContacted` it hands the same field
+to all three — and this report would age `dueDate` and call the result
+dormancy. Falling back to `updatedAt` does not rescue it either: the fallback
+only fires when there is **no** date field, and here there is one. It is just
+the wrong one.
+
+So the field is picked, preselected from a name that looks like contact, and
+**named on screen and in the file** — §37's filter already names the field it
+watches, because filtering on a date the reader cannot see is indistinguishable
+from rows going missing. §45's answer to exactly this shape, one feature over.
+
+**And my own default rebuilt the trap, which the probe caught and reading
+would not have.** The first version preferred *"the first module with any date
+field"*, so on an ordinary Contacts + Deals workspace — Contacts has no date
+field, Deals has `closeDate` — contacted mode opened on **Deals, aged on
+Expected close**. Measured at three viewports while checking the layout, and
+visible in one line of probe output. It prefers a *contact-ish* module and
+otherwise simply the first, so with no date field the explanatory note fires
+and says what to add, rather than answering a question nobody asked.
+
+### The two clocks, and `monthsAgoDay`
+
+`updatedAt` is a local millisecond stamp. A stored date field is `YYYY-MM-DD`,
+which `parseDay` turns into a UTC-projected midnight. **Different coordinate
+systems**, and mixing them fails two ways:
+
+- `Number('2024-09-12')` is `NaN`, so the shortcut drops every row into
+  `undated` and reports a clean workspace;
+- comparing a day coordinate against `monthsAgo`'s instant is off by the
+  clock-time, which is **worse**, because a handful of boundary rows move and
+  the list still looks right.
+
+So `js/date-rules.js` gains `monthsAgoDay(now, months)`: the day `monthsAgo`
+landed on, read with local getters and projected the way `today()` does,
+directly comparable with `parseDay` and with nothing else. **No `zone`
+parameter, deliberately** — both callers run in the browser, and a zone
+argument would invite somebody to pass the workspace's, which is exactly the
+unification §39 forbids.
+
+Three unit tests, checked against a bare `return monthsAgo(now, months)`: all
+three fail. The arithmetic is unit-tested and the wiring is E2E-tested, which
+is the right split — the clock-time bug is invisible at E2E scale (a
+three-year-old date is stale on both readings) and obvious at unit scale.
+
+### One card, two questions — and the crossed pair that proves it
+
+Two cards would be two nearly identical scanners on one screen, which is §33's
+adjacent-and-unlabelled-numbers problem waiting to happen. They are one query
+asked twice, so they share one control row, one scan and one renderer, and the
+copy is what differs.
+
+**The E2E is one arrangement of records and it fails in both directions.** One
+record is edited today and was last contacted three years ago; another was
+contacted today and last edited three years ago. Each mode must return exactly
+one, and they must be different ones.
+
+A test that only checked *"the dormant one appears"* would pass on a report
+that ignored the field entirely — a row three years old is old on both clocks
+unless something is deliberately new on one of them. That is why the pair is
+crossed rather than a single stale record.
+
+Two mutations were run. `byField = false` fails, but on the **wording**
+(`uncontacted` becomes `unchanged`) rather than on the rows — a true failure
+naming the wrong thing. Keeping the label and swapping only the comparison to
+`Number(r.updatedAt)` fails on `toHaveCount(2)` against 1, which is the
+assertion actually doing the work. Recorded because the first mutation looked
+sufficient and was not.
+
+### The rest, and what each is for
+
+- **Segmentation is two more selects**: which module (you want dormant
+  customers, not dormant invoices) and a dropdown value. Client-side over rows
+  already in memory, §37's shape. Both reset when the module changes — a field
+  key or an option value from the previous module matches nothing, and an empty
+  list is reported exactly like a real answer.
+- **CSV beside the JSON.** This is the one report whose output gets pasted into
+  a mail tool, and `js/csv.js` already prefixes a leading `=`/`+`/`-`/`@` so a
+  name cannot execute as a formula on open.
+- **Empty contact dates are counted, never folded in.** They are not dormant
+  customers, they are customers nobody has logged — a habit problem with a
+  different fix, and on a first run usually the more useful number.
+- **`fmtDate`, not `fmtWhen`, for a day coordinate.** `fmtWhen` runs
+  `toLocaleDateString` on the ms, and a UTC midnight renders as the *previous*
+  day for anyone west of Greenwich — §37's trap, in the one place a report says
+  a date out loud.
+
+### §44's button count became an allow-list
+
+§44 pinned *"no delete button"* structurally with
+`expect('#stale-results button').toHaveCount(1)`. Adding the CSV button makes
+that 2 — and **bumping the number would have kept the shape of the assertion
+and thrown away its meaning.** It now compares the sorted ids against
+`['stale-download', 'stale-download-csv']`, so a third button fails by name.
+A count says nothing about *which* buttons they are, which is the entire point
+of a guard against a control that acts on the list.
+
+### Traps hit while building it
+
+- **`.dsar-search` is a non-wrapping flex row capped at 62ch.** Five controls
+  in it crush each select to about ten characters — §4's layout trap, which
+  renders perfectly plausibly. `.stale-search` wraps and releases the cap, and
+  **must sit after `.dsar-search .input`**: same specificity (0,2,0), so order
+  decides. Measured rather than judged, at 1440/900/390: the row wraps to
+  38/128/173px tall and `scrollWidth` never exceeds the viewport at any of
+  them.
+- **`modules` is not a global in either sense.** §39 records `DB` and §41
+  records `Cloud` as bare globals rather than `window.` properties; this is the
+  third variant and the strictest — `modules` is a `let` *inside* app.js's
+  IIFE, so a `page.evaluate` reference **throws** rather than returning
+  undefined. Read module ids through `DB.getAll('modules')`.
+- **`#f-name`, not `#f-client_name`.** Relabelling the builder's default field
+  keeps its key, because record data survives a rename (§4). Walked straight
+  into it; the id looks wrong beside a column headed *Client name*, so the test
+  says why.
+
+### Blast radius
+
+`js/app.js`, `js/date-rules.js` and `css/style.css` are all in `APP_SHELL`, so
+`CACHE_VERSION` → `crmbuilder-v49`. No new served file and no route, so the
+smoke count stays **45 local / 50 live** — running it is what proves that (§9).
+`server.js` requires `js/date-rules.js` (§39), so the addition has a second
+consumer no browser test covers; `monthsAgoDay` is additive and the server does
+not call it, and the shared-surface test covers the export list either way.
+
+Counts: Node **418 → 421**, Playwright **118 → 119**, smoke **45** locally.
+
+### Docs walked (§27)
+
+| | Needed |
+|---|---|
+| `README.md` | its own feature bullet |
+| `guide.html` | a paragraph in the week-shaped section, not the compliance one |
+| `USER-GUIDE.md`, `docs/manual.html` | a *The other question* subsection with the two-clock table |
+| `docs/product-tour.html` | its own tile — *The customers nobody has called* |
+| `docs/ONBOARDING.md` | a week-1 step: add a *Last contacted* field while they are still keen |
+| `docs/DEMO-SCRIPT.md` | its own expected question, with the distinction shown rather than described |
+| `docs/BETA.md` tester note | the mode, and what an empty field means |
+| `terms.html` | **nothing** — checked. Retention is a controller duty and that sentence is still true; dormancy is commercial |
+| `docs/API.md` | nothing — client-only, no route, no wire change |
+
+**The dormancy material is deliberately kept OUT of the GDPR paragraphs** in
+`ONBOARDING.md`, `DEMO-SCRIPT.md` and `BETA.md` — which is where the eye goes,
+because that is where the retention review lives. Winning back a lapsed
+customer is a commercial act, and filing it beside the data-protection tools
+would imply a compliance claim it does not make. Same call as §49's, for the
+same reason, one file over.

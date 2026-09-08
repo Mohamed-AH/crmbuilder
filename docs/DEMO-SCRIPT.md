@@ -285,6 +285,23 @@ No. The webhook posts from the deployment to *their* chat service, using a URL
 they supply and that is never shown back to them. The digest carries counts and
 module names, never record contents.
 
+**"Can it tell us who we have not spoken to in a while?"**
+Yes, and it is worth showing rather than describing. Settings → **Data you have
+stopped using**, first dropdown → *People nobody has contacted*. It reads a date
+field they pick — not the record's last edit — narrows to one module and one
+dropdown value, and downloads as CSV for whatever they send mail with.
+
+**Show the distinction, because it is the reason the feature exists.** A
+customer whose address somebody corrected last month counts as *changed* and
+has still not been spoken to in two years. The other mode would call them
+active. The screen names the field it aged on, above the list, so the answer
+can be checked rather than trusted.
+
+Two things to say plainly, in this order. It only knows what they logged — and
+it tells them how many records have that field **empty**, which is usually the
+more useful number on a first run, because it is a habit problem rather than a
+dormancy one. And it sends nothing: this is a list, and the sending is theirs.
+
 **"What about GDPR?"**
 Answer the part a tool can answer and hand back the part it cannot. Three
 things are on the screen: a **Consent & lawful basis** template that records

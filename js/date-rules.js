@@ -225,6 +225,32 @@ const DateRules = (() => {
   }
 
   /*
+   * The same shift, as a DAY COORDINATE rather than an instant.
+   *
+   * `monthsAgo` above returns a millisecond stamp, which is right for ageing
+   * `updatedAt`. It is WRONG for ageing a stored date field, and mixing the
+   * two is the bug this exists to prevent: `parseDay` returns a UTC-projected
+   * midnight, `monthsAgo` returns a local instant carrying a time of day, and
+   * comparing them straight is off by up to a day in one direction and by the
+   * clock-time in the other. Nothing throws — a handful of rows quietly move
+   * in or out of the list somebody is working from, which is §37's UTC trap
+   * arriving in a third place.
+   *
+   * So: take the calendar day `monthsAgo` landed on, read it with LOCAL
+   * getters (the viewer's day is the right day for a browser report — §39's
+   * two clocks), and project it the same way `today()` does. The result is
+   * directly comparable with `parseDay`, and with nothing else.
+   *
+   * No `zone` parameter, deliberately. Both callers run in the browser, and a
+   * zone argument here would invite somebody to pass the workspace's — which
+   * is exactly the unification §39 forbids.
+   */
+  function monthsAgoDay(now, months) {
+    const d = new Date(monthsAgo(now, months));
+    return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+
+  /*
    * ---------------------------------------------------------------------
    * Importing a day out of a spreadsheet.
    *
@@ -353,7 +379,7 @@ const DateRules = (() => {
 
   return {
     parseDay, daysUntil, isDueWithin, watchedDateField, today, resolveZone, zoneParts, dayKey,
-    monthsAgo, parseImportedDay, scanDayOrder, dayOrders,
+    monthsAgo, monthsAgoDay, parseImportedDay, scanDayOrder, dayOrders,
   };
 })();
 

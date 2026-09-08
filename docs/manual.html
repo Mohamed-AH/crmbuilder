@@ -746,6 +746,28 @@
 
       <p>Two things about the dates. <em>Unchanged</em> means the last edit recorded on this workspace — importing or restoring a record resets it, so a bulk import last month makes everything in it look new. And records that have never reached this device, from a colleague who is offline, are not counted.</p>
 
+      <h3>The other question: who nobody has contacted</h3>
+      <p>The same card asks a second thing, and it is <strong>not</strong> the same question. Switch the first dropdown from <em>Records nobody has changed</em> to <em>People nobody has contacted</em>. The difference is which date it reads:</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Mode</th><th>Reads</th><th>Answers</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Records nobody has changed</strong></td><td>when the record was last edited</td><td>how long have we been holding this?</td></tr>
+            <tr><td><strong>People nobody has contacted</strong></td><td>a date field <strong>you pick</strong></td><td>who have we stopped talking to?</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>That distinction matters more than it looks. A customer whose address you corrected last month counts as <em>changed</em> — and you still have not spoken to them in two years. Asked the other way round, a customer you phoned last week but never logged looks dormant. So the second question needs a date meaning <em>we made contact</em>, and only you know which field that is.</p>
+      <p><strong>Pick the field, and the screen says which one it used.</strong> If the module has a date field named something like <em>Last contacted</em> it starts there; otherwise it opens on the module's first date field and you change it. The result always says <strong>Aged on &lt;field&gt;</strong> above the list, so you can see whether the answer means what you think. Two more controls appear as they become useful: which module (you want dormant customers, not dormant invoices), and narrowing to a dropdown value — so <em>Contacts, tagged Retail, nobody has contacted in 2 years</em> is one question.</p>
+      <p><strong>Download it as CSV</strong>, not just JSON: this is the one report whose output goes into a mail tool. Both files carry the same caveat, because whoever opens the file did not run the report — "last contacted" is only as good as your habit of updating it, and somebody you phoned but did not log looks dormant.</p>
+
+      <div class="note tip">
+        <span class="note-label">Tip</span>
+        <p>If the module has no date field at all, the card says so and falls back to the last-changed date — which is the other question again. Add a date field called <em>Last contacted</em> and fill it in when you speak to somebody. Records with that field <em>empty</em> are counted separately and are not in the list: they are not dormant customers, they are customers nobody has logged at all.</p>
+      </div>
+
       <h3>Closing your account</h3>
       <p>Settings → Danger zone → <strong>Delete my account</strong>. Anyone can close their own account, whatever their role. You are told what it costs before anything happens, and the numbers come from the server rather than from this device: on your own, your workspace goes with the account and the confirmation says how many records and modules that is; on a team, the team keeps its workspace and you lose your access to it.</p>
       <p>Two cases are refused, and you are told in advance rather than at the last step: you cannot close your account while you are the only owner of a team that still has other people in it — make someone else an owner first — or the only administrator of the whole deployment.</p>

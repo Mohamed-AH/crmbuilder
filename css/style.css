@@ -413,6 +413,18 @@ a.stat-card:hover, .stat-card-add:hover { border-color: var(--border-strong); bo
    its own here. §4's cascade trap, in the shape it usually takes. */
 .dsar-search .input { flex: 1 1 auto; min-width: 0; }
 .dsar-search .btn { flex: 0 0 auto; }
+/*
+ * The retention row carries up to five controls (§50) where Data requests has
+ * two, so it wraps and drops the 62ch cap that stops a single search field
+ * running the width of the screen. Without this the selects are squeezed to
+ * about ten characters each and read as broken chrome rather than as a
+ * question - §4's layout trap, which renders perfectly plausibly.
+ *
+ * MUST sit after `.dsar-search .input` above: same specificity (0,2,0), so
+ * order is what decides, and `width: auto` is what releases `.input`'s 100%.
+ */
+.stale-search { flex-wrap: wrap; max-width: none; }
+.stale-search .input { flex: 0 1 auto; width: auto; min-width: 11ch; }
 .dsar-list { list-style: none; margin: 12px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-width: 62ch; }
 .dsar-hit {
   display: flex; flex-direction: column; gap: 2px;

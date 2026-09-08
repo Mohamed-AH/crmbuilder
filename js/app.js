@@ -3260,13 +3260,13 @@
         -->
         <div class="card">
           <div class="card-head"><h2>Data you have stopped using</h2></div>
-          <p class="settings-hint">Holding personal data longer than you need it is the rule most small businesses drift past without noticing. This lists records nobody has changed in a while, so you can decide what still earns its place. It changes nothing by itself.</p>
-          <div class="dsar-search">
-            <select class="input" id="stale-window" aria-label="Unchanged for">
-              ${RETENTION_WINDOWS.map(([m, label]) => `<option value="${m}" ${m === 24 ? 'selected' : ''}>Unchanged for ${esc(label)}</option>`).join('')}
-            </select>
-            <button class="btn" id="stale-go">${icon('search', 15)} Review</button>
-          </div>
+          <p class="settings-hint">Two questions with one answer between them: what nobody has <strong>changed</strong> in a while, and who nobody has <strong>contacted</strong>. The first is the retention question; the second is the one that finds past customers worth going back to. Both report and neither deletes.</p>
+          <!--
+            Painted by renderRetentionControls(), because the field picker only
+            exists in "contacted" mode and the narrowing filter only once a
+            module with a dropdown is chosen (§50).
+          -->
+          <div id="stale-controls"></div>
           <div id="stale-results"></div>
         </div>
         <div class="card">
@@ -3978,18 +3978,184 @@
   const RETENTION_WINDOWS = [[12, '12 months'], [24, '2 years'], [36, '3 years'], [60, '5 years']];
   const RETENTION_SHOWN = 100;
 
-  function bindRetention() {
-    const go = $('#stale-go');
-    if (go) go.addEventListener('click', () => runRetentionReview());
+  /*
+   * ONE CARD, TWO QUESTIONS - and they are not the same question (§50).
+   *
+   *   changed    what have we stopped TOUCHING?    -> `updatedAt`
+   *   contacted  who have we stopped TALKING to?   -> a date field you pick
+   *
+   * `updatedAt` is exactly right for the first and wrong for the second, in
+   * the direction that hides the answer: a customer whose address you
+   * corrected last month reads as active, and one you emailed last week
+   * without logging reads as dormant. Shipping dormancy on `updatedAt` would
+   * produce a confidently wrong list, which is this file's recurring failure
+   * shape rather than a rough edge.
+   *
+   * Two cards would put two nearly identical scanners on one screen - §33's
+   * adjacent-and-unlabelled-numbers problem waiting to happen. They genuinely
+   * are one query asked twice, so they share one control row, one scan and
+   * one renderer, and the copy is what differs.
+   */
+  const RETENTION_MODES = [
+    ['changed', 'Records nobody has changed'],
+    ['contacted', 'People nobody has contacted'],
+  ];
+
+  // What counts as a "we spoke to them" field, by name. Used only to choose a
+  // default; the screen names whichever field is actually used.
+  const CONTACTISH = /contact|spoke|spoken|touch|call|met|meeting/i;
+
+  /*
+   * Which date field to PRESELECT as "last contacted".
+   *
+   * Deliberately not `DateRules.watchedDateField`, and that is the whole of
+   * decision 2. That helper returns one field per module and both the due
+   * filter and the digest already use it - so on an Invoices module carrying
+   * `dueDate` and `lastContacted` it hands the same field to all three, and
+   * this report would age `dueDate` and call the result dormancy. Falling back
+   * to `updatedAt` does not rescue that: the fallback only fires when there is
+   * NO date field, and here there is one. It is just the wrong one.
+   *
+   * So the field is an input - §45's answer to exactly this shape, where the
+   * CSV date order became a control rather than a better heuristic. This only
+   * chooses what the picker opens on, and the screen names the result either
+   * way, so a wrong guess is visible rather than silent.
+   */
+  function contactDateField(mod) {
+    const dates = ((mod && mod.fields) || []).filter((f) => f && f.type === 'date');
+    if (!dates.length) return null;
+    return dates.find((f) => CONTACTISH.test(`${f.key} ${f.label || ''}`)) || dates[0];
   }
 
+  function retentionSelects(mod) {
+    return ((mod && mod.fields) || []).filter((f) => f && f.type === 'select' && (f.options || []).length);
+  }
+
+  const retention = { mode: 'changed', months: 24, moduleId: '', fieldKey: '', filterKey: '', filterValue: '' };
   let lastRetention = null;
+
+  /*
+   * The controls are painted rather than written into the card, because two
+   * of them depend on the other three: the field picker exists only in
+   * `contacted` mode, and the value filter only once a module with a dropdown
+   * is chosen. They are all selects, so re-rendering costs nothing - §38's
+   * rule about never re-rendering over a typed value is about a token and a
+   * query, and there is neither here.
+   */
+  function renderRetentionControls() {
+    const box = $('#stale-controls');
+    if (!box) return;
+    const mod = retention.moduleId ? getModule(retention.moduleId) : null;
+    const dateFields = ((mod && mod.fields) || []).filter((f) => f.type === 'date');
+    const selects = retentionSelects(mod);
+    const opt = (v, label, on) => `<option value="${esc(String(v))}" ${on ? 'selected' : ''}>${esc(label)}</option>`;
+    const pairs = selects.flatMap((f) => (f.options || []).map((v) => [f, v]));
+
+    box.innerHTML = `
+      <div class="dsar-search stale-search">
+        <select class="input" id="stale-mode" aria-label="What to look for">
+          ${RETENTION_MODES.map(([v, label]) => opt(v, label, v === retention.mode)).join('')}
+        </select>
+        <select class="input" id="stale-window" aria-label="For how long">
+          ${RETENTION_WINDOWS.map(([m, label]) => opt(m, `for over ${label}`, m === retention.months)).join('')}
+        </select>
+        <select class="input" id="stale-module" aria-label="Which module">
+          ${retention.mode === 'changed' ? opt('', 'in any module', !retention.moduleId) : ''}
+          ${modules.map((m) => opt(m.id, `in ${m.name}`, m.id === retention.moduleId)).join('')}
+        </select>
+        ${retention.mode === 'contacted' ? `
+          <select class="input" id="stale-field" aria-label="Which date means contact">
+            ${dateFields.length
+    ? dateFields.map((f) => opt(f.key, `by ${f.label || f.key}`, f.key === retention.fieldKey)).join('')
+    : opt('', 'by last changed', true)}
+          </select>` : ''}
+        ${pairs.length ? `
+          <select class="input" id="stale-filter" aria-label="Narrow to">
+            ${opt('', 'all of them', !retention.filterKey)}
+            ${pairs.map(([f, v]) => opt(`${f.key}:${v}`, `${f.label || f.key}: ${v}`, retention.filterKey === f.key && retention.filterValue === v)).join('')}
+          </select>` : ''}
+        <button class="btn" id="stale-go">${icon('search', 15)} Review</button>
+      </div>
+      ${retention.mode === 'contacted' && !dateFields.length ? `
+        <p class="settings-hint" id="stale-nofield">${esc(mod ? mod.name : 'This module')} has no date field, so nothing records when you last spoke to anybody. This falls back to when the record was last <strong>changed</strong>, which is a different question - add a date field called "Last contacted" and fill it in to ask the real one.</p>` : ''}`;
+  }
+
+  function bindRetention() {
+    const box = $('#stale-controls');
+    if (!box) return;
+    renderRetentionControls();
+
+    box.addEventListener('change', (e) => {
+      const id = e.target && e.target.id;
+      if (id === 'stale-mode') {
+        retention.mode = e.target.value;
+        /*
+         * Contacted mode needs a module: each one carries its own idea of
+         * what "contacted" means, so "in any module" cannot be answered. The
+         * default lands on the first module that actually has a contact-ish
+         * date field rather than simply the first, because otherwise the
+         * common case opens on a module with no answer in it and reads as
+         * broken before anybody has chosen anything.
+         */
+        if (retention.mode === 'contacted' && !retention.moduleId) {
+          /*
+           * Prefer a module that has a CONTACT-ish date field, and otherwise
+           * simply the first - never "the first module with any date field".
+           *
+           * Found by measuring rather than reasoning: that second clause was
+           * in the first version, and on the ordinary Contacts + Deals
+           * workspace it opened on **Deals, aged on Expected close**, because
+           * Contacts has no date field and Deals has one that is nothing to
+           * do with contact. That is precisely the wrong-field trap this
+           * whole decision exists to prevent, rebuilt by my own default.
+           *
+           * Landing on the first module instead is honest: with no date field
+           * the note below fires, says so, and tells them what to add.
+           */
+          const best = modules.find((m) => {
+            const f = contactDateField(m);
+            return f && CONTACTISH.test(`${f.key} ${f.label || ''}`);
+          }) || modules[0];
+          retention.moduleId = best ? best.id : '';
+        }
+        retention.fieldKey = '';
+        retention.filterKey = '';
+        retention.filterValue = '';
+      } else if (id === 'stale-window') {
+        retention.months = Number(e.target.value) || 24;
+      } else if (id === 'stale-module') {
+        retention.moduleId = e.target.value;
+        // A field key and a dropdown value both belong to the module that was
+        // selected a moment ago. Carrying either across matches nothing, and
+        // an empty list is reported exactly like a real answer.
+        retention.fieldKey = '';
+        retention.filterKey = '';
+        retention.filterValue = '';
+      } else if (id === 'stale-field') {
+        retention.fieldKey = e.target.value;
+      } else if (id === 'stale-filter') {
+        const raw = String(e.target.value);
+        const cut = raw.indexOf(':');
+        retention.filterKey = cut > 0 ? raw.slice(0, cut) : '';
+        retention.filterValue = cut > 0 ? raw.slice(cut + 1) : '';
+      } else return;
+
+      if (retention.mode === 'contacted' && !retention.fieldKey) {
+        const f = contactDateField(getModule(retention.moduleId));
+        retention.fieldKey = f ? f.key : '';
+      }
+      renderRetentionControls();
+    });
+
+    box.addEventListener('click', (e) => {
+      if (e.target.closest('#stale-go')) runRetentionReview();
+    });
+  }
 
   async function runRetentionReview() {
     const box = $('#stale-results');
     if (!box) return;
-    const months = Number($('#stale-window').value) || 24;
-    box.innerHTML = '<p class="settings-hint">Checking…</p>';
+    box.innerHTML = '<p class="settings-hint">Checking&hellip;</p>';
 
     // Same reason as §43's search: this device holds a replica, and a review
     // run against yesterday's copy answers the wrong question.
@@ -4001,132 +4167,222 @@
 
     const mods = await DB.getAll('modules');
     const recs = await DB.getAll('records');
-    lastRetention = { ...staleReport(mods, recs, months), stale, months };
+    lastRetention = { ...staleReport(mods, recs, retention), stale, ...retention };
     renderRetention(box, lastRetention);
   }
 
   /*
-   * Group untouched records by module.
+   * Group quiet records by module.
    *
-   * **`updatedAt`, not `createdAt`.** "Untouched" is the question a retention
-   * policy asks, and a record created three years ago and edited last week is
-   * in use. A row nobody has ever edited carries its creation stamp as
-   * `updatedAt`, so that case is covered without a second clock.
+   * **The two clocks are kept apart, and that is the one thing here that
+   * cannot be got wrong quietly.** `updatedAt` is a local millisecond stamp;
+   * a stored date field is `YYYY-MM-DD`, which `DateRules.parseDay` turns
+   * into a UTC-projected midnight. They are different coordinate systems, so
+   * each is compared against its own cutoff - `monthsAgo` for the first,
+   * `monthsAgoDay` for the second. `Number('2024-09-12')` is NaN, so the
+   * shortcut would drop every row into `undated` and report a clean
+   * workspace; comparing a day coordinate against an instant would be off by
+   * the clock-time, which is worse because it looks right.
    *
-   * **Rows with no clock are counted separately, never silently dropped.**
-   * `undefined < cutoff` is false, so an un-stamped row would quietly leave
-   * the report — and "nothing is old" would be the answer for a workspace
-   * whose rows all came from a hand-edited backup. Reported as unknown
-   * instead, which is a different fact from "recent".
+   * **Rows with no readable clock are counted separately, never silently
+   * dropped or silently included.** Either would make the total a number
+   * nobody can reconcile against the record count on screen - §33's
+   * adjacent-and-wrong figure. In `contacted` mode that count is the useful
+   * half: a blank contact date is not a dormant customer, it is a customer
+   * nobody has logged, and the two want different actions.
    */
-  function staleReport(mods, recs, months) {
-    const cutoff = DateRules.monthsAgo(Date.now(), months);
+  function staleReport(mods, recs, opts) {
+    const { months, mode, moduleId, fieldKey, filterKey, filterValue } = opts;
     const byId = new Map(mods.map((m) => [m.id, m]));
+    const byField = mode === 'contacted' && !!fieldKey;
+    const cutoff = byField ? DateRules.monthsAgoDay(Date.now(), months) : DateRules.monthsAgo(Date.now(), months);
     const rows = [];
     let undated = 0;
+    let checked = 0;
 
     for (const r of recs) {
       const mod = byId.get(r.moduleId);
       if (!mod) continue;                       // orphaned row: nothing to name
-      const at = Number(r.updatedAt);
-      if (!Number.isFinite(at) || at <= 0) { undated += 1; continue; }
+      if (moduleId && r.moduleId !== moduleId) continue;
+      const data = r.data || {};
+      if (filterKey && String(data[filterKey] === undefined || data[filterKey] === null ? '' : data[filterKey]) !== filterValue) continue;
+      checked += 1;
+
+      let at = null;
+      let raw = '';
+      if (byField) {
+        raw = data[fieldKey] === undefined || data[fieldKey] === null ? '' : String(data[fieldKey]);
+        at = DateRules.parseDay(raw);
+      } else {
+        const n = Number(r.updatedAt);
+        at = Number.isFinite(n) && n > 0 ? n : null;
+      }
+      if (at === null) { undated += 1; continue; }
       if (at >= cutoff) continue;
+
       rows.push({
         moduleId: mod.id,
         moduleName: mod.name,
         recordId: r.id,
         name: recordName(mod, r),
-        updatedAt: at,
+        at,
+        // A day coordinate is UTC midnight, so fmtWhen would render the
+        // PREVIOUS day for anyone west of Greenwich - §37's trap, in the one
+        // place a report says a date out loud. fmtDate takes the stored
+        // string and reads it as a local day, which is what it is.
+        when: byField ? fmtDate(raw) : fmtWhen(at),
+        iso: byField ? raw : new Date(at).toISOString(),
         demo: !!r._demo,
       });
     }
 
-    rows.sort((a, b) => a.updatedAt - b.updatedAt);   // oldest first: the ones to look at
+    rows.sort((a, b) => a.at - b.at);   // oldest first: the ones to look at
     const counts = new Map();
     for (const row of rows) {
       const seen = counts.get(row.moduleId);
-      if (!seen) counts.set(row.moduleId, { moduleName: row.moduleName, count: 1, oldest: row.updatedAt });
-      else { seen.count += 1; seen.oldest = Math.min(seen.oldest, row.updatedAt); }
+      if (!seen) counts.set(row.moduleId, { moduleName: row.moduleName, count: 1 });
+      else seen.count += 1;
     }
     const byModule = [...counts.values()].sort((a, b) => b.count - a.count || a.moduleName.localeCompare(b.moduleName));
-    return { cutoff, total: rows.length, rows, byModule, undated, checked: recs.length };
+
+    // What the report aged on, carried so the screen and the file can both
+    // NAME it. §37's filter already names the field it watches, for the same
+    // reason: filtering on a date the reader cannot see is indistinguishable
+    // from rows going missing.
+    const mod = moduleId ? byId.get(moduleId) : null;
+    const field = byField ? ((mod && mod.fields) || []).find((f) => f.key === fieldKey) : null;
+    const agedOn = byField
+      ? { kind: 'field', label: (field && (field.label || field.key)) || fieldKey }
+      : { kind: 'updatedAt', label: 'last changed' };
+
+    return { cutoff, total: rows.length, rows, byModule, undated, checked, agedOn, moduleName: mod ? mod.name : '' };
+  }
+
+  function retentionScope(out) {
+    return `${out.moduleName ? ` in ${out.moduleName}` : ''}${out.filterKey ? ` (${out.filterValue})` : ''}`;
   }
 
   function renderRetention(box, out) {
     const window = (RETENTION_WINDOWS.find(([m]) => m === out.months) || [])[1] || `${out.months} months`;
+    const contacted = out.agedOn.kind === 'field';
+    const scope = esc(retentionScope(out));
     const staleNote = out.stale ? '<p class="settings-hint">This device could not reach the server, so it checked the copy it already had.</p>' : '';
+
+    // The field is named on screen, always. Without it the reader has to take
+    // "dormant" on trust, and cannot tell a list that means something from a
+    // list aged on a date nobody ever fills in.
+    const agedNote = `<p class="settings-hint">Aged on <strong>${esc(out.agedOn.label)}</strong>${contacted ? '' : ' &mdash; the last edit recorded on this workspace, which is not the same as the last time you spoke to somebody'}.</p>`;
+
     const undatedNote = out.undated
-      ? `<p class="settings-hint">${out.undated} record${out.undated === 1 ? '' : 's'} carr${out.undated === 1 ? 'ies' : 'y'} no last-changed date and could not be aged — usually rows restored from a hand-edited file.</p>`
+      ? `<p class="settings-hint">${out.undated} record${out.undated === 1 ? '' : 's'} ${out.undated === 1 ? 'has' : 'have'} no <strong>${esc(out.agedOn.label)}</strong> to age${contacted ? ', so nobody has recorded talking to them at all. That is a different list, and worth its own look.' : ' &mdash; usually rows restored from a hand-edited file.'}</p>`
       : '';
 
     if (!out.total) {
       box.innerHTML = `
-        <p class="settings-hint"><strong>Nothing has been sitting untouched for ${esc(window)}.</strong> Checked ${out.checked} record${out.checked === 1 ? '' : 's'}.</p>
-        ${undatedNote}${staleNote}`;
+        <p class="settings-hint"><strong>Nothing${scope} has gone ${contacted ? 'uncontacted' : 'untouched'} for ${esc(window)}.</strong> Checked ${out.checked} record${out.checked === 1 ? '' : 's'}.</p>
+        ${agedNote}${undatedNote}${staleNote}`;
       return;
     }
 
     const shown = out.rows.slice(0, RETENTION_SHOWN);
     box.innerHTML = `
-      <p class="settings-hint"><strong>${out.total} record${out.total === 1 ? '' : 's'} unchanged for over ${esc(window)}</strong>, out of ${out.checked} — ${out.byModule.map((b) => `${esc(b.moduleName)} ${b.count}`).join(' · ')}</p>
-      ${undatedNote}${staleNote}
+      <p class="settings-hint"><strong>${out.total} record${out.total === 1 ? '' : 's'}${scope} ${contacted ? 'uncontacted' : 'unchanged'} for over ${esc(window)}</strong>, out of ${out.checked} &mdash; ${out.byModule.map((b) => `${esc(b.moduleName)} ${b.count}`).join(' &middot; ')}</p>
+      ${agedNote}${undatedNote}${staleNote}
       <!--
         No delete button, and that is the feature. Nothing here decides what to
         keep: a quiet record may be a closed matter you are required to hold
         for six years, and the app cannot tell that from an abandoned one.
       -->
-      <p class="settings-hint">This is a list to review, not a bin. Old is not the same as unwanted — some records have to be kept for years — so open the ones that matter and decide. Deleting cannot be undone, and on a team it deletes for everybody.</p>
+      <p class="settings-hint">This is a list to review, not a bin. Old is not the same as unwanted &mdash; some records have to be kept for years &mdash; so open the ones that matter and decide. Deleting cannot be undone, and on a team it deletes for everybody.</p>
       <ul class="dsar-list">
         ${shown.map((r) => `
           <li class="dsar-hit">
-            <span class="dsar-where">${esc(r.moduleName)} · ${esc(r.name)}${r.demo ? ' <span class="dsar-tag">sample data</span>' : ''}</span>
-            <span class="dsar-fields">Last changed ${esc(fmtWhen(r.updatedAt))}</span>
+            <span class="dsar-where">${esc(r.moduleName)} &middot; ${esc(r.name)}${r.demo ? ' <span class="dsar-tag">sample data</span>' : ''}</span>
+            <span class="dsar-fields">${contacted ? 'Last contacted' : 'Last changed'} ${esc(r.when)}</span>
           </li>`).join('')}
       </ul>
-      ${out.total > shown.length ? `<p class="settings-hint">Showing the ${shown.length} oldest. The file below carries all ${out.total}.</p>` : ''}
+      ${out.total > shown.length ? `<p class="settings-hint">Showing the ${shown.length} oldest. The files below carry all ${out.total}.</p>` : ''}
       <div class="btn-row">
         <button class="btn" id="stale-download">${icon('download', 15)} Download the list (${out.total})</button>
+        <button class="btn" id="stale-download-csv">${icon('download', 15)} CSV, for a mail merge</button>
       </div>`;
 
     const dl = $('#stale-download');
-    if (dl) dl.addEventListener('click', downloadRetention);
+    if (dl) dl.addEventListener('click', () => downloadRetention('json'));
+    const csv = $('#stale-download-csv');
+    if (csv) csv.addEventListener('click', () => downloadRetention('csv'));
   }
 
-  function downloadRetention() {
+  /*
+   * The caveats travel INSIDE the file, exactly as §43's bundle does it,
+   * because whoever opens it next did not run the report and never saw the
+   * screen. The dormancy note is the one that matters and is specific to that
+   * mode: the list is only as good as the habit of filling the field in.
+   */
+  function retentionNotes(out) {
+    const notes = [
+      'A report, not a deletion. Nothing here has been changed or removed.',
+      'Old is not the same as unwanted - some records must be kept for years.',
+      'Records that have never reached this device - from a colleague who is offline - are not included.',
+    ];
+    if (out.agedOn.kind === 'field') {
+      notes.push(`"Last contacted" here means the "${out.agedOn.label}" field. It is only as good as your habit of updating it - somebody you phoned but did not log looks dormant.`);
+      notes.push('Records with that field empty are counted separately and are NOT in this list: nobody has recorded contacting them at all.');
+    } else {
+      notes.push('"Unchanged" means the last edit recorded on this workspace. Importing or restoring a record can reset that date.');
+    }
+    return notes;
+  }
+
+  function downloadRetention(kind) {
     if (!lastRetention) return;
     const out = lastRetention;
+    const contacted = out.agedOn.kind === 'field';
+    const stamp = new Date().toISOString().slice(0, 10);
+    const base = contacted ? 'dormant' : 'retention-review';
+
+    if (kind === 'csv') {
+      /*
+       * CSV as well as JSON, because this is the one report whose output gets
+       * pasted into a mail tool. js/csv.js already writes RFC 4180 and
+       * prefixes a leading = + - or @ so a name cannot execute as a formula
+       * when the file is opened in a spreadsheet.
+       */
+      const rows = [['Module', 'Record', contacted ? 'Last contacted' : 'Last changed', 'Sample data']];
+      out.rows.forEach((r) => rows.push([r.moduleName, r.name, r.iso.slice(0, 10), r.demo ? 'yes' : '']));
+      downloadFile(`${base}-${stamp}.csv`, CSV.stringify(rows), 'text/csv;charset=utf-8');
+      toast(`Downloaded ${out.total} row${out.total === 1 ? '' : 's'}`);
+      return;
+    }
+
     const payload = {
       app: 'crmbuilder',
-      kind: 'retention-review',
-      version: 1,
+      kind: contacted ? 'dormancy-review' : 'retention-review',
+      version: 2,
       producedAt: new Date().toISOString(),
       workspace: SETTINGS.businessName || '',
+      question: contacted ? 'who have we stopped contacting' : 'what have we stopped changing',
+      agedOn: out.agedOn,
+      scope: {
+        module: out.moduleName || 'all modules',
+        narrowedTo: out.filterKey ? `${out.filterKey}: ${out.filterValue}` : null,
+      },
       unchangedForMonths: out.months,
       unchangedBefore: new Date(out.cutoff).toISOString(),
       recordsChecked: out.checked,
       recordsFound: out.total,
       recordsWithNoDate: out.undated,
-      /*
-       * Same rule as §43's bundle: the limits travel inside the file, because
-       * whoever reads it next did not run it and never saw the screen.
-       */
-      notes: [
-        'A report, not a deletion. Nothing here has been changed or removed.',
-        'Old is not the same as unwanted — some records must be kept for years.',
-        '"Unchanged" means the last edit recorded on this workspace. Importing or restoring a record can reset that date.',
-        'Records that have never reached this device — from a colleague who is offline — are not included.',
-      ],
+      notes: retentionNotes(out),
       byModule: out.byModule,
       records: out.rows.map((r) => ({
         module: r.moduleName,
         record: r.name,
         recordId: r.recordId,
-        lastChanged: new Date(r.updatedAt).toISOString(),
+        [contacted ? 'lastContacted' : 'lastChanged']: r.iso,
         sampleData: r.demo || undefined,
       })),
     };
-    const stamp = new Date().toISOString().slice(0, 10);
-    downloadFile(`retention-review-${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
+    downloadFile(`${base}-${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
     toast(`Downloaded ${out.total} record${out.total === 1 ? '' : 's'}`);
   }
 

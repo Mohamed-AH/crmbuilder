@@ -3023,13 +3023,26 @@ test.describe('settings', () => {
      * be no button that acts on the list.
      */
     await expect(box).toContainText('not a bin');
-    await expect(page.locator('#stale-results button')).toHaveCount(1);
+    /*
+     * An ALLOW-LIST of ids, not a count.
+     *
+     * This was `toHaveCount(1)` while the download was the only button, and
+     * §50 added a CSV one beside it. Bumping the number to 2 would have kept
+     * the shape of the assertion and thrown away its meaning: what has to be
+     * pinned is that the two buttons here both *read*, and that a third
+     * cannot appear without somebody changing this line on purpose. A count
+     * says nothing about which buttons they are.
+     */
+    const buttons = await page.locator('#stale-results button').evaluateAll((els) => els.map((el) => el.id).sort());
+    expect(buttons, 'a button appeared on the retention list that only reads-and-downloads should have').toEqual(
+      ['stale-download', 'stale-download-csv'],
+    );
     await expect(page.locator('#stale-download')).toBeVisible();
 
     // The window is live, not decorative: at five years the same row is recent.
     await page.selectOption('#stale-window', '60');
     await page.click('#stale-go');
-    await expect(box).toContainText('Nothing has been sitting untouched for 5 years', { timeout: 15000 });
+    await expect(box).toContainText('Nothing has gone untouched for 5 years', { timeout: 15000 });
     await expect(page.locator('#stale-download')).toHaveCount(0);
 
     await page.selectOption('#stale-window', '24');
@@ -3059,6 +3072,194 @@ test.describe('settings', () => {
     // The caveats travel inside the file, for the reader who did not run it.
     expect(report.notes.join(' ')).toMatch(/not a deletion/i);
     expect(report.notes.join(' ')).toMatch(/Old is not the same as unwanted/i);
+  });
+
+  /*
+   * Dormancy: the same card, a different clock (§50).
+   *
+   * THE CROSSED PAIR IS THE TEST. One record is edited today and was last
+   * contacted three years ago; another was contacted today and last edited
+   * three years ago. Each mode must return exactly one of them, and they must
+   * be different ones. That single arrangement fails in both directions:
+   *
+   *   - age dormancy on `updatedAt` and it returns the wrong record;
+   *   - age retention on the date field and it returns the other wrong one.
+   *
+   * A test that only checked "the dormant one appears" would pass on a report
+   * that ignored the field entirely, because the row is old on both clocks
+   * unless something is deliberately new on one of them.
+   *
+   * Anonymous, for §44's reason: signed out there is no sync, so a backdated
+   * row stays backdated rather than racing a push.
+   */
+  test('dormancy asks a different question from retention, on a date you pick', async ({ page }) => {
+    await onboard(page, { name: 'Dormancy Co', templates: ['Contacts'] });
+
+    // A real module through the real builder: the report has to work on a
+    // module somebody made, not only on a template (§36's rule).
+    await page.click('#add-module-btn');
+    await page.fill('#b-name', 'Clients');
+    await page.locator('.builder-field .bf-label').first().fill('Client name');
+
+    await page.click('#b-add-field');
+    let row = page.locator('.builder-field').last();
+    await row.locator('.bf-label').fill('Last contacted');
+    await row.locator('.bf-type').selectOption('date');
+    await row.locator('.bf-list').check();
+
+    await page.click('#b-add-field');
+    row = page.locator('.builder-field').last();
+    await row.locator('.bf-label').fill('Segment');
+    await row.locator('.bf-type').selectOption('select');
+    await row.locator('.bf-options').fill('Retail, Trade');
+
+    await page.click('#b-save');
+    await expect(page.locator('#nav-modules .nav-link:has-text("Clients")')).toBeVisible();
+
+    // Local getters, never toISOString - §42's own bug, and the reason
+    // js/date-rules.js exists.
+    const dayAgo = (years) => page.evaluate((y) => {
+      const d = new Date();
+      d.setFullYear(d.getFullYear() - y);
+      const pad = (x) => String(x).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }, years);
+
+    const rows = [
+      { name: 'Quiet Trade', contacted: await dayAgo(3), segment: 'Trade' },
+      { name: 'Quiet Retail', contacted: await dayAgo(3), segment: 'Retail' },
+      { name: 'Recent Retail', contacted: await dayAgo(0), segment: 'Retail' },
+      // No contact date at all. Not dormant - unlogged, which is a different
+      // list and has to be counted rather than folded into either answer.
+      { name: 'Never Logged', contacted: '', segment: 'Trade' },
+    ];
+    for (const r of rows) {
+      await page.click('#add-record-btn');
+      // #f-name, NOT #f-client_name: relabelling the builder's default field
+      // keeps its key, so record data survives a rename (§4). Written out
+      // because the id looks wrong beside a column headed "Client name".
+      await page.fill('#f-name', r.name);
+      if (r.contacted) await page.fill('#f-last_contacted', r.contacted);
+      await page.selectOption('#f-segment', r.segment);
+      await page.click('#record-save');
+      await expect(page.locator(`tr:has-text("${r.name}")`)).toBeVisible();
+    }
+
+    // The other half of the crossed pair: contacted today, edited three years
+    // ago. `DB` is a bare global, not `window.DB` (§39).
+    await page.evaluate(async () => {
+      const all = await DB.getAll('records');
+      const old = all.find((r) => r.data.name === 'Recent Retail');
+      const at = new Date();
+      at.setFullYear(at.getFullYear() - 3);
+      await DB.put('records', { ...old, updatedAt: at.getTime() });
+    });
+
+    await page.goto('/#/settings');
+    await expect(page.locator('#stale-mode')).toBeVisible({ timeout: 20000 });
+
+    // --- retention: what nobody has CHANGED -------------------------------
+    await page.selectOption('#stale-window', '24');
+    await page.click('#stale-go');
+    const box = page.locator('#stale-results');
+    await expect(box).toContainText('unchanged for over 2 years', { timeout: 15000 });
+    await expect(page.locator('.dsar-hit')).toHaveCount(1);
+    await expect(page.locator('.dsar-hit')).toContainText('Recent Retail');
+
+    // --- dormancy: who nobody has CONTACTED -------------------------------
+    await page.selectOption('#stale-mode', 'contacted');
+
+    /*
+     * The default lands on Clients rather than Contacts, because Clients is
+     * the module with a contact-ish date field. The first version of this
+     * chain preferred "the first module with ANY date field" and opened on a
+     * module aged by an unrelated date - the exact trap the feature exists to
+     * avoid, found by measuring rather than by reading.
+     */
+    /*
+     * `modules` is NOT reachable from page.evaluate. §39 records `DB` and §41
+     * records `Cloud` as bare globals rather than `window.` properties; this
+     * is the third variant and the strictest — `modules` is a `let` INSIDE
+     * app.js's IIFE, so it is not a global in either sense and the reference
+     * throws rather than returning undefined. `DB` is the seam.
+     */
+    const moduleId = (name) => page.evaluate(
+      async (n) => (await DB.getAll('modules')).find((m) => m.name === n).id, name,
+    );
+    await expect(page.locator('#stale-module')).toHaveValue(await moduleId('Clients'));
+    await expect(page.locator('#stale-field')).toBeVisible();
+
+    await page.click('#stale-go');
+    await expect(box).toContainText('uncontacted for over 2 years', { timeout: 15000 });
+
+    // The field is NAMED, always. Without this line the reader has to take
+    // "dormant" on trust and cannot tell a meaningful list from one aged on a
+    // date nobody fills in (§37's filter names its field for the same reason).
+    await expect(box).toContainText('Aged on Last contacted');
+
+    // THE crossed assertion. Recent Retail is three years stale on
+    // `updatedAt` and was contacted today, so a report reading the wrong
+    // clock returns it here.
+    await expect(page.locator('.dsar-hit')).toHaveCount(2);
+    await expect(box).toContainText('Quiet Trade');
+    await expect(box).toContainText('Quiet Retail');
+    await expect(box).not.toContainText('Recent Retail');
+
+    // An empty contact date is counted, not silently dropped or included.
+    await expect(box).toContainText('1 record has no Last contacted to age');
+    await expect(box).not.toContainText('Never Logged');
+
+    // --- narrowing to a segment -------------------------------------------
+    await page.selectOption('#stale-filter', 'segment:Retail');
+    await page.click('#stale-go');
+    await expect(page.locator('.dsar-hit')).toHaveCount(1, { timeout: 15000 });
+    await expect(box).toContainText('Quiet Retail');
+    await expect(box).not.toContainText('Quiet Trade');
+
+    // --- a module with no date field says so, rather than answering ---------
+    await page.selectOption('#stale-module', await moduleId('Contacts'));
+    await expect(page.locator('#stale-nofield')).toContainText('no date field');
+    await expect(page.locator('#stale-nofield')).toContainText('Last contacted');
+
+    // --- the CSV, which is why this report exists at all --------------------
+    await page.selectOption('#stale-module', await moduleId('Clients'));
+    await page.selectOption('#stale-filter', '');
+    await page.click('#stale-go');
+    await expect(page.locator('#stale-download-csv')).toBeVisible({ timeout: 15000 });
+    const [csv] = await Promise.all([
+      page.waitForEvent('download'),
+      page.click('#stale-download-csv'),
+    ]);
+    expect(csv.suggestedFilename()).toMatch(/^dormant-\d{4}-\d{2}-\d{2}\.csv$/);
+    const text = await new Promise((resolve) => {
+      let out = '';
+      csv.createReadStream().then((s) => {
+        s.on('data', (c) => { out += c; });
+        s.on('end', () => resolve(out));
+      });
+    });
+    expect(text.split(/\r?\n/)[0]).toBe('Module,Record,Last contacted,Sample data');
+    expect(text).toContain('Quiet Trade');
+    expect(text).not.toContain('Recent Retail');
+
+    // And the JSON carries the caveat that makes the list honest, for whoever
+    // opens it without having run it (§43's rule).
+    const [json] = await Promise.all([
+      page.waitForEvent('download'),
+      page.click('#stale-download'),
+    ]);
+    const jsonText = await new Promise((resolve) => {
+      let out = '';
+      json.createReadStream().then((s) => {
+        s.on('data', (c) => { out += c; });
+        s.on('end', () => resolve(out));
+      });
+    });
+    const report = JSON.parse(jsonText);
+    expect(report.kind).toBe('dormancy-review');
+    expect(report.agedOn).toEqual({ kind: 'field', label: 'Last contacted' });
+    expect(report.notes.join(' ')).toMatch(/only as good as your habit of updating it/i);
+    expect(report.notes.join(' ')).toMatch(/counted separately/i);
   });
 
   test('a data request refuses a one-letter query and says why', async ({ page }) => {

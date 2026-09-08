@@ -113,6 +113,22 @@ One habit, consistently kept, is what makes the data trustworthy enough to rely 
 
 ## Week 1 check-in (15 minutes)
 
+### Add a "Last contacted" field while they are still keen
+
+One date field on whichever module holds their customers, and one habit: fill
+it in when you speak to somebody. It costs nothing on day one and it is the
+only way Settings → *Data you have stopped using* can later answer **who nobody
+has contacted** rather than only *what nobody has changed*.
+
+Those are different questions and the difference is the whole point: a customer
+whose address someone corrected last month reads as active, and nobody has
+spoken to them in two years. Without the field the report falls back to the
+last-changed date and says so — honest, and not the answer they wanted.
+
+Sell it as the win-back list, because that is what it becomes: dormant
+customers, narrowed to one module and one tag, out as CSV. **Say the limit in
+the same breath** — it only knows what they logged.
+
 ### Switch the daily digest on — but only now, not on day one
 
 Leave it off during setup. A digest over a half-imported workspace counts rows

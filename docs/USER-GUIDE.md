@@ -348,6 +348,51 @@ workspace — importing or restoring a record resets it, so a bulk import last
 month makes everything in it look new. And records that have never reached this
 device, from a colleague who is offline, are not counted.
 
+#### The other question: who nobody has contacted
+
+The same card asks a second thing, and it is **not** the same question. Switch
+the first dropdown from *Records nobody has changed* to *People nobody has
+contacted*.
+
+The difference is which date it reads:
+
+| | Reads | Answers |
+|---|---|---|
+| **Records nobody has changed** | when the record was last edited | how long have we been holding this? |
+| **People nobody has contacted** | a date field **you pick** | who have we stopped talking to? |
+
+That distinction matters more than it looks. A customer whose address you
+corrected last month counts as *changed* — and you still have not spoken to
+them in two years. Asked the other way round, a customer you phoned last week
+but never logged looks dormant. So the second question needs a date that means
+*we made contact*, and only you know which field that is.
+
+**Pick the field, and the screen says which one it used.** If the module has a
+date field with a name like *Last contacted* it starts there; otherwise it
+opens on the module's first date field and you change it. The result always
+says **Aged on _\<field\>_** above the list, so you can see whether the answer
+means what you think.
+
+**If the module has no date field at all**, it says so and falls back to the
+last-changed date, which is the other question again. Add a date field called
+*Last contacted* and fill it in when you speak to somebody; then the report is
+worth acting on.
+
+Two more controls appear as they become useful: **which module** (you want
+dormant customers, not dormant invoices) and **narrow to** a dropdown value —
+so *Contacts, tagged Retail, nobody has contacted in 2 years* is one question.
+
+**Download it as CSV**, not just JSON: this is the one report whose output goes
+into a mail tool. Both files carry the same caveat, because whoever opens the
+file did not run the report:
+
+> "Last contacted" is only as good as your habit of updating it. Somebody you
+> phoned but did not log looks dormant.
+
+**Records with that field empty are counted separately and are not in the
+list.** They are not dormant customers — they are customers nobody has logged
+at all, which is a different problem with a different fix.
+
 ### Closing your account
 
 Settings → Danger zone → **Delete my account**. Anyone can close their own

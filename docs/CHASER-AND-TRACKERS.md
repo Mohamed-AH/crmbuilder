@@ -4,7 +4,7 @@
 > §29 defines as the maintained tier — not `docs/archive/`, which is frozen.
 > If you change something this file names, change this file.
 >
-> **Part 1 is built (`CLAUDE.md` §49). Parts 2 and 3 are not.** This
+> **Parts 1 and 2 are built (`CLAUDE.md` §49, §50). Part 3 is not.** This
 > was the spec agreed before any code, written so that the decisions are
 > recorded with their reasoning rather than reconstructed from a diff. Where a
 > choice was taken, the alternatives are kept beside it — a decision without
@@ -32,7 +32,7 @@ The other three are planned here.
 | # | Decision | Taken | Rejected |
 |---|---|---|---|
 | 1 | Renewal reminder window | **Single workspace `remind.days`** — shipped | per-module windows |
-| 2 | Dormancy clock | **A date field the user picks**, falling back to `updatedAt` | a mandatory schema field · a full activity model |
+| 2 | Dormancy clock | **A date field the user picks**, falling back to `updatedAt` — shipped | a mandatory schema field · a full activity model |
 | 3 | Chaser dispatch | **BYOK manual send**, with `mailto:` as the built-in fallback | `mailto:` only · automated escalation |
 | 4 | Who may send | **Owner + member** | owner only · every role |
 | 5 | Message content | **Invoice number and balance** | counts only |
@@ -155,6 +155,13 @@ no route moves.
 ---
 
 # Part 2 — Dormant customer reactivation (report only)
+
+> **BUILT.** Shipped in the existing retention card as a second mode, with
+> `DateRules.monthsAgoDay` added for the clock. `CLAUDE.md` §50 has what it
+> cost — including the part this plan named as the fix and my own default then
+> rebuilt: preferring *the first module with any date field* opened the report
+> on Deals, aged on `Expected close`. Found by measuring the layout, not by
+> reading the code. The rest of this part is left as written.
 
 ## What already works, and the word that changes everything
 

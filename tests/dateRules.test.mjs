@@ -216,6 +216,52 @@ describe('DateRules.monthsAgo', () => {
 });
 
 /*
+ * monthsAgoDay — the same shift as a day coordinate (§50).
+ *
+ * The dormancy report ages a stored DATE FIELD rather than `updatedAt`, and
+ * those are two different coordinate systems: `parseDay` returns a
+ * UTC-projected midnight, `monthsAgo` returns a local instant carrying a time
+ * of day. Comparing them straight is off by the clock-time in one direction
+ * and by up to a day in the other, silently — a handful of rows move in or out
+ * of the list, and nothing says so.
+ *
+ * Checked against the broken state per §9: swapping the body for a bare
+ * `monthsAgo(now, months)` fails the first test here on every hour but
+ * midnight, and fails the round-trip test outright.
+ */
+describe('DateRules.monthsAgoDay', () => {
+  const at = (y, m, d, h = 12) => new Date(y, m - 1, d, h, 0, 0).getTime();
+  const day = (y, m, d) => Date.UTC(y, m - 1, d);
+
+  test('lands on the calendar day, with no time of day left on it', () => {
+    assert.equal(DateRules.monthsAgoDay(at(2026, 9, 12, 9), 24), day(2024, 9, 12));
+    assert.equal(DateRules.monthsAgoDay(at(2026, 9, 12, 23), 24), day(2024, 9, 12));
+    // The hour must not move the answer. A raw monthsAgo carries 23:00 into
+    // the comparison, which is what puts a boundary row on the wrong side.
+    assert.equal(
+      DateRules.monthsAgoDay(at(2026, 9, 12, 0), 24),
+      DateRules.monthsAgoDay(at(2026, 9, 12, 23), 24),
+    );
+  });
+
+  test('inherits the clamping, so a short month does not overflow', () => {
+    assert.equal(DateRules.monthsAgoDay(at(2026, 8, 31), 6), day(2026, 2, 28));
+    assert.equal(DateRules.monthsAgoDay(at(2028, 2, 29), 24), day(2026, 2, 28));
+  });
+
+  /*
+   * The one that makes it usable: the result has to be directly comparable
+   * with parseDay's output, because that is the only thing it is ever
+   * compared against.
+   */
+  test('is on the same scale as parseDay, so the two can be compared', () => {
+    assert.equal(DateRules.monthsAgoDay(at(2026, 9, 12), 24), DateRules.parseDay('2024-09-12'));
+    assert.ok(DateRules.parseDay('2024-09-11') < DateRules.monthsAgoDay(at(2026, 9, 12), 24));
+    assert.ok(DateRules.parseDay('2024-09-13') > DateRules.monthsAgoDay(at(2026, 9, 12), 24));
+  });
+});
+
+/*
  * Importing a day out of a spreadsheet (§45).
  *
  * The defect these replace: `new Date('03/04/2026')` answers 4 March for
