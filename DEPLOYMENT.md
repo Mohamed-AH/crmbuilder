@@ -50,7 +50,7 @@ times the work.
 | `DEPLOYMENT_MODE` | `pooled` | `dedicated` | reported by `/health` |
 | `TENANT_NAME` | unset | the client's short name | reported by `/health`, so instances are distinguishable |
 | `HEALTH_DETAIL` | **unset** | `1` | exposes org/user counts on public `/health` — a customer count on a pooled deployment |
-| `APP_COMMIT` | unset | unset | which commit is running, reported by `/healthz` — it is what lets CI tell whether a deploy has landed (§46). `RENDER_GIT_COMMIT` is read first and Render is expected to provide it, so try leaving this unset: run `npm run test:smoke` against the deployment and read the **deployed build** line. If it says *this deployment does not report a commit*, set `APP_COMMIT` yourself. Omitted from the response entirely when neither is set, which is deliberate |
+| `APP_COMMIT` | **leave unset** | **leave unset** | which commit is running, reported by `/healthz` — it is what lets CI tell whether a deploy has landed (§46). `RENDER_GIT_COMMIT` is read first and **Render does set it** (confirmed against the live deployment, not assumed), so on Render there is nothing to configure. Set `APP_COMMIT` only on a host that provides no equivalent: run `npm run test:smoke` against it and read the **deployed build** line — *this deployment does not report a commit* is the case that needs it. Omitted from the response entirely when neither is set, which is deliberate |
 | `EVENT_RETENTION_DAYS` | `90` (default) | as contracted | analytics events TTL |
 | `TOMBSTONE_RETENTION_DAYS` | `180` (default) | as contracted | how long a deleted record's tombstone survives, i.e. how long a device may be offline and still learn about the delete |
 | `FEEDBACK_RETENTION_DAYS` | `90` (default) | `90` | problem reports TTL |

@@ -174,8 +174,16 @@ jobs:
               echo "state=unknown" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            if [ "$reported" = "$WANT" ]; then
-              echo "Live deployment is running ${WANT:0:12}."
+            # PREFIX MATCH, not equality. The live deployment reports what the
+            # host handed it, and a host that abbreviates to a short SHA would
+            # never equal github.sha — so every push run would wait out its
+            # budget and skip, for ever, silently. That is the same
+            # silent-permanent-skip failure the omitted-vs-placeholder
+            # decision exists to avoid, arrived at from the other end.
+            # Seven characters is git's own floor for an unambiguous short SHA.
+            if [ ${#reported} -ge 7 ] && { case "$WANT" in "$reported"*) true;; *) false;; esac || \
+                                           case "$reported" in "$WANT"*) true;; *) false;; esac; }; then
+              echo "Live deployment is running ${reported:0:12} — the commit under test."
               echo "state=current" >> "$GITHUB_OUTPUT"
               exit 0
             fi

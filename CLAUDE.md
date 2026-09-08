@@ -117,9 +117,11 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 418 Node tests + 105 Playwright tests, 44 smoke checks. On
-Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
-limit, not a failure.
+**All green:** 418 Node tests + 105 Playwright tests, and the smoke audit at
+**44 passing locally / 49 against production** — the same checks either way,
+with five of them informational on a local file-store HTTP deployment and real
+assertions against a live one (§46). On Windows one Node test skips itself —
+see §4's SIGTERM note; it is a platform limit, not a failure.
 
 ```sh
 npm install
@@ -425,7 +427,7 @@ prompted writing this down.
 node --test tests/signup.test.mjs                       # one file
 node --test --test-name-pattern "egress is counted" …   # one test
 npx playwright test -g "the demo can be kept on purpose"
-npm run test:smoke                                      # 44 checks, seconds
+npm run test:smoke                                      # 44 local / 49 live (§46)
 ```
 
 **Port blocks are disjoint per file**, because `node --test` runs files in
@@ -4789,7 +4791,7 @@ fastest way to be quoted back at.
 ### Blast radius
 
 `js/date-rules.js` and `js/app.js` are both in `APP_SHELL`, so `CACHE_VERSION`
-→ `crmbuilder-v43`. No new served file, so the smoke count stays **44** — and
+→ `crmbuilder-v43`. No new served file, so the smoke count stays **44 locally** — and
 running it is what proves that, per §9.
 
 `server.js` requires `js/date-rules.js` (§39), so a change there has a second
@@ -4961,7 +4963,7 @@ control that now handles it. Removed rather than softened.
 
 `js/app.js`, `js/date-rules.js` and `css/style.css` are all in `APP_SHELL`, so
 `CACHE_VERSION` → `crmbuilder-v44`. No new served file, so the smoke count
-stays **44**. `.csv-format`, `.csv-format-row` and `.btn:disabled` are defined
+stays **44 locally**. `.csv-format`, `.csv-format-row` and `.btn:disabled` are defined
 in `css/style.css` — §27's invented-class trap, and `.btn:disabled` in
 particular, without which a blocked import button looks pressable and reads as
 a bug rather than as a question.
@@ -5063,10 +5065,20 @@ because every asset assertion above it is written against the checkout the
 file came from, so when one 404s the first question is whether the deployment
 is even running that commit, and until now there was no way to ask.
 
-**The smoke count stays 44**, and that is not an oversight: the summary counts
-`PASS`, and this line is `INFO`. Recorded because "I added a check and the
-number did not move" reads as a mistake later, and §9 treats that number as
-the proof the file ran.
+**The smoke count does not move**, and that is not an oversight: the summary
+counts `PASS`, and this line is `INFO` in both environments. Recorded because
+"I added a check and the number did not move" reads as a mistake later, and §9
+treats that number as the proof the file ran.
+
+**And the count is two numbers, not one — 44 local, 49 live.** Reported from a
+real run against production and worth pinning here, because §2 states "44
+smoke checks" flatly and somebody comparing that against a live run showing 49
+has §33's problem exactly: two figures, both right, adjacent, unlabelled. The
+same checks run either way; five of them are *informational* on a local
+file-store HTTP deployment and real assertions against a live one —
+`storage backend`, `sign-in method`, `dev login is off in production`,
+`HSTS in production`, and `HTTPS`, which does not appear locally at all.
+Measured by diffing the two runs, not derived.
 
 ### Verified
 
@@ -5085,10 +5097,34 @@ The last two warnings were separated after the first version said *"still
 running "* for a deployment that had not answered at all — the state that
 renders as nothing (§36, §38, §39), in the one place somebody reads at 2am.
 
-Full Node suite **418**, Playwright **105**, smoke **44** — the full run
-because `/healthz` is polled in eight test files' boot-wait loops (§40) and
+A fifth case was added after the first live run, and it is the one that would
+have hurt: **the match is a PREFIX comparison, not equality.** The deployment
+reports whatever the host hands it, and a host abbreviating to a short SHA
+would never equal `github.sha` — so every push run would wait out its budget
+and skip, for ever, silently. That is the same silent-permanent-skip failure
+the omitted-vs-placeholder decision above exists to avoid, reached from the
+other end, and it would have looked like the fix working. Seven characters is
+the floor, which is git's own for an unambiguous short SHA; a two-character
+prefix is refused, because it would match almost anything.
+
+| Reported | Wanted | Outcome |
+|---|---|---|
+| full SHA | full SHA | current |
+| **short SHA** | full SHA | **current** — the case that would have skipped for ever |
+| short SHA | an unrelated commit | stale, correctly |
+| two characters | full SHA | stale — too short to trust |
+
+Full Node suite **418**, Playwright **105**, smoke **44 locally** — the full
+run because `/healthz` is polled in eight test files' boot-wait loops (§40) and
 `startServer()` gained an `extraEnv` parameter, and §9 names shared test
 helpers as blast radius.
+
+**Confirmed against production**, not only locally — §30's standard for a CI
+change. A live smoke run reported `49 passed · 0 warnings · 0 failed` and
+`deployed build 9f8126c3c28f`, which is both halves of this working: the
+marker reaches a real deployment, and the commit it names is the one that had
+just been pushed. That run is also what retired the `RENDER_GIT_COMMIT` caveat
+below, and what showed the count is two numbers rather than one.
 
 ### The comment that had never matched the code
 
@@ -5109,8 +5145,14 @@ under two. If Render gets slower this becomes a skip that the daily run catches
 the next morning rather than a red tick within the hour — acceptable, and worth
 raising the budget rather than removing the wait if it starts happening.
 
-**Nothing here proves Render actually sets `RENDER_GIT_COMMIT`.** This session
-cannot reach `*.onrender.com` (§8), so the runbook says to check the *deployed
-build* line and set `APP_COMMIT` if it reports nothing, rather than asserting
-the variable exists. If it turns out not to be set, the wait degrades to
-today's behaviour — it does not break.
+**~~Nothing here proves Render actually sets `RENDER_GIT_COMMIT`.~~ It does —
+confirmed the same day.** This session cannot reach `*.onrender.com` (§8), so
+this shipped with the claim hedged and the runbook telling the operator to
+check. A live smoke run then reported `deployed build 9f8126c3c28f` — the
+commit that had just been pushed. Nothing to configure on Render, and
+`DEPLOYMENT.md` now says so as a fact rather than an expectation.
+
+Left visible rather than rewritten, because the hedge was correct when it was
+written and the pattern is the one §17 and §40 both record: **the thing that
+settled it was running the real check against the real deployment**, which is
+the one job the automated version cannot do from in here.
