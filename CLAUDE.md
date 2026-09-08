@@ -5126,6 +5126,24 @@ marker reaches a real deployment, and the commit it names is the one that had
 just been pushed. That run is also what retired the `RENDER_GIT_COMMIT` caveat
 below, and what showed the count is two numbers rather than one.
 
+**And then the wait itself was observed doing its job on CI**, which is the
+confirmation that actually matters — the run above was a smoke test, not a
+test of the waiting:
+
+```
+Live deployment is running 9f8126c3c28f, waiting for 9e93deb290eb…
+Live deployment is running 9e93deb290eb — the commit under test.
+```
+
+One poll saw the previous build, the next saw the pushed one, and the smoke
+then passed 49/49 against it. **The race is observed rather than inferred**:
+that first line is precisely the state that used to produce
+`✗ GET /js/dsar.js — HTTP 404` and *"Deployment is NOT healthy"*. The
+`sync model` line on the same run reads `up 19s`, so the deployment had
+finished restarting nineteen seconds earlier — without the wait, that smoke
+would have run against the old build. The window is that narrow, and it is
+why the failure looked intermittent.
+
 ### The comment that had never matched the code
 
 The `live` job said *"Runs on schedule, on manual dispatch, and after a push to
