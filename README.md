@@ -30,6 +30,7 @@ trying to do, and marks what is current versus frozen. The short version:
 
 | Document | For |
 |---|---|
+| **[What you can do](guide.html)** | The short version for a customer or a prospect — what the app lets you do and what it deliberately does not, in about four minutes. Served at **`/guide`**. |
 | **[User Guide](docs/USER-GUIDE.md)** | End users — every feature, in the order you need it. Also published as a [shareable web manual](docs/manual.html). |
 | **[Onboarding Playbook](docs/ONBOARDING.md)** | Whoever rolls this out to a business: session plans, data migration, week-1 check-in. |
 | **[Demo Script](docs/DEMO-SCRIPT.md)** | A timed 10-minute demo aimed at people who already use professional CRMs. Presenter-facing, deliberately imperative. |
@@ -40,6 +41,7 @@ trying to do, and marks what is current versus frozen. The short version:
 | **[Running the beta](docs/BETA.md)** | Operator runbook for opening it to testers, plus the tester-facing note to send with the invite. |
 | **[Archive](docs/archive/)** | Frozen plans and decision records — kept for the *why*, **not maintained**, and some of it is now false. |
 | **[Marketing](MARKETING.md)** | B2B/B2C copy and launch threads. |
+| **[Posts](docs/posts/)** | Story-led pieces, **dated and not maintained** — a published post cannot be edited afterwards. |
 
 ## Testing
 
@@ -99,6 +101,7 @@ render.yaml           Render blueprint (free tier)
 index.html            app shell
 privacy.html          privacy policy — a real page, and what Google needs to publish the consent screen
 terms.html            terms of use
+guide.html            "what you can do with it" — the short customer-facing page, served at /guide
 css/style.css         styles (Inter, light/dark, desktop-first)
 legal.css             standalone styling for the two pages above (they load no app JS)
 js/icons.js           inline Lucide SVG icons
@@ -108,6 +111,7 @@ js/cloud.js           account + sync layer (server ⇄ local fallback)
 js/csv.js             RFC 4180 CSV reader/writer
 js/date-rules.js      calendar-day arithmetic — the due filter, the digest, CSV date import
 js/dsar.js            finds every place one person appears, for a data request
+js/manual-toc.js      contents menu for docs/manual.html — a file, not inline, because of CSP
 js/templates.js       prebuilt module templates
 js/scope.js           storage scopes — which account local data belongs to
 js/tour.js            guided walkthrough engine (no dependencies)

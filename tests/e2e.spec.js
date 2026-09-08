@@ -3275,6 +3275,45 @@ test.describe('settings', () => {
 
 // --- security --------------------------------------------------------------
 
+/*
+ * The standalone pages must survive the service worker (§47).
+ *
+ * sw.js answers EVERY navigation with the cached app shell and writes what it
+ * fetched back over index.html. §19 excluded /privacy and /terms from that and
+ * stopped there — so the two customer-facing doc pages, whose URLs are frozen
+ * because they may already be in somebody's inbox (§28), were still going
+ * through it.
+ *
+ * Both halves are asserted because they fail differently: the reader gets the
+ * CRM instead of the page they asked for, and then the app itself is the doc
+ * page until the cache is cleared.
+ */
+test.describe('pages that are not the app', () => {
+  for (const [path, title] of [
+    ['/guide', 'What you can do'],
+    ['/docs/manual.html', 'CRM Builder Manual'],
+    ['/docs/product-tour.html', 'Build Your Own CRM'],
+  ]) {
+    test(`${path} renders itself with the service worker installed, and does not poison the shell`, async ({ page }) => {
+      await page.goto('/');
+      // skipWaiting + clients.claim means the worker controls this client
+      // immediately, which is what makes the bug reachable on a FIRST visit
+      // rather than only on a return one.
+      await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+
+      await page.goto(path);
+      await expect(page).toHaveTitle(new RegExp(title));
+      // The app shell would have rendered #app. These pages load no app JS.
+      await expect(page.locator('#app')).toHaveCount(0);
+
+      // The worse half: the navigation handler caches what it fetched AS the
+      // shell, so without the fix the app is this page from here on.
+      await page.goto('/');
+      await expect(page.locator('#app')).toBeVisible();
+    });
+  }
+});
+
 test('javascript: URLs in link fields are not rendered as executable hrefs', async ({ page }) => {
   await onboard(page, { templates: ['Companies'] });
   await page.click('#nav-modules .nav-link:has-text("Companies")');

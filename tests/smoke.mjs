@@ -420,6 +420,31 @@ await check('sync model', async () => {
   return `per-record · ${h.deployment}${h.tenant ? ` · ${h.tenant}` : ''} · up ${h.uptimeSec}s`;
 });
 
+/*
+ * The pages that are NOT the app, and are meant to be sent to people (§47).
+ *
+ * There was no reachability check for these — only the "must not serve"
+ * assertions below them — so a customer-facing URL could 404 in production
+ * while every other check passed. That is exactly the allow-list failure §28
+ * exists to catch, on the paths whose URLs are frozen because they may already
+ * be in somebody's inbox.
+ */
+await check('the shareable pages are reachable', async () => {
+  const pages = [['/guide', 'What you can do'], ['/docs/manual.html', 'CRM Builder Manual'], ['/docs/product-tour.html', 'Build Your Own CRM']];
+  const broken = [];
+  for (const [path, marker] of pages) {
+    const { res, err } = await get(path);
+    if (err) { broken.push(`${path} (${err.message})`); continue; }
+    if (!res.ok) { broken.push(`${path} (HTTP ${res.status})`); continue; }
+    // Content, not status: the SPA catch-all used to answer everything with
+    // the app shell, so a 200 proves nothing on its own (§28).
+    const html = await res.text();
+    if (!html.includes(marker)) broken.push(`${path} (served something else)`);
+  }
+  if (broken.length) throw new Error(broken.join(', '));
+  return `${pages.length} pages`;
+});
+
 await check('privacy and terms are reachable', async () => {
   // Google will not publish an OAuth consent screen without a privacy policy
   // URL, so this failing means signups cannot be opened at all.

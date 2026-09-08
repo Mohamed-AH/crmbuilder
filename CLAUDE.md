@@ -69,6 +69,8 @@ never change, because everything cross-references them.
 | **Consent & lawful basis template** | §42 |
 | **CSV date import** — the day it lost, and DD/MM | §42 · §37 · §45 |
 | **A question with no correct default** — how to ask one | §45 |
+| **What to send a customer** — the short page, and the post | §47 |
+| A doc page that rendered as the app | §47 · §19 |
 | **CI red that clears on re-run** — the live smoke vs the deploy | §46 |
 | Which commit is actually deployed | §46 · §40 |
 | **Subject access requests**: the search, and what it cannot find | §43 |
@@ -119,8 +121,8 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 418 Node tests + 105 Playwright tests, and the smoke audit at
-**44 passing locally / 49 against production** — the same checks either way,
+**All green:** 418 Node tests + 108 Playwright tests, and the smoke audit at
+**45 passing locally / 50 against production** — the same checks either way,
 with five of them informational on a local file-store HTTP deployment and real
 assertions against a live one (§46). On Windows one Node test skips itself —
 see §4's SIGTERM note; it is a platform limit, not a failure.
@@ -198,7 +200,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v44`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v45`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -429,7 +431,7 @@ prompted writing this down.
 node --test tests/signup.test.mjs                       # one file
 node --test --test-name-pattern "egress is counted" …   # one test
 npx playwright test -g "the demo can be kept on purpose"
-npm run test:smoke                                      # 44 local / 49 live (§46)
+npm run test:smoke                                      # 45 local / 50 live (§46)
 ```
 
 **Port blocks are disjoint per file**, because `node --test` runs files in
@@ -1743,10 +1745,18 @@ what this file is for. The others are written once and quietly rot:
   That is now the opposite of the advice they need.
 
 **The rule that follows:** a change that alters *what a user can do* has to be
-walked through `USER-GUIDE.md`, `manual.html`, `product-tour.html`,
-`ONBOARDING.md`, `DEMO-SCRIPT.md` and `BETA.md`'s tester note — not just this
-file and the README. `manual.html` and `product-tour.html` are the easiest to
-forget because they are HTML and nothing greps them by habit.
+walked through `README.md`, `guide.html`, `USER-GUIDE.md`, `manual.html`,
+`product-tour.html`, `ONBOARDING.md`, `DEMO-SCRIPT.md` and `BETA.md`'s tester
+note. `manual.html` and `product-tour.html` are the easiest to forget because
+they are HTML and nothing greps them by habit.
+
+**`README.md` and `guide.html` were added to that list later, and the README
+was added because leaving it off had already cost something** (§46): it is the
+front page, it is what somebody reads first, and it had fallen a year behind
+while every document that *was* on the list stayed current. The original rule
+said "not just this file and the README", which reads as though the README were
+covered. It was not covered by anything. `guide.html` is the short
+customer-facing page (§47) and goes stale the same way for the same reason.
 
 **And the same rule for the wire contract: `docs/API.md`.** This was proved the
 hard way almost immediately. API.md was written in §29's reorganisation and was
@@ -5210,8 +5220,10 @@ being a rough edge when the control shipped.
 
 **Then the same question about the README found more**, and for the same
 reason: §27's six-document rule names the files a *feature* change has to walk,
-and the root `README.md` is not one of them — so it had quietly fallen a year
-behind while every document that is on the list stayed current. Four kinds of
+and the root `README.md` was not one of them — so it had quietly fallen a year
+behind while every document that is on the list stayed current. **It is on the
+list now** (§27, and §47 added `guide.html` beside it), which is the actual fix:
+bringing one file up to date does nothing about the next feature. Four kinds of
 stale, and only the first is the sort anyone would notice:
 
 - **Features nobody had added**: the due-date filter, workspace webhooks and
@@ -5264,3 +5276,141 @@ Left visible rather than rewritten, because the hedge was correct when it was
 written and the pattern is the one §17 and §40 both record: **the thing that
 settled it was running the real check against the real deployment**, which is
 the one job the automated version cannot do from in here.
+
+
+---
+
+## 47. Telling users what the app does, and two live bugs found on the way
+
+Asked for two things: **a short document about what the app lets you do**, in
+plain "you can X" terms and without sounding like a salesman, and **a post**
+opening with a story about a cement factory that ran on two daily numbers,
+followed by a walkthrough of the digest.
+
+Both exist. What is worth recording is that planning them turned up two defects
+on the pages that were *already* customer-facing, and one of them had been live
+for twenty-one cache versions.
+
+### `guide.html`, and the rule that stops it reading as a pitch
+
+Served at **`/guide`** — a root file, so the extensionless alias (§28) makes the
+URL short enough to say out loud, which is the entire point of a page you send
+people. Reuses `legal.css`, loads no app JS, and renders for somebody who has
+never opened the app.
+
+**Every item states a capability and its limit in the same breath.** That is
+what makes it not a pitch, and it is how this codebase already writes about
+itself:
+
+> **You can be told each morning what is overdue.** It says *how many*, not
+> *which* — a chat channel usually has more people in it than your CRM does.
+
+Organised by what somebody does in a week rather than by feature, so the
+sections are "stop things slipping" and "answer the awkward questions" rather
+than "reminders" and "DSAR". No pricing, no comparison table, no adjectives
+doing persuasion work. One call to action, at the end: load the sample business.
+
+**It is on §27's walk list**, along with `README.md` — see below.
+
+### The post is dated and NOT maintained, deliberately
+
+`docs/posts/2026-09-08-the-two-number-digest.md`, with a banner saying so.
+
+A published post cannot be edited after it goes out, so pretending to keep it
+current is the wrong promise; dating it is honest and keeps it off the walk
+list. Its walkthrough stays short and points at `USER-GUIDE.md` for detail, so
+there is little surface to drift.
+
+**The digest message in it is real**, produced by pushing a workspace through
+`/api/sync` and reading `/api/org/reminders`, not written from memory — §42's
+rule. The story's own analysis is what the feature already does: the cement
+factory report *told him which team to go and talk to*, which is exactly why
+the digest carries counts and never record names (§39). The closing note
+arrives at §39's push-versus-pull staleness split from the other end — the day
+the report did not land on his desk **was** the signal, and the person carrying
+it was the monitor.
+
+### The bug that had been live since `crmbuilder-v24`
+
+`sw.js` answers **every** navigation with the cached app shell and writes what
+it fetched back over `index.html`. §19 excluded `/privacy` and `/terms` and
+stopped there — so `/docs/manual.html` and `/docs/product-tour.html`, which
+§28 and §29 both describe as deliberately public with **frozen URLs because
+they may already be in somebody's inbox**, were still going through it.
+
+**Proven before it was fixed**, and the page snapshot is unambiguous: opening
+the manual with the service worker installed rendered the **CRM** — sidebar,
+Dashboard and Admin links, a *New module* button. `skipWaiting` +
+`clients.claim` means this hits a **first** visit, not only a return one.
+
+The second half is worse than the first. The navigation handler caches what it
+fetched *as the shell*, so after one visit to the manual the app itself is the
+manual until the cache is cleared. Both halves are asserted, because they fail
+differently and a fix for one is not a fix for the other.
+
+**The general rule, now written where the list is**: anything served that is
+not the app belongs in `STANDALONE_PAGES`. §19 added the two pages that were in
+front of it at the time and stated the rule as *"anything added to those pages
+must be added to that list too"* — which is about the legal pages specifically,
+and is why two more standalone pages could be added later without anybody
+hearing the rule apply.
+
+### And the test found two more, because of a guard I did not write for this
+
+The new test passed its own assertions and then **failed in `afterEach`** on a
+console-error guard. Two CSP violations, on those same two customer-facing
+pages, both live:
+
+- **Google Fonts is blocked.** `style-src 'self' 'unsafe-inline'` (§30 Phase 4)
+  does not allow `fonts.googleapis.com`, so the stylesheet has been refused
+  since that header shipped, and both pages have been rendering in their
+  fallback stacks.
+- **`docs/manual.html`'s inline `<script>` is blocked.** `script-src 'self'`,
+  so the **mobile Contents toggle has done nothing on a phone** for the same
+  period — a functional break, not a cosmetic one, on the page we hand to
+  customers.
+
+The app had already learnt both lessons: it self-hosts Inter, and
+`js/boot-icons.js` exists **precisely** because an inline script would be
+refused (§30). The doc pages were simply never checked against a header written
+for the app.
+
+**Fixes, and both were cheap because the pages were already defensive.** The
+font stacks already fell back to Georgia / `system-ui` / `ui-monospace`, so
+removing the blocked `<link>` changes nothing a live visitor currently sees —
+it removes a wasted request, a console error, and a third-party call that
+§40's privacy roster would otherwise have to declare. The script moved to
+`js/manual-toc.js`, served because `js/` is allow-listed, and deliberately
+**not** added to `index.html` or `APP_SHELL` — it is not part of the app.
+
+**The lesson is about the guard, not the bug.** `expectedConsoleErrors` was
+built for §20's deliberate 403. It caught two unrelated live defects here
+because it asserts on something no individual test thought to look at. A test
+that only checks what it set out to check would have gone green over both.
+
+### `README.md` joins §27's walk list
+
+§46 found the README a year behind and fixed the file. This fixes the *rule*,
+which is the part that stops it happening again: `README.md` and `guide.html`
+are named in §27 now.
+
+The original wording — *"not just this file and the README"* — reads as though
+the README were covered by something. It was covered by nothing. That is a
+sentence that describes a gap while sounding like it closes it.
+
+### Blast radius
+
+| | |
+|---|---|
+| `guide.html` | new root file → `PUBLIC_ROOT_FILES`, `STANDALONE_PAGES` |
+| `js/manual-toc.js` | new served file, **not** app shell — no `index.html` or `APP_SHELL` entry |
+| `sw.js` | `STANDALONE_PAGES` + `CACHE_VERSION` → `crmbuilder-v45` |
+| `tests/smoke.mjs` | a reachability check for all three shareable pages — there was none, only "must **not** serve" |
+
+**The smoke check is the one that would have caught a 404 on a URL somebody
+already has.** It is content-based, not status-based, for §28's reason: the
+catch-all used to answer everything with the shell, so a 200 proves nothing.
+
+Counts: Node **418**, Playwright **105 → 108**, smoke **44 → 45** locally
+(50 live). The full suite was run because `sw.js` and `CACHE_VERSION` are
+shared surface (§9).

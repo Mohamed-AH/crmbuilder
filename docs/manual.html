@@ -1,7 +1,4 @@
 <title>CRM Builder Manual</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,400;7..72,600;7..72,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 
 <style>
   /* ---------------------------------------------------------------- tokens */
@@ -980,38 +977,4 @@
   </main>
 </div>
 
-<script>
-  // Mobile contents toggle
-  const toc = document.getElementById('toc');
-  const toggle = document.getElementById('tocToggle');
-  toggle.addEventListener('click', () => {
-    const open = toc.classList.toggle('is-open');
-    toggle.setAttribute('aria-expanded', String(open));
-    toggle.innerHTML = open ? 'Contents &nbsp;▴' : 'Contents &nbsp;▾';
-  });
-  toc.querySelectorAll('a').forEach((a) => a.addEventListener('click', () => {
-    if (window.matchMedia('(max-width: 900px)').matches) {
-      toc.classList.remove('is-open');
-      toggle.setAttribute('aria-expanded', 'false');
-      toggle.innerHTML = 'Contents &nbsp;▾';
-    }
-  }));
-
-  // Highlight the section currently in view
-  const links = new Map();
-  toc.querySelectorAll('a').forEach((a) => links.set(a.getAttribute('href').slice(1), a));
-  const seen = new Set();
-
-  const spy = new IntersectionObserver((entries) => {
-    entries.forEach((e) => {
-      if (e.isIntersecting) seen.add(e.target.id);
-      else seen.delete(e.target.id);
-    });
-    // The topmost visible section wins.
-    const order = [...links.keys()];
-    const active = order.find((id) => seen.has(id));
-    links.forEach((a, id) => a.classList.toggle('is-active', id === active));
-  }, { rootMargin: '-8% 0px -70% 0px', threshold: 0 });
-
-  document.querySelectorAll('main section').forEach((s) => spy.observe(s));
-</script>
+<script src="/js/manual-toc.js" defer></script>

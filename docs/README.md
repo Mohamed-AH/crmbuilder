@@ -26,6 +26,7 @@ is why status is declared, not inferred.
 
 | … | Read |
 |---|---|
+| **see what it can do, quickly** | [../guide.html](../guide.html) — served at `/guide`, and the one to send somebody |
 | **use the CRM** | [USER-GUIDE.md](USER-GUIDE.md) · or [manual.html](manual.html), the same thing as a web page |
 | **evaluate it / show it to someone** | [product-tour.html](product-tour.html) for them, [DEMO-SCRIPT.md](DEMO-SCRIPT.md) for you |
 | **roll it out to a business** | [ONBOARDING.md](ONBOARDING.md) |

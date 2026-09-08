@@ -5062,6 +5062,12 @@ const ASSET_DIRS = ['css', 'js', 'fonts', 'icons'];
 // /privacy and /terms are the URLs Google's consent screen points at.
 const PUBLIC_ROOT_FILES = [
   'index.html', 'privacy.html', 'terms.html',
+  // guide.html is the short "what you can do" page, at root rather than under
+  // docs/ so the extensionless alias below gives it /guide — short enough to
+  // say out loud, which is the whole point of a page you send people. Its path
+  // is frozen for the same reason manual.html's is (§28), and it must stay in
+  // sw.js's STANDALONE_PAGES or the service worker serves the app instead (§47).
+  'guide.html',
   'legal.css', 'manifest.webmanifest', 'sw.js',
 ];
 

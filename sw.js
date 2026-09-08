@@ -4,7 +4,7 @@
  * API/auth requests are network-only (never cached).
  * Bump CACHE_VERSION whenever any precached asset changes.
  */
-const CACHE_VERSION = 'crmbuilder-v44';
+const CACHE_VERSION = 'crmbuilder-v45';
 const APP_SHELL = [
   './',
   './index.html',
@@ -60,8 +60,16 @@ self.addEventListener('fetch', (event) => {
    * writes whatever it fetched back over the cached copy — so without this,
    * opening /privacy would show the CRM, and would then poison the cached
    * shell with the privacy page. Both failures are silent.
+   *
+   * THE DOC PAGES WERE MISSING FROM THIS LIST FOR TWENTY-ONE CACHE VERSIONS
+   * (§47). §19 added /privacy and /terms because they were the pages in front
+   * of it at the time; /docs/manual.html and /docs/product-tour.html are
+   * equally not-the-app, equally public, and their URLs are equally frozen —
+   * and opening the manual really did render the CRM. Anything served that is
+   * not the app belongs here, which is why the entries are listed beside the
+   * server's own PUBLIC_ROOT_FILES / PUBLIC_DOCS rather than added ad hoc.
    */
-  const STANDALONE_PAGES = ['/privacy', '/terms'];
+  const STANDALONE_PAGES = ['/privacy', '/terms', '/guide', '/docs/manual', '/docs/product-tour'];
   if (STANDALONE_PAGES.includes(url.pathname) || STANDALONE_PAGES.some((p) => url.pathname === `${p}.html`)) {
     // Handled by the browser, not by us: no cache entry, so these are the one
     // part of the site that needs a connection. That is the right trade — they
