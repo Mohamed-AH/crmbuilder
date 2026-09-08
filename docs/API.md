@@ -476,7 +476,7 @@ repo read access.
 
 ```
 GET  /health                    public; detail behind platform admin / HEALTH_DETAIL
-GET  /healthz                   older liveness probe
+GET  /healthz                   older liveness probe; also says which commit is running
 POST /api/feedback              a problem report
 POST /api/access-request        reads ASK_COOKIE, never req.body.email
 POST /api/me/beta-accepted      stamps betaAcceptedAt
@@ -484,6 +484,28 @@ POST /api/me/terms-accepted     stamps termsAcceptedVersion — the SERVER's, ne
 GET  /api/me/deletion           what closing this account would cost, and whether it is refused
 DELETE /api/me                  close this account — no id in the path, ever
 ```
+
+### `/healthz` and the deployed commit
+
+```
+GET /healthz  → { ok: true, storage: 'file' | 'mongodb', commit?: string }
+```
+
+Deliberately the *cheap* probe: it answers and does nothing else. `/health`
+evaluates the alert rules and runs the reminder pass off the back of every
+request (CLAUDE.md §25, §39), so anything polling on a timer — a CI deploy
+wait, an uptime monitor you do not want firing digests — belongs here.
+
+**`commit` is ABSENT when the host does not supply one**, rather than `null`,
+`''` or `'unknown'`. That is a contract, not a detail: a caller has to be able
+to tell *"this deployment is running a different commit"* from *"this
+deployment does not say"*, and a placeholder collapses those into one answer.
+A CI job that waits for a deploy would then block for its whole budget and
+skip on every host without the variable — silently, for ever (CLAUDE.md §46).
+
+Filled from `APP_COMMIT`, else `RENDER_GIT_COMMIT`. **Compare it as a prefix,
+not for equality**: the value is whatever the host supplies, and a host that
+abbreviates to a short SHA would never equal a full one.
 
 ### Closing your own account
 

@@ -5186,6 +5186,28 @@ finished restarting nineteen seconds earlier — without the wait, that smoke
 would have run against the old build. The window is that narrow, and it is
 why the failure looked intermittent.
 
+### The doc that went stale, exactly where §27 says it does
+
+Asked directly — *"docs updated?"* — and auditing rather than answering found
+one real gap, in the file §27 already names as the one that goes stale fastest:
+**`docs/API.md` listed `/healthz` as "older liveness probe" and nothing else.**
+A caller now depends on its response shape, and the absent-not-placeholder rule
+above is a contract rather than an implementation detail — a client reading the
+document would have had no way to know it, or that the value wants a prefix
+comparison.
+
+§27's own words: *"a doc describing a contract goes stale the moment the
+contract moves, which is more often than a doc describing a feature."* This
+change added no route, so the route count stayed right and the file *looked*
+current. **A response shape moved underneath a line that still read correctly**
+— which is why the count is not the thing to check.
+
+The rest of the walk was already done and was verified rather than assumed:
+§44 and §45 are present in all six user-facing documents, with two greps that
+came back empty for wording reasons rather than missing content, and
+`docs/BETA.md`'s CSV-date rough-edge bullet is correctly *gone* — it stopped
+being a rough edge when the control shipped.
+
 ### The comment that had never matched the code
 
 The `live` job said *"Runs on schedule, on manual dispatch, and after a push to
