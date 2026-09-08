@@ -81,6 +81,8 @@ never change, because everything cross-references them.
 | E2E suite slow or "flaky" | §32 |
 | **What tombstones cost**, and reading storage figures | §33 · §26 |
 | **How the docs are organised**, and what is frozen | §29 |
+| **Own domain / pricing** — everything a launch has to change | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) · §48 |
+| **Sweeping for what is live and unnoticed** — how, and what it found | §48 |
 
 ---
 
@@ -121,7 +123,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 418 Node tests + 112 Playwright tests, and the smoke audit at
+**All green:** 418 Node tests + 117 Playwright tests, and the smoke audit at
 **45 passing locally / 50 against production** — the same checks either way,
 with five of them informational on a local file-store HTTP deployment and real
 assertions against a live one (§46). On Windows one Node test skips itself —
@@ -1746,8 +1748,8 @@ what this file is for. The others are written once and quietly rot:
 
 **The rule that follows:** a change that alters *what a user can do* has to be
 walked through `README.md`, `guide.html`, `USER-GUIDE.md`, `manual.html`,
-`product-tour.html`, `ONBOARDING.md`, `DEMO-SCRIPT.md` and `BETA.md`'s tester
-note. `manual.html` and `product-tour.html` are the easiest to forget because
+`product-tour.html`, `ONBOARDING.md`, `DEMO-SCRIPT.md`, `MARKETING.md` and
+`BETA.md`'s tester note. `manual.html` and `product-tour.html` are the easiest to forget because
 they are HTML and nothing greps them by habit.
 
 **`README.md` and `guide.html` were added to that list later, and the README
@@ -5682,3 +5684,110 @@ thorough is its own inaccuracy (§40, §41). And **no count went stale outside
 this file** — grepped for Playwright totals, smoke totals and
 `crmbuilder-v[0-9]` across every doc, and the only hits are the live URL and a
 browser zoom level. §29's rule holding, which is worth recording when it does.
+
+
+---
+
+## 48. Sweeping for what else is live and unnoticed, and the two launches
+
+Asked directly after §47: *"what else has been live and unnoticed like this?"*
+The question is answerable because the failure has a **shape** — a defect that
+renders as plausible — and that shape is mechanically searchable. Five sweeps,
+run rather than reasoned about.
+
+### What the sweeps were, and what each returned
+
+| Sweep | Result |
+|---|---|
+| Third-party subresources anywhere served (the CSP refuses them — §47's Google Fonts finding) | **clean** — every remaining external URL is an `<a href>` or demo data |
+| Console errors + failed requests on all five public pages, at a phone viewport | **clean** — including `/privacy` and `/terms`, which no E2E had ever driven with a console guard |
+| Undefined CSS classes on the served pages (§27's trap, which has now cost time four times) | **clean** |
+| Every internal `href` on every served page, resolved against a running server | **clean** |
+| Outbound links on customer-facing pages | **two findings** — below |
+
+**A clean sweep is worth recording too.** Four of these five have caught
+something before, and "I checked and there was nothing" is what stops the next
+reader re-running them on a hunch.
+
+### The one that mattered: the sales page linked to a build artifact
+
+`docs/product-tour.html` — the page written to sell the product — had its
+*"Read the manual"* button pointing at
+`https://claude.ai/code/artifact/3e34f282-…`.
+
+**Dated rather than guessed:** introduced 2026-08-26, and **four later commits
+edited that same file** — §27's documentation audit and §44/§45's walks among
+them — across 72 commits. Every one of them read the prose and none saw the
+`href`, because a link renders as a perfectly ordinary button whether or not
+the far end is anything at all. §27's own sentence explains it: *the HTML ones
+are the easiest to forget because nothing greps them by habit.*
+
+Fixed to `/docs/manual.html`. The sibling *"Open the demo"* button was an
+absolute `https://crmbuilder-v1.onrender.com` and is now `/` — a page served
+from the deployment does not need to name it, and an absolute host there is one
+more thing to get wrong on a domain move.
+
+**The guard covers the class, not the instance.** Five tests, one per public
+page: no link may match a build-tool or scratch host, and every internal link
+must answer 200. Checked against the broken state per §9 — restoring the
+artifact URL fails *"/docs/product-tour.html links nowhere embarrassing…"* by
+name, printing the URL.
+
+### And the one no rule covered at all: `MARKETING.md`
+
+Found by following `docs/README.md`'s own *"sell it"* row. It is prepared copy
+for posts and landing pages, and **`CLAUDE.md` mentioned it zero times** — so
+it was on no walk list, exactly as `README.md` was in §46 and `guide.html` was
+before §47.
+
+It says *"**No per-seat pricing. No lock-in.**"*, *"Free. No ads."*, *"$0/month"*
+three times — and opens by attacking other CRMs for being *"rented back to you
+at $25 per seat per month"*.
+
+That is not stale-feature-list stale. **Introducing pricing while that copy
+stands means a product whose own marketing attacks other products for doing
+what it has started doing**, in text somebody can quote back. It is now on
+§27's walk list, which is the fix that matters; rewriting the file alone would
+leave the next feature to rediscover it.
+
+### `docs/LAUNCH-CHECKLIST.md`
+
+The second half of the request: one document covering everything a domain move
+and a pricing launch have to change, code and docs, so neither ships half-done.
+It lives in `docs/` — the tier §29 defines as maintained — and it 404s in
+production by construction (§28), **checked**, which is what lets it be blunt
+about what is unfinished.
+
+**Every factual claim in it was verified, not recalled**: the `onrender.com`
+occurrences were grepped per file, `manifest.webmanifest` was read (relative
+`start_url`, so a move does not touch it), `render.yaml` pins a name and not a
+host, and `server.js` sets no cookie `domain`.
+
+Three things the writing turned up that were not obvious going in:
+
+- **`terms.html` scopes itself to *"the free beta at this address"***, so the
+  legal text is domain-specific and one sentence is wrong after *either*
+  launch. That is why the two are one document rather than two.
+- **The domain move's real risk is not a string.** IndexedDB is per-origin, so
+  unsynced rows are stranded; an installed PWA keeps serving the old origin and
+  never learns about the move; and `CACHE_VERSION` cannot evict a cache on an
+  origin you are no longer serving (§47). **A redirect fixes the website and
+  none of those three.**
+- **Pricing forces decisions this codebase deliberately deferred** — whether
+  quotas start being enforced (§17: *"nothing is enforced"*), what non-payment
+  does (§24's suspension, which must never reach `deleteAccount()` — §15), and
+  whether a suspended customer can still export (§36 says export is for every
+  role, deliberately). The checklist states each as a question with the prior
+  reasoning attached rather than answering it.
+
+### The §47 item that is now closed
+
+*"Confirm the manual's mobile Contents toggle works on a phone"* was left
+outstanding for the user. Measured here at a 390px viewport: the TOC goes
+75px → 591px, the label flips to *Contents ▴*, and `aria-expanded` goes true.
+At 1280px the toggle is correctly not visible. §47's CSP fix works; nothing
+further is needed.
+
+Counts after: Playwright **112 → 117**. Node and smoke unchanged — no served
+file was added and no route moved, and the new document is deliberately
+unserved.

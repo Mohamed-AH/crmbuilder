@@ -481,8 +481,14 @@
       guided tour and let it show you round.
     </p>
     <div class="hero-actions">
-      <a class="btn btn-primary" href="https://crmbuilder-v1.onrender.com">Open the demo</a>
-      <a class="btn" href="https://claude.ai/code/artifact/3e34f282-7c70-4298-aee3-c77219e4f7cd">Read the manual</a>
+      <!--
+        Root-relative on purpose. This page is served from the deployment, so
+        "/" is the app wherever that deployment lives — an absolute hostname
+        here is one more thing to remember on a domain move, and the kind that
+        keeps working while pointing at the old home. See docs/LAUNCH-CHECKLIST.md.
+      -->
+      <a class="btn btn-primary" href="/">Open the demo</a>
+      <a class="btn" href="/docs/manual.html">Read the manual</a>
     </div>
   </div>
 </section>

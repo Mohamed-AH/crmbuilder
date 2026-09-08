@@ -35,7 +35,8 @@ is why status is declared, not inferred.
 | **change the code** | [../CLAUDE.md](../CLAUDE.md) — read §3 *Invariants* and §4 *Traps* first |
 | **call or extend the API** | [API.md](API.md) — every route, auth, sync, roles, alerts, reminders |
 | **understand why a decision was made** | [archive/](archive/) |
-| **sell it** | [../MARKETING.md](../MARKETING.md) |
+| **sell it** | [../MARKETING.md](../MARKETING.md) — on `CLAUDE.md` §27's walk list, and it makes strong claims about price |
+| **launch a domain, or start charging** | [LAUNCH-CHECKLIST.md](LAUNCH-CHECKLIST.md) — everything both touch, code and docs |
 
 ---
 
@@ -49,6 +50,7 @@ is why status is declared, not inferred.
 | [DEMO-SCRIPT.md](DEMO-SCRIPT.md) | presenter | Timed 10-minute demo, imperative, with the expected questions. |
 | [ONBOARDING.md](ONBOARDING.md) | rollout | Getting a business *using* it inside a week. |
 | [BETA.md](BETA.md) | operator | Runbook: consent screen, codes, usage, alerts, access requests, plus the note to send testers. |
+| [LAUNCH-CHECKLIST.md](LAUNCH-CHECKLIST.md) | operator | What an own-domain move and a pricing launch each have to change. Live, not frozen. |
 | [API.md](API.md) | developers | The HTTP contract and the rules behind it. Carries the route count; nothing else should. |
 | [../DEPLOYMENT.md](../DEPLOYMENT.md) | operator | Render + Atlas + OAuth, the env matrix, backups, what the deployment publishes. |
 | [../CLAUDE.md](../CLAUDE.md) | developers | **The densest document here.** Architecture, invariants, and every trap that has cost time. |

@@ -3385,6 +3385,41 @@ test.describe('pages that are not the app', () => {
    * checks the content type — which is what covers the next such path nobody
    * thought to list, the way /docs/manual.html and /healthz were both missed.
    */
+  /*
+   * The pages we hand to customers, checked as a SET rather than one at a time.
+   *
+   * `docs/product-tour.html` shipped a "Read the manual" button pointing at a
+   * https://claude.ai/code/artifact/… URL — on the page written to sell the
+   * product. It landed 2026-08-26 and survived FOUR later edits to that same
+   * file, including §27's documentation audit and §44/§45's walks, because
+   * nothing greps HTML by habit (§27's own words) and a link renders as a
+   * perfectly ordinary button whether or not the far end is anything.
+   *
+   * Two assertions, and the second is the general one: no build-tool or
+   * scratch host in a customer-facing link, and every internal href actually
+   * resolves. A dead link is this file's recurring failure shape — it looks
+   * exactly like a live one until somebody presses it.
+   */
+  for (const path of ['/guide', '/docs/manual.html', '/docs/product-tour.html', '/privacy', '/terms']) {
+    test(`${path} links nowhere embarrassing, and nowhere broken`, async ({ page }) => {
+      await page.goto(path);
+      const hrefs = await page.evaluate(() =>
+        [...document.querySelectorAll('a[href]')].map((a) => a.getAttribute('href')));
+
+      for (const href of hrefs) {
+        expect(href, `${path} links to a build-tool URL`).not.toMatch(
+          /claude\.ai|anthropic\.com|\/artifact\/|localhost|127\.0\.0\.1|ngrok/i);
+      }
+
+      // Internal links only — an external host is not ours to keep alive.
+      const internal = hrefs.filter((h) => h && !/^(https?:|mailto:|tel:|#)/.test(h));
+      for (const href of internal) {
+        const res = await page.request.get(new URL(href, page.url()).toString());
+        expect(res.status(), `${path} links to ${href}`).toBe(200);
+      }
+    });
+  }
+
   test('a navigation that is not HTML never becomes the cached shell', async ({ page }) => {
     await page.goto('/');
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
