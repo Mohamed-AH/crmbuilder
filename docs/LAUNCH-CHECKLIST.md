@@ -3,6 +3,12 @@
 > **Status: live, and kept current.** This sits in `docs/`, which `CLAUDE.md`
 > §29 defines as the tier that is maintained — not `docs/archive/`, which is
 > frozen. If you change something this file names, change this file.
+>
+> **Nothing here is decided.** There is no domain chosen and no price set, and
+> this document does not argue for either. It is the reference to open **when**
+> those decisions are made — a list of what would have to change, so that
+> nothing is remembered late. Where a choice is unavoidable it is written as a
+> question with the prior reasoning attached (§2.4), never as an answer.
 
 Two launches that are not yet done, each of which touches code, configuration
 we do not control, legal text and a dozen documents. They are written together
@@ -175,13 +181,18 @@ product read as inconsistent if it is worked partially.
 | `docs/BETA.md` | the whole tester note |
 | `README.md` | the front page |
 
-### `MARKETING.md` is the dangerous one, and no rule covers it
+### `MARKETING.md` — internal, and the one to check before you publish
 
 Found while writing this file, by following `docs/README.md`'s own *"sell it"*
-row. It is prepared copy for posts and landing pages, and **it is on no walk
-list at all** — `CLAUDE.md` mentioned it zero times before today. Exactly the
-shape §46 found in `README.md` and §47 found for `guide.html`: a
-customer-facing document that every rule happened to miss.
+row. **It is an internal document** — it 404s in production, and nobody reads
+it as a document. It is prepared copy: it becomes public one paragraph at a
+time, when a person copies text out of it into a post or a landing page.
+
+That is why it is **here and not on `CLAUDE.md` §27's walk list**, where it was
+briefly put and then taken off again (§48). Its failure is deferred to the
+moment of publishing, so the check belongs at that moment — which is this
+document — rather than on a list walked at every feature change, where it would
+almost always be a no-op and would teach the eye to skip the list.
 
 What is in it:
 
@@ -197,14 +208,18 @@ this file exists to prevent** — a product whose own marketing attacks other
 products for doing the thing it has started doing. It is worse than a stale
 feature list because somebody can quote it back.
 
-Two separate jobs, and doing only the first is how it recurs:
+**Rewrite it before anything is published from it, not after.** The
+competitor-price attack has to go regardless of what we charge; the honest
+version of that argument was always *per-module rather than per-seat*, not
+*free rather than paid*, so it survives a price in a way the current wording
+cannot.
 
-1. Rewrite the copy. The competitor-price attack has to go regardless of what
-   we charge; the honest version of the argument was always *per-module rather
-   than per-seat*, not *free rather than paid*.
-2. **`MARKETING.md` is on §27's walk list now.** That is the actual fix —
-   §47's words: bringing one file up to date does nothing about the next
-   feature.
+**And check what has already gone out.** The file is a source, so the thing
+that can embarrass us is the copy that has left it — a post, a profile, a
+landing page written from these paragraphs months ago. Rewriting the source
+does nothing about those. List where this copy has been published and go and
+look; if the answer is "nowhere yet", write that down, because it is the
+cheapest state this will ever be in.
 
 Also note it sells a **self-hosted** story (*"Deploy it yourself in an
 afternoon"*, *"your own infra"*), which a hosted paid product does not

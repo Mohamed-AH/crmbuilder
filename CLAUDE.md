@@ -1748,8 +1748,15 @@ what this file is for. The others are written once and quietly rot:
 
 **The rule that follows:** a change that alters *what a user can do* has to be
 walked through `README.md`, `guide.html`, `USER-GUIDE.md`, `manual.html`,
-`product-tour.html`, `ONBOARDING.md`, `DEMO-SCRIPT.md`, `MARKETING.md` and
-`BETA.md`'s tester note. `manual.html` and `product-tour.html` are the easiest to forget because
+`product-tour.html`, `ONBOARDING.md`, `DEMO-SCRIPT.md` and `BETA.md`'s tester
+note.
+
+**The criterion is *read directly by an outsider*, not *served*.** `README.md`
+is on the list and 404s in production — it is the repository's front page and
+somebody reads it as a document. That is what `MARKETING.md` is **not**: it is
+source copy nobody reads as a document, which becomes public only when a person
+copies a paragraph out of it into a post. It was briefly added here and has
+been taken off again — see §48. `manual.html` and `product-tour.html` are the easiest to forget because
 they are HTML and nothing greps them by habit.
 
 **`README.md` and `guide.html` were added to that list later, and the README
@@ -5733,22 +5740,49 @@ must answer 200. Checked against the broken state per §9 — restoring the
 artifact URL fails *"/docs/product-tour.html links nowhere embarrassing…"* by
 name, printing the URL.
 
-### And the one no rule covered at all: `MARKETING.md`
+### `MARKETING.md`, and the correction to what I did about it
 
 Found by following `docs/README.md`'s own *"sell it"* row. It is prepared copy
-for posts and landing pages, and **`CLAUDE.md` mentioned it zero times** — so
-it was on no walk list, exactly as `README.md` was in §46 and `guide.html` was
-before §47.
+for posts and landing pages, and **`CLAUDE.md` mentioned it zero times.**
 
 It says *"**No per-seat pricing. No lock-in.**"*, *"Free. No ads."*, *"$0/month"*
 three times — and opens by attacking other CRMs for being *"rented back to you
-at $25 per seat per month"*.
+at $25 per seat per month"*. **Introducing pricing while that copy stands means
+a product whose own marketing attacks other products for doing what it has
+started doing**, in text somebody can quote back. That risk is real and stands.
 
-That is not stale-feature-list stale. **Introducing pricing while that copy
-stands means a product whose own marketing attacks other products for doing
-what it has started doing**, in text somebody can quote back. It is now on
-§27's walk list, which is the fix that matters; rewriting the file alone would
-leave the next feature to rediscover it.
+**What I got wrong was the remedy.** I put it on §27's walk list beside
+`README.md` and `guide.html`, on the reasoning that all three were
+customer-facing documents no rule covered. Corrected when that was questioned:
+**it is an internal document**, and the walk list is the wrong instrument.
+
+The distinction the list actually runs on is **read directly by an outsider**,
+which is not the same as *served*:
+
+| | Served? | Read as a document by an outsider? | On the walk list |
+|---|---|---|---|
+| `guide.html`, `manual.html`, `product-tour.html` | yes | yes | yes |
+| `README.md` | **no — 404s** | yes, it is the repository's front page | yes |
+| `MARKETING.md` | no — 404s | **no** | **no** |
+
+Nobody ever reads `MARKETING.md`. It becomes public one paragraph at a time,
+when a person copies text out of it into a post — so its failure is **deferred
+to the moment of publishing**, not live the way a stale manual is. Walking it
+on every feature change would mostly be walking a file that nothing had made
+wrong yet, and this codebase already has a name for that: §40 and §41 both
+record that **padding a roster is its own kind of inaccuracy**. Adding an entry
+that is usually a no-op is how a list stops being read.
+
+So the requirement moves to where it belongs — a **publish-time gate** in
+`docs/LAUNCH-CHECKLIST.md`, which is the document you open when you are about
+to do the thing that makes it public. It was already the most prominent item
+in that file's pricing half; what changed is that it is no longer *also* on a
+list where it would have decayed into furniture.
+
+**Recorded as a correction rather than quietly reverted**, because the reasoning
+is the reusable part: "no rule covers this file" is a real finding, and
+"therefore put it on the nearest existing list" is the wrong reflex. The
+question to ask is *when* the file can hurt you, and add the check there.
 
 ### `docs/LAUNCH-CHECKLIST.md`
 

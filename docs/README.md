@@ -35,7 +35,7 @@ is why status is declared, not inferred.
 | **change the code** | [../CLAUDE.md](../CLAUDE.md) — read §3 *Invariants* and §4 *Traps* first |
 | **call or extend the API** | [API.md](API.md) — every route, auth, sync, roles, alerts, reminders |
 | **understand why a decision was made** | [archive/](archive/) |
-| **sell it** | [../MARKETING.md](../MARKETING.md) — on `CLAUDE.md` §27's walk list, and it makes strong claims about price |
+| **sell it** | [../MARKETING.md](../MARKETING.md) — internal source copy. It makes strong claims about price, so read [LAUNCH-CHECKLIST.md](LAUNCH-CHECKLIST.md) §2.1 before publishing any of it |
 | **launch a domain, or start charging** | [LAUNCH-CHECKLIST.md](LAUNCH-CHECKLIST.md) — everything both touch, code and docs |
 
 ---
