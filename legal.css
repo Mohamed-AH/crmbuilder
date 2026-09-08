@@ -46,11 +46,21 @@ p, li { color: var(--ink-soft); }
 li { margin-bottom: 6px; }
 strong { color: var(--ink); }
 .updated { font-size: 14px; color: var(--ink-soft); margin: 0; }
+/*
+ * The fill carries almost no weight on its own: --paper-sunk against --paper
+ * is a contrast ratio of 1.06 in light and 1.05 in dark, and the hairline
+ * border only reaches 1.24 / 1.43. Measured, not eyeballed. The accent edge is
+ * what actually marks the block off (4.57 / 7.64 against the page, either side
+ * of WCAG's 3.0 for non-text), which matters because a callout is load-bearing
+ * now — guide.html elevates its one disqualifying limit into one so it is seen.
+ * Left padding drops to 16px so the 3px edge leaves the text inset unchanged.
+ */
 .callout {
   background: var(--paper-sunk);
   border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
   border-radius: 10px;
-  padding: 16px 18px;
+  padding: 16px 18px 16px 16px;
   margin: 24px 0;
 }
 .callout p:last-child { margin-bottom: 0; }

@@ -38,7 +38,7 @@ never change, because everything cross-references them.
 | **Restoring a backup** — what it verifies, what it loses | §17 |
 | Restore granularity, and the webhook a recovery cannot bring back | §38 |
 | Problem reports and webhook shapes | §18 |
-| Legal pages, service-worker page trap | §19 |
+| Legal pages, service-worker page trap | §19 · §47 |
 | **What the server publishes** (allow-list) | §28 |
 | Migrations | §12 |
 | Guided tour | §7 |
@@ -121,7 +121,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 418 Node tests + 109 Playwright tests, and the smoke audit at
+**All green:** 418 Node tests + 110 Playwright tests, and the smoke audit at
 **45 passing locally / 50 against production** — the same checks either way,
 with five of them informational on a local file-store HTTP deployment and real
 assertions against a live one (§46). On Windows one Node test skips itself —
@@ -200,7 +200,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v45`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v46`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -5480,9 +5480,88 @@ so both go straight to the network. Checked rather than assumed, which is
 standalone-pages describe is what covers the shared-`legal.css` risk: it loads
 all three pages.
 
+> **That paragraph is WRONG, and it was wrong when it was written.** The page
+> goes to the network; its stylesheet did not. `STANDALONE_PAGES` is matched
+> against a **navigation**, so `/legal.css` — a subresource — fell straight
+> through to the cache-first branch at the foot of `sw.js` and was kept with
+> no revalidation. "Checked rather than assumed" checked `APP_SHELL` and the
+> precache list, and there are **two** caches in that file. See the subsection
+> below; the claim is left standing rather than edited, because what it got
+> wrong is the useful part.
+
 **And the new test tripped §14's own `.toast` trap on the first run.**
 `.callout` matches two elements on the page now — the opening one and the
 elevated limit — so `toContainText` failed strict mode. Filter, do not assume
 one. The test says plainly what it does not prove: it catches deletion of the
 beta line and the roles, not drift from §14, because `TEAM_ROLES` is
 server-side and no browser test can read it.
+
+### Two refinements asked for, and the second one found a live bug
+
+Reported as *"minor refinement opportunities"* on the new page: the roles
+table's mobile behaviour, and the contrast of the callout blocks. Measured
+rather than judged, and the split is the interesting half — **one was already
+right, one was right about the wrong thing, and checking it turned up
+something neither point mentioned.**
+
+**The table was already wrapped**, and the wrapper already scrolls
+(`.table-wrap { overflow-x: auto }`, added with the table itself). Driven at
+360, 320 and 280 CSS pixels: the table measures 312 / 272 / 232 against a
+wrapper of exactly the same width, so it never needs to scroll — the columns
+wrap — and `document.documentElement.scrollWidth` never exceeds the viewport,
+so the **page** does not scroll sideways either. Both halves matter: the
+wrapper is the guard for a future wider table, and the page-overflow figure is
+what says the guard is not currently doing anything visible.
+
+**The callout's text contrast was never the problem.** `--ink-soft` on
+`--paper-sunk` is **7.23:1** in light and **7.36:1** in dark, comfortably past
+WCAG AA's 4.5 for body text, and `strong` reaches 16.7 / 15.2. So the stated
+concern does not exist.
+
+**What is real sits under the same heading and is a different property.** The
+callout's *distinction* — whether the block reads as one at all — came from a
+fill of **1.06:1** (light) and **1.05:1** (dark) against the page, with a
+hairline border reaching only 1.24 / 1.43. Effectively invisible, against
+WCAG's 3.0 for non-text. That was tolerable while a callout was decoration;
+it is not, now that `guide.html` **elevates its one disqualifying limit into
+one specifically so it is seen** (above). Elevating something into a container
+that does not read as a container achieves nothing.
+
+Fixed at the boundary rather than the fill: a 3px `--accent` left edge, which
+measures **4.57:1** light and **7.64:1** dark against the page. Left padding
+drops 18 → 16px so the 3px edge leaves the text inset unchanged at 19px.
+`--paper-sunk` is used by `.callout` and by nothing else, so darkening the
+token was the alternative — rejected because it fights the ink above it and
+because a token named for a surface should not be tuned for one component.
+Verified by driving all three pages in both colour schemes: seven callouts,
+`3px rgb(21, 112, 239)` and `3px rgb(106, 166, 255)`.
+
+**And the fix needed a bump, which is how the paragraph above was found to be
+wrong.** Installing the worker and opening `/guide` puts `/legal.css` in the
+cache — printed, not inferred. So the table styling of the previous commit
+was invisible to anybody already carrying a copy: the roles table at browser
+defaults, cramped and borderless, which is the exact state that change existed
+to remove, shipped silently by a claim that it could not happen.
+
+`STANDALONE_ASSETS` (`/legal.css`, `/js/manual-toc.js`) joins
+`STANDALONE_PAGES` in the early return. **The point is to make the claim true
+rather than to restate it**: a page the worker refuses to handle should not
+have its stylesheet handled either, and with that in place a `legal.css` edit
+genuinely needs nothing. The bump to `crmbuilder-v46` is still required *this*
+once, to evict what is already stale — the fix heals future visits, not caches
+that already hold a copy.
+
+`js/manual-toc.js` is listed for the same reason and was heading for the same
+fate: §47 kept it out of `APP_SHELL` on the grounds that *"it is not part of
+the app"*, which is right and which the runtime cache did not care about.
+
+**The test asserts on the CACHE, not on the rendering**, and that is
+deliberate: a stale stylesheet still renders, plausibly — this file's
+recurring failure shape (§36, §38, §39). Nothing on screen would have said so,
+which is why nothing did for a cache version. It also asserts `/js/app.js` **is**
+cached, or it would pass just as happily on a worker that caches nothing at
+all. Checked against the broken state per §9: removing the one
+`STANDALONE_ASSETS` line fails it by name, listing both stray files.
+
+Counts after: Playwright **109 → 110**. Node and smoke unchanged — no served
+file was added, no route moved.

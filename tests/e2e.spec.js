@@ -3312,6 +3312,44 @@ test.describe('pages that are not the app', () => {
       await expect(page.locator('#app')).toBeVisible();
     });
   }
+
+  /*
+   * The subresources those pages load, which the list above did NOT cover for
+   * one cache version. STANDALONE_PAGES is matched against a navigation, so
+   * /legal.css fell through to the cache-first branch and was kept with no
+   * revalidation — measured by installing the worker and reading caches, not
+   * reasoned about. §47 states a legal.css edit needs no CACHE_VERSION bump
+   * "checked rather than assumed"; the check looked at APP_SHELL and missed
+   * the runtime cache, so the roles-table styling shipped invisible to anyone
+   * already holding a copy.
+   *
+   * Asserting on the CACHE rather than on the rendering is deliberate: a
+   * stale stylesheet still renders, plausibly, which is this codebase's
+   * recurring failure shape. Nothing on screen would have said so.
+   */
+  test('the files those pages load are not cached either', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+
+    for (const path of ['/guide', '/privacy', '/terms', '/docs/manual.html']) {
+      await page.goto(path);
+    }
+
+    const cached = await page.evaluate(async () => {
+      const out = [];
+      for (const name of await caches.keys()) {
+        const cache = await caches.open(name);
+        for (const req of await cache.keys()) out.push(new URL(req.url).pathname);
+      }
+      return out;
+    });
+
+    // The app's own shell is still precached — otherwise this passes on a
+    // worker that caches nothing at all, which proves nothing.
+    expect(cached).toContain('/js/app.js');
+    expect(cached).not.toContain('/legal.css');
+    expect(cached).not.toContain('/js/manual-toc.js');
+  });
 });
 
 /*

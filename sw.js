@@ -4,7 +4,7 @@
  * API/auth requests are network-only (never cached).
  * Bump CACHE_VERSION whenever any precached asset changes.
  */
-const CACHE_VERSION = 'crmbuilder-v45';
+const CACHE_VERSION = 'crmbuilder-v46';
 const APP_SHELL = [
   './',
   './index.html',
@@ -70,7 +70,28 @@ self.addEventListener('fetch', (event) => {
    * server's own PUBLIC_ROOT_FILES / PUBLIC_DOCS rather than added ad hoc.
    */
   const STANDALONE_PAGES = ['/privacy', '/terms', '/guide', '/docs/manual', '/docs/product-tour'];
-  if (STANDALONE_PAGES.includes(url.pathname) || STANDALONE_PAGES.some((p) => url.pathname === `${p}.html`)) {
+  /*
+   * …and the files those pages load. The early return below matches a
+   * NAVIGATION, so a subresource never reached it: /legal.css fell through to
+   * the cache-first branch at the foot of this file and was kept with no
+   * revalidation. Measured, not reasoned — installing the worker and opening
+   * /guide put /legal.css in the v45 cache. §47 says a legal.css edit needs no
+   * CACHE_VERSION bump because the file is in neither index.html nor
+   * APP_SHELL; that checked the PRECACHE and missed the runtime cache, so the
+   * table styling shipped in 611d37f was invisible to anyone already carrying
+   * a copy — the roles table at browser defaults, which is the state that
+   * change existed to remove.
+   *
+   * Listing them here is what makes the claim true rather than merely
+   * restating it: a page the worker refuses to handle should not have its
+   * stylesheet handled either.
+   */
+  const STANDALONE_ASSETS = ['/legal.css', '/js/manual-toc.js'];
+  if (
+    STANDALONE_PAGES.includes(url.pathname)
+    || STANDALONE_PAGES.some((p) => url.pathname === `${p}.html`)
+    || STANDALONE_ASSETS.includes(url.pathname)
+  ) {
     // Handled by the browser, not by us: no cache entry, so these are the one
     // part of the site that needs a connection. That is the right trade — they
     // are read once, and serving a stale policy is worse than serving none.
