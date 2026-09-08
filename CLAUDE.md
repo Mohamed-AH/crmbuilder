@@ -58,6 +58,7 @@ never change, because everything cross-references them.
 | Why a "reminders are stale" alert cannot work | §39 |
 | **`/health` vs `/healthz`** — which one runs anything | §40 |
 | Alerts and digests silently never running | §40 |
+| **What a healthy reminder ping log looks like** | §40 |
 | Expected refusals in the production log | §40 |
 | **Restoring into a new or existing database** | §40 · [`docs/BETA.md`](docs/BETA.md) |
 | **Rotating a Healthchecks ping URL** — and the swap that leaves both green | [`docs/BETA.md`](docs/BETA.md) · §39 |
@@ -3816,6 +3817,46 @@ The alternative — firing it from `/healthz` only when `IS_PROD` — is worse
 still: production would then be the one environment running a path no test
 covers. The fix is one field in the monitor, and it is the operator's, not the
 code's.
+
+### Confirmed fixed, by the only evidence that could confirm it
+
+This section says *"nothing proves that anything calls `/health`, and nothing
+can — the caller is a row in somebody's UptimeRobot account."* It is now
+proven, from the one place outside this repository that could do it: the
+reminders check's own ping log, after the monitor was moved.
+
+```
+04:02  scanned 0, sent 0, failed 0, 6ms
+03:54  …                              4ms
+03:48  …                              6ms
+03:34  …                              7ms
+03:20  …                              7ms
+03:06  …                              6ms
+02:51  …                              6ms
+02:44  status: new → up               196ms
+```
+
+**The cadence is the finding.** 02:51 → 03:48 is 15, 14, 14, 14 minutes — five
+pings in a row on UptimeRobot's interval, with nothing being pushed. Only a
+scheduled monitor produces that, so **the monitor is on `/health` and the pass
+is riding it**, which is exactly what had never once happened before §40. The
+outage is closed rather than assumed closed.
+
+The three short gaps (7, 6, 8 minutes) are CI: a push runs the live smoke,
+which hits `/health`, which runs a pass. That is the same overlap that makes a
+single green ping meaningless straight after a deploy — hence the quiet-period
+test in the runbook. Here it cuts the other way and is just noise on top of a
+cadence that is already unambiguous.
+
+Two smaller confirmations in the same log. **`scanned 0` proves the gate
+ordering** (§39: `enabled` and `hook.url` are read off the meta doc, so a
+workspace nobody has switched the digest on for never touches the records
+collection) — the pass is doing nothing, cheaply, which is the design. And
+**the body is the counts-only one**, which is what proves this check is fed by
+the reminder pass rather than by the backup job: the swap that would leave
+both checks green (`docs/BETA.md` § *Rotating either ping URL*) has not
+happened. `196ms` on the first ping and single digits after it is a cold start
+followed by a warm service.
 
 ### The other log line: an expected refusal, reported as a fault
 
