@@ -365,6 +365,27 @@ await check('storage backend', async () => {
   };
 });
 
+/*
+ * WHICH BUILD am I looking at (§46).
+ *
+ * Informational, never a failure: a deployment that does not report a commit
+ * is not a broken one, and most of the ways to run this have no commit to
+ * report. It earns its line because every asset assertion above is written
+ * against the checkout this file came from — so when one of them 404s, the
+ * first question is whether the deployment is even running that commit, and
+ * before this there was no way to ask.
+ */
+await check('deployed build', async () => {
+  const { res, err } = await get('/healthz');
+  if (err) return { status: 'INFO', detail: 'could not read /healthz' };
+  let body;
+  try { body = JSON.parse(await res.text()); } catch { body = null; }
+  if (!body || !body.commit) {
+    return { status: 'INFO', detail: 'this deployment does not report a commit' };
+  }
+  return { status: 'INFO', detail: body.commit.slice(0, 12) };
+});
+
 await check('sync model', async () => {
   const { res, err } = await get('/health');
   if (err) throw new Error(`${err.message} — /health unreachable`);

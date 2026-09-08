@@ -2380,7 +2380,33 @@ function notifyAlerts(fired) {
   }).catch((err) => console.warn('Alert webhook failed:', err.message));
 }
 
-app.get('/healthz', (req, res) => res.json({ ok: true, storage: store.kind() }));
+/*
+ * Which commit is actually running (§46).
+ *
+ * Render injects `RENDER_GIT_COMMIT`; `APP_COMMIT` lets any other host say the
+ * same thing. **Absent when neither is set, rather than 'unknown' or null** —
+ * the CI deploy-wait has to tell "this deployment is running a different
+ * commit" (wait, or report a stale deploy) apart from "this deployment does
+ * not say", and a placeholder string collapses those into one answer. Same
+ * asymmetry as §30's `verified_email`: a stated mismatch is actionable,
+ * absence is not.
+ *
+ * On `/healthz` and NOT `/health`, deliberately. A wait loop polls this every
+ * few seconds, and `/health` runs the alert rules and the reminder pass off
+ * the back of every request (§25, §39) — a CI poll there would fire real
+ * digests at customers' channels. `/healthz` answers and does nothing else,
+ * which is exactly why §40 declined to hang work off it.
+ *
+ * The repository is public, so the commit discloses nothing that is not
+ * already on GitHub. On a private deployment this would be a judgement call.
+ */
+const APP_COMMIT = String(process.env.APP_COMMIT || process.env.RENDER_GIT_COMMIT || '').trim();
+
+app.get('/healthz', (req, res) => res.json({
+  ok: true,
+  storage: store.kind(),
+  ...(APP_COMMIT ? { commit: APP_COMMIT.slice(0, 40) } : {}),
+}));
 
 app.get('/health', async (req, res) => {
   const body = {

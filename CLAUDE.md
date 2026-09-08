@@ -67,6 +67,8 @@ never change, because everything cross-references them.
 | **Consent & lawful basis template** | §42 |
 | **CSV date import** — the day it lost, and DD/MM | §42 · §37 · §45 |
 | **A question with no correct default** — how to ask one | §45 |
+| **CI red that clears on re-run** — the live smoke vs the deploy | §46 |
+| Which commit is actually deployed | §46 · §40 |
 | **Subject access requests**: the search, and what it cannot find | §43 |
 | **Closing your own account** — and what it takes with it | §43 · §15 |
 | **Retention**: what has gone quiet, and why nothing deletes it | §44 |
@@ -115,7 +117,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 416 Node tests + 105 Playwright tests, 44 smoke checks. On
+**All green:** 418 Node tests + 105 Playwright tests, 44 smoke checks. On
 Windows one Node test skips itself — see §4's SIGTERM note; it is a platform
 limit, not a failure.
 
@@ -4967,3 +4969,148 @@ a bug rather than as a question.
 `.mode-switch .btn[disabled]` (specificity 0,3,0) still beats the new
 `.btn:disabled` (0,2,0), so the admin mode switch is unaffected — checked,
 because §4's cascade trap has now cost time twice in this file.
+
+
+---
+
+## 46. The live smoke tested the wrong build, and said the deployment was broken
+
+Reported from CI: `✗ GET /js/dsar.js — HTTP 404`, *"Deployment is NOT healthy"*,
+**and it cleared on a re-run.**
+
+Nothing was wrong with the deployment, and nothing was wrong with the check.
+The `live` job smoke-tests the **running** deployment using the **asset list
+from the commit that was just pushed** — and Render has not finished deploying
+that commit yet. `js/dsar.js` was added in §43; for the few minutes between the
+push and the deploy landing, the live URL is an older build that genuinely does
+not have that file. The audit is correct, and it is auditing the wrong thing.
+
+### Which of the two candidates it was, established rather than assumed
+
+A 404 on a served asset has two causes here and they want opposite fixes:
+
+| | Check |
+|---|---|
+| the file is missing from the server's allow-list (§28) | `ASSET_DIRS` is `['css', 'js', 'fonts', 'icons']` — a **whole directory**, so nothing under `js/` can 404 for allow-list reasons |
+| the running build does not have the file | everything else — and the file is in the repo, and a re-run passes |
+
+So it is the second, and §28's content-based assertion is doing its job. Worth
+writing down because "a served file 404s in production" is precisely the
+failure §28 exists to catch, and reaching for that explanation first would have
+produced a fix for a bug that is not there.
+
+### The general shape, which §40 already named
+
+> **A mechanism that hangs off a URL configured somewhere else has a failure
+> mode no test in this repository can see.**
+
+§40 wrote that about the keep-warm ping being on `/healthz` instead of
+`/health`. This is the same sentence from the other side: the repository could
+not see *which build* the URL was serving, so it could not tell "this file is
+missing" from "this file is not deployed yet". **Nothing exposed the running
+commit** — `/health` reports storage, sync model, deployment shape and uptime,
+and not the one fact that would have made the failure self-explanatory.
+
+### Two runs asking different questions, which is why one skip is safe
+
+The job fires on push, on the daily schedule and on manual dispatch, and those
+are not the same question:
+
+| | Wants |
+|---|---|
+| **push** | "does the commit I just pushed work in production" — which cannot be answered until it *is* in production |
+| **schedule / dispatch** | "is production healthy right now" — nothing is in flight, so a stale deployment failing the current asset list is a **real finding**: a deploy that never landed |
+
+So a push run waits for the deployment to report the pushed commit and then
+smokes it; if it never does, it **skips loudly and passes**, because asserting
+this commit's expectations against an older build is what produced the false
+red. A scheduled run does neither — no wait, no skip, and it fails.
+
+**The skip is the dangerous half and it is bounded on purpose.** A skip that
+can happen every day is §17's no-op-that-reports-success, which this file is
+emphatic about: the backstop is that the daily run cannot skip, so a deploy
+that never lands is red within 24 hours rather than never.
+
+### The commit marker, and why absence is not a placeholder
+
+`/healthz` now carries `commit`, from `APP_COMMIT` or Render's own
+`RENDER_GIT_COMMIT`.
+
+- **On `/healthz`, not `/health`.** A wait loop polls this every twenty
+  seconds, and `/health` runs the alert rules and the reminder pass off the
+  back of every request (§25, §39) — a CI poll there would fire real digests
+  into customers' channels. `/healthz` answers and does nothing else, which is
+  exactly the property §40 refused to spend by hanging work off it.
+- **The field is OMITTED when neither variable is set** — not `null`, not
+  `'unknown'`, not `''`. The wait branches three ways: this deployment is
+  current, this deployment is behind, this deployment does not say. A
+  placeholder collapses the last two into "behind", so the wait would burn its
+  whole budget and skip the smoke on every host that does not set the
+  variable — a silent, permanent skip, arrived at by trying to be tidy. Same
+  asymmetry as §30's `verified_email`: a stated mismatch is actionable,
+  absence is not. Guarded by *"/healthz omits the commit when nothing sets
+  one"*, which fails on a version emitting `'unknown'`.
+- The repository is public, so the commit discloses nothing that is not
+  already on GitHub. On a private deployment that would be a judgement call
+  rather than a free one.
+
+### The smoke test says which build it looked at
+
+A `deployed build` line in the Configuration section, **INFO and never a
+failure** — a deployment that does not report a commit is not a broken one,
+and most ways of running this have no commit to report. It earns its place
+because every asset assertion above it is written against the checkout the
+file came from, so when one 404s the first question is whether the deployment
+is even running that commit, and until now there was no way to ask.
+
+**The smoke count stays 44**, and that is not an oversight: the summary counts
+`PASS`, and this line is `INFO`. Recorded because "I added a check and the
+number did not move" reads as a mistake later, and §9 treats that number as
+the proof the file ran.
+
+### Verified
+
+Each branch of the wait was driven against a real server, with the loop
+**extracted verbatim from the YAML** rather than retyped — a copy that drifts
+from the workflow proves nothing about the workflow:
+
+| Deployment reports | Outcome |
+|---|---|
+| the pushed commit | `state=current` — smoke runs |
+| an older commit | `state=stale` — skipped, warning names both commits |
+| no commit field | `state=unknown` — smoke runs, exactly as before |
+| nothing at all (down) | `state=stale` — skipped, warning says it never answered |
+
+The last two warnings were separated after the first version said *"still
+running "* for a deployment that had not answered at all — the state that
+renders as nothing (§36, §38, §39), in the one place somebody reads at 2am.
+
+Full Node suite **418**, Playwright **105**, smoke **44** — the full run
+because `/healthz` is polled in eight test files' boot-wait loops (§40) and
+`startServer()` gained an `extraEnv` parameter, and §9 names shared test
+helpers as blast radius.
+
+### The comment that had never matched the code
+
+The `live` job said *"Runs on schedule, on manual dispatch, and after a push to
+the default branch."* There has never been a branch filter — it is
+`github.event_name != 'pull_request'`, so it runs on every push to every
+branch. The comment described an intention nobody implemented, and it matters
+here because the branch being deployed **is** the feature branch, so a reader
+trusting the comment would conclude this race could not happen on it. Fixed to
+say what the condition does, with the discrepancy noted rather than quietly
+corrected.
+
+### What this does not fix
+
+**A push whose deploy is slower than the budget is skipped, not retried.** The
+budget is seven minutes; a free-tier redeploy plus a cold start is usually
+under two. If Render gets slower this becomes a skip that the daily run catches
+the next morning rather than a red tick within the hour — acceptable, and worth
+raising the budget rather than removing the wait if it starts happening.
+
+**Nothing here proves Render actually sets `RENDER_GIT_COMMIT`.** This session
+cannot reach `*.onrender.com` (§8), so the runbook says to check the *deployed
+build* line and set `APP_COMMIT` if it reports nothing, rather than asserting
+the variable exists. If it turns out not to be set, the wait degrades to
+today's behaviour — it does not break.

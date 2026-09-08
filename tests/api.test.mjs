@@ -191,7 +191,10 @@ const TELEGRAM_PORT = 8440 + Math.floor(Math.random() * 10);
 let portOffset = Math.floor(Math.random() * PORT_SPAN);
 const nextPort = () => PORT_BASE + (portOffset++ % PORT_SPAN);
 
-function startServer() {
+// `extraEnv` exists for the one test that needs a differently-configured
+// deployment (§46's commit marker). Defaulting to none keeps every other
+// caller identical.
+function startServer(extraEnv = {}) {
   PORT_IN_USE = nextPort();
   BASE = `http://127.0.0.1:${PORT_IN_USE}`;
   child = spawn(process.execPath, ['server.js'], {
@@ -224,6 +227,7 @@ function startServer() {
        */
       RATE_TELEGRAM_MAX: '200',
       NODE_ENV: 'test',
+      ...extraEnv,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -270,6 +274,37 @@ describe('health and public surface', () => {
     assert.equal(status, 200);
     assert.equal(json.ok, true);
     assert.ok(['file', 'mongodb'].includes(json.storage), `unexpected storage: ${json.storage}`);
+  });
+
+  /*
+   * The commit marker (§46), and the assertion that matters is the ABSENCE.
+   *
+   * CI's live smoke waits for the deployment to report the commit it just
+   * pushed, and branches three ways: this one is current, this one is behind,
+   * this one does not say. A placeholder — 'unknown', null, an empty string —
+   * collapses the last two into "behind", and the wait would then block for
+   * its whole budget and skip the smoke on every deployment that does not set
+   * the variable. So the field is omitted, and that is load-bearing rather
+   * than tidy.
+   */
+  test('/healthz omits the commit when nothing sets one, rather than saying "unknown"', async () => {
+    const { json } = await req('/healthz');
+    assert.equal('commit' in json, false, `reported ${JSON.stringify(json.commit)}`);
+  });
+
+  test('…and reports it when the host does set one', async () => {
+    // Its own deployment: the shared server deliberately has no commit, which
+    // is the case above. Restores the shared one afterwards, or every test
+    // after this runs against a server this one configured.
+    await stopServer();
+    try {
+      await startServer({ APP_COMMIT: 'c0ffee1234567890' });
+      const { json } = await req('/healthz');
+      assert.equal(json.commit, 'c0ffee1234567890');
+    } finally {
+      await stopServer();
+      await startServer();
+    }
   });
 
   test('/health describes the deployment without exposing tenant counts', async () => {

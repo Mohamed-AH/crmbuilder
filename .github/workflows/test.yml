@@ -113,7 +113,10 @@ jobs:
 
   live:
     name: Live deployment health
-    # Runs on schedule, on manual dispatch, and after a push to the default branch.
+    # Runs on every push, on the daily schedule, and on manual dispatch.
+    # (It used to say "after a push to the default branch"; there has never
+    # been a branch filter, and the branch that is deployed is the one being
+    # worked on — so the comment was describing an intention, not the code.)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -123,7 +126,80 @@ jobs:
         with:
           node-version: 22
 
+      # ------------------------------------------------------------------
+      # A PUSH RUN AND THE DAILY RUN ARE ASKING DIFFERENT QUESTIONS (§46).
+      #
+      # This job smoke-tests the LIVE deployment using the asset list from the
+      # commit that was just pushed — and Render has not finished deploying
+      # that commit yet. So a file added in this push 404s, the audit reports
+      # "Deployment is NOT healthy", and a re-run half an hour later is green.
+      # That happened with /js/dsar.js, and it is testing the wrong build
+      # rather than finding anything.
+      #
+      # On a push: wait for the deployment to report the pushed commit, then
+      # smoke it. If it never does, the build under test is not live and its
+      # expectations do not apply — say so and stop, rather than failing.
+      #
+      # On the schedule or a manual run: do NOT wait and do NOT skip. Nothing
+      # is in flight, so a stale deployment failing the current asset list is
+      # a REAL finding — a deploy that never landed. That is the run that has
+      # to be able to fail, and it is why the skip above cannot be silent
+      # (§17: a no-op that reports success is worse than a failure).
+      # ------------------------------------------------------------------
+      - name: Wait for the deployment to catch up
+        id: deployed
+        if: github.event_name == 'push'
+        env:
+          BASE_URL: ${{ inputs.live_url || vars.LIVE_URL || 'https://crmbuilder-v1.onrender.com' }}
+          WANT: ${{ github.sha }}
+          # Render's free tier redeploys in a couple of minutes, plus a cold
+          # start. Generous, because the cost of waiting is a CI minute and the
+          # cost of not waiting is a red tick nobody trusts.
+          BUDGET_SECONDS: 420
+        run: |
+          set -uo pipefail
+          deadline=$(( $(date +%s) + BUDGET_SECONDS ))
+          reported=""
+          answered=""
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            body=$(curl -sf --max-time 90 "$BASE_URL/healthz" || true)
+            [ -n "$body" ] && answered=yes
+            reported=$(printf '%s' "$body" | node -e \
+              'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(JSON.parse(s).commit||"")}catch{}})')
+            # No commit reported at all: this deployment predates the field, or
+            # runs somewhere that does not set it. We cannot gate on something
+            # it does not say, so behave exactly as before.
+            if [ -z "$reported" ] && [ -n "$body" ]; then
+              echo "The deployment does not report a commit — smoke testing it as-is."
+              echo "state=unknown" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "$reported" = "$WANT" ]; then
+              echo "Live deployment is running ${WANT:0:12}."
+              echo "state=current" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ -n "$reported" ]; then
+              echo "Live deployment is running ${reported:0:12}, waiting for ${WANT:0:12}…"
+            else
+              echo "No answer from $BASE_URL yet, waiting for ${WANT:0:12}…"
+            fi
+            sleep 20
+          done
+          echo "state=stale" >> "$GITHUB_OUTPUT"
+          # Two different problems, and "still running <nothing>" describes
+          # neither. The daily run is the backstop for both.
+          if [ -z "$answered" ]; then
+            echo "::warning::$BASE_URL did not answer /healthz within ${BUDGET_SECONDS}s, so which commit is live could not be established. Skipping the live smoke. If this is not a redeploy in progress, the deployment is down — the daily scheduled run will fail loudly."
+          else
+            echo "::warning::Live deployment is still running ${reported:0:12} after ${BUDGET_SECONDS}s, not ${WANT:0:12}. Skipping the live smoke: it would assert this commit's assets against an older build. The daily scheduled run will catch a deploy that never lands."
+          fi
+
       - name: Smoke test the live deployment
+        # Skipped only when a push run proved the deployment is behind. The
+        # scheduled and manual runs have no `deployed` step, so `state` is
+        # empty and this always runs for them.
+        if: steps.deployed.outputs.state != 'stale'
         env:
           # Defaults to the production deployment. Override per-run via the
           # workflow_dispatch input, or permanently with a repository variable
