@@ -3314,6 +3314,30 @@ test.describe('pages that are not the app', () => {
   }
 });
 
+/*
+ * Two claims on /guide that are worth pinning, and one that is not.
+ *
+ * The beta disclosure is exactly the line somebody removes for tone, and it is
+ * the reason the page does not read as an overclaim to a prospect who then
+ * opens /terms and finds "data loss is possible". The role ladder is
+ * customer-facing permissions documentation.
+ *
+ * What this does NOT prove is that the table still MATCHES §14 — there is no
+ * shared source a browser test could read, TEAM_ROLES being server-side. It
+ * catches deletion, not drift, and saying so is better than implying more.
+ */
+test('the guide states the beta and lists all four roles', async ({ page }) => {
+  await page.goto('/guide');
+  // `.callout` matches two on this page now — the opening one and the module
+  // -visibility limit below. Filter rather than assume one, per §14's `.toast`.
+  await expect(page.locator('.callout').filter({ hasText: 'free beta' })).toHaveCount(1);
+  for (const role of ['Owner', 'Member', 'Contributor', 'Viewer']) {
+    await expect(page.locator('table td').filter({ hasText: new RegExp(`^${role}$`) })).toHaveCount(1);
+  }
+  // The limit that disqualifies some buyers is elevated, not in a paragraph.
+  await expect(page.locator('.callout').filter({ hasText: 'see every module' })).toHaveCount(1);
+});
+
 test('javascript: URLs in link fields are not rendered as executable hrefs', async ({ page }) => {
   await onboard(page, { templates: ['Companies'] });
   await page.click('#nav-modules .nav-link:has-text("Companies")');

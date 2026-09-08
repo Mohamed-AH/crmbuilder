@@ -12,13 +12,17 @@
   <header>
     <a class="back" href="/">← CRM Builder</a>
     <h1>What you can do with it</h1>
-    <p class="updated">A four-minute read · the <a href="/docs/manual.html">full manual</a> is there when you need detail</p>
+    <p class="updated">A four-minute read · <a href="/">open the app</a> · the <a href="/docs/manual.html">full manual</a> is there when you need detail</p>
   </header>
 
   <div class="callout">
     <p><strong>This is the short version.</strong> Every line below is something
     you can do today, with the catch stated next to it rather than discovered
     later. If a limit matters to you, it is better that you know now.</p>
+    <p><strong>The first one: this is a free beta.</strong> It is in real use,
+    and it is backed up nightly — but you should keep your own export of
+    anything you would hate to lose, and the <a href="/terms">terms</a> say so
+    rather than burying it.</p>
   </div>
 
   <h2>Set it up around how you already work</h2>
@@ -73,16 +77,38 @@
   <p><strong>You can share one workspace with your team.</strong> You invite
   them with a private link; there are no per-seat fees, because there are no
   seats to buy.</p>
-  <p><strong>You can decide what each person may do.</strong> Owners change the
-  structure and manage the team, members work with records, contributors add and
-  edit but cannot delete, and viewers read only. The server enforces it, so it
-  is not just hidden buttons.</p>
+  <p><strong>You can decide what each person may do.</strong> Four roles, and
+  each one does everything the row below it does plus one more thing — so there
+  is a single ladder to reason about rather than a grid of switches.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Role</th><th>Can do</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Owner</td><td>Everything below, plus: change what fields a module has, add and remove modules, invite people and set their roles, rename the workspace and set its currency</td></tr>
+        <tr><td>Member</td><td>Everything below, plus: delete records</td></tr>
+        <tr><td>Contributor</td><td>Everything below, plus: add and edit records</td></tr>
+        <tr><td>Viewer</td><td>Read everything, and export it</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p><strong>The server enforces this, not just the buttons.</strong> Hiding a
+  control would only stop somebody who uses the control; a viewer who edits a
+  record some other way has the change refused and undone, and is told which
+  rule stopped it.</p>
   <p><strong>Two of you can edit the same record at once</strong> and both keep
   your work — even the same record, as long as it is different fields. Only the
   very same field, at the very same moment, is last-one-wins.</p>
-  <p><strong>The honest limit:</strong> everyone on a team can see every module.
-  Roles govern what people can <em>do</em>, not what they can see. If something
-  must be invisible to a colleague, it should not go in this workspace yet.</p>
+  <div class="callout">
+    <p><strong>The honest limit, and it is the one most likely to matter:</strong>
+    everyone on a team can see every module. Roles govern what people can
+    <em>do</em>, not what they can see, and per-module access is not built. If
+    something must be invisible to a colleague, it should not go in this
+    workspace yet.</p>
+  </div>
 
   <h2>Work anywhere, including with no signal</h2>
   <p><strong>You can install it</strong> on a phone, tablet or desktop and open

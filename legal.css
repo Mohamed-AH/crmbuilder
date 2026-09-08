@@ -58,3 +58,19 @@ strong { color: var(--ink); }
 footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--rule); font-size: 14px; }
 footer a { color: var(--accent); }
 code { font-family: ui-monospace, Menlo, monospace; font-size: 0.9em; }
+
+/*
+ * Tables. Used only by guide.html's role ladder (§47) — the legal pages have
+ * none, checked before adding these rules. A four-rung permission ladder is a
+ * LOOKUP rather than prose: someone evaluating for a team wants to find their
+ * row. Without styling a bare <table> renders at browser defaults, cramped and
+ * borderless, which is worse than the paragraph it replaced — §27's
+ * invented-class trap arrived at through a plain tag.
+ */
+.table-wrap { overflow-x: auto; margin: 0 0 16px; }
+table { border-collapse: collapse; width: 100%; font-size: 15px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-size: 13px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--ink-soft); font-weight: 600; }
+td { color: var(--ink-soft); }
+td:first-child { color: var(--ink); font-weight: 600; white-space: nowrap; }
+tbody tr:last-child td { border-bottom: none; }

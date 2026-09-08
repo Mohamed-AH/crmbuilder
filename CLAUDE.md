@@ -121,7 +121,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 418 Node tests + 108 Playwright tests, and the smoke audit at
+**All green:** 418 Node tests + 109 Playwright tests, and the smoke audit at
 **45 passing locally / 50 against production** — the same checks either way,
 with five of them informational on a local file-store HTTP deployment and real
 assertions against a live one (§46). On Windows one Node test skips itself —
@@ -5388,6 +5388,64 @@ built for §20's deliberate 403. It caught two unrelated live defects here
 because it asserts on something no individual test thought to look at. A test
 that only checks what it set out to check would have gone green over both.
 
+### An outside review of the guide, and which four of five to take
+
+A review came back with five suggestions. Each was checked against the file
+rather than accepted or waved off — §21's treatment — and the split is worth
+recording because the two it got wrong are wrong for the *same* reason.
+
+**Taken: the role ladder becomes a table.** The review was right and this file
+already agreed with it: §14 presents the ladder as a table precisely because
+"there is one ordering to reason about rather than a matrix". Writing it as
+prose on the customer-facing page was the inconsistency. Permissions are a
+lookup — somebody evaluating for a team wants to find their row.
+
+**`legal.css` had NO table styling**, checked before writing any markup: a bare
+`<table>` renders at browser defaults, cramped and borderless, which is worse
+than the paragraph it replaced. That is §27's invented-class trap reached
+through a plain tag rather than a class name — the same way §41 found the
+missing `h3`. Rules added there, and both legal pages were confirmed to contain
+no tables so nothing else is restyled.
+
+**Taken: the beta is stated, and the review missed this one.** The page said
+nothing about beta status or cost — grepped, the only hit was the word "price"
+in a currency sentence — while its own footer links to `/terms`, which is
+headed *"What you should expect from a beta"* and says data loss is possible.
+So a prospect read four confident minutes and then discovered the framing on
+the legal page. That is the exact failure the page is built against: the limit
+found later rather than stated up front.
+
+**Taken: the module-visibility limit is elevated to a callout**, because it is
+the one that disqualifies some buyers outright.
+
+**Taken, but not as proposed: a top link.** The review asked for a *"Launch
+Interactive Demo"* button. No such sandbox exists — loading the sample business
+means opening the app and clicking through — so that label would have been an
+overclaim in the header of the page written to avoid overclaiming. A plain
+*open the app* link says what it does.
+
+### The two that were declined, and why they share a cause
+
+**Shortening the bold lead-ins to 2–4 word concept anchors** — *"Daily morning
+digest"*, *"Consent tracking"*. Measured first: they run 4–12 words, mostly
+6–9, so "full sentences" overstates it. But the substance is that this would
+convert a claim addressed to the reader into a **feature name**, and a left
+margin reading *Daily morning digest / Granular search / Consent tracking* is a
+spec sheet. "You can X" is the brief, and it is what makes the page sound like
+a person rather than a datasheet.
+
+**Moving offline up to position two** for "technical decision-makers". That is
+not this page's reader. The sections run in the order somebody works through a
+week, and position two is the core daily experience. A CTO evaluating
+architecture has `product-tour.html` and the README.
+
+**Both declines share one cause: they optimise the page for a different
+audience than the one it was written for** — a scanner collecting features, and
+a technical evaluator. Either change is right for a page aimed at those
+readers; neither is right for this one. Worth naming, because a suggestion can
+be perfectly good craft advice and still be wrong for the document in front of
+it.
+
 ### `README.md` joins §27's walk list
 
 §46 found the README a year behind and fixed the file. This fixes the *rule*,
@@ -5411,6 +5469,20 @@ sentence that describes a gap while sounding like it closes it.
 already has.** It is content-based, not status-based, for §28's reason: the
 catch-all used to answer everything with the shell, so a 200 proves nothing.
 
-Counts: Node **418**, Playwright **105 → 108**, smoke **44 → 45** locally
+Counts: Node **418**, Playwright **105 → 109**, smoke **44 → 45** locally
 (50 live). The full suite was run because `sw.js` and `CACHE_VERSION` are
 shared surface (§9).
+
+**The review's changes needed no `CACHE_VERSION` bump** — `guide.html` is in
+`STANDALONE_PAGES` and `legal.css` is in neither `index.html` nor `APP_SHELL`,
+so both go straight to the network. Checked rather than assumed, which is
+§41's rule for the legal pages. Targeted run plus smoke per §9, and the
+standalone-pages describe is what covers the shared-`legal.css` risk: it loads
+all three pages.
+
+**And the new test tripped §14's own `.toast` trap on the first run.**
+`.callout` matches two elements on the page now — the opening one and the
+elevated limit — so `toContainText` failed strict mode. Filter, do not assume
+one. The test says plainly what it does not prove: it catches deletion of the
+beta line and the roles, not drift from §14, because `TEAM_ROLES` is
+server-side and no browser test can read it.
