@@ -496,6 +496,14 @@ evaluates the alert rules and runs the reminder pass off the back of every
 request (CLAUDE.md §25, §39), so anything polling on a timer — a CI deploy
 wait, an uptime monitor you do not want firing digests — belongs here.
 
+**Neither endpoint is intercepted by the service worker**, which matters only
+to a caller inside a browser that has the app installed. Both predate the
+`/api/` prefix that makes every other endpoint network-only, so until
+`crmbuilder-v47` opening either one served the app shell and then cached the
+JSON response *as* that shell — see CLAUDE.md §47. They are named in `sw.js`'s
+standalone list now, and the navigation handler will only write a `text/html`
+response back as the shell, so a JSON endpoint added later cannot repeat it.
+
 **`commit` is ABSENT when the host does not supply one**, rather than `null`,
 `''` or `'unknown'`. That is a contract, not a detail: a caller has to be able
 to tell *"this deployment is running a different commit"* from *"this

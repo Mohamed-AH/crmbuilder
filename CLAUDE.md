@@ -5638,3 +5638,47 @@ shell"* while leaving the first one green — which is what shows the two
 changes are covering different things rather than one twice.
 
 Counts after: Playwright **110 → 112**.
+
+### The runbook was telling operators to do the thing that broke it
+
+*"Are the docs updated?"* — walked rather than answered, which is §46's own
+lesson about this question. Two files needed a line and the rest genuinely did
+not.
+
+**`DEPLOYMENT.md` § *Verify the deployment* is where this stings.** Step 1 is
+*open the app* — which installs the service worker and claims the page — and
+step 2 is *open `/health` and read `"storage":"mongodb"`*. That is the exact
+sequence above, written down as a procedure:
+
+| The documented step | What actually happened |
+|---|---|
+| 1. open the app | worker installs, `clients.claim` |
+| 2. open `/health` | **the CRM rendered**, so the value step 2 asks you to read was not on the page |
+| — | and the JSON was written over the cached shell |
+| 4. install it | installs a shell that is now a page of JSON |
+
+So the step could not be completed as written, and completing it broke the
+next thing. Measured on a pre-v47 worker, not reconstructed from the code.
+
+**One reload clears it, and that is measured too.** The same profile, upgraded
+to v47: the app renders on load **1**, not load 2 — `activate` drops the stale
+cache and re-precaches. The note says one load because that is what was
+observed; it does not explain the mechanism, because the mechanism is timing
+between the update check and the claim and I did not pin it down.
+
+**`docs/API.md` gets the other line**, and it is the §46 shape exactly: no
+route moved, the route count is still right, and the `/healthz` section still
+*read* correctly — but a browser-based caller's reachability changed
+underneath it. §27's *"a doc describing a contract goes stale the moment the
+contract moves"*, where what moved was not the response body.
+
+**The six user-facing documents needed nothing, and that is checked rather
+than skipped.** `README.md`, `guide.html`, `USER-GUIDE.md`, `manual.html`,
+`product-tour.html`, `ONBOARDING.md`, `DEMO-SCRIPT.md` and `BETA.md`'s tester
+note describe no endpoint and no caching rule; the only service-worker
+sentences anywhere are `README.md`'s *"fully offline via a service worker"*
+and `DEPLOYMENT.md`'s cold-start note, both still true. Padding them to look
+thorough is its own inaccuracy (§40, §41). And **no count went stale outside
+this file** — grepped for Playwright totals, smoke totals and
+`crmbuilder-v[0-9]` across every doc, and the only hits are the live URL and a
+browser zoom level. §29's rule holding, which is worth recording when it does.

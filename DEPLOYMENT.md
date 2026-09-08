@@ -177,6 +177,16 @@ and set the env vars above plus `NODE_ENV=production` and a random `SESSION_SECR
 1. Open `https://<your-app>.onrender.com` — the onboarding screen should load.
 2. `https://<your-app>.onrender.com/health` should report `"storage":"mongodb"` and `"sync":"per-record"` — if storage says `"file"`, `MONGODB_URI` isn't set. It must **not** report `counts` on a pooled deployment; if it does, `HEALTH_DETAIL` is set and should not be.
    (`/healthz` still answers `{"ok":true,"storage":"..."}` for anything already probing it.)
+
+   > **If this step shows you the app instead of the JSON**, the browser is
+   > carrying a service worker from before `crmbuilder-v47`. Step 1 installs
+   > one, and until v47 it answered *every* navigation with the cached app
+   > shell — so this step showed the CRM, and then wrote the health JSON back
+   > over that cached shell, leaving the next load of the app a page of JSON
+   > (CLAUDE.md §47). Reload once: the new worker activates, drops the stale
+   > cache and the app returns. Measured, not assumed — one load is enough.
+   > It also means these two steps are worth running in this order on a
+   > browser you do not mind clearing.
 3. Sign in with Google, create a module, then open the site in a private window and sign in again — your workspace should sync down.
 4. Install it: browser menu → *Install CRM Builder* (desktop) or *Add to Home Screen* (mobile).
 5. Run the audit from a machine that can reach the URL:
