@@ -4,7 +4,7 @@
  * API/auth requests are network-only (never cached).
  * Bump CACHE_VERSION whenever any precached asset changes.
  */
-const CACHE_VERSION = 'crmbuilder-v46';
+const CACHE_VERSION = 'crmbuilder-v47';
 const APP_SHELL = [
   './',
   './index.html',
@@ -87,10 +87,27 @@ self.addEventListener('fetch', (event) => {
    * stylesheet handled either.
    */
   const STANDALONE_ASSETS = ['/legal.css', '/js/manual-toc.js'];
+
+  /*
+   * …and the two JSON endpoints that predate /api/ and are therefore not
+   * caught by the prefix check above. Navigating to /healthz in a browser that
+   * has the app installed served the CRM and then wrote the JSON body over the
+   * cached shell, so the next load of / rendered {"ok":true,…} as the whole
+   * application — permanently, because the navigation handler answers from
+   * that cache first. Measured, and an operator checking their own health
+   * endpoint is exactly who would hit it.
+   *
+   * This list fixes what such a navigation DISPLAYS. The cache poisoning is
+   * closed structurally below, because a list only ever covers the paths
+   * somebody thought of — which is how /docs/manual.html (§47) and these two
+   * were both missed.
+   */
+  const STANDALONE_ENDPOINTS = ['/health', '/healthz'];
   if (
     STANDALONE_PAGES.includes(url.pathname)
     || STANDALONE_PAGES.some((p) => url.pathname === `${p}.html`)
     || STANDALONE_ASSETS.includes(url.pathname)
+    || STANDALONE_ENDPOINTS.includes(url.pathname)
   ) {
     // Handled by the browser, not by us: no cache entry, so these are the one
     // part of the site that needs a connection. That is the right trade — they
@@ -106,7 +123,20 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       caches.match('./index.html').then((cached) => {
         const fresh = fetch(request).then((response) => {
-          if (response.ok) {
+          /*
+           * `response.ok` alone is not "this is the app". Any same-origin
+           * navigation that answers 200 with something else — a JSON endpoint,
+           * the manifest, a stylesheet opened directly — was written back here
+           * AS the shell, and from then on every load of / served that body
+           * instead of the application. The lists above cannot close this:
+           * they only ever name the paths somebody remembered.
+           *
+           * So the type is checked instead of the path. A response that is not
+           * HTML is still returned to the caller; it simply never becomes the
+           * cached shell.
+           */
+          const isShell = (response.headers.get('content-type') || '').includes('text/html');
+          if (response.ok && isShell) {
             const copy = response.clone();
             caches.open(CACHE_VERSION).then((cache) => cache.put('./index.html', copy));
           }

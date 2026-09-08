@@ -3350,6 +3350,50 @@ test.describe('pages that are not the app', () => {
     expect(cached).not.toContain('/legal.css');
     expect(cached).not.toContain('/js/manual-toc.js');
   });
+
+  /*
+   * /health and /healthz predate /api/, so the prefix check that makes every
+   * other endpoint network-only never covered them — and both halves of §19's
+   * bug were still live on them. Navigating to /healthz rendered the CRM, and
+   * then wrote the JSON body over the cached shell, so the NEXT load of / was
+   * `{"ok":true,…}` as the entire application. Permanently: the navigation
+   * handler answers from that cache first, so nothing heals it.
+   *
+   * An operator checking their own health endpoint in the browser they use the
+   * app in is exactly who hits this.
+   */
+  test('opening the health endpoints shows them, and does not replace the app', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+
+    await page.goto('/healthz');
+    await expect(page.locator('#app')).toHaveCount(0);
+    await expect(page.locator('body')).toContainText('"ok":true');
+
+    // The load AFTER the poisoning is the one that shows it. A second load
+    // would re-fetch the real shell and heal it, which is how a sweep that
+    // ends on an ordinary route hides this entirely.
+    await page.goto('/');
+    await expect(page.locator('#app')).toBeVisible();
+  });
+
+  /*
+   * The half that is structural rather than a list. `response.ok` is not "this
+   * is the app": ANY same-origin navigation answering 200 with something else
+   * became the cached shell. /manifest.webmanifest is deliberately in none of
+   * the exclusion lists, so this passes only because the navigation handler
+   * checks the content type — which is what covers the next such path nobody
+   * thought to list, the way /docs/manual.html and /healthz were both missed.
+   */
+  test('a navigation that is not HTML never becomes the cached shell', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+
+    await page.goto('/manifest.webmanifest');
+    await page.goto('/');
+    await expect(page.locator('#app')).toBeVisible();
+    await expect(page.locator('body')).not.toContainText('"start_url"');
+  });
 });
 
 /*

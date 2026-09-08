@@ -121,7 +121,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 418 Node tests + 110 Playwright tests, and the smoke audit at
+**All green:** 418 Node tests + 112 Playwright tests, and the smoke audit at
 **45 passing locally / 50 against production** — the same checks either way,
 with five of them informational on a local file-store HTTP deployment and real
 assertions against a live one (§46). On Windows one Node test skips itself —
@@ -200,7 +200,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v46`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v47`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -5565,3 +5565,76 @@ all. Checked against the broken state per §9: removing the one
 
 Counts after: Playwright **109 → 110**. Node and smoke unchanged — no served
 file was added, no route moved.
+
+### Then the same question asked generally, and `/healthz` was worse
+
+*"Are there other subresources the worker is caching that it shouldn't?"* —
+asked straight after the fix above, and the honest answer needed the whole
+reachable surface walked rather than the one file that had just been found.
+
+**The surface is small and closed**, which is what made this answerable:
+`ASSET_DIRS` + `PUBLIC_ROOT_FILES` + `PUBLIC_DOCS` + two endpoints, and
+everything else 404s (§28). Every same-origin GET was visited with the worker
+installed and the cache dumped. Assets are all precached or now listed; the
+only paths outside both are **`/health` and `/healthz`**.
+
+They predate `/api/`, so the prefix check that makes every other endpoint
+network-only has never covered them — and **both halves of §19's bug were
+still live on them**, four years and thirty-three cache versions after §19
+supposedly closed it:
+
+| | |
+|---|---|
+| navigating to `/healthz` | rendered **the CRM**, `#app` present, "CRM Builder Dashboard" |
+| and then | wrote `{"ok":true,…}` **over the cached shell** |
+| so the next load of `/` | served that JSON **as the entire application** |
+
+**Permanently.** The navigation handler answers from the cache first, so
+nothing heals it — the app is dead in that browser profile until the cache is
+cleared. And the person who hits it is an operator checking their own health
+endpoint in the browser they use the app in, which is a normal thing to do.
+
+**My first sweep reported "none", and it was wrong.** It visited every path in
+one profile and ended on `/no-such-route`, whose response *is* the shell — so
+the last navigation put the real shell back and healed the poisoning before
+the dump. The finding needs **one fresh profile per path**, and the assertion
+has to be on the **first** load of `/` afterwards. A probe that heals what it
+is looking for reports clean, which is the same shape as §34's test passing
+against its own fixture.
+
+### The list is the smaller half. The type check is the fix.
+
+Two changes, and the split is the point:
+
+- **`STANDALONE_ENDPOINTS`** joins the early return, so navigating to
+  `/healthz` shows the JSON rather than the CRM. That is a **list**, and a
+  list only ever covers the paths somebody thought of — which is precisely how
+  `/docs/manual.html` survived twenty-one cache versions (above) and how these
+  two survived thirty-three.
+- **`response.ok` is not "this is the app".** The navigation handler now
+  writes back only when the response is `text/html`. Any same-origin
+  navigation answering 200 with something else — a JSON endpoint, the
+  manifest, a stylesheet opened directly — was becoming the shell. Checking
+  the **type** instead of the path is what covers the next such route nobody
+  lists.
+
+`/manifest.webmanifest` is the proof and is deliberately in **no** list: after
+the fix it still *displays* the CRM when navigated to directly (nobody does
+that on purpose, and it is a genuine app asset), but it can no longer replace
+the application. The test that pins it passes only because of the type check.
+
+**The `CACHE_VERSION` bump is load-bearing this time, not hygiene.** A browser
+already holding a poisoned `index.html` serves it from cache before any of
+this new code runs; `activate` deleting every cache whose key is not the
+current one is the **only** thing that repairs an installation already in that
+state. Shipping the fix without the bump would leave exactly the users it is
+for still broken. → `crmbuilder-v47`.
+
+Two tests, each checked against its own mutation per §9 and failing by name:
+dropping `STANDALONE_ENDPOINTS` fails *"opening the health endpoints shows
+them…"* on `#app` count 1 against 0, and restoring the bare `response.ok`
+write-back fails *"a navigation that is not HTML never becomes the cached
+shell"* while leaving the first one green — which is what shows the two
+changes are covering different things rather than one twice.
+
+Counts after: Playwright **110 → 112**.
