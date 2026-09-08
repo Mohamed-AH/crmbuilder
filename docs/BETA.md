@@ -451,6 +451,15 @@ prove the wiring. It answers with the pass itself
 (`{"ok":true,"pass":{"scanned":0,"sent":0,...}}`) and the check goes green
 within seconds, its log showing `scanned 0, sent 0, failed 0, 0ms`.
 
+**A ping arriving on its own does not prove the keep-warm monitor is right.**
+A push to the app repo runs CI, whose live smoke hits `/health`, which runs a
+pass — so straight after a deploy the reminders check goes green whether or
+not UptimeRobot is pointed at `/health` (§40's outage, still able to hide
+here). The test that separates them is a **quiet** one: leave it half an hour
+with nothing pushed, then look at Last Ping. Minutes means the monitor is on
+`/health` and driving the pass; half an hour and climbing means it is on
+`/healthz`, which keeps the service warm while running nothing.
+
 **Prove the backup one** by running the nightly workflow manually. The ping is
 the last step and it is gated on a backup that was actually fetched, encrypted
 and proved to decrypt, so a green check here means the whole job worked and
@@ -465,7 +474,16 @@ faithfully reporting a mechanism it is not watching. That is the shape this
 runbook keeps meeting: a no-op that reports success is worse than a failure,
 because nothing will ever argue with it.
 
-**The frequency tells them apart, and it needs nothing from either repo:**
+**Check the ping BODY first, because it answers immediately.** Open each
+check's log: the reminder pass sends `scanned N, sent N, failed N, Nms` and
+the backup's ping does not. That is the tell that works at the one moment you
+actually need it.
+
+**Frequency is the passive tell, and it is useless for the first quarter of an
+hour** — which is precisely when you are looking. Right after a rotation you
+have just run the backup workflow by hand to prove it, so *both* checks show a
+ping a minute old and the table below says nothing. Come back to it once
+things have settled:
 
 | Check | Healthy **Last Ping** |
 |---|---|
