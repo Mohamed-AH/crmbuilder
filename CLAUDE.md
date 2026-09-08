@@ -84,6 +84,7 @@ never change, because everything cross-references them.
 | **Own domain / pricing** — everything a launch has to change | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) · §48 |
 | **Sweeping for what is live and unnoticed** — how, and what it found | §48 |
 | **Chaser, renewal tracker, dormancy report** — the spec, before any code | [`docs/CHASER-AND-TRACKERS.md`](docs/CHASER-AND-TRACKERS.md) |
+| **Tracking what expires** — the template, and the one date field | §49 · §37 · §39 |
 
 ---
 
@@ -124,7 +125,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 418 Node tests + 117 Playwright tests, and the smoke audit at
+**All green:** 418 Node tests + 118 Playwright tests, and the smoke audit at
 **45 passing locally / 50 against production** — the same checks either way,
 with five of them informational on a local file-store HTTP deployment and real
 assertions against a live one (§46). On Windows one Node test skips itself —
@@ -164,6 +165,9 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
   approval lets them straight in with nothing to email — see §20
 - **Per-workspace webhooks** behind an SSRF guard, and a **daily digest** of
   what is due or overdue — off by default, counts only — see §38, §39
+- **A `Renewals` template** — a register of certificates, licences and
+  inspections that expire. No new machinery: the due filter and the digest
+  already count a date field, so this is the columns plus the wiring — see §49
 - **A date-format control on the CSV import screen** — the order is an input,
   preselected from what the file proves and required when it proves nothing;
   never guessed — see §45
@@ -203,7 +207,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v47`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v48`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -5826,3 +5830,146 @@ further is needed.
 Counts after: Playwright **112 → 117**. Node and smoke unchanged — no served
 file was added and no route moved, and the new document is deliberately
 unserved.
+
+---
+
+## 49. The renewals template, and a module that can vanish from the digest
+
+The first of the three features specced in
+[`docs/CHASER-AND-TRACKERS.md`](docs/CHASER-AND-TRACKERS.md), and the smallest
+by a wide margin: **no new machinery at all.** §37's due filter and §39's daily
+digest already count what is overdue or falling due inside a window, on any
+module carrying a date field, so an owner could have built a renewals register
+by hand. What they could not do is know to, or guess which columns an
+inspection actually asks for.
+
+`renewals` — holder · kind · **expires** · status · reference · issuer · notes.
+§42's `consent` template is the precedent for every structural choice: a module
+rather than fields on Contacts, opt-in, costing nothing to a workspace that
+never picks it.
+
+### The constraint that had to go in the file, not just in a test
+
+`DateRules.watchedDateField` is `dates.find(f => f.showInList) || dates[0]` —
+**one date field per module**, and it is what both the filter and the digest
+count against. So `expires` must be the only listed date field, and the reason
+belongs in `js/templates.js` beside the fields rather than only in a test,
+because the person who breaks it is the one adding an `issuedOn`.
+
+**Measured both ways against the mutation, and the quieter half is worse than
+the miscount I wrote the warning for:**
+
+| The second date field is | What happens |
+|---|---|
+| **filled** | the digest counts certificates by the day they were *issued*, and reads exactly as plausibly as the correct message |
+| **empty** — which is what an added field is on every existing row | `daysUntil` returns null for every record, the module falls out of the `total > 0` filter, and **the register disappears from the digest entirely** |
+
+No error, no empty section, nothing: the renewals simply stop being mentioned.
+That is §36's state-that-renders-as-nothing on the one feature whose whole job
+is to speak up, and it is reachable by an ordinary owner adding an ordinary
+column — not only by editing the template.
+
+The E2E fails on the mutation **one assertion earlier than predicted**, at
+*"a module with an expiry date must reach the digest"* rather than on the
+`field` name. The comment I wrote first predicted the wrong line; it now
+records what was observed. §9's rule earning its keep — the mutation was run,
+not reasoned about, and reasoning about it would have produced a confident and
+wrong note.
+
+### No samples, and it is the one template where that is a decision
+
+Every other template's samples avoid dates because `createFromTemplate` copies
+a sample verbatim and does **not** resolve `{ __rel: n }` — only `loadDemoData`
+does — so a date has to be hard-coded and goes stale. Here both halves of that
+bite at once:
+
+- a hard-coded expiry lands in a brand-new workspace as a certificate that
+  expired two years ago;
+- and leaving it empty puts an empty cell in the one column the module exists
+  for, on the first screen somebody sees (§36).
+
+So `samples: []`, like `notes`. `DEMO_SKIPS` gains `renewals` for a related
+reason worth keeping separate: the demo's dates are **relative** so the
+business never looks stale, so seeding it would start reporting overdue
+certificates to somebody who only wanted a look around.
+
+### One window for the workspace, with a review condition
+
+`remind.days` is a single number for the whole workspace, and shipping it that
+way is the decision rather than an oversight. Per-module windows
+(`remind.perModule`) would touch `remindSettings()`'s clamping, the
+`n > remind.days` comparison, the preview, the settings screen and the message
+— contained, since settings already sync whole and are already owner-only
+(§14), but the bulk of the work for a problem nobody has reported.
+
+> **Revisit the first time a workspace wants two different windows.** That will
+> not appear in telemetry — it arrives as a support message, so it has to be
+> *recognised*. Written into `docs/CHASER-AND-TRACKERS.md` §1 for that reason.
+
+The user docs say the same thing as advice: pick the look-ahead for the slowest
+thing you track, because the per-module Due date filter still gives you the
+shorter view.
+
+### "Overdue", not "expired"
+
+For a certificate the right word is *expired*, and the message builder is
+shared across every module with no way to tell a due date from an expiry date.
+Deriving it from the field label ("starts with Expir") is a locale-bound
+heuristic on a string the user typed. Left as *overdue*, said plainly in the
+user docs — the price of the better word is a shared code path, and the word is
+understood.
+
+### A pre-existing find: the icon picker could not represent its own template
+
+`MODULE_ICONS` is what the builder's icon row renders, and a swatch is marked
+`on` only when it equals `draft.icon`. `shield-check` — the icon §42 gave the
+`consent` template — **was not in that list**, so opening the builder on a
+Consent module showed an icon row with nothing selected. Not destructive (the
+module keeps its icon unless you click one) and exactly this file's recurring
+shape: it reads as *unset* rather than as *chosen*.
+
+Fixed by adding `shield-check` to `MODULE_ICONS`, not by changing the template
+— `createFromTemplate` copies the icon at creation time, so editing
+`js/templates.js` would leave every existing Consent module untouched. The rule
+now sits in a comment on that array: **every icon a template uses has to be in
+it too.** `clipboard-list`, which Renewals uses, already was.
+
+### Blast radius
+
+`js/templates.js` and `js/app.js` are both in `APP_SHELL`, so `CACHE_VERSION`
+→ `crmbuilder-v48`. No new served file and no route, so the smoke count stays
+**45 local / 50 live** — and running it is what proves that (§9). No
+`docs/API.md` change: nothing about the wire moved.
+
+`TEMPLATE_KEYS` (`tests/demo.test.mjs`) and the `.template-card` count
+(`tests/e2e.spec.js`) are both derived from `js/templates.js` since §42, so an
+eighth template broke neither. Verified rather than assumed — both were
+literals until they went stale.
+
+Counts: Node **418**, Playwright **117 → 118**, smoke **45** locally.
+
+### Docs walked (§27)
+
+| | Needed |
+|---|---|
+| `README.md` | the module list, and a feature bullet |
+| `guide.html` | the module list, and a *Stop things slipping* paragraph naming the one-window limit |
+| `USER-GUIDE.md`, `docs/manual.html` | a *Tracking things that expire* section, with the one-date-column warning |
+| `docs/product-tour.html` | the module list, and a tile — this is the feature that sells to a trade business or an agency |
+| `docs/ONBOARDING.md` | a row in the noun→module translation table, and *pick the look-ahead for the slowest thing they track* |
+| `docs/DEMO-SCRIPT.md` | an expected question, because "we lose accounts over expired COIs" is usually the strongest reason in the room |
+| `docs/BETA.md` tester note | the template, and the one-date-column rule |
+| `docs/API.md` | nothing — no route, no wire change |
+
+**Three of those lists had already gone stale**, and not because of this
+change: `README.md`, `guide.html` and `docs/product-tour.html` each named the
+original six templates and had never gained `consent`, which shipped in §42.
+§27's drift, found by walking the list rather than by anybody noticing. Only
+`renewals` was added to them — `consent` has its own paragraph in each, so
+putting it in the parenthetical too would be padding (§40, §41).
+
+**The renewals material is deliberately NOT in the GDPR paragraphs** of
+`ONBOARDING.md`, `DEMO-SCRIPT.md` and `BETA.md`, which is where the eye goes
+because that is where `consent` lives. Renewals is operational, not a data
+protection tool, and filing it there would imply a compliance claim the
+template does not make.

@@ -4088,3 +4088,112 @@ test('the digest says what it is waiting for, rather than nothing at all', async
   await saveDigest(0);
   await expect(card).toContainText(/Due to go out/i, { timeout: 20000 });
 });
+
+/*
+ * The renewals register, driven from the template into the digest.
+ *
+ * This is the one journey that proves the template is wired to the engine
+ * rather than merely present. Nothing new was built for it — §37's filter and
+ * §39's digest already count a date field — so what needs testing is that the
+ * RIGHT field is counted, and that the window excludes what it should.
+ *
+ * `field` is the assertion that matters and it looks incidental. It is what
+ * `DateRules.watchedDateField` picked, and that helper is
+ * `dates.find(f => f.showInList) || dates[0]` — ONE date field per module.
+ * Without that line the rest of this test passes just as happily on a module
+ * counting the wrong dates.
+ *
+ * Checked against the broken state per §9, by adding an `issuedOn` above
+ * `expires` in js/templates.js with `showInList: true`. What it actually does
+ * is worse than the miscount that mutation was written to produce: the new
+ * field is empty on every row, so `daysUntil` is null for all of them, the
+ * module drops out of the `total > 0` filter, and the register **vanishes
+ * from the digest entirely**. This test fails on
+ * *"a module with an expiry date must reach the digest"* — one assertion
+ * earlier than expected, and naming the real symptom. Recorded here rather
+ * than in the comment I first wrote, which predicted the wrong line.
+ *
+ * The clocks are aligned first, for §39's parity reason: the container and CI
+ * run UTC, so a test that does not set the workspace zone to the browser's own
+ * passes here and fails on a European machine for something that is not a
+ * defect.
+ */
+test('a renewals register is counted by the digest, on the date it expires', async ({ page }) => {
+  await onboard(page, { name: 'Harbour Electrical', templates: ['Renewals'] });
+  await signIn(page, uniqueEmail('renewals-owner'), { claim: 'all' });
+  await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 25000 });
+
+  const browserZone = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
+  await page.goto('/#/settings');
+  await expect(page.locator('#set-timezone')).toBeVisible({ timeout: 20000 });
+  await page.selectOption('#set-timezone', browserZone);
+  await page.click('#save-workspace');
+  await expect(page.locator('.toast').last()).toContainText(/saved/i);
+  await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 25000 });
+
+  /*
+   * Local calendar getters, never toISOString — §42's own bug, and the reason
+   * js/date-rules.js exists. A date built through UTC is a day out for
+   * everybody east of Greenwich, which is precisely the audience this
+   * template was added for.
+   */
+  const dayFromNow = (offset) => page.evaluate((n) => {
+    const d = new Date();
+    d.setDate(d.getDate() + n);
+    const pad = (x) => String(x).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }, offset);
+
+  await page.click('#nav-modules .nav-link:has-text("Renewals")');
+  await expect(page.locator('#add-record-btn')).toBeVisible();
+
+  const rows = [
+    // Inside the window, and the ordinary case: something to chase.
+    { holder: 'Site liability policy', kind: 'Insurance certificate', days: 10 },
+    // Already expired. The digest must keep this rather than showing only the
+    // future — an expired certificate is the row you most need to see (§37).
+    { holder: 'Van MOT', kind: 'Vehicle inspection', days: -40 },
+    // Outside it. Without this row the count assertions below would pass on a
+    // version that simply counted every record in the module.
+    { holder: 'Electrical competence card', kind: 'Professional registration', days: 200 },
+  ];
+
+  for (const row of rows) {
+    await page.click('#add-record-btn');
+    await page.fill('#f-holder', row.holder);
+    await page.selectOption('#f-kind', row.kind);
+    await page.fill('#f-expires', await dayFromNow(row.days));
+    await page.click('#record-save');
+    await expect(page.locator(`tr:has-text("${row.holder}")`)).toBeVisible();
+  }
+  await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 25000 });
+
+  /*
+   * 30 days, which is the window a renewal actually wants and the reason
+   * §2.4's per-module setting was considered. It is left OFF: the preview
+   * answers before the feature is switched on, deliberately, so that nobody
+   * has to enable a thing in order to find out what it would say (§39).
+   */
+  await page.goto('/#/settings');
+  await expect(page.locator('#remind-days')).toBeVisible({ timeout: 20000 });
+  await page.selectOption('#remind-days', '30');
+  await page.click('#remind-save');
+  await expect(page.locator('.toast').last()).toContainText(/digest off/i, { timeout: 20000 });
+  await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 25000 });
+
+  const { reminders } = await (await page.request.get('/api/org/reminders')).json();
+  expect(reminders.zone, 'the workspace zone did not save').toBe(browserZone);
+
+  const renewals = reminders.modules.find((m) => m.name === 'Renewals');
+  expect(renewals, 'a module with an expiry date must reach the digest').toBeTruthy();
+
+  // The mutation guard. See the note above this test.
+  expect(
+    renewals.field,
+    'the digest counted a date field that is not the expiry date',
+  ).toBe('Expires');
+
+  expect(renewals.overdue, 'the lapsed MOT must survive the window').toBe(1);
+  expect(renewals.upcoming, 'the policy expiring in 10 days is inside 30').toBe(1);
+  expect(renewals.total, 'the card expiring in 200 days is outside 30').toBe(2);
+});

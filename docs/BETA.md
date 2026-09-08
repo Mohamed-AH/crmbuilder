@@ -1020,6 +1020,14 @@ details attached, so you do not have to describe what browser you are on. Small
 irritations are as useful as crashes — those are the things that never get
 reported and never get fixed.
 
+**If anything you rely on expires** — insurance, a trade licence, a safety
+certificate, a vehicle inspection — there is a **Renewals** template (Add
+module → from a template). It is an ordinary module with an expiry date on it,
+so the Due date filter and the daily digest already count it; set the digest's
+look-ahead to 30 days and you hear about a lapse a month out. Keep *Expires* as
+the only date column shown in the table: the digest watches one date field per
+module, so a second one can change what it counts.
+
 **If you keep other people's details in it**, three things are there for you.
 The **Consent & lawful basis** template (Add module → from a template) records
 why you may hold each person's details and where they came from. Settings →

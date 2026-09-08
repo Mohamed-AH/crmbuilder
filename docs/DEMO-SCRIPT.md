@@ -264,6 +264,22 @@ Overdue rows are always counted, however old — the window only bounds the
 future side. If they ask why: a reminder that hides the six-month-old unpaid
 invoice is worse than none.
 
+**"We have to keep on top of insurance certificates and licences."**
+This is the one to take seriously rather than answer quickly — it is why a
+trade business or an agency loses an account, and it is usually the strongest
+reason in the room. There is a **Renewals** template: one row per certificate,
+with who or what it covers, the policy number, who issued it, and the date it
+expires. Nothing special happens to it — that is the point. It is an ordinary
+module with a date on it, so the Due date filter and the daily digest already
+work, and setting the look-ahead to 30 days means the morning message tells
+them a month before rather than a client asking first.
+
+Two things to say plainly. The look-ahead is **one setting for the whole
+workspace**, so if they also track deals on a weekly rhythm they pick the
+longer window and use the per-module filter for the shorter one. And the
+message will say *overdue* rather than *expired* — the same wording every
+module gets.
+
 **"Does that mean you can see our data?"**
 No. The webhook posts from the deployment to *their* chat service, using a URL
 they supply and that is never shown back to them. The digest carries counts and

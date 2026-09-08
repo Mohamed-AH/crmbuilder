@@ -4,11 +4,13 @@
 > §29 defines as the maintained tier — not `docs/archive/`, which is frozen.
 > If you change something this file names, change this file.
 >
-> **None of it is built.** This is the spec agreed before any code, written so
-> that the decisions are recorded with their reasoning rather than
-> reconstructed from a diff. Where a choice was taken, the alternatives are
-> kept beside it — a decision without its rejected options is a decision
-> nobody can safely reverse.
+> **Part 1 is built (`CLAUDE.md` §49). Parts 2 and 3 are not.** This
+> was the spec agreed before any code, written so that the decisions are
+> recorded with their reasoning rather than reconstructed from a diff. Where a
+> choice was taken, the alternatives are kept beside it — a decision without
+> its rejected options is a decision nobody can safely reverse. The plan is
+> kept accurate as each part lands rather than frozen: this is `docs/`, not
+> `docs/archive/`.
 >
 > Internal: not served (`CLAUDE.md` §28), which is what lets it be blunt about
 > what is unfinished.
@@ -29,7 +31,7 @@ The other three are planned here.
 
 | # | Decision | Taken | Rejected |
 |---|---|---|---|
-| 1 | Renewal reminder window | **Single workspace `remind.days`** | per-module windows |
+| 1 | Renewal reminder window | **Single workspace `remind.days`** — shipped | per-module windows |
 | 2 | Dormancy clock | **A date field the user picks**, falling back to `updatedAt` | a mandatory schema field · a full activity model |
 | 3 | Chaser dispatch | **BYOK manual send**, with `mailto:` as the built-in fallback | `mailto:` only · automated escalation |
 | 4 | Who may send | **Owner + member** | owner only · every role |
@@ -41,6 +43,13 @@ that does not survive in the code.
 ---
 
 # Part 1 — Compliance renewal tracker
+
+> **BUILT.** Shipped as the `renewals` template in `js/templates.js`. What it
+> cost, what the mutation check actually found, and the docs it touched are in
+> `CLAUDE.md` §49 — including one thing this plan did not anticipate: a module
+> whose watched date field is **empty** does not miscount, it **disappears from
+> the digest**. The rest of this part is left as written, because the reasoning
+> is what shaped it.
 
 ## What already works
 

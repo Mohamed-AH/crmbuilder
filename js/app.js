@@ -189,7 +189,15 @@
   }
 
   const MODULE_COLORS = ['#1570ef', '#0e9384', '#099250', '#dc6803', '#c11574', '#6938ef', '#d92d20', '#475467'];
-  const MODULE_ICONS = ['package', 'users', 'building-2', 'handshake', 'square-check-big', 'target', 'sticky-note', 'calendar', 'receipt', 'briefcase', 'wrench', 'truck', 'star', 'tag', 'clipboard-list', 'folder', 'map-pin', 'globe', 'phone', 'mail', 'heart', 'database'];
+  /*
+   * Every icon a TEMPLATE uses has to be in here too. The picker marks a
+   * swatch `on` only when it matches `draft.icon`, so an icon this list does
+   * not carry renders as nothing selected — the module keeps it, but opening
+   * the builder on Consent showed an icon row with no choice made, which reads
+   * as unset rather than as chosen. `shield-check` was missing for exactly
+   * that reason; `clipboard-list` (Renewals) was already here.
+   */
+  const MODULE_ICONS = ['package', 'users', 'building-2', 'handshake', 'square-check-big', 'target', 'sticky-note', 'calendar', 'receipt', 'briefcase', 'wrench', 'truck', 'star', 'tag', 'clipboard-list', 'shield-check', 'folder', 'map-pin', 'globe', 'phone', 'mail', 'heart', 'database'];
 
   // ---------------------------------------------------------------- utils
   const $ = (sel, root = document) => root.querySelector(sel);

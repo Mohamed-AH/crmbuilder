@@ -56,18 +56,26 @@ const SEED_ORDER = [...TEMPLATE_KEYS, ...DEMO.modules.map((m) => m.key)];
  * Templates the demo business deliberately does NOT fill.
  *
  * `loadDemoData` skips any template with no rows, so an unseeded one simply
- * never appears in the demo. `consent` is the only one, and it is a decision
- * rather than an omission: a consent register covering six of the demo's forty
- * contacts would read as compliance half-done, which is worse than absent, and
- * covering all forty would double a third of the dataset to demonstrate a
- * module most workspaces will not pick. Its own two samples teach it at the
- * point somebody chooses it.
+ * never appears in the demo. Two of them, and each is a decision rather than
+ * an omission:
+ *
+ * - `consent` — a register covering six of the demo's forty contacts reads as
+ *   compliance half-done, which is worse than absent, and covering all forty
+ *   would double a third of the dataset to demonstrate a module most
+ *   workspaces will not pick. Its own two samples teach it at the point
+ *   somebody chooses it.
+ * - `renewals` — the same argument, plus one that is specific to it. Every row
+ *   in a renewal register turns on a date, and the demo's dates are relative
+ *   (`{ __rel: n }`) so the business never looks stale. Seeding it would
+ *   therefore put expiring certificates in front of anyone who loads the demo,
+ *   and — because §39's digest counts exactly this — would start reporting
+ *   overdue items to a workspace that only wanted a look around.
  *
  * **Named here rather than inferred from `DEMO.records`.** Deriving the
  * exception from the data makes the assertion below vacuous — it would pass
  * just as happily on a dataset that had quietly lost Contacts.
  */
-const DEMO_SKIPS = new Set(['consent']);
+const DEMO_SKIPS = new Set(['consent', 'renewals']);
 const MODULE_BY_KEY = new Map([...TEMPLATES, ...DEMO.modules].map((m) => [m.key, m]));
 
 describe('the shipped demo dataset', () => {

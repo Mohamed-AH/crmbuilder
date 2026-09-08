@@ -167,4 +167,75 @@ const TEMPLATES = [
       { person: 'Okafor Supplies', basis: 'Contract', purpose: 'Invoicing and deliveries', source: 'They contacted us' },
     ],
   },
+  /*
+   * A register of things that expire, built to be read by the digest.
+   *
+   * Nothing here is new machinery. §37's due-date filter and §39's daily
+   * digest already count what is overdue or falling due inside a window, on
+   * any module carrying a date field — so an owner could have built this by
+   * hand. What they could not do is know to, or guess which columns an
+   * inspection actually asks for. That is the whole of this template's job.
+   *
+   * A module rather than fields on Contacts, for §42's three reasons, which
+   * are written out in full on the `consent` template above.
+   *
+   * ---------------------------------------------------------------------
+   * `expires` MUST BE THE ONLY DATE FIELD CARRYING `showInList`.
+   *
+   * `DateRules.watchedDateField` is `dates.find(f => f.showInList) || dates[0]`
+   * — ONE date field per module, and it is what both the filter and the digest
+   * count against. Add an `issuedOn` with `showInList: true` and whichever sits
+   * first in this array silently becomes what the digest reports.
+   *
+   * MEASURED, both ways, and the quieter one is worse:
+   *
+   * - If the new field is FILLED, the message counts certificates by the day
+   *   they were issued and reads exactly as plausibly as the correct one.
+   * - If it is EMPTY — which is what an added field is on every existing row —
+   *   `daysUntil` returns null for every record, the module falls out of the
+   *   `total > 0` filter, and **the register disappears from the digest
+   *   altogether**. No error, no empty section, nothing: the renewals simply
+   *   stop being mentioned. That is §36's state-that-renders-as-nothing, on
+   *   the one feature whose job is to speak up.
+   *
+   * Nothing throws in either case, and no test that does not know to look
+   * would catch it.
+   *
+   * Today there is only one date field at all, so both branches agree. That is
+   * belt and braces rather than the rule — the rule is the sentence above.
+   * ---------------------------------------------------------------------
+   *
+   * **No samples, and this is the one template where that is a decision.**
+   * `createFromTemplate` copies a sample verbatim and does NOT resolve
+   * `{ __rel: n }` (only `loadDemoData` does), so a sample expiry date has to
+   * be hard-coded — which lands in a brand-new workspace as a certificate that
+   * expired two years ago. Leaving the date empty is worse still: an empty cell
+   * in the one column this module exists for reads as "no date set" (§36), on
+   * the first screen somebody sees. Every other template avoids dates in
+   * samples for the staleness half of that; here both halves apply, so there
+   * are no rows.
+   *
+   * **The digest will say "overdue" rather than "expired", deliberately.** The
+   * message builder is shared across every module and has no way to tell a due
+   * date from an expiry date; deriving it from the field label is a
+   * locale-bound heuristic on a string the user typed. The price of the better
+   * word is a shared code path, and the word is understood.
+   */
+  {
+    key: 'renewals',
+    name: 'Renewals',
+    icon: 'clipboard-list',
+    color: '#d92d20',
+    description: 'Certificates, licences and policies that expire — and when.',
+    fields: [
+      { key: 'holder', label: 'Who or what it covers', type: 'text', required: true, showInList: true },
+      { key: 'kind', label: 'Type', type: 'select', options: ['Insurance certificate', 'Trade licence', 'Safety certificate', 'Background check', 'Vehicle inspection', 'Professional registration', 'Other'], showInList: true },
+      { key: 'expires', label: 'Expires', type: 'date', required: true, showInList: true },
+      { key: 'status', label: 'Status', type: 'select', options: ['Current', 'Renewal requested', 'Renewed', 'Lapsed'], showInList: true },
+      { key: 'reference', label: 'Policy or licence number', type: 'text' },
+      { key: 'issuer', label: 'Issued by', type: 'text' },
+      { key: 'notes', label: 'Notes', type: 'textarea' },
+    ],
+    samples: [],
+  },
 ];

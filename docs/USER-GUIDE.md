@@ -173,6 +173,39 @@ to write: if you're unsure which basis applies, the ICO's website is free and
 plain-spoken. And nothing links these rows to your Contacts automatically —
 you name the person in text, the same way Deals names a contact.
 
+### Tracking things that expire
+
+Insurance certificates, trade licences, safety checks, vehicle inspections,
+background checks — the paperwork that is fine until the day it is not, and
+that nobody thinks about until a client asks for it.
+
+Pick **Renewals** on the onboarding screen, or add it later from **Add module →
+from a template**. One row per certificate: who or what it covers, what kind it
+is, the policy number, who issued it, where the renewal has got to, and the
+date it **expires**.
+
+**The point of it is the date.** Once the rows are in, two things you already
+have start working on them:
+
+- The **Due date** filter on the module (§ *Table view and board view*) shows
+  what lapses in the next 7, 14, 30 or 90 days — and everything already
+  expired, however long ago.
+- The **daily digest** (§ *Notifications*) counts the same rows into your team
+  channel each morning. Set **Look ahead** to 30 days and you are told a month
+  before, which is usually enough time to actually renew something.
+
+Three things worth knowing:
+
+- **Keep `Expires` the only date column.** The digest watches one date field
+  per module — the first one shown in the table. Add a second date column, an
+  *Issued on* say, and it may start counting that one instead, or stop
+  mentioning the module altogether. Keep other dates out of the table view.
+- **The digest says "overdue", not "expired".** It is the same wording for
+  every module and it means the same thing here.
+- **The look-ahead is one setting for the whole workspace.** If your deals want
+  7 days and your certificates want 30, you get one number. Pick the longer one
+  — the filter on each module is still per-module.
+
 ---
 
 ## 6. Field types

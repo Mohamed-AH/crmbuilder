@@ -46,6 +46,7 @@ Typical translations:
 | "follow-ups", "callbacks", "to-dos" | Tasks |
 | "enquiries", "walk-ins", "web forms" | Leads |
 | "sites", "properties", "vehicles", "equipment" | a custom module |
+| "certificates", "licences", "insurance", "MOTs", "DBS checks" | Renewals |
 
 Resist adding everything at once. **Three modules used daily beats eight
 modules used never.** Anything can be added in two minutes later.
@@ -128,6 +129,12 @@ By week 1 there is real data and a real due date to chase, so:
 2. Under **Daily digest**, set the look-ahead window and the earliest hour, and
    check the preview — the screen shows the exact message their team will get.
 3. Only then switch it on.
+
+**Pick the look-ahead for the slowest thing they track, not the fastest.** It
+is one setting for the whole workspace. A week is right for chasing a quote and
+useless for a certificate nobody can renew that fast, so a business with a
+**Renewals** module wants 30 days — the per-module Due date filter still lets
+them look at a shorter window whenever they want.
 
 **Set three expectations while you are there**, because each is otherwise a
 support question:
