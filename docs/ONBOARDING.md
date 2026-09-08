@@ -113,6 +113,26 @@ One habit, consistently kept, is what makes the data trustworthy enough to rely 
 
 ## Week 1 check-in (15 minutes)
 
+### Show them the chaser on a real overdue invoice
+
+Not a demo row — one of theirs, which is why this waits for week 1. Open it,
+press **Chase by email**, and let them read the draft. Most people's reaction is
+that it says the awkward part for them, which is the actual problem: the money
+is already earned and nobody wants to write the email.
+
+Say the two limits in the same breath, because both come up:
+
+- **It does not send.** It opens their own email app, from their own address.
+  That is deliberate — a reminder from a stranger's system gets ignored, and
+  theirs has their signature on it.
+- **It reads the record as it stands.** If the amount is stale the reminder is
+  wrong, and it reaches somebody who has already paid. The preview exists for
+  that; tell them to read it rather than trusting it.
+
+If the invoice module has no email field, the chaser follows a link to the
+customer. That only works if the invoice actually links to one — worth checking
+while you are setting the module up, not after.
+
 ### Add a "Last contacted" field while they are still keen
 
 One date field on whichever module holds their customers, and one habit: fill

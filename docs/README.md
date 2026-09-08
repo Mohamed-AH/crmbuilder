@@ -52,7 +52,7 @@ is why status is declared, not inferred.
 | [ONBOARDING.md](ONBOARDING.md) | rollout | Getting a business *using* it inside a week. |
 | [BETA.md](BETA.md) | operator | Runbook: consent screen, codes, usage, alerts, access requests, plus the note to send testers. |
 | [LAUNCH-CHECKLIST.md](LAUNCH-CHECKLIST.md) | operator | What an own-domain move and a pricing launch each have to change. Live, not frozen. |
-| [CHASER-AND-TRACKERS.md](CHASER-AND-TRACKERS.md) | developers | Overdue chaser, renewal tracker, dormancy report — the spec, and the options rejected. Parts 1 and 2 built; part 3 not. |
+| [CHASER-AND-TRACKERS.md](CHASER-AND-TRACKERS.md) | developers | Overdue chaser, renewal tracker, dormancy report — the spec, and the options rejected. Parts 1 and 2 built; part 3's mailto: half built, BYOK send not. |
 | [API.md](API.md) | developers | The HTTP contract and the rules behind it. Carries the route count; nothing else should. |
 | [../DEPLOYMENT.md](../DEPLOYMENT.md) | operator | Render + Atlas + OAuth, the env matrix, backups, what the deployment publishes. |
 | [../CLAUDE.md](../CLAUDE.md) | developers | **The densest document here.** Architecture, invariants, and every trap that has cost time. |

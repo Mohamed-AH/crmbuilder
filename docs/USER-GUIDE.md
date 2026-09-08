@@ -475,6 +475,33 @@ Three things worth knowing:
 - **Only the owner** can see or change it — not members, and not view-only
   accounts.
 
+#### Chasing something that is overdue
+
+Open an overdue record and there is a **Chase by email** button beside Save. It
+does not send anything — it writes the draft and hands it to your own email
+app, from your own address, with your own signature on it. That is what makes a
+payment reminder work: one from a stranger's system gets ignored.
+
+It appears only when the record is **past** the date the module watches (the
+same date the filter above uses) *and* an email address can be found. It looks
+on the record first, and then follows a link — an invoice usually does not
+carry an address, but the customer it is linked to does. The preview says which
+it used, so you can check it rather than trust it.
+
+The draft names the record, the amount if the module has a currency field, the
+date it was due and how many days ago that was — and it ends with *"If you have
+already paid, please disregard this message."*
+
+**Read the preview before you send.** The message is built from the record as
+it stands right now, so if the amount is out of date, the reminder is wrong —
+and a demand sent to somebody who has already paid is worse than not sending
+one. Nothing here checks that for you.
+
+Two smaller things. Some email apps refuse a very long draft, so if yours is
+over the limit the end is cut and the screen says by how many characters,
+before you press anything. And every role can do this, including view-only: it
+opens your own email app with an address you can already read off the record.
+
 #### The daily digest
 
 With a webhook set, an owner can turn on a once-a-day message: a count of what

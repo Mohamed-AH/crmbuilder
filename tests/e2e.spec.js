@@ -794,6 +794,205 @@ test.describe('CSV', () => {
       await page.click('#csv-import-go');
       await expect(page.locator('tr:has-text("Renew insurance")')).toBeVisible();
     });
+
+  /*
+   * The overdue chaser, first commit: it drafts and your own mail client sends.
+   *
+   * No key, no credential, no sub-processor - so what is under test is the
+   * DRAFT: who it resolved, what it says, and that the URL and the screen are
+   * encoded for the two different things they are.
+   *
+   * Europe/London, in §42's existing describe, is deliberate: the container and
+   * CI run UTC, so a date test that does not pin a zone passes on a whole class
+   * of off-by-one.
+   */
+  test('an overdue record offers a draft, addressed through the record it is linked to', async ({ page }) => {
+    await onboard(page, { name: 'Harbour Electrical', templates: ['Contacts'] });
+
+    // The customer, with the address the invoice does not carry.
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await page.click('#add-record-btn');
+    // NOT "Amira Hassan": the Contacts template seeds a sample of that name,
+    // so the row locator below would match two of them (§34).
+    await page.fill('#f-name', 'Priya Raman');
+    await page.fill('#f-email', 'priya@dockside.example');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Priya Raman")')).toBeVisible();
+
+    // Invoices, through the real builder.
+    await page.click('#add-module-btn');
+    await page.fill('#b-name', 'Invoices');
+    // #f-name, not #f-reference: relabelling the default field keeps its key (§4).
+    await page.locator('.builder-field .bf-label').first().fill('Reference');
+
+    await page.click('#b-add-field');
+    let row = page.locator('.builder-field').last();
+    await row.locator('.bf-label').fill('Amount');
+    await row.locator('.bf-type').selectOption('currency');
+
+    await page.click('#b-add-field');
+    row = page.locator('.builder-field').last();
+    await row.locator('.bf-label').fill('Due');
+    await row.locator('.bf-type').selectOption('date');
+    await row.locator('.bf-list').check();
+
+    await page.click('#b-add-field');
+    row = page.locator('.builder-field').last();
+    await row.locator('.bf-label').fill('Client');
+    await row.locator('.bf-type').selectOption('relation');
+    await page.click('#b-save');
+    await expect(page.locator('#nav-modules .nav-link:has-text("Invoices")')).toBeVisible();
+
+    // Local getters, never toISOString - §42's own bug.
+    const dayAgo = (n) => page.evaluate((d) => {
+      const t = new Date();
+      t.setDate(t.getDate() - d);
+      const pad = (x) => String(x).padStart(2, '0');
+      return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+    }, n);
+
+    const add = async (ref, amount, dueDays) => {
+      await page.click('#add-record-btn');
+      await page.fill('#f-name', ref);
+      await page.fill('#f-amount', String(amount));
+      await page.fill('#f-due', await dayAgo(dueDays));
+      await page.selectOption('#f-client', { label: 'Priya Raman' });
+      await page.click('#record-save');
+      await expect(page.locator(`tr:has-text("${ref}")`)).toBeVisible();
+    };
+    await add('INV-1042', 2400, 40);      // overdue
+    await add('INV-1099', 800, -30);      // due in 30 days
+
+    // --- the one that is not overdue has no button at all -------------------
+    // §36's rule 1: absent, rather than present and explaining itself away.
+    await page.click('tr:has-text("INV-1099") td:first-child');
+    await expect(page.locator('#record-save')).toBeVisible();
+    await expect(page.locator('#record-chase')).toHaveCount(0);
+    await page.click('.modal-foot [data-close]');
+
+    // --- the overdue one ----------------------------------------------------
+    await page.click('tr:has-text("INV-1042") td:first-child');
+    await page.click('#record-chase');
+
+    const preview = page.locator('.modal-backdrop').last();
+    // Resolved THROUGH the relation, and the preview says so. An address the
+    // reader cannot trace is one they have to take on trust.
+    await expect(preview).toContainText('priya@dockside.example');
+    await expect(preview).toContainText('from Priya Raman');
+    await expect(preview).toContainText('Harbour Electrical: INV-1042 is overdue');
+
+    // Decision 5: the reference and the balance are both in the message.
+    const body = await page.locator('#chase-body').textContent();
+    expect(body).toContain('INV-1042');
+    expect(body).toMatch(/2,400/);
+    expect(body).toContain('40 days ago');
+    // The dunning line. The real risk here is accuracy, not privacy: a wrong
+    // balance is a demand sent to somebody who has already paid.
+    expect(body).toContain('If you have already paid, please disregard this message.');
+    await expect(page.locator('#chase-caveat')).toContainText('Check it before you send');
+
+    // --- the encode/escape rule, both directions ----------------------------
+    const href = await page.locator('#chase-open').getAttribute('href');
+
+    // A URL, so it is percent-encoded: the body survives a round trip intact,
+    // and its newlines are CRLF as RFC 6068 asks rather than a bare %0A.
+    expect(href.startsWith('mailto:priya@dockside.example?')).toBe(true);
+    expect(href).not.toContain('%40');
+    expect(href).toContain('%0D%0A');
+    const decoded = decodeURIComponent(href.split('&body=')[1]);
+    expect(decoded.replace(/\r\n/g, '\n')).toBe(body.replace(/\r\n/g, '\n'));
+
+    // And HTML, so the screen shows the text rather than the encoding. Running
+    // encodeURIComponent over the preview is the same bug in reverse, and it
+    // renders as a wall of %20 that still looks like a message.
+    expect(body).not.toContain('%20');
+    expect(body).not.toContain('&amp;');
+
+    await page.click('#chase-cancel');
+    // A NESTED layer (§22): closing the preview returns to the record rather
+    // than destroying it, so an unsaved edit is not lost by looking at a draft.
+    await expect(page.locator('#record-save')).toBeVisible();
+  });
+
+  /*
+   * The budget, and that it is never spent silently.
+   *
+   * A record name is not bounded by anything - it arrives from a CSV import and
+   * from a restored backup as well as from the form (§3) - so a long one is the
+   * realistic way this fires rather than a contrived one.
+   */
+  test('a draft too long for a mail client is shortened, and says so', async ({ page }) => {
+    await onboard(page, { name: 'Budget Co', templates: ['Contacts'] });
+
+    /*
+     * Its own module rather than Contacts, for two reasons. The Contacts
+     * template seeds sample rows, so `tr:first-child` would not be the record
+     * under test (§34) - and this module carries the email ITSELF, which is
+     * the other half of `chaseRecipient`: the test above resolves through a
+     * relation, this one does not resolve at all.
+     */
+    await page.click('#add-module-btn');
+    await page.fill('#b-name', 'Bills');
+    await page.locator('.builder-field .bf-label').first().fill('Reference');
+
+    await page.click('#b-add-field');
+    let row = page.locator('.builder-field').last();
+    await row.locator('.bf-label').fill('Email');
+    await row.locator('.bf-type').selectOption('email');
+
+    await page.click('#b-add-field');
+    row = page.locator('.builder-field').last();
+    await row.locator('.bf-label').fill('Due');
+    await row.locator('.bf-type').selectOption('date');
+    await row.locator('.bf-list').check();
+    await page.click('#b-save');
+    await expect(page.locator('#nav-modules .nav-link:has-text("Bills")')).toBeVisible();
+
+    /*
+     * A record name is not bounded by anything - it arrives from a CSV import
+     * and from a restored backup as well as from the form (§3) - so a long one
+     * is the realistic way this fires rather than a contrived one.
+     */
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', `Bill ${'x'.repeat(2600)}`);
+    await page.fill('#f-email', 'someone@example.test');
+    await page.fill('#f-due', await page.evaluate(() => {
+      const t = new Date();
+      t.setDate(t.getDate() - 10);
+      const pad = (x) => String(x).padStart(2, '0');
+      return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+    }));
+    await page.click('#record-save');
+
+    await page.click('tbody tr:first-child td:first-child');
+    await page.click('#record-chase');
+
+    // No relation to follow, so no "from" line: the address is on the record.
+    await expect(page.locator('.modal-backdrop').last()).toContainText('someone@example.test');
+    await expect(page.locator('.modal-backdrop').last()).not.toContainText('— from ');
+
+    // Visible, never silent - the whole point of the guard.
+    await expect(page.locator('#chase-trimmed')).toContainText(/Shortened by \d+ characters/);
+
+    const href = await page.locator('#chase-open').getAttribute('href');
+    expect(href.length, 'the trim has to actually bring it under the budget').toBeLessThanOrEqual(2000);
+
+    /*
+     * The subject is capped rather than trimmed, and that is what makes the
+     * body budget reachable at all: without the cap an unbounded subject eats
+     * the whole allowance, the body is cut to a single ellipsis, and the href
+     * is STILL over - a guard reporting success while failing.
+     */
+    const subject = decodeURIComponent(href.split('?subject=')[1].split('&body=')[0]);
+    expect(subject.length).toBeLessThanOrEqual(150);
+    expect(subject.endsWith('\u2026')).toBe(true);
+
+    // What the reader is shown is what would be sent, ellipsis included.
+    // `textContent` normalises CRLF to LF, so compare on one of them.
+    const shown = await page.locator('#chase-body').textContent();
+    expect(shown.endsWith('\u2026')).toBe(true);
+    expect(decodeURIComponent(href.split('&body=')[1]).replace(/\r\n/g, '\n')).toBe(shown);
+  });
   });
 
   test('imports with column mapping, type coercion and new fields', async ({ page }) => {

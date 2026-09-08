@@ -804,6 +804,17 @@
         <p>The webhook URL works like a password, so it is never shown to you again after you save it, and it is never included in a backup. If your workspace is restored from one, an owner has to paste it again — the Notifications screen says so rather than looking as though nothing was ever set up, and notifications stay off until it is re-entered.</p>
       </div>
 
+      <h3>Chasing something that is overdue</h3>
+      <p>Open an overdue record and there is a <strong>Chase by email</strong> button beside Save. It does not send anything &mdash; it writes the draft and hands it to your own email app, from your own address, with your own signature on it. That is what makes a payment reminder work: one from a stranger's system gets ignored.</p>
+      <p>It appears only when the record is <strong>past</strong> the date the module watches (the same date the filter uses) <em>and</em> an email address can be found. It looks on the record first, then follows a link &mdash; an invoice usually does not carry an address, but the customer it is linked to does. The preview says which it used, so you can check it rather than trust it. The draft names the record, the amount if the module has a currency field, the due date and how many days ago that was, and it ends with <em>"If you have already paid, please disregard this message."</em></p>
+
+      <div class="note caution">
+        <span class="note-label">Careful</span>
+        <p><strong>Read the preview before you send.</strong> The message is built from the record as it stands right now, so if the amount is out of date the reminder is wrong &mdash; and a demand sent to somebody who has already paid is worse than not sending one. Nothing here checks that for you.</p>
+      </div>
+
+      <p>Some email apps refuse a very long draft, so if yours is over the limit the end is cut and the screen says by how many characters before you press anything. Every role can do this, including view-only: it opens your own email app with an address you can already read off the record.</p>
+
       <h3>The daily digest</h3>
       <p>With a webhook set, an owner can turn on a once-a-day message: a count of what is due or already overdue, per module &mdash; the same rows the <strong>Due date</strong> filter shows. Set how far to <strong>look ahead</strong>, the earliest hour it may go out (read in the workspace&rsquo;s time zone), and whether to send it at all. It is off until you turn it on, and the settings screen shows you the exact message your team would get before you do.</p>
       <ul>

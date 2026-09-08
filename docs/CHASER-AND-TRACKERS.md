@@ -4,7 +4,8 @@
 > §29 defines as the maintained tier — not `docs/archive/`, which is frozen.
 > If you change something this file names, change this file.
 >
-> **Parts 1 and 2 are built (`CLAUDE.md` §49, §50). Part 3 is not.** This
+> **Parts 1 and 2 are built (`CLAUDE.md` §49, §50), and part 3's `mailto:`
+> half is (§51). The BYOK send is not.** This
 > was the spec agreed before any code, written so that the decisions are
 > recorded with their reasoning rather than reconstructed from a diff. Where a
 > choice was taken, the alternatives are kept beside it — a decision without
@@ -33,7 +34,7 @@ The other three are planned here.
 |---|---|---|---|
 | 1 | Renewal reminder window | **Single workspace `remind.days`** — shipped | per-module windows |
 | 2 | Dormancy clock | **A date field the user picks**, falling back to `updatedAt` — shipped | a mandatory schema field · a full activity model |
-| 3 | Chaser dispatch | **BYOK manual send**, with `mailto:` as the built-in fallback | `mailto:` only · automated escalation |
+| 3 | Chaser dispatch | **BYOK manual send**, with `mailto:` as the built-in fallback — the fallback is shipped, the BYOK send is not | `mailto:` only · automated escalation |
 | 4 | Who may send | **Owner + member** | owner only · every role |
 | 5 | Message content | **Invoice number and balance** | counts only |
 
@@ -437,6 +438,13 @@ So the message template stays `{{name}}`-style substitution over a
 nesting. Anything more is a second thing to secure.
 
 ## The `mailto:` fallback is not a throwaway
+
+> **BUILT** — `CLAUDE.md` §51. The two things this section asked for and that
+> the build had to prove: the subject cap is what makes the 2 000-character
+> budget reachable at all (without it the body trims to an ellipsis and the
+> href is still 2 690), and the escape rule is a bug in *both* directions, so
+> both are asserted. Roles: every role, and §51 says why that does not
+> contradict decision 4.
 
 It is what a workspace with no key gets, permanently, and it is what makes the
 feature useful to a sole trader — the audience `guide.html` is written for. It

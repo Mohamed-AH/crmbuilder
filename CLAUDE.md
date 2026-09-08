@@ -86,6 +86,7 @@ never change, because everything cross-references them.
 | **Chaser, renewal tracker, dormancy report** — the spec, before any code | [`docs/CHASER-AND-TRACKERS.md`](docs/CHASER-AND-TRACKERS.md) |
 | **Tracking what expires** — the template, and the one date field | §49 · §37 · §39 |
 | **Dormancy vs retention** — two questions, two clocks | §50 · §44 |
+| **Chasing an overdue record** — the draft, and the two escapes | §51 |
 
 ---
 
@@ -126,7 +127,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 421 Node tests + 119 Playwright tests, and the smoke audit at
+**All green:** 421 Node tests + 121 Playwright tests, and the smoke audit at
 **45 passing locally / 50 against production** — the same checks either way,
 with five of them informational on a local file-store HTTP deployment and real
 assertions against a live one (§46). On Windows one Node test skips itself —
@@ -166,6 +167,9 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
   approval lets them straight in with nothing to email — see §20
 - **Per-workspace webhooks** behind an SSRF guard, and a **daily digest** of
   what is due or overdue — off by default, counts only — see §38, §39
+- **An overdue chaser that drafts rather than sends** — it writes the reminder
+  and hands it to the reader's own mail client, so there is no key, no
+  sub-processor and nothing sent from the deployment — see §51
 - **A dormancy report** beside the retention one — same card, same scan, a
   different clock: who nobody has *contacted*, aged on a date field you pick
   rather than on the record's last edit. Reports and never deletes — see §50
@@ -211,7 +215,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v49`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v50`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -6149,3 +6153,190 @@ because that is where the retention review lives. Winning back a lapsed
 customer is a commercial act, and filing it beside the data-protection tools
 would imply a compliance claim it does not make. Same call as §49's, for the
 same reason, one file over.
+
+
+---
+
+## 51. The chaser that writes the email and does not send it
+
+Part 3 of [`docs/CHASER-AND-TRACKERS.md`](docs/CHASER-AND-TRACKERS.md), first
+commit. Open an overdue record and **Chase by email** drafts the reminder and
+hands it to the reader's own mail client.
+
+**This is not scaffolding for the BYOK send.** It is the permanent fallback for
+any workspace that never adds a key, and it is what a sole trader — the reader
+`guide.html` is written for — will use for ever. It also happens to remove the
+thing the brief actually named: *chasing payment feels awkward*. The draft says
+the awkward part, and the money was already earned.
+
+What it buys by not sending: no credential, no sub-processor, no bounce
+handling, no deliverability, no privacy-roster change — and the mail leaves
+from the address the customer already recognises, with the sender's own
+signature on it. A payment reminder from a system nobody recognises gets
+ignored, so this is the point rather than the limitation.
+
+### Available to every role, and that is a decision
+
+§14's ladder and decision 4 in the spec say owner + member. **That governs
+`canSendMail()` on the route that will send through our server, and there is no
+route here.** This composes a draft in the reader's own mail client, from their
+own address, out of an address they can already read off the record — §36 keeps
+export open to every role for exactly that reason. Gating it would buy nothing
+real and would tell a contributor their own mail client is off limits.
+
+Recorded rather than left to be inferred, because it looks like a decision-4
+violation to anybody reading the ladder first.
+
+### `encodeURIComponent`, never `esc()` — and the reverse is a bug too
+
+A URL and a document are different things, and the two escapes are not
+interchangeable in either direction:
+
+| | Wrong tool | What the reader gets |
+|---|---|---|
+| the `href` | `esc()` | `&` and `#` intact, so the body stops at the first one |
+| the preview | `encodeURIComponent` | a wall of `%20` that still looks like a message |
+
+Both directions are asserted. The mutation swapping in `esc()` fails on
+`%0D%0A` and prints the raw body back in the diff, which is the failure naming
+itself.
+
+**`\r\n`, not `\n`**, so the body encodes to `%0D%0A` as RFC 6068 asks — a bare
+`%0A` renders the whole message on one line in some clients. **The address
+keeps its `@`**: percent-encoding it is spec-legal and every client is
+nonetheless tested against the plain form, so `encodeURIComponent(...)` then
+`.replace(/%40/g, '@')`.
+
+### The subject is capped and the body is trimmed, and that asymmetry is load-bearing
+
+A record name is not bounded by anything — it arrives from a CSV import and a
+restored backup as well as from the form (§3's threat model). So:
+
+- the **subject** is capped at 150 characters, because a subject is a label and
+  a truncated one still identifies the mail;
+- the **body** keeps the full reference and is trimmed only if the assembled
+  href would exceed 2000 characters, **visibly**, with the count on screen
+  before anything is pressed.
+
+Truncating the reference *inside* the message would be wrong in a way somebody
+could act on; truncating it in the subject is not.
+
+**The cap is what makes the budget work at all, and the mutation proves it.**
+Removing it leaves the trim with nothing it can do: the body is cut to a single
+ellipsis and the href is **still 2690 characters**. That is a guard reporting
+success while failing — this file's standing failure shape, and it was measured
+rather than predicted.
+
+The trim binary-searches the longest body that fits rather than estimating a
+ratio: percent-encoding runs between one and nine characters per source
+character, so a fixed guess is badly wrong on either an ASCII or an
+emoji-heavy message.
+
+### The address is resolved, and the preview says how
+
+An invoice does not usually carry an email; the customer does. So
+`chaseRecipient` looks for an `email` field on the record, then follows a
+relation to a record that has one — and carries back **`via`**, the name of the
+record the address came from, because resolving through a link is a step the
+reader should be able to check. §37's filter names the date field it watches
+for the same reason: a resolution the reader cannot trace is one they have to
+take on trust.
+
+Both branches are covered: the first journey resolves through a relation, the
+second reads the address off the record itself.
+
+**Absent, not inert.** The button is built only when the record is past the
+watched date *and* an address was found — §36's rule 1, rather than a control
+that opens a dialog to explain it cannot work. Both halves are resolved before
+the modal is assembled, which is why `openRecord` gained an await.
+
+### The real risk is accuracy, not privacy
+
+§39's counts-only rule exists because a webhook destination may be a shared
+channel. Here the recipient **is** the customer, so that reasoning does not
+apply and decision 5 puts the reference and the balance in the message — a
+reminder that does not say what is owed cannot do its job.
+
+What replaces it is a different risk: **a wrong balance is a demand sent to
+somebody who has already paid**, which is worse than a vague nudge. Two
+mitigations, and neither is optional:
+
+- the **preview**, which is the whole interaction rather than a confirmation
+  step — and which says the message was built from the record as it stands;
+- the line every real dunning email carries: *"If you have already paid, please
+  disregard this message."*
+
+The reference is the record's own **name** — the first field, whatever the user
+chose to identify these by — rather than a guess at which text field holds an
+invoice number. Guessing there would be confidently wrong on half the
+workspaces that have one.
+
+### A nested layer, per §22
+
+`openModal` replaces the whole of `#modal-root`, so previewing from inside the
+record would destroy the record — and Close would then cost the reader every
+unsaved edit rather than returning them to it. `openNestedModal` /
+`closeNested`, and the E2E asserts `#record-save` is still there afterwards.
+
+The Open button is a real `<a href>`, so the browser performs the handoff; the
+layer closes on a `setTimeout(…, 0)` **after** it, never instead of it. A
+`preventDefault` here would close the preview and open nothing.
+
+### No new CSS, and that was checked rather than assumed
+
+§27's invented-class trap has now cost time four times, so the preview is built
+entirely from classes that already exist: `.read-row` / `.read-label` /
+`.read-value`, `.read-note` (which already carries `white-space: pre-wrap`,
+exactly right for a message body), `.settings-hint`, `.modal-foot`.
+
+**`.read-row` is only styled inside `.record-read`**, so the preview body
+carries that class. Without it the rows render at browser defaults and look
+plausible in a screenshot, which is the trap in its usual shape.
+
+### Test traps
+
+- **The Contacts template seeds an "Amira Hassan"**, so creating one made
+  `tr:has-text("Amira Hassan")` match two rows. §34's rule is about not
+  depending on what the seed produced; this is the other half — not colliding
+  with it either.
+- **`textContent` normalises CRLF to LF.** The href decodes back to `\r\n` and
+  the screen reports `\n`, so the round-trip assertion compares on one of them.
+  The first version failed by two characters in each direction and said only
+  that the strings differed.
+- **`#f-name`, not `#f-reference`** — §4 again, and the third time in three
+  sections. Relabelling the builder's default field keeps its key.
+
+### Blast radius
+
+`js/app.js` is in `APP_SHELL`, so `CACHE_VERSION` → `crmbuilder-v50`. No new
+served file, no route, no wire change — smoke stays **45 local / 50 live**, and
+running it is what proves that (§9). `safeHref` already permits `mailto:` (§3),
+so the invariant needed nothing; what is not automatic is the encoding, which
+is why both directions are tested.
+
+Counts: Node **421**, Playwright **119 → 121**, smoke **45** locally.
+
+### Docs walked (§27)
+
+| | Needed |
+|---|---|
+| `README.md` | a feature bullet |
+| `guide.html` | a paragraph in *Stop things slipping*, beside the digest |
+| `USER-GUIDE.md`, `docs/manual.html` | a *Chasing something that is overdue* section, with the accuracy caveat as a Careful note |
+| `docs/product-tour.html` | its own tile — *Chasing what is owed* |
+| `docs/ONBOARDING.md` | a week-1 step on a **real** overdue invoice, and the two limits to say in the same breath |
+| `docs/DEMO-SCRIPT.md` | an expected question, with "it does not send" said immediately rather than waited for |
+| `docs/BETA.md` tester note | where the button is and when it appears |
+| `privacy.html` | **nothing** — checked. Nothing leaves the deployment, so there is no recipient to declare. That changes with the BYOK send, and the paragraph then has to describe **both** dispatch states because this one remains the fallback (§40's complete-list lesson) |
+| `terms.html`, `docs/API.md` | nothing — no route, no wire change, no processor change |
+
+### What is deliberately still not built
+
+Option 2 (BYOK manual send) and Option 3 (automated escalation) are both
+unbuilt, and Option 3 stays that way until the scheduler question is answered
+on its own. §40 records the `/health` ping having never once fired the reminder
+engine for weeks, invisibly to every test here; that is an acceptable
+foundation for a message nobody loses money over and not one for money
+collection. `docs/CHASER-AND-TRACKERS.md` Part 3 carries the reasoning and the
+`meta.mail` design, which is the next thing to build and is independent of any
+send UI.

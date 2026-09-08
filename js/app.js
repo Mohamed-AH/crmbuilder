@@ -2470,6 +2470,221 @@
       </div>`;
   }
 
+  /*
+   * ------------------------------------------------------------------
+   * Chasing something that is overdue, without becoming an email product.
+   *
+   * Part 3 of docs/CHASER-AND-TRACKERS.md, first commit: it drafts, and the
+   * owner's own mail client sends. No key, no credential, no sub-processor,
+   * no bounce handling, no deliverability - and the mail leaves from the
+   * address their customers already recognise, with their signature on it,
+   * which is the half that makes a payment reminder work at all.
+   *
+   * This is NOT scaffolding for the BYOK send. It is the permanent fallback
+   * for any workspace that never adds a key, and it is what a sole trader -
+   * the reader guide.html is written for - will use for ever.
+   *
+   * **Available to every role, and that is a decision rather than an
+   * oversight.** Decision 4 in the spec says owner + member, and that governs
+   * `canSendMail()` on the ROUTE that will send through our server. Nothing
+   * is sent here: this composes a draft in the reader's own mail client, from
+   * their own address, out of an address they can already read off the record
+   * (§36 keeps export open to every role for the same reason). Gating it
+   * would buy nothing and would tell a contributor their own mail client is
+   * off limits.
+   * ------------------------------------------------------------------
+   */
+
+  // Some mail clients truncate a long mailto, and a demand for money that
+  // stops mid-sentence is worse than a short one. Measured against the whole
+  // assembled href, because that is what actually hits the limit.
+  const CHASE_MAX_HREF = 2000;
+
+  /*
+   * Who to chase, and where the address came from.
+   *
+   * An invoice usually does not carry an email; the person does. So: an
+   * `email` field on the record itself, and failing that follow a relation to
+   * a record that has one. `via` is carried back because the preview has to
+   * NAME whose address this is - resolving through a link is a step the
+   * reader should be able to check, exactly as §37's filter names the date
+   * field it watches.
+   *
+   * Returns null rather than a blank, so the button is absent rather than
+   * present and inert (§36's rule 1).
+   */
+  async function chaseRecipient(mod, record) {
+    const own = mod.fields.find((f) => f.type === 'email' && record.data[f.key]);
+    if (own) return { email: String(record.data[own.key]).trim(), via: '' };
+
+    for (const f of mod.fields.filter((x) => x.type === 'relation' && x.relatedModule && record.data[x.key])) {
+      const relMod = getModule(f.relatedModule);
+      if (!relMod) continue;
+      const emailField = relMod.fields.find((x) => x.type === 'email');
+      if (!emailField) continue;
+      const hit = (await DB.recordsByModule(relMod.id)).find((r) => r.id === record.data[f.key]);
+      if (hit && hit.data[emailField.key]) {
+        return { email: String(hit.data[emailField.key]).trim(), via: recordName(relMod, hit) };
+      }
+    }
+    return null;
+  }
+
+  /*
+   * How many days past its date this record is, on the VIEWER's calendar.
+   *
+   * No zone argument: this runs in the browser and somebody in Tokyo looking
+   * at their own list should see their own today (§39's two clocks). The
+   * workspace zone is the server's, and unifying them reintroduces the
+   * off-by-one js/date-rules.js exists to prevent.
+   */
+  function chaseOverdueBy(mod, record) {
+    const field = DateRules.watchedDateField(mod);
+    if (!field) return null;
+    const n = DateRules.daysUntil(record.data[field.key], new Date());
+    if (n === null || n >= 0) return null;
+    return { field, days: -n };
+  }
+
+  /*
+   * The draft.
+   *
+   * Decision 5: it carries the reference and the balance, because a reminder
+   * that does not say what is owed cannot do its job. The "reference" is the
+   * record's own name - the first field, which is whatever the user chose to
+   * identify these by - rather than a guess at which text field is a number.
+   *
+   * The dunning line is not decoration. The real risk here is ACCURACY, not
+   * privacy: a wrong balance is a demand sent to somebody who has already
+   * paid, which is worse than a vague nudge. Every real chaser carries that
+   * sentence, and the preview is the other half of the mitigation.
+   */
+  function chaseDraft(mod, record, overdue) {
+    const name = recordName(mod, record);
+    const biz = SETTINGS.businessName || '';
+    const due = fmtDate(record.data[overdue.field.key]);
+    const money = mod.fields.find((f) => f.type === 'currency'
+      && record.data[f.key] !== '' && record.data[f.key] !== undefined && record.data[f.key] !== null);
+    const amount = money ? fmtCurrency(record.data[money.key]) : '';
+    const ago = `${overdue.days} day${overdue.days === 1 ? '' : 's'}`;
+
+    /*
+     * The subject is capped and the body is not.
+     *
+     * A record name arrives from a CSV import or a restored backup as well as
+     * from the form (§3's threat model), so it is not bounded by anything.
+     * An unbounded subject would eat the whole href budget below and leave
+     * the trim with nothing it could do - the body would be cut to a single
+     * ellipsis and the message would still not fit, which is the shape of a
+     * guard that reports success while failing.
+     *
+     * So the SUBJECT is capped, visibly, and the body keeps the full
+     * reference: a subject is a label and a truncated one still identifies
+     * the mail, while a truncated reference inside the message is wrong in a
+     * way somebody might act on.
+     */
+    const subjectRaw = `${biz ? `${biz}: ` : ''}${name} is overdue`;
+    const subject = subjectRaw.length > 150 ? `${subjectRaw.slice(0, 149)}…` : subjectRaw;
+    const body = [
+      'Hello,',
+      '',
+      `Our records show ${name} is still outstanding${amount ? `, ${amount}` : ''}. It was due on ${due}, ${ago} ago.`,
+      '',
+      'Could you let us know when we can expect payment?',
+      '',
+      'If you have already paid, please disregard this message.',
+      '',
+      biz ? `Thanks,\r\n${biz}` : 'Thanks',
+    ].join('\r\n');
+
+    return { subject, body, amount, due, ago, name };
+  }
+
+  /*
+   * Assemble the href, and trim VISIBLY if it will not fit.
+   *
+   * `encodeURIComponent`, never `esc()`. This is a URL, not HTML, and the two
+   * are not interchangeable in either direction: `esc()` would leave `&` and
+   * `#` intact and cut the body off at the first one, while running
+   * `encodeURIComponent` over the preview would show the reader a screen full
+   * of `%20`. The preview escapes; the href encodes. Getting that backwards
+   * is the classic version of this bug, so both directions are asserted.
+   *
+   * `\r\n` in the body encodes to `%0D%0A`, which is what RFC 6068 asks for -
+   * a bare `\n` gives `%0A` and some clients render the whole message on one
+   * line. The address keeps its `@`: percent-encoding it is spec-legal and
+   * every client is nonetheless tested against the plain form.
+   */
+  function chaseHref(to, subject, body) {
+    const addr = encodeURIComponent(to).replace(/%40/g, '@');
+    const build = (b) => `mailto:${addr}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(b)}`;
+    let href = build(body);
+    if (href.length <= CHASE_MAX_HREF) return { href, trimmed: 0, body };
+
+    // Binary-search the longest body that fits, rather than guessing at the
+    // ratio: percent-encoding is between one and nine characters per source
+    // character, so a fixed estimate is wrong by a lot on either an ASCII or
+    // an emoji-heavy message.
+    let lo = 0;
+    let hi = body.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (build(`${body.slice(0, mid)}…`).length <= CHASE_MAX_HREF) lo = mid;
+      else hi = mid - 1;
+    }
+    const cut = `${body.slice(0, lo)}…`;
+    return { href: build(cut), trimmed: body.length - lo, body: cut };
+  }
+
+  /*
+   * A NESTED layer, not `openModal` (§22's rule).
+   *
+   * `openModal` replaces the whole of `#modal-root`, so previewing from
+   * inside the record would destroy the record - and Close would then cost
+   * the reader every unsaved edit rather than returning them to it.
+   */
+  function openChasePreview(mod, record, overdue, to) {
+    const draft = chaseDraft(mod, record, overdue);
+    const out = chaseHref(to.email, draft.subject, draft.body);
+
+    const layer = openNestedModal(`
+      <div class="modal-head">
+        <h2>Chase ${esc(draft.name)}</h2>
+      </div>
+      <div class="modal-body record-read">
+        <div class="read-row">
+          <div class="read-label">To</div>
+          <div class="read-value">${esc(to.email)}${to.via ? ` <span class="muted">— from ${esc(to.via)}</span>` : ''}</div>
+        </div>
+        <div class="read-row">
+          <div class="read-label">Subject</div>
+          <div class="read-value">${esc(draft.subject)}</div>
+        </div>
+        <div class="read-row">
+          <div class="read-label">Message</div>
+          <div class="read-value"><p class="read-note" id="chase-body">${esc(out.body)}</p></div>
+        </div>
+        <p class="settings-hint" id="chase-caveat">This reads the record as it stands now, ${draft.amount ? `including the ${esc(draft.amount)}` : 'and found no amount on it'}. Check it before you send: a reminder with the wrong figure reaches somebody who has already paid.</p>
+        ${out.trimmed ? `<p class="settings-hint" id="chase-trimmed"><strong>Shortened by ${out.trimmed} characters.</strong> Some mail apps refuse a very long draft, so the end has been cut — read what is above before sending, or shorten the record name.</p>` : ''}
+        <p class="settings-hint">Nothing is sent from here. This opens a draft in your own email app, from your own address, and you send it.</p>
+      </div>
+      <div class="modal-foot">
+        <span></span>
+        <div class="modal-foot-right">
+          <button class="btn btn-ghost" id="chase-cancel">Close</button>
+          <a class="btn btn-primary" id="chase-open" href="${esc(out.href)}">${icon('mail', 15)} Open in my email app</a>
+        </div>
+      </div>`);
+
+    $('#chase-cancel', layer).addEventListener('click', () => closeNested(layer));
+    $('#chase-open', layer).addEventListener('click', () => {
+      // Closed after the handoff rather than instead of it: the anchor's own
+      // navigation is what opens the mail client, so this must not preventDefault.
+      setTimeout(() => closeNested(layer), 0);
+    });
+    return layer;
+  }
+
   async function openRecord(staleMod, record) {
     // Rows can outlive the module definition they were rendered from (a CSV
     // import adds fields, the builder edits them), so always open the form
@@ -2478,6 +2693,15 @@
     const isNew = !record;
     const data = record ? record.data : {};
     const readOnly = !canEditRecords();
+
+    /*
+     * Resolved BEFORE the modal is built, so a record with nothing to chase
+     * simply has no button - §36's rule 1, rather than a control that opens
+     * a dialog to say it cannot work. Both halves have to hold: overdue on
+     * the watched date, and an address to send to.
+     */
+    const overdue = isNew ? null : chaseOverdueBy(mod, record);
+    const chaseTarget = overdue ? await chaseRecipient(mod, record) : null;
 
     let fieldsHTML;
     if (readOnly) {
@@ -2509,12 +2733,15 @@
       <div class="modal-foot">
         ${!isNew && canDeleteRecords() ? `<button class="btn btn-danger-ghost" id="record-delete">${icon('trash-2', 15)} Delete</button>` : '<span></span>'}
         <div class="modal-foot-right">
+          ${chaseTarget ? `<button class="btn" id="record-chase">${icon('mail', 15)} Chase by email</button>` : ''}
           <button class="btn btn-ghost" data-close>${canEditRecords() ? 'Cancel' : 'Close'}</button>
           ${canEditRecords() ? '<button class="btn btn-primary" id="record-save">Save</button>' : ''}
         </div>
       </div>`);
 
     $$('[data-close]', modal).forEach((b) => b.addEventListener('click', closeModal));
+    const chaseBtn = $('#record-chase', modal);
+    if (chaseBtn) chaseBtn.addEventListener('click', () => openChasePreview(mod, record, overdue, chaseTarget));
     const saveBtn = $('#record-save', modal);
     if (saveBtn) saveBtn.addEventListener('click', async () => {
       const form = $('#record-form', modal);

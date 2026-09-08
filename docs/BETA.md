@@ -1028,6 +1028,13 @@ look-ahead to 30 days and you hear about a lapse a month out. Keep *Expires* as
 the only date column shown in the table: the digest watches one date field per
 module, so a second one can change what it counts.
 
+**If something is overdue**, open it and there is a *Chase by email* button
+beside Save. It drafts the reminder and opens it in your own email app &mdash;
+nothing is sent from the deployment, and there is no key to add. It only shows
+up when the record is past its date and an address can be found, on the record
+or on whatever it is linked to. Read the preview: the amount comes from the
+record as it stands right now.
+
 **If you want the list of customers nobody has called**, Settings → *Data you
 have stopped using* and switch the first dropdown to *People nobody has
 contacted*. It ages on a date field you pick rather than on the record's last

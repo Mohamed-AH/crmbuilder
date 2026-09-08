@@ -285,6 +285,25 @@ No. The webhook posts from the deployment to *their* chat service, using a URL
 they supply and that is never shown back to them. The digest carries counts and
 module names, never record contents.
 
+**"Can it chase people who owe us money?"**
+It writes the email; their own mail client sends it. Open an overdue record and
+press **Chase by email** — the draft names the invoice, the amount, how many
+days late it is, and closes with *"if you have already paid, please disregard
+this message"*. The address is found on the record or by following the link to
+the customer, and the preview says which.
+
+**Say what it does not do, immediately and in this order**, because the second
+one is the objection they will otherwise raise themselves. It does not send:
+the draft opens in their email app, from their address, with their signature —
+which is the point rather than a limitation, because a payment reminder from a
+system nobody recognises gets ignored. And it reads the record as it stands, so
+a stale amount is a demand to somebody who has already paid; the preview is the
+mitigation and they should read it.
+
+No key, no account, no third party. If they ask whether it can send on its own:
+not today, deliberately, and the honest reason is that sending on a schedule
+needs bounce handling and idempotency that are not there yet.
+
 **"Can it tell us who we have not spoken to in a while?"**
 Yes, and it is worth showing rather than describing. Settings → **Data you have
 stopped using**, first dropdown → *People nobody has contacted*. It reads a date
