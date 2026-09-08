@@ -5208,6 +5208,32 @@ came back empty for wording reasons rather than missing content, and
 `docs/BETA.md`'s CSV-date rough-edge bullet is correctly *gone* — it stopped
 being a rough edge when the control shipped.
 
+**Then the same question about the README found more**, and for the same
+reason: §27's six-document rule names the files a *feature* change has to walk,
+and the root `README.md` is not one of them — so it had quietly fallen a year
+behind while every document that is on the list stayed current. Four kinds of
+stale, and only the first is the sort anyone would notice:
+
+- **Features nobody had added**: the due-date filter, workspace webhooks and
+  the daily digest, and every data-protection tool (§42–§45). All shipped, all
+  user-visible, none mentioned.
+- **A factually wrong CI claim**: *"Set a repository variable `LIVE_URL` to
+  enable the scheduled live check."* It has always had a built-in default, so
+  the check runs whether or not you set one — `LIVE_URL` overrides, it does not
+  enable. Someone reading that would conclude their deployment was unmonitored.
+- **Five files that exist and were not listed**: `js/tour.js`,
+  `js/date-rules.js`, `js/dsar.js`, `lib/safe-fetch.js`, `scripts/restore.mjs`.
+  `lib/` is the one that matters — a whole top-level directory, and the README
+  is where somebody looks to find out why it is not under `js/`.
+- **A data model missing a collection**: `invites`, listed nowhere, beside
+  `betaCodes` which was.
+
+`docs/README.md` was checked at the same time and is fine: every file under
+`docs/` is referenced, its routing table is task-based so new features need no
+new row, and its *"14 sections"* claim about `USER-GUIDE.md` is still exactly
+right — the new material went in as subsections. A number in a second place
+that has *not* gone stale, which is worth recording too.
+
 ### The comment that had never matched the code
 
 The `live` job said *"Runs on schedule, on manual dispatch, and after a push to

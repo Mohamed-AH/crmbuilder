@@ -12,10 +12,13 @@ A **modular CRM builder for small businesses** — an installable, offline-first
 - **Workspace settings** — business name and currency (30 currencies; all money fields format accordingly).
 - **Admin dashboard** — account management (roles, disable, delete) plus business analytics: total/active users, workspaces, records, signups per day, and daily active users.
 - **Operator controls** — a Deployment card showing what the instance is carrying against its three real limits (Atlas storage, container memory, monthly bandwidth), an Organisations table sorted by who is heaviest with each tenant's share, levers to pause signups or cap new organisations without a redeploy, and reversible read-only suspension for a single workspace. Threshold alerts reach Discord, Slack or Telegram, each level announced once rather than every quarter of an hour.
-- **Spreadsheet import/export** — CSV export of the current view, and CSV import with automatic column matching, a mapping step, on-the-fly field creation, and type coercion for money, dates and yes/no columns.
+- **Spreadsheet import/export** — CSV export of the current view, and CSV import with automatic column matching, a mapping step, on-the-fly field creation, and type coercion for money, dates and yes/no columns. `03/04/2026` is 3 April or 4 March and the file does not say which, so the import **asks** — working the answer out from the file where something in it settles the question, naming the value it read that from, and requiring an answer where nothing does, rather than guessing and putting half the rows in the wrong month.
 - **Sortable columns** — click any header; sorting is type-aware (numbers numerically, dates chronologically, dropdowns in pipeline order).
 - **Team workspaces** — an organisation shares one workspace; owners invite colleagues with a single-use link that expires after a week. Joiners choose whether to bring their own records with them. Four roles: **owner** (schema, invites, the team), **member** (records, including deleting them), **contributor** (add and edit, but not delete) and **viewer** (read only). Records carry who added them, and removing someone from a team is not deleting their account.
 - **Concurrent editing** — two people editing *different fields of the same record* both keep their edit. Each field carries its own clock and the server merges key by key, so a colleague's phone-number change does not vanish because you saved the email a second later.
+- **Due-date filter** — every module with a date field can show just what is due in the next 7, 14 or 30 days. Overdue rows are always included however old, because a filter that hides the lapsed invoice hides the row most worth looking at.
+- **A nudge, once a day** — point a workspace at a Slack, Discord or Telegram channel and it posts a morning count of what is due or overdue. Off until switched on, **counts and module names only, never record contents** (a chat channel usually has more people in it than the CRM does), and a day with nothing due sends nothing. Telegram needs no webhook URL: paste the bot token and pick the chat from a list the app looks up for you.
+- **Data-protection tools** — for a business holding other people's details: a **Consent & lawful basis** module template, a **data request** search that answers *"what do you hold about me"* across every text field (including names that only appear as a link, and values under fields you have since removed), a **retention review** of what nothing has touched in a window you pick, and **closing your own account** from Settings. The search and the review report; they never delete on your behalf.
 - **Demo data** — one click fills every module with a coherent fictional business (144 records across 8 modules, two of them beyond the prebuilt templates, with projects linked to the companies paying for them) for evaluations and demos. It is never loaded without asking, never syncs to an account unless you choose to keep it, and **Settings → Remove sample data** takes it back out while keeping anything you added yourself.
 - **Backup & restore** — export/import the whole workspace as JSON.
 - **PWA** — installable on desktop and mobile, fully offline via a service worker, light & dark mode, Inter typography, Lucide icons.
@@ -52,9 +55,18 @@ npm run test:smoke    # deployment health audit (localhost)
 BASE_URL=https://your-app.onrender.com npm run test:smoke
 ```
 
-CI (`.github/workflows/test.yml`) runs the full suite on every push and smoke-tests
-the live deployment daily. Set a repository variable `LIVE_URL` to enable the
-scheduled live check.
+CI (`.github/workflows/test.yml`) runs the full suite on every push, and
+smoke-tests the live deployment on every push *and* daily. A repository
+variable `LIVE_URL` overrides which deployment it audits; without one it falls
+back to a built-in default, so the scheduled check runs whether or not you set
+it.
+
+**A push run waits for the deployment to be running that commit before
+auditing it** — `/healthz` reports the deployed commit, and CI polls it. Without
+that, a push adding a new file audits the *previous* build, which 404s on the
+new file and reports the deployment broken until somebody re-runs the job. The
+daily run deliberately does not wait: nothing is in flight, so a stale
+deployment failing the current asset list is a real finding rather than a race.
 
 A `security` job runs alongside: `npm audit` gates on high/critical in
 **production** dependencies (a dev-only advisory should not block a server
@@ -94,11 +106,17 @@ js/boot-icons.js      fills static icon placeholders (a file, not inline — CSP
 js/db.js              promise-based IndexedDB wrapper
 js/cloud.js           account + sync layer (server ⇄ local fallback)
 js/csv.js             RFC 4180 CSV reader/writer
+js/date-rules.js      calendar-day arithmetic — the due filter, the digest, CSV date import
+js/dsar.js            finds every place one person appears, for a data request
 js/templates.js       prebuilt module templates
 js/scope.js           storage scopes — which account local data belongs to
+js/tour.js            guided walkthrough engine (no dependencies)
 js/demo-data.js       fictional business used by "Load demo data"
 js/app.js             router, views, module builder, kanban, admin dashboard
+lib/safe-fetch.js     SSRF guard for customer-chosen webhook destinations — server-side,
+                      and deliberately NOT under js/, which is served
 scripts/inspect.mjs   read-only database inspection — what is actually stored, and what disagrees
+scripts/restore.mjs   puts a backup back, into Mongo or the file store, and verifies the counts
 scripts/gen-demo-data.mjs  regenerates js/demo-data.js (seeded, so a re-run is byte-identical)
 scripts/seed-fixture.mjs   seeds a team, roles, tombstones and meta counters into the file store
 tests/                smoke, API, CSV unit and Playwright end-to-end tests
@@ -114,6 +132,7 @@ MARKETING.md          B2B/B2C copy + launch threads
 - **Module**: `{ id, name, icon, color, defaultView, fields[], createdAt }`
 - **Field**: `{ key, label, type, required?, showInList?, options?, relatedModule? }`
 - **Record**: `{ id, moduleId, data: { [fieldKey]: value }, fieldsAt?: { [fieldKey]: ts }, createdAt, updatedAt }`
-- **Settings**: `{ businessName, currency }`
+- **Settings**: `{ businessName, currency, timezone, remind: { enabled, days, hour } }` — synced to every member of the workspace
+- **Workspace webhook**: a **sibling** of settings on the meta doc, never inside it. Settings sync to everyone and resolve last-write-wins; a webhook URL is a credential (a Telegram one contains the bot token), so putting it there would hand it to every teammate's device and let an unrelated settings save overwrite it
 
-Client data lives in the `crmbuilder` IndexedDB database (mirrored to localStorage). When signed in, each module and record syncs individually to the MongoDB collections `modules` and `records`, carrying an `updatedAt` (the row's edit clock) and a `serverAt` (the delta cursor). A record also carries `fieldsAt`, a clock per field, so two people editing different fields of one record resolve key by key instead of one overwriting the other; a row without it resolves whole-row exactly as before. Deletes are tombstones, so a device that was offline learns about them instead of resurrecting the row — and a tombstone discards the body, so a delete is not undoable. Accounts, orgs, settings, analytics, beta codes, access requests and platform settings live in `users`, `orgs`, `data`, `events`, `betaCodes`, `accessRequests` and `platform`.
+Client data lives in the `crmbuilder` IndexedDB database (mirrored to localStorage). When signed in, each module and record syncs individually to the MongoDB collections `modules` and `records`, carrying an `updatedAt` (the row's edit clock) and a `serverAt` (the delta cursor). A record also carries `fieldsAt`, a clock per field, so two people editing different fields of one record resolve key by key instead of one overwriting the other; a row without it resolves whole-row exactly as before. Deletes are tombstones, so a device that was offline learns about them instead of resurrecting the row — and a tombstone discards the body, so a delete is not undoable. Accounts, orgs, settings, analytics, invites, beta codes, access requests and platform settings live in `users`, `orgs`, `data`, `events`, `invites`, `betaCodes`, `accessRequests` and `platform`. The nightly backup deliberately carries **counts** of outstanding invites and beta codes rather than the codes themselves — both are bearer credentials, and the artifact is downloadable by anyone with read access to the repository holding it.
