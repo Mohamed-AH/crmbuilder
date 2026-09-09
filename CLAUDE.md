@@ -92,6 +92,7 @@ never change, because everything cross-references them.
 | **Sending a chaser** — the recipient rule, and the relay it closes | §53 · §51 |
 | **A doc sibling that survives a stale push** — the union, not more clocks | §54 · §26 · §10 |
 | Who already chased this, and sent vs drafted | §54 |
+| **A failed write killed the process** — async routes, and a Windows rename | §55 · §30 · §4 |
 
 ---
 
@@ -133,7 +134,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 493 Node tests + 125 Playwright tests, and the smoke audit at
+**All green:** 498 Node tests + 125 Playwright tests, and the smoke audit at
 **46 passing locally / 51 against production** — the same checks either way,
 with five of them informational on a local file-store HTTP deployment and real
 assertions against a live one (§46). On Windows one Node test skips itself —
@@ -471,6 +472,7 @@ parallel and they each spawn real servers:
 | `ssrf.test.mjs` | 9600–9650 | 2 (capture servers, not the app) |
 | `reminders.test.mjs` | 9700–9750 | 1 app + 1 capture |
 | `mail.test.mjs` | 9800–9850 | 2 capture (9800–9839) + 1 app (9840–9849) |
+| `resilience.test.mjs` | 9900–9950 | 1 |
 
 They used to overlap badly — `api.test.mjs` alone spanned 8300–8899, across
 three other files' ranges. Widen a block and check the neighbours.
@@ -7030,3 +7032,146 @@ colleague's name already on the Team screen, it goes nowhere new, and it is
 covered by "your CRM contents are stored on our server".
 
 Counts: Node **480 → 493**, Playwright **123 → 125**, smoke **46** locally.
+
+
+---
+
+## 55. A write the server could not make took the whole deployment with it
+
+Reported from a Windows machine: CI green, the Node half of `npm test` green
+(493, one skipped — §4's SIGTERM note), and the Playwright run dying at test 33
+with the **web server gone**, taking tests 33–69 with it.
+
+```
+[WebServer] Error: EPERM: operation not permitted, rename
+  'data\e2e\store.json.20680.tmp' -> 'data\e2e\store.json'
+    at FileStore.save (server.js:240)
+    at FileStore.putItems (server.js:342)
+    at applyPush (server.js:1791)
+  Node.js v24.18.1        <- the process, gone
+```
+
+**Two faults, and only the second is about Windows.** Reading the stack as one
+bug produces a Windows fix and leaves a deployment that dies on a full disk.
+
+### Fault 1: Express 4 does not catch a rejected promise
+
+An `async` route handler that rejects does not reach the error handler — Express
+4 never looks at the return value, so it becomes an **unhandled rejection**, and
+Node ≥ 15 exits on those by default. **48 of the 55 routes here are `async`**,
+`requireAuth` is async too, and nothing wrapped any of them.
+
+So this was never about renaming. A Mongo timeout, a full disk, or any `await`
+that throws inside a handler kills the deployment the same way — and §30's
+Phase 4 *"error handler that cannot leak"* only ever covered **synchronous**
+throws, which is why the audit read as complete.
+
+**Reproduced on Linux**, which is what says it is not a platform artifact
+(§9's triage rule, coming out the other way for once): a probe that put a
+non-empty directory where `store.json` goes gave
+`PUSH RESULT: fetch failed` — the connection dying mid-flight, not a status —
+then `SERVER EXITED: 1`, `STILL ALIVE: DEAD`.
+
+The fix is at the **router**, not on 48 handlers:
+
+```js
+for (const verb of ['get', 'post', 'put', 'patch', 'delete', 'all', 'use']) {
+  const original = app[verb].bind(app);
+  app[verb] = (...args) => original(...args.map(wrapAsync));
+}
+```
+
+- **Arity 4 is left alone.** That is how Express recognises an error handler,
+  and wrapping one hides the handler this exists to reach.
+- **`.catch(next)`, never `await`.** The handler owns the response; awaiting it
+  would add a microtask to every successful request and change ordering on the
+  one path that must not move.
+- **A router patch rather than a wrapper at each call site**, because the next
+  route somebody adds is `async` too and would not be wrapped. This is §31's
+  argument for putting the guard in `DB.put` rather than at the writes.
+
+`express-async-errors` does this and is a fifth production dependency for
+twelve lines (§30: four dependencies is an asset on a shared free tier).
+Express 5 does it natively and is not a change to make while chasing a crash.
+
+### Fault 2: the rename is transient on Windows
+
+rename(2) there is `MoveFileEx`, which fails **EPERM/EACCES/EBUSY** while
+anything at all holds the destination — Defender scanning the file just
+written, Search indexing it, an editor with it open. It clears in
+milliseconds, and it is common enough that an ordinary E2E run hit it.
+
+`save()` retries, bounded at ten attempts, **errno-scoped**: ENOSPC,
+ENOTEMPTY, EISDIR and EROFS describe states that will not improve, so
+retrying them turns a clear failure into a slow one. They throw at once, and
+fault 1's fix is what turns that into a 500.
+
+- **A synchronous sleep** (`Atomics.wait`), because `save()` is synchronous and
+  every caller depends on that. Making it async means auditing every write path
+  for an interleaving that cannot happen today. It runs only on the failure
+  branch and for at most ~180ms.
+- **The temp file is removed when it gives up.** Otherwise one stale
+  `store.json.<pid>.tmp` accumulates per failure, in the directory holding
+  every customer's records.
+
+### The test, and how it is made to fail here
+
+`tests/resilience.test.mjs`, ports 9900–9950 (§9). The hard part is making a
+write impossible **on a machine that is not Windows**, and the honest answer is
+two mechanisms plus a skip:
+
+| | Stops | Set by |
+|---|---|---|
+| `chmod(dir, 0o500)` | an ordinary user — which is CI | anyone |
+| `chattr +i <file>` | **root**, which is what this container runs as | root |
+
+Neither covers both, so it tries one, tries the other, and **verifies by
+attempting a real replace** rather than trusting the call — a setup that
+silently did nothing gives a test that passes and proves nothing. If neither
+blocks anything it **skips with the reason said out loud**, per §4's SIGTERM
+precedent.
+
+**`chattr +i` yields EPERM on rename even as root** — the same errno Windows
+raises, which is what makes the retry deterministically testable here rather
+than only on the reporter's machine.
+
+**The transient test is proved by TIMING, not by status.** The block is lifted
+120ms after the request goes out, so a save that succeeded on its first attempt
+would have answered before then; arriving afterwards is what says something was
+actually retried.
+
+**My first probe reported no bug, and the probe was wrong.** `chmod(dir, 0o500)`
+is bypassed by root, so the push succeeded and the server survived — which
+would have read as "the report does not reproduce". Replaced with a non-empty
+directory in the target's place, which nothing bypasses.
+
+### Checked against the broken state, and the split is the useful part
+
+| Mutation | Fails |
+|---|---|
+| drop the router patch | **4 of 5**, the first on `fetch failed` rather than a status — the reported symptom |
+| drop the retry loop | **2 of 5**: *a transient block is waited out* (200 against 500) and *a failed save leaves no temp file behind*, since the cleanup lives on that branch |
+
+Neither mutation fails the other's tests, which is what shows the two changes
+cover different faults rather than one twice.
+
+### Blast radius
+
+`server.js` only — no client file, no served file, no route, no wire change.
+`CACHE_VERSION` stays `crmbuilder-v52` and smoke stays **46 local / 51 live**;
+running them is what proves that (§9).
+
+**The router patch is shared surface in the strongest sense** — it wraps every
+handler in the application, so it had a full run before it was trusted, per
+§9's blast-radius rule. `app.use` is patched too, which means the JSON body
+parsers, the rate limiter and the static middleware all pass through
+`wrapAsync`; they are synchronous and arity 3, so they are returned unchanged,
+and the full suite is what says so rather than the reasoning.
+
+**`docs/API.md` gains a line and no route.** §46's trap exactly: the count is
+still right and the file looks current, while a **status code** moved — a write
+the server cannot make is now a 500 rather than a dropped connection, and that
+is the difference between a client retrying and a client seeing the deployment
+disappear.
+
+Counts: Node **493 → 498**, Playwright **125**, smoke **46** locally.

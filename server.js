@@ -203,6 +203,24 @@ const TOMBSTONE_DAYS = Number(process.env.TOMBSTONE_RETENTION_DAYS || 180);
 // Both stores implement the same interface so the rest of the app
 // doesn't care which one is active.
 
+/*
+ * Rename failures worth waiting out. See FileStore.save().
+ *
+ * These are the codes Windows raises while something else holds the
+ * destination; every one of them clears on its own. Anything not in here —
+ * ENOSPC, ENOTEMPTY, EISDIR, EROFS — describes a state that will not improve,
+ * and retrying it only delays the error.
+ */
+const RETRY_RENAME = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
+/*
+ * Block this thread for `ms`. Node allows Atomics.wait on the main thread,
+ * unlike a browser, and there is no synchronous sleep otherwise.
+ */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 class FileStore {
   constructor(file) {
     this.file = file;
@@ -234,10 +252,42 @@ class FileStore {
    * copy intact. The temp file must sit beside the target for that to hold —
    * a rename across filesystems is a copy, and copies are not atomic.
    */
+  /*
+   * The rename is RETRIED, and that is a Windows fix rather than a general one.
+   *
+   * rename(2) on Windows is MoveFileEx, which fails EPERM/EACCES/EBUSY while
+   * anything at all holds a handle on the destination — Defender scanning the
+   * file that was just written, Search indexing it, an editor with it open.
+   * It is transient and clears in milliseconds, and it is common enough that a
+   * full E2E run on a developer's machine hit it and killed the server.
+   *
+   * Bounded and errno-scoped on purpose. ENOSPC, ENOTEMPTY and EISDIR are not
+   * transient, so retrying them would turn a clear failure into a slow one —
+   * they throw immediately, and the wrapper above now turns that into a 500
+   * rather than a dead process.
+   *
+   * A synchronous sleep, because save() is synchronous and every caller
+   * depends on that: making it async would mean auditing every write path for
+   * an interleaving that cannot happen today. It runs only on the failure
+   * branch, and only for as long as ~180ms.
+   */
   save() {
     const tmp = `${this.file}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(this.s));
-    fs.renameSync(tmp, this.file);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        fs.renameSync(tmp, this.file);
+        return;
+      } catch (err) {
+        if (attempt >= 9 || !RETRY_RENAME.has(err.code)) {
+          // Leaving it behind would accumulate one stale temp file per failure
+          // in the directory holding the store.
+          try { fs.unlinkSync(tmp); } catch { /* it may never have landed */ }
+          throw err;
+        }
+        sleepSync(20);
+      }
+    }
   }
   async init() { this.pruneTombstones(); }
   kind() { return 'file'; }
@@ -2066,6 +2116,50 @@ async function migrateToOrgWorkspaces() {
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1); // Render terminates TLS at the proxy
+
+/* ---- an async handler that rejects must not kill the deployment -----------
+ *
+ * Express 4 does not catch a rejected promise from an `async` handler. It
+ * becomes an unhandled rejection, and Node >= 15 exits the process by default.
+ * So ANY of the 48 async routes here — plus `requireAuth`, which is async and
+ * sits on nearly all of them — could take the whole server down rather than
+ * answering 500.
+ *
+ * §30's "error handler that cannot leak" only ever covered SYNCHRONOUS throws.
+ * That was not noticed because the routes that reject do so rarely: a Mongo
+ * hiccup, a full disk, or — the one that reported this — a failed rename in
+ * FileStore.save(). Reproduced deliberately rather than reasoned about: with a
+ * store the process cannot replace, a single /api/sync push exits the process
+ * with code 1, and the request is never answered at all.
+ *
+ * WRAPPED AT THE ROUTER, not at 48 call sites. Route 49 is the one that would
+ * be forgotten, and this file's standing preference is a guarantee that holds
+ * for somebody who never reads the comment (§38). `app.set` and `app.get(name)`
+ * as a settings getter are untouched: a non-function argument passes straight
+ * through, so `app.get('port')` still reads a setting.
+ *
+ * Arity 4 is left alone — that is how Express recognises an error handler, and
+ * wrapping one would hide the very handler this exists to reach.
+ */
+function wrapAsync(fn) {
+  if (typeof fn !== 'function' || fn.length >= 4) return fn;
+  return function wrapped(req, res, next) {
+    try {
+      const out = fn.call(this, req, res, next);
+      // `.catch(next)` and not `await`: the handler owns the response, and
+      // this must add nothing to the successful path.
+      if (out && typeof out.then === 'function') out.catch(next);
+      return out;
+    } catch (err) {
+      return next(err);
+    }
+  };
+}
+
+for (const verb of ['get', 'post', 'put', 'patch', 'delete', 'all', 'use']) {
+  const original = app[verb].bind(app);
+  app[verb] = (...args) => original(...args.map(wrapAsync));
+}
 
 /*
  * Count what goes out, without paying for the counting.

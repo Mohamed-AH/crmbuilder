@@ -44,6 +44,14 @@ A failed sync would leave the two sides disagreeing forever. See §2.
 | 429 | Rate limited — see *Limits and headers* below |
 | 500 | Something threw. The body is `{ "error": "Something went wrong." }` and **never** a stack trace |
 
+**A 500 is an answer, and that is worth stating.** Every route here is `async`,
+and Express 4 does not route a rejected promise to the error handler on its
+own — so until `CLAUDE.md` §55 a failure inside a handler (a write the server
+could not make, a database timeout) was an unhandled rejection that **exited
+the process**, and the caller saw a dropped connection rather than a status.
+Handlers are wrapped at the router now. A client should treat 500 as
+retryable; it no longer means the deployment has gone.
+
 ### Limits and headers
 
 Every response carries a fixed set of security headers, including a CSP with
