@@ -581,7 +581,8 @@
     <section id="modules">
       <span class="sec-num">05</span>
       <h2>Building and changing modules</h2>
-      <p>Click <strong>+</strong> next to MODULES in the sidebar, or <strong>Add module</strong> on the dashboard.</p>
+      <p>Click <strong>+</strong> next to MODULES in the sidebar, or <strong>Add module</strong> on the dashboard. Either one offers the prebuilt modules first, with <strong>Empty module</strong> at the top if you would rather start from nothing.</p>
+      <p><strong>The prebuilt ones are always available</strong>, not only on your first day. If you skipped Renewals or Consent when you set the workspace up, add it whenever you want it &mdash; the picker marks the ones you already have, so it also answers &ldquo;which of these did I take?&rdquo;. A module added from a template is an ordinary module: you can rename it, change its fields and delete it exactly like one you built.</p>
 
       <ol class="steps">
         <li><strong>Name it.</strong> Use the plural — "Projects", "Invoices", "Job Sites". Buttons elsewhere in the app automatically use the singular form.</li>
@@ -817,6 +818,15 @@
 
       <h4>Sending it from the app instead</h4>
       <p>An owner can connect the workspace&rsquo;s own email account &mdash; <strong>Settings &rarr; Sending reminders by email</strong> &mdash; by pasting a <strong>Resend</strong> or <strong>Postmark</strong> API key and the address reminders should come from. A <strong>Send it now</strong> button then appears in the preview beside <em>Open in my email app</em>, and one press sends it.</p>
+      <p><strong>Setting it up, start to finish.</strong> You need an account with one of the two services; both have a free tier that is ample for chasing invoices.</p>
+      <ol>
+        <li><strong>Sign up</strong> at <a href="https://resend.com">resend.com</a> or <a href="https://postmarkapp.com">postmarkapp.com</a>. Either is fine &mdash; pick on price and on which you find easier to read.</li>
+        <li><strong>Add and verify your sending domain</strong> with them. This is the step that takes real effort: they give you DNS records to add wherever your domain is managed, and it can take anything from minutes to a few hours to go through. <strong>Do this before anything else</strong> &mdash; it is the single most common reason a first send fails, and the failure arrives as a refusal from your provider rather than as anything wrong with the key.</li>
+        <li><strong>Create an API key</strong> in their dashboard, with permission to send. Copy it the moment it is shown; neither service will show it to you twice.</li>
+        <li><strong>Open Settings &rarr; Sending reminders by email.</strong> Paste the key, and type the address reminders should come from &mdash; it has to be at the domain you verified in step 2. Save.</li>
+        <li><strong>Send one to yourself.</strong> Open an overdue record, press <em>Chase by email</em>, and use <em>Send it now</em>. That first send is what proves the whole chain, and it is much better to discover a DNS record is still propagating on a reminder addressed to you than on one addressed to a customer.</li>
+      </ol>
+      <p>If a send is refused, the message on screen is your provider&rsquo;s own wording rather than ours &mdash; that is deliberate, because they are the only one that knows whether the problem is the key, the domain, or the recipient.</p>
       <ul>
         <li><strong>It is your account with them, not ours.</strong> Your sending domain, your deliverability, your bill. We hold the key so the reminder can be sent and nothing else: it is never shown back to anybody, never sent to a browser, and never included in a backup.</li>
         <li><strong>You do not pick the provider.</strong> We work out which service the key belongs to from the key itself.</li>

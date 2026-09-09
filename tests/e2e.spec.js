@@ -542,6 +542,7 @@ test.describe('module builder', () => {
     test(`field controls stay aligned when the type is ${label}`, async ({ page }) => {
       await onboard(page);
       await page.click('#add-module-btn');
+      await page.click('[data-blank]');   // the picker's first entry — an empty module
       await page.locator('.builder-field .bf-type').first().selectOption(type);
 
       const metrics = await page.evaluate(() => {
@@ -574,6 +575,7 @@ test.describe('module builder', () => {
   test('creates a custom module with a dropdown and a relation', async ({ page }) => {
     await onboard(page);
     await page.click('#add-module-btn');
+    await page.click('[data-blank]');   // the picker's first entry — an empty module
     await page.fill('#b-name', 'Projects');
     await page.locator('.builder-field .bf-label').first().fill('Project name');
 
@@ -615,6 +617,43 @@ test.describe('module builder', () => {
    * out (§11). Nothing tested that path for any template before — the demo
    * loader has its own, and it does not touch `samples` at all.
    */
+  /*
+   * The reported bug: "I had selected a few modules during initial setup, now
+   * I can't access the built in modules which I did not select."
+   *
+   * True, and it was the whole product: the prebuilt modules were reachable
+   * ONLY from onboarding and from a button in Settings → App, sitting beside
+   * "Install on this device". Every create affordance a person would actually
+   * reach for — the sidebar +, the dashboard tile — opened a blank builder.
+   *
+   * Onboarding takes Contacts ONLY here, so Renewals is genuinely one the user
+   * declined. That is what makes this the reported case rather than a tour of
+   * the picker.
+   */
+  test('a prebuilt module skipped at onboarding can still be added later', async ({ page }) => {
+    await onboard(page, { templates: ['Contacts'] });
+    await expect(page.locator('#nav-modules .nav-link')).toHaveCount(1);
+
+    await page.click('#add-module-btn');
+    await page.click('.template-line:has-text("Renewals")');
+
+    // It is there, it opened, and it carries the template's own columns rather
+    // than a blank module wearing the name.
+    // toContainText, not toHaveText: the heading carries the module's icon.
+    await expect(page.locator('.page-head h1')).toContainText('Renewals', { timeout: 20000 });
+    await expect(page.locator('#nav-modules .nav-link:has-text("Renewals")')).toHaveCount(1);
+    await page.click('#add-record-btn');
+    await expect(page.locator('#f-expires')).toBeVisible();
+    await page.click('[data-close]');
+
+    // And the picker says which ones are already in the workspace — the other
+    // half of the question that was being asked.
+    await page.click('#add-module-btn');
+    await expect(page.locator('.template-line:has-text("Contacts")')).toContainText('already added');
+    await expect(page.locator('.template-line:has-text("Renewals")')).toContainText('already added');
+    await expect(page.locator('.template-line:has-text("Leads")')).not.toContainText('already added');
+  });
+
   test('the consent template arrives usable, and its samples can be removed', async ({ page }) => {
     await onboard(page, { templates: ['Consent & lawful basis'] });
     await page.click('#nav-modules .nav-link:has-text("Consent")');
@@ -847,6 +886,7 @@ test.describe('CSV', () => {
 
     // Invoices, through the real builder.
     await page.click('#add-module-btn');
+    await page.click('[data-blank]');   // the picker's first entry — an empty module
     await page.fill('#b-name', 'Invoices');
     // #f-name, not #f-reference: relabelling the default field keeps its key (§4).
     await page.locator('.builder-field .bf-label').first().fill('Reference');
@@ -962,6 +1002,7 @@ test.describe('CSV', () => {
      * relation, this one does not resolve at all.
      */
     await page.click('#add-module-btn');
+    await page.click('[data-blank]');   // the picker's first entry — an empty module
     await page.fill('#b-name', 'Bills');
     await page.locator('.builder-field .bf-label').first().fill('Reference');
 
@@ -1404,8 +1445,24 @@ test.describe('guided tour', () => {
       await expect(page.locator('.tour-pop:not(.is-loading)')).toBeVisible();
       await expect(page.locator('[data-tour-count]')).toHaveText(`Step ${step} of 6`);
 
-      // The card must stay on screen and must not cover the thing it points at.
-      const layout = await page.evaluate(() => {
+      /*
+       * The card must stay on screen and must not cover the thing it points at
+       * — POLLED, because that is a steady-state claim and a single read is
+       * not.
+       *
+       * `is-loading` comes off BEFORE position() runs, and steps 2 and 3 force
+       * their own screen in a `before` hook whose re-render is not awaited
+       * (§4, §7). So the board can grow under a card that was correctly placed
+       * for the shorter one, and §35's ResizeObserver repositions it on a
+       * later frame. One `evaluate` can land inside that window, and a slower
+       * machine widens it — which is how this surfaced as an intermittent
+       * step-2 failure on the reporter's machine and never here.
+       *
+       * This does NOT soften §35's guard: that defect was a card placed over
+       * the ring and LEFT there, 20 runs out of 20. A placement that never
+       * settles still fails, and removing watchGeometry() is what proves it.
+       */
+      await expect.poll(async () => page.evaluate(() => {
         const pop = document.querySelector('.tour-pop').getBoundingClientRect();
         const ring = document.querySelector('.tour-ring').getBoundingClientRect();
         return {
@@ -1414,9 +1471,8 @@ test.describe('guided tour', () => {
           coversTarget: !(pop.right < ring.left || pop.left > ring.right
             || pop.bottom < ring.top || pop.top > ring.bottom),
         };
-      });
-      expect(layout.onScreen, `step ${step} card is off screen`).toBe(true);
-      expect(layout.coversTarget, `step ${step} card covers its own highlight`).toBe(false);
+      }), `step ${step} card must settle on screen and clear of its own highlight`)
+        .toEqual({ onScreen: true, coversTarget: false });
 
       await page.click('[data-tour-next]');
     }
@@ -2389,6 +2445,7 @@ test.describe('team workspaces', () => {
 
     // A module of their own, with a field type the templates never use here.
     await page.click('#add-module-btn');
+    await page.click('[data-blank]');   // the picker's first entry — an empty module
     await page.fill('#b-name', 'Equipment');
     await page.click('#b-add-field');
     const row = page.locator('.builder-field').last();
@@ -3571,6 +3628,7 @@ test.describe('settings', () => {
     // A real module through the real builder: the report has to work on a
     // module somebody made, not only on a template (§36's rule).
     await page.click('#add-module-btn');
+    await page.click('[data-blank]');   // the picker's first entry — an empty module
     await page.fill('#b-name', 'Clients');
     await page.locator('.builder-field .bf-label').first().fill('Client name');
 

@@ -94,6 +94,8 @@ never change, because everything cross-references them.
 | Who already chased this, and sent vs drafted | §54 |
 | **A failed write killed the process** — async routes, and a Windows rename | §55 · §30 · §4 |
 | **A test that passes in a UTC container** — and the save it was hiding | §55 · §45 · §39 |
+| **Reaching a prebuilt module you skipped at onboarding** | §56 · §49 · §42 |
+| **Where BYOK setup is written down** | §56 · §52 · §53 |
 
 ---
 
@@ -135,7 +137,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 498 Node tests + 125 Playwright tests, and the smoke audit at
+**All green:** 498 Node tests + 126 Playwright tests, and the smoke audit at
 **46 passing locally / 51 against production** — the same checks either way,
 with five of them informational on a local file-store HTTP deployment and real
 assertions against a live one (§46). **On Windows some Node tests skip
@@ -228,7 +230,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v53`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v54`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -7333,3 +7335,161 @@ that some skip and say why, and points here.
 `after` clears the read-only attribute alongside the other two undos: a file
 left read-only is one Windows refuses to delete, so the temp directory would
 survive every run and accumulate.
+
+
+---
+
+## 56. The prebuilt modules were reachable once, on your first day
+
+Reported as three questions, and the middle one was a product bug: *"I had
+selected a few modules during initial setup, now in the dashboard I can create
+new modules but I can't access the built in modules which I did not select. I
+was looking for how to use the renewal tracker when I realized I can't access
+that module."*
+
+True, and worse than it sounds. **Every create affordance a person would reach
+for opened a BLANK builder**:
+
+| Entrance | Opened |
+|---|---|
+| sidebar `+` | `openBuilder(null)` |
+| dashboard *Add module* tile | `openBuilder(null)` |
+| onboarding *build your own* | `openBuilder(null)` |
+| **Settings → App → "Add module from template"** | the picker — the only path |
+
+So the eight templates existed, were fully working, and lived behind one button
+filed in a card headed **App**, between *Install on this device* and *Replay
+the tour* — a card about the device and the demo, not about the shape of the
+workspace. Nothing anywhere else said they were still available. §49 shipped
+Renewals and wrote it into eight documents; the person who wanted it could not
+get to it.
+
+**The picker is the front door now**, with **Empty module** as its first entry,
+so the old behaviour is one click rather than gone. Onboarding's own custom
+button stays direct — it is already on a screen full of templates.
+
+**Templates already in the workspace are MARKED, not hidden or disabled.** A
+second Contacts for a different purpose is a legitimate thing to want, and the
+marker answers the other half of what was actually being asked: *which of these
+did I take?* Matched on **name**, because that is what the reader is comparing
+against their own sidebar — a template's key is never carried onto the module
+it creates.
+
+### The console guard caught what twelve assertions were not watching for
+
+The blank entry carries `class="template-line"` like every other row, so
+`$$('.template-line')` bound the template handler to it **as well as** mine.
+Clicking it ran both: `TEMPLATES[Number(undefined)]` → `TEMPLATES[NaN]` →
+`undefined.name`.
+
+**Twelve E2E tests failed, every one of them on
+`Console errors during test: TypeError: Cannot read properties of undefined`**
+— not on an assertion, because no test was looking at that. §47 records
+`expectedConsoleErrors` catching two unrelated live defects for exactly this
+reason, and it has now done it a third time. The selector is
+`.template-line[data-template]`.
+
+### Blast radius, which is the part that needed the full run
+
+`#add-module-btn` is clicked by **six** E2E tests, and rewiring it put a modal
+in front of every one — §9's named pattern, and the reason a shared entry point
+is not a small change. Each gained one `[data-blank]` click.
+
+**A trap in making that edit, worth recording because it is silent.** The
+clicks sit at two indent levels, so a two-pass string replace was used — and
+the 4-space pattern is a **substring of the 6-space line**, so the second pass
+matched inside what the first had already rewritten and double-inserted at one
+site. `grep -c` said 7 where 6 sites exist, which is the only reason it was
+seen. Anchor on the whole line, or do it in one pass.
+
+Guarded by *"a prebuilt module skipped at onboarding can still be added
+later"*, which onboards with **Contacts only** so Renewals is genuinely one the
+user declined — that is what makes it the reported case rather than a tour of
+the picker. Checked against the broken state per §9: restoring
+`() => openBuilder(null)` on the sidebar `+` fails it, waiting for a
+`.template-line` that never appears.
+
+`toContainText`, not `toHaveText`, on the module heading: it carries the
+module's icon, and the exact form fails on whitespace for a reason that has
+nothing to do with the fix.
+
+### The tour's step 2, and an assertion that read one frame
+
+Reported in the same message: *"step 2 card covers its own highlight"*, one
+failure in an otherwise clean 125.
+
+**Not §35's bug and not §35's short-viewport case** — the E2E viewport is
+1440×900, which is the viewport §35 measured 0-overlap-in-20 at. The mechanism
+is a window §35's own fix leaves open:
+
+- `pop.classList.remove('is-loading')` — the test's readiness gate — runs
+  **before** `position()`;
+- steps 2 and 3 force their own screen in a `before` hook whose re-render is
+  not awaited (§4, §7), so the board can grow under a card correctly placed for
+  the shorter one;
+- §35's `ResizeObserver` repositions it, but a ResizeObserver callback is
+  delivered on a **later frame**.
+
+Between the board growing and the observer firing, `coversTarget` is true. The
+test read the geometry **once**, so it could land inside that window — and a
+slower machine widens it, which is why this surfaced there and never here.
+
+**Polled now, because it is a steady-state claim and one read is not.** This
+does not soften §35: that defect was a card placed over the ring and *left*
+there, 20 runs out of 20, and a placement that never settles still fails.
+
+**Proven, and the first mutation was the wrong one.** Removing
+`watchGeometry()` — the obvious choice — **passed**, because on this machine
+the re-render lands before `position()` and the observer is idle: the mutation
+does not reproduce the reporter's condition here, so it proves nothing either
+way. What proves it is forcing a persistent overlap (place the card on the
+ring's top-left and return): the polled assertion fails by name, at step 4.
+Recorded because the first mutation looked sufficient and was not — §50 hit the
+same shape.
+
+### The docs questions, answered by reading rather than recalling
+
+All three features were already documented; only one thing was genuinely
+missing.
+
+| | `guide.html` | `USER-GUIDE.md` |
+|---|---|---|
+| Renewals | ✅ | § *Tracking things that expire* |
+| Dormancy | ✅ (*"who nobody has contacted"*) | § *The other question: who nobody has contacted* |
+| Chaser | ✅ | § *Chasing something that is overdue* |
+| Chase log | ✅ | § 9 |
+| **BYOK setup** | one line | **one paragraph, no steps** |
+
+**My first grep said dormancy was missing from `guide.html` and it was not** —
+the page says *"who nobody has contacted"* and I had searched for *dormant*.
+Worth recording: a grep that comes back empty is evidence about the pattern
+before it is evidence about the file (§46 records two of those coming back
+empty for wording reasons).
+
+**The BYOK gap was real.** The section covered the domain-verification
+requirement, the provider being detected rather than picked, the roles and the
+key never being read back — everything about *how it behaves* — and nothing
+about how to get one. It now carries five numbered steps, with **verify your
+sending domain first** called out as the step that takes real effort and the
+single most common reason a first send fails (§53's 403 finding, in the place
+an owner meets it), and *send one to yourself* as the last step.
+
+**No provider button labels are quoted**, deliberately: this session cannot
+reach either service (§8), so the steps describe what is needed rather than
+naming UI that would be unverifiable here and stale in a year.
+
+### Docs walked (§27)
+
+A user can now do something new — reach a template they skipped — so the walk
+was real rather than a checked omission.
+
+| | Needed |
+|---|---|
+| `guide.html` | one clause: the prebuilt ones stay available |
+| `USER-GUIDE.md`, `docs/manual.html` | the picker as the entrance, that the prebuilt ones are always available, and that a template module is an ordinary module afterwards — plus the BYOK steps |
+| `README.md`, `product-tour.html`, `ONBOARDING.md`, `DEMO-SCRIPT.md`, `BETA.md` | **nothing** — they describe *which* modules exist and what they are for, which has not changed. Padding them to look thorough is its own inaccuracy (§40, §41) |
+| `docs/API.md` | nothing — client-only, no route, no wire change |
+
+`js/app.js` is in `APP_SHELL`, so `CACHE_VERSION` → **`crmbuilder-v54`**. No new
+served file, so smoke stays **46 local / 51 live**. Full run, because a shared
+entry point moved: Node **498**, Playwright **125 → 126**, smoke **46** locally.

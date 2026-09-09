@@ -114,6 +114,16 @@ total** — so a Deals board doubles as a pipeline value report.
 ## 5. Building and changing modules
 
 Click **+** next to MODULES in the sidebar, or **Add module** on the dashboard.
+Either one offers the prebuilt modules first, with **Empty module** at the top
+if you would rather start from nothing.
+
+**The prebuilt ones are always available**, not only on your first day. If you
+skipped Renewals or Consent when you set the workspace up, add it whenever you
+want it — the picker marks the ones you already have, so it also answers "which
+of these did I take?". A module added from a template is an ordinary module: you
+can rename it, change its fields and delete it exactly like one you built.
+
+Starting from scratch instead:
 
 1. **Name it.** Use the plural — "Projects", "Invoices", "Job Sites". Buttons
    elsewhere in the app automatically use the singular form.
@@ -503,6 +513,32 @@ An owner can connect the workspace's own email account — **Settings → Sendin
 reminders by email** — by pasting a **Resend** or **Postmark** API key and the
 address reminders should come from. A **Send it now** button then appears in the
 preview beside *Open in my email app*, and one press sends it.
+
+**Setting it up, start to finish.** You need an account with one of the two
+services; both have a free tier that is ample for chasing invoices.
+
+1. **Sign up** at [resend.com](https://resend.com) or
+   [postmarkapp.com](https://postmarkapp.com). Either is fine — pick on price
+   and on which you find easier to read.
+2. **Add and verify your sending domain** with them. This is the step that
+   takes real effort: they give you DNS records to add wherever your domain is
+   managed, and it can take anything from minutes to a few hours to go through.
+   **Do this before anything else** — it is the single most common reason a
+   first send fails, and the failure arrives as a refusal from your provider
+   rather than as anything wrong with the key.
+3. **Create an API key** in their dashboard, with permission to send. Copy it
+   the moment it is shown; neither service will show it to you twice.
+4. **In CRM Builder, open Settings → Sending reminders by email.** Paste the
+   key, and type the address reminders should come from — it has to be at the
+   domain you verified in step 2. Save.
+5. **Send one to yourself.** Open an overdue record, press *Chase by email*,
+   and use *Send it now*. That first send is what proves the whole chain, and
+   it is much better to discover a DNS record is still propagating on a
+   reminder addressed to you than on one addressed to a customer.
+
+If a send is refused, the message on screen is your provider's own wording
+rather than ours — that is deliberate, because they are the only one that knows
+whether the problem is the key, the domain, or the recipient.
 
 A few things worth knowing before you do:
 

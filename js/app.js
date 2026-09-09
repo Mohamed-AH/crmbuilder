@@ -1426,7 +1426,7 @@
         </div>
       </div>`;
     const dashAdd = $('#dash-add-module');
-    if (dashAdd) dashAdd.addEventListener('click', () => openBuilder(null));
+    if (dashAdd) dashAdd.addEventListener('click', openTemplatePicker);
     $$('[data-quick-add]').forEach((b) => b.addEventListener('click', () => {
       const mod = getModule(b.dataset.quickAdd);
       if (mod) openRecord(mod, null);
@@ -3765,7 +3765,7 @@
             <!-- Installing is a device-local act and writes nothing to the
                  workspace, so it stays whatever the role. -->
             <button class="btn ${deferredInstall ? '' : 'hidden'}" id="settings-install">${icon('download', 15)} Install on this device</button>
-            ${canEditSchema() ? `<button class="btn" id="add-template-btn">${icon('plus', 15)} Add module from template</button>` : ''}
+            ${canEditSchema() ? `<button class="btn" id="add-template-btn">${icon('plus', 15)} Add a module</button>` : ''}
             ${canEditRecords() ? `<button class="btn" id="load-demo-btn">${icon('database', 15)} Load demo data</button>` : ''}
             <button class="btn" id="replay-tour-btn">${icon('map-pin', 15)} Replay the tour</button>
             ${demoCount && canEditRecords() ? `<button class="btn" id="remove-demo-btn">${icon('trash-2', 15)} Remove sample data (${esc(demoBreakdown)})</button>` : ''}
@@ -4208,23 +4208,58 @@
     });
   }
 
+  /*
+   * The one place a module gets made, and that is the point of it.
+   *
+   * The prebuilt modules used to be reachable ONLY from onboarding and from a
+   * button in Settings → App, filed beside "Install on this device" and
+   * "Replay the tour". So somebody who did not tick Renewals on their first
+   * day had no way to find it: the sidebar +, the dashboard tile and the
+   * onboarding custom button all opened a BLANK builder, and nothing anywhere
+   * said the eight templates still existed. Reported exactly that way —
+   * "I can't access the built in modules which I did not select".
+   *
+   * Every create entrance comes through here now, with blank as the first
+   * option, so the choice is offered at the moment somebody has decided to
+   * make a module rather than filed under the device settings.
+   *
+   * Templates a workspace already holds are MARKED, never hidden or disabled:
+   * a second Contacts for a different purpose is a legitimate thing to want,
+   * and the marker is what answers "which of these have I already got" —
+   * which is the question the reporter was actually asking.
+   */
   function openTemplatePicker() {
+    // Matched on name, because that is what the reader is comparing against
+    // the sidebar. A template's key is not carried onto the created module.
+    const have = new Set(modules.map((m) => String(m.name || '').toLowerCase()));
     const modal = openModal(`
       <div class="modal-head">
-        <h2>Add module from template</h2>
+        <h2>New module</h2>
         <button class="icon-btn" data-close aria-label="Close">${icon('x', 16)}</button>
       </div>
       <div class="modal-body">
+        <p class="settings-hint" style="margin:0 0 12px">Start from one of the prebuilt modules — you can rename it and change its fields afterwards — or build your own from scratch.</p>
         <div class="template-list">
+          <button class="template-line" data-blank="1">
+            <span class="template-icon" style="color:var(--ink-soft);background:var(--paper-sunk)">${icon('plus', 18)}</span>
+            <span><strong>Empty module</strong><br><span class="muted">Name it and add your own fields</span></span>
+          </button>
           ${TEMPLATES.map((t, i) => `
             <button class="template-line" data-template="${i}">
               <span class="template-icon" style="color:${esc(t.color)};background:${esc(t.color)}1a">${LUCIDE[t.icon] ? icon(t.icon, 18) : esc(t.icon)}</span>
-              <span><strong>${esc(t.name)}</strong><br><span class="muted">${esc(t.description)}</span></span>
+              <span><strong>${esc(t.name)}</strong>${have.has(t.name.toLowerCase()) ? ' <span class="muted">— already added</span>' : ''}<br><span class="muted">${esc(t.description)}</span></span>
             </button>`).join('')}
         </div>
       </div>`, { wide: true });
     $$('[data-close]', modal).forEach((b) => b.addEventListener('click', closeModal));
-    $$('.template-line', modal).forEach((b) => b.addEventListener('click', async () => {
+    const blank = $('[data-blank]', modal);
+    if (blank) blank.addEventListener('click', () => { closeModal(); openBuilder(null); });
+    // `[data-template]`, not bare `.template-line`: the blank entry carries that
+    // class too, so a plain selector bound BOTH handlers to it and this one read
+    // TEMPLATES[NaN].name. Caught by the console guard rather than by any
+    // assertion — twelve tests failed on a TypeError none of them was watching
+    // for (§47's lesson about that guard, earned again).
+    $$('.template-line[data-template]', modal).forEach((b) => b.addEventListener('click', async () => {
       const t = TEMPLATES[Number(b.dataset.template)];
       const mod = await createFromTemplate(t, false);
       await loadModules();
@@ -6234,7 +6269,11 @@
     // Wire the chrome first: if anything later fails, the app is still
     // navigable rather than inert.
     window.addEventListener('hashchange', route);
-    $('#add-module-btn').addEventListener('click', () => openBuilder(null));
+    // The picker, not the blank builder: the prebuilt modules were otherwise
+    // unreachable to anyone who did not tick them at onboarding (see
+    // openTemplatePicker). "Empty module" is its first entry, so the old
+    // behaviour is one click away rather than gone.
+    $('#add-module-btn').addEventListener('click', openTemplatePicker);
     $('#install-btn').addEventListener('click', promptInstall);
     $('#menu-btn').addEventListener('click', () => document.body.classList.toggle('sidebar-open'));
     $('#scrim').addEventListener('click', closeSidebar);
