@@ -93,6 +93,7 @@ never change, because everything cross-references them.
 | **A doc sibling that survives a stale push** — the union, not more clocks | §54 · §26 · §10 |
 | Who already chased this, and sent vs drafted | §54 |
 | **A failed write killed the process** — async routes, and a Windows rename | §55 · §30 · §4 |
+| **A test that passes in a UTC container** — and the save it was hiding | §55 · §45 · §39 |
 
 ---
 
@@ -224,7 +225,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v52`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v53`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -7175,3 +7176,109 @@ is the difference between a client retrying and a client seeing the deployment
 disappear.
 
 Counts: Node **493 → 498**, Playwright **125**, smoke **46** locally.
+
+---
+
+### Then the same run found two more, and only one was a test problem
+
+With the crash fixed, the reporter's next full run was **123 passed, 2 failed**
+— the server survived, so these were always there and the crash was hiding
+them. Neither is a Windows fault; both are things this container cannot see.
+
+#### A save that said "saved" before anything left the device
+
+*the reminder count is the number the due-date filter shows* failed with
+`Expected "Asia/Calcutta", received "UTC"`. The zone name was a red herring
+twice over — `resolveZone` accepts the legacy alias, and the picker offered
+it (that assertion passed). The setting had simply not reached the server.
+
+**Measured rather than reasoned**, with a probe that polled `/api/org/reminders`
+after the save:
+
+```
+SYNCED +34ms   server=UTC     <- the only thing the test waits on
+       +1379ms server=UTC
+       +1808ms server=America/New_York
+```
+
+`saveSettings()` calls `persist()`, which only **schedules** a 1500ms debounced
+push. The `.sync-status` chip therefore never left `synced`, so the wait was
+satisfied by a state that predated the click, and every step after it was
+racing the debounce.
+
+**And the digest card is the product half.** §39 already made the *digest*
+button `await Cloud.sync()` and re-render, with a comment saying the preview is
+server-computed. The **workspace** button sets `SETTINGS.timezone` — which is
+exactly what that card gates on and displays, in two places — and did neither.
+So changing the zone left the card on the same screen saying *"Waiting until
+09:00 in UTC"*: §33's adjacent-and-wrong number, in the place §39's own comment
+was written to prevent it.
+
+The save now pushes before it says "saved", mirroring its sibling. It re-renders
+**only when the zone moved**: a full `renderSettings()` wipes the Telegram token
+field (§38), the one thing on that screen an owner cannot recover, so it is not
+spent on a save that cannot have made the card stale — the name and currency do
+not reach the digest, whose message carries counts and never money (§39).
+
+#### The assertion had been vacuous everywhere it had ever run
+
+This is the finding worth keeping. `expect(reminders.zone).toBe(browserZone)`
+aligns the two clocks by setting the workspace zone to the browser's own — and
+**in a UTC container `browserZone` is `UTC`, which is also the server's default
+for a workspace that never chose one.** So it passed whether or not the setting
+had ever left the device.
+
+Demonstrated rather than argued, in both directions:
+
+| | Result |
+|---|---|
+| bug present, zone pinned to `America/New_York` | **fails**, `Expected "America/New_York", received "UTC"` — the reporter's failure, reproduced here |
+| bug present, no zone pin (today's CI, this container) | **passes** |
+
+CI has never once exercised it. The one machine with a real time zone is the
+only thing that ever could, which is why a bug on the sync path surfaced as a
+platform report. Now pinned, the same way §42 and §45 pin `Europe/London` and
+for the same sentence: *the container and CI are UTC, so a date test that does
+not name a zone passes on the bug.*
+
+#### A toast asserted with `.last()`, on an ordering nothing controls
+
+*work typed while a workspace is paused* failed with `.toast` `.last()` reading
+`Added` for the full 20s. The read-only notice is said **exactly once** — §24
+latches it, or the debounced push would fire it on every keystroke — and its
+position relative to the two `Added` toasts is ordered by nothing at all. The
+debounce is 1500ms against 1100ms of wait plus however long the second record's
+UI steps take, so on a machine with less than ~400ms of slack the **first**
+record's push lands *between* the two, `.last()` is `Added` for ever, and the
+latch means it never comes again.
+
+**Reproduced here by widening that wait to 1900ms**, which fails identically to
+the report — so the slow machine is the cause and not the culprit.
+
+A `hasText` locator does not fix it either: a toast fades and leaves the DOM, so
+one that fired fifteen seconds ago is not there to find. The test records every
+toast through a `MutationObserver` as they arrive and asserts the list contains
+the reason — §54's answer to the same class of problem, where asserting on the
+push bodies replaced a toast that was a paint race. The chip is asserted too, as
+the durable half: a toast fades, `data-status="error"` stays.
+
+#### Checked against the broken state
+
+| Mutation | Fails |
+|---|---|
+| drop the `await Cloud.sync()` from the workspace save | *the workspace zone did not save* — the reported failure |
+| that, **and** drop the zone pin | **nothing** — which is the vacuity, shown rather than claimed |
+| widen the inter-record wait past the debounce | nothing now; failed identically to the report before |
+| drop `readOnlyReason` from the toast | the recorded-toast assertion, by name |
+
+**§27's walk needs nothing, and that is checked rather than skipped.** No
+capability moved — the fix makes an existing one behave the way the documents
+already describe it. `USER-GUIDE.md` and `manual.html` describe *Not before* as
+"read in the workspace's time zone", which was true before and is true now;
+`docs/API.md` sees no route and no wire shape move. Padding them to look
+thorough is its own inaccuracy (§40, §41).
+
+`js/app.js` is in `APP_SHELL`, so `CACHE_VERSION` → **`crmbuilder-v53`**. No new
+served file and no route, so smoke stays **46 local / 51 live**. Full run,
+because `sw.js` and `CACHE_VERSION` are shared surface (§9): Node **498**,
+Playwright **125**, smoke **46** locally.

@@ -3073,6 +3073,33 @@ test.describe('admin', () => {
      * below the line and disappears.
      */
     await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    /*
+     * Record every toast as it appears, rather than sampling `.last()` once.
+     *
+     * The read-only notice is said EXACTLY ONCE — §24 latches it, or the
+     * debounced push would fire it on every keystroke — and its position
+     * relative to the two "Added" toasts is not ordered by anything. The
+     * debounce is 1500ms and there is 1100ms of wait plus however long the
+     * second record's UI steps take, so on a machine with less than ~400ms of
+     * slack the FIRST record's push lands between the two "Added" toasts.
+     * `.last()` is then "Added" for ever and the latch means the notice never
+     * comes again. Reported from a slow Windows machine; reproduced here by
+     * widening that wait past the debounce, which fails identically.
+     *
+     * A `hasText` locator would not fix it either: a toast fades and leaves
+     * the DOM, so one that fired fifteen seconds ago is simply not there to
+     * find. Only a record kept as they arrive is proof against both.
+     */
+    await page.evaluate(() => {
+      window.__toasts = [];
+      new MutationObserver((list) => {
+        for (const m of list) {
+          for (const node of m.addedNodes) {
+            if (node.nodeType === 1 && node.classList.contains('toast')) window.__toasts.push(node.textContent);
+          }
+        }
+      }).observe(document.getElementById('toast-root'), { childList: true });
+    });
     for (const name of ['Typed while paused', 'Typed a moment later']) {
       await page.click('#add-record-btn');
       await page.fill('#f-name', name);
@@ -3081,8 +3108,13 @@ test.describe('admin', () => {
       await page.waitForTimeout(1100); // distinct updatedAt, and a sync attempt between them
     }
 
-    // They are told, rather than left with a sync that silently stopped.
-    await expect(page.locator('.toast').last()).toContainText('storage review', { timeout: 20000 });
+    // They are told, rather than left with a sync that silently stopped — and
+    // the reason travels, so it is the operator's words rather than a generic
+    // failure. The chip is the durable half: a toast fades, `error` stays.
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'error', { timeout: 20000 });
+    await expect
+      .poll(() => page.evaluate(() => window.__toasts || []), { timeout: 20000 })
+      .toEqual(expect.arrayContaining([expect.stringContaining('storage review')]));
 
     // The server does not have it.
     await expect(async () => {
@@ -4528,61 +4560,87 @@ test.describe('workspace notifications', () => {
  * something — and without it this test would pass in a UTC container and fail
  * on a developer machine in Europe, for a reason that is not a defect.
  */
-test('the reminder count is the number the due-date filter shows', async ({ page }) => {
-  await page.goto('/');
-  await expect(page.locator('#onboard-demo')).toBeVisible();
-  await page.click('#onboard-demo');
-  await expect(page.locator('#workspace-name')).toHaveText('Lumen Studio', { timeout: 20000 });
-  // 'all', not the default 'work': the demo business IS the fixture here, and
-  // the default claim deliberately leaves samples on the device (§11) — which
-  // would sign in to an empty workspace and give the server nothing to count.
-  await signIn(page, uniqueEmail('parity-owner'), { claim: 'all' });
-  await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 25000 });
+/*
+ * Pinned to a non-UTC zone, and that is the whole reason this describe exists.
+ *
+ * The test aligns the two clocks by setting the workspace zone to the
+ * BROWSER's own, then asserts the server came back with it. In a UTC container
+ * — which is CI, and this one — that browser zone is `UTC`, which is also the
+ * server's default for a workspace that never chose one. So the assertion held
+ * whether or not the setting had ever left the device: it has been vacuous
+ * everywhere it has ever run. The one machine with a real zone is what caught
+ * it, and what it caught was real (§55).
+ *
+ * Same rule §42 and §45 pin `Europe/London` for: the container and CI are UTC,
+ * so a date test that does not name a zone passes on the bug.
+ */
+test.describe('reminder parity', () => {
+  test.use({ timezoneId: 'America/New_York' });
 
-  const browserZone = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
-  await page.goto('/#/settings');
-  await expect(page.locator('#set-timezone')).toBeVisible({ timeout: 20000 });
-  /*
-   * The picker must offer the browser its OWN zone, and that is not free:
-   * Intl.supportedValuesOf('timeZone') returns 418 canonical names and none of
-   * them is `UTC`, which is exactly what a container with no TZ set reports.
-   * Building the list from the authoritative source alone left an owner unable
-   * to select their own zone. This assertion is what caught it.
-   */
-  await expect(
-    page.locator(`#set-timezone option[value="${browserZone}"]`),
-    `the picker does not offer this browser own zone (${browserZone})`,
-  ).toHaveCount(1);
-  await page.selectOption('#set-timezone', browserZone);
-  await page.click('#save-workspace');
-  await expect(page.locator('.toast').last()).toContainText(/saved/i);
-  await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 25000 });
+  test('the reminder count is the number the due-date filter shows', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('#onboard-demo')).toBeVisible();
+    await page.click('#onboard-demo');
+    await expect(page.locator('#workspace-name')).toHaveText('Lumen Studio', { timeout: 20000 });
+    // 'all', not the default 'work': the demo business IS the fixture here, and
+    // the default claim deliberately leaves samples on the device (§11) — which
+    // would sign in to an empty workspace and give the server nothing to count.
+    await signIn(page, uniqueEmail('parity-owner'), { claim: 'all' });
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 25000 });
 
-  await page.click('#nav-modules .nav-link:has-text("Tasks")');
-  await expect(page.locator('#due-filter')).toBeVisible();
-  await page.locator('#due-filter').selectOption('7');
-  // Wait on the rendered result before reading it: renderModule is async and
-  // the change handler does not await it, so reading straight away samples the
-  // previous render and the assertion passes for the wrong reason (§4).
-  await expect(page.locator('tbody tr').first()).toBeVisible();
-  const onScreen = Number(await page.locator('.count-badge').textContent());
-  expect(onScreen).toBeGreaterThan(0);
+    const browserZone = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
+    await page.goto('/#/settings');
+    await expect(page.locator('#set-timezone')).toBeVisible({ timeout: 20000 });
+    /*
+     * The picker must offer the browser its OWN zone, and that is not free:
+     * Intl.supportedValuesOf('timeZone') returns 418 canonical names and none of
+     * them is `UTC`, which is exactly what a container with no TZ set reports.
+     * Building the list from the authoritative source alone left an owner unable
+     * to select their own zone. This assertion is what caught it.
+     */
+    await expect(
+      page.locator(`#set-timezone option[value="${browserZone}"]`),
+      `the picker does not offer this browser own zone (${browserZone})`,
+    ).toHaveCount(1);
+    await page.selectOption('#set-timezone', browserZone);
+    await page.click('#save-workspace');
+    /*
+     * This toast is the wait, and it only became one with the fix it caught.
+     * The save now pushes BEFORE it says "saved", so the toast means the
+     * server has the zone. The `synced` chip below cannot mean that: it never
+     * left `synced`, so it read true 34ms after the click and every step after
+     * it was racing a 1500ms debounce (§55). Kept as a second anchor, not as
+     * the one being relied on.
+     */
+    await expect(page.locator('.toast').last()).toContainText(/saved/i, { timeout: 25000 });
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 25000 });
 
-  const { reminders } = await (await page.request.get('/api/org/reminders')).json();
-  expect(reminders.zone, 'the workspace zone did not save').toBe(browserZone);
-  const tasks = reminders.modules.find((m) => m.name === 'Tasks');
-  expect(tasks, 'Tasks has a due date, so it must appear in the digest').toBeTruthy();
-  expect(tasks.field).toBe('Due date');
+    await page.click('#nav-modules .nav-link:has-text("Tasks")');
+    await expect(page.locator('#due-filter')).toBeVisible();
+    await page.locator('#due-filter').selectOption('7');
+    // Wait on the rendered result before reading it: renderModule is async and
+    // the change handler does not await it, so reading straight away samples the
+    // previous render and the assertion passes for the wrong reason (§4).
+    await expect(page.locator('tbody tr').first()).toBeVisible();
+    const onScreen = Number(await page.locator('.count-badge').textContent());
+    expect(onScreen).toBeGreaterThan(0);
 
-  expect(
-    tasks.total,
-    `the digest would say ${tasks.total} but the filter shows ${onScreen}`,
-  ).toBe(onScreen);
+    const { reminders } = await (await page.request.get('/api/org/reminders')).json();
+    expect(reminders.zone, 'the workspace zone did not save').toBe(browserZone);
+    const tasks = reminders.modules.find((m) => m.name === 'Tasks');
+    expect(tasks, 'Tasks has a due date, so it must appear in the digest').toBeTruthy();
+    expect(tasks.field).toBe('Due date');
 
-  // And the overdue half specifically, because a digest that counted only the
-  // future would still match a filter that did the same — the two would be
-  // wrong together, which is the failure a parity test is worst at catching.
-  expect(tasks.overdue).toBeGreaterThan(0);
+    expect(
+      tasks.total,
+      `the digest would say ${tasks.total} but the filter shows ${onScreen}`,
+    ).toBe(onScreen);
+
+    // And the overdue half specifically, because a digest that counted only the
+    // future would still match a filter that did the same — the two would be
+    // wrong together, which is the failure a parity test is worst at catching.
+    expect(tasks.overdue).toBeGreaterThan(0);
+  });
 });
 
 /*

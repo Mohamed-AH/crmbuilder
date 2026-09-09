@@ -3793,12 +3793,32 @@
     if (saveWs) saveWs.addEventListener('click', async () => {
       const nextCurrency = $('#set-currency').value;
       if (nextCurrency !== SETTINGS.currency && !(await confirmCurrencyChange(SETTINGS.currency, nextCurrency))) return;
+      const nextZone = $('#set-timezone').value;
+      const zoneMoved = nextZone !== SETTINGS.timezone;
       SETTINGS.businessName = $('#set-name').value.trim();
       SETTINGS.currency = nextCurrency;
-      SETTINGS.timezone = $('#set-timezone').value;
+      SETTINGS.timezone = nextZone;
       saveSettings();
       renderSidebar();
+      /*
+       * Push before saying it is saved, exactly as the digest button below
+       * does — and for the same reason, because these two controls feed one
+       * card. The time zone chosen here is what the digest gates on and what
+       * its card DISPLAYS, and that card is computed by the SERVER. persist()
+       * only schedules a debounced push, so redrawing straight away shows the
+       * zone the server still holds beside the one just picked (§33's
+       * adjacent-and-wrong number, §39's rule in its sibling handler).
+       */
+      if (Cloud.isAuthed) await Cloud.sync().catch(() => {});
       toast('Workspace saved');
+      /*
+       * Re-drawn ONLY when the zone moved. A full renderSettings() wipes the
+       * Telegram token field (§38), which is the one thing on this screen an
+       * owner cannot recover from anywhere — so it is not spent on a save that
+       * cannot have made the card stale. The name and currency do not reach
+       * the digest: its message carries counts, never money (§39).
+       */
+      if (zoneMoved && Cloud.isAuthed) await renderSettings();
     });
 
     /*
