@@ -7,7 +7,7 @@
 > and every section here points at the relevant one rather than restating it —
 > one fact, one home (`CLAUDE.md` §27).
 
-52 routes over six boundaries. All JSON unless noted. All authenticated routes
+54 routes over six boundaries. All JSON unless noted. All authenticated routes
 take the session cookie; there is no bearer token anywhere except
 `/api/admin/export`, which is deliberately different (see §5).
 
@@ -287,6 +287,8 @@ GET    /api/org/hook                owner only — masked, NEVER the URL
 PUT    /api/org/hook                owner only — { url }; '' removes it
 POST   /api/org/hook/test           owner only — sends one, 6/min per caller
 POST   /api/org/hook/telegram/chats owner only — { token } → chats, 12/min per caller
+GET    /api/org/mail                owner OR member — NEVER the key
+PUT    /api/org/mail                owner only — { key, from }; '' removes it
 GET    /api/org/reminders           owner only — counts + the exact message, sends nothing
 ```
 
@@ -319,6 +321,26 @@ for 24 hours, so a bot messaged yesterday genuinely has nothing to show.
 **400** carries a specific reason for each of: a malformed token, one Telegram
 rejects (401), a bot that already has a webhook set elsewhere (409), and a reply
 too large to read. `CLAUDE.md` §38.
+
+**The email provider key is write-only too, and it has no masked form at all.**
+`GET /api/org/mail` returns the provider, the from-address, when it was added
+and whether a send has ever succeeded — and no part of the key, to anybody, on
+any route. `publicHook` returns a `masked` form because a webhook URL has a
+non-secret half that identifies it (the host); a key does not, so there is
+nothing to show that is not secret. **Read and write are gated differently**,
+which is the one place this diverges from the webhook: `GET` needs
+`canSendMail()` (owner or member — the people who may send, so their client can
+know whether sending is available and under what address), `PUT` needs
+`canEditSettings()`. A viewer gets **403** on both.
+
+**`PUT` makes no outbound call**, and that is the difference from the webhook's
+save rather than an omission. The only way to prove an email key is to send an
+email, which would put a message in somebody's inbox every time an owner
+corrects a typo. So **400** covers what can never work — a key matching neither
+provider's shape, a from-address that is not one — and everything else is found
+by the first real send. `verified` stays false until one succeeds. The provider
+is detected from the key (`re_` → Resend, a UUID → Postmark), never chosen from
+a dropdown. `CLAUDE.md` §52.
 
 **`wouldStrandTeam()` is one rule behind three endpoints** — leave, self-demote
 and join. The last owner of a populated team walking away leaves people with a

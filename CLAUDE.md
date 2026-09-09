@@ -87,6 +87,8 @@ never change, because everything cross-references them.
 | **Tracking what expires** — the template, and the one date field | §49 · §37 · §39 |
 | **Dormancy vs retention** — two questions, two clocks | §50 · §44 |
 | **Chasing an overdue record** — the draft, and the two escapes | §51 |
+| **A provider key on the meta doc** — where it goes, and what redacts it | §52 · §38 · §17 |
+| Resend vs Postmark, detected rather than asked | §52 |
 
 ---
 
@@ -101,6 +103,7 @@ No build step, no frontend framework — plain ES5-ish scripts loaded in order b
 server.js             Express: static PWA, OAuth, /api/sync + /api/data, /api/admin/*, /api/org, /health
 lib/safe-fetch.js     SSRF guard for customer-chosen webhook destinations (§38)
                       server-side, CommonJS, and deliberately NOT under js/
+lib/mail-send.js      bring-your-own-key email — Resend and Postmark (§52)
 index.html            app shell (script order matters — see §3)
 privacy.html          privacy policy | terms.html  terms of use  (see §19)
 legal.css             styling for those two — they load no app JS at all
@@ -127,8 +130,8 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 421 Node tests + 121 Playwright tests, and the smoke audit at
-**45 passing locally / 50 against production** — the same checks either way,
+**All green:** 467 Node tests + 121 Playwright tests, and the smoke audit at
+**46 passing locally / 51 against production** — the same checks either way,
 with five of them informational on a local file-store HTTP deployment and real
 assertions against a live one (§46). On Windows one Node test skips itself —
 see §4's SIGTERM note; it is a platform limit, not a failure.
@@ -462,6 +465,7 @@ parallel and they each spawn real servers:
 | `backup.test.mjs` | 9500–9550 | 2 |
 | `ssrf.test.mjs` | 9600–9650 | 2 (capture servers, not the app) |
 | `reminders.test.mjs` | 9700–9750 | 1 app + 1 capture |
+| `mail.test.mjs` | 9800–9850 | 1 (a capture server, not the app) |
 
 They used to overlap badly — `api.test.mjs` alone spanned 8300–8899, across
 three other files' ranges. Widen a block and check the neighbours.
@@ -6340,3 +6344,269 @@ foundation for a message nobody loses money over and not one for money
 collection. `docs/CHASER-AND-TRACKERS.md` Part 3 carries the reasoning and the
 `meta.mail` design, which is the next thing to build and is independent of any
 send UI.
+
+
+---
+
+## 52. A second credential on the meta doc, and no send to use it yet
+
+BYOK infrastructure for the chaser: the tenant supplies their own Resend or
+Postmark key, which moves the sending domain, the deliverability reputation,
+the billing and — the one that makes a payment reminder actually get paid —
+the from-address off this deployment entirely.
+
+**Storage, redaction and the adapter. No route sends anything.** That order is
+deliberate and it is §38's: the webhook transport was built before the digest
+that uses it, because the alternative is writing the part that handles a
+credential under pressure with the feature already half-built. §51's `mailto:`
+chaser is untouched and remains the permanent fallback for every workspace
+that never connects a key.
+
+### Where the key goes was already decided, by §38
+
+Every word of the webhook's reasoning transfers, so `mail` is a **sibling** of
+`settings` on the meta doc rather than a field inside it:
+
+- `pullChanges` sends `meta.settings` **whole** to anyone whose cursor is
+  behind — member, contributor, **viewer** — so a key kept there lands in every
+  colleague's IndexedDB, offline, permanently.
+- **And masking it on the way down would then destroy it.** The client merges
+  the pulled document into local settings and pushes the whole thing back,
+  where last-write-wins accepts it, so `re_•••••` overwrites the real key the
+  first time an owner changes the currency. Redaction and last-write-wins
+  cannot both apply to one document.
+
+As a sibling, `putData` merges it on both stores and `pullChanges` names
+`meta.settings` specifically, so sync **structurally** cannot reach it — a
+guarantee that holds for somebody who never reads the comment. Asserted across
+the **whole** sync response body for all three roles rather than a named field:
+a field-by-field check only covers the fields somebody thought of.
+
+### There is no masked form, and that is the departure from `publicHook`
+
+`publicHook` returns `masked` because a webhook URL has a non-secret half that
+genuinely identifies it — the host is what tells a Slack hook from a Discord
+one at a glance. **A key has no such half.** What identifies this configuration
+is the provider and the from-address, and both are returned in full, so a hint
+like `re_••••9f2c` would be handing back bytes of the secret for no operational
+gain. There is no rotation flow here that needs two keys told apart. The test
+asserts the last six characters are absent too, so "improving" this fails by
+name.
+
+`verified` is the fourth field and is deliberately not something the save can
+set — see below.
+
+### The save makes NO outbound call, and that is a decision
+
+The webhook probes at save because it can: a test notification into a chat
+channel costs nothing and proves the destination. **The only way to prove an
+email key is to send an email**, which would put a message in somebody's inbox
+every time an owner corrects a typo in the from-address.
+
+So §38's refuse/warn split still applies, with the warn half moved to the first
+real send, because that is the only place the answer exists:
+
+| | |
+|---|---|
+| **refused, 400** | a key matching neither provider's shape; a from-address that is not one — properties of the input, needing no network |
+| **stored, unverified** | everything else. `verified` stays false until a send succeeds |
+
+The consequence is stated rather than discovered: a wrong-but-well-formed key
+is stored and the first send finds out. The screen can then say *not checked
+yet* rather than implying a confirmation nobody made.
+
+**A replacement key does not inherit the old one's history.** `lastOkAt` is
+what `verified` reports, so carrying it forward puts a green tick over a
+credential that has never been used — §17's workflow reporting success while
+producing no backups, in a smaller place. **The test for that passed on the bug
+first time**: `lastOkAt` is 0 on a fresh key, so an implementation that spread
+the previous row forward was indistinguishable from one that did not. It plants
+a verified state stop-edit-start before replacing, per §9.
+
+### Read and write are gated differently, unlike the webhook
+
+`PUT` needs `canEditSettings()` — owner-only, the same rule the webhook and the
+currency hang off. **`GET` needs `canSendMail()`**, a new predicate: owner,
+platformAdmin or member.
+
+Mirroring the webhook exactly would leave a member with no way to know whether
+sending is available, so their client would either hide a capability they have
+or offer a button that 403s. What a member sees is the provider, the address
+their mail goes out under, and whether it has ever worked — the facts they need
+to decide whether to press send. Never the key, which is not a question of role
+at all: `publicMail` does not return it to anybody.
+
+**`canSendMail` is a new predicate rather than the existing seam**, and that is
+the substance rather than the name. `canEditRecords` and `canDeleteRecords` are
+enforced inside `applyPush` because they gate **sync**; a send is a route call
+and never passes through that seam, so it has to be checked on the endpoint.
+Owner and member — one rung above `canEditRecords`, because this is not an edit
+a colleague can see and undo: it leaves the deployment, arrives in somebody's
+inbox with the business's address on it, and cannot be recalled.
+
+**§51's `mailto:` chaser is deliberately NOT gated by it.** That composes a
+draft in the reader's own mail client, from their own address, out of an
+address already on the record — nothing leaves the deployment and there is no
+route to check. §36 keeps export open to every role for the same reason.
+
+### Redacted on export, and the marker is not stripped
+
+`workspaces[].meta` **is** the `data` collection, so anything on the meta doc is
+in every nightly artifact — and a provider key is worth more to whoever
+downloads one than a webhook URL is: a bot token posts into one chat, a Resend
+key sends mail as that business to anyone.
+
+Same treatment, same reasons, including the one that is easy to undo by
+tidying: **the provider name and the from-address go too.** Carrying them would
+make the re-entry notice better — *"you were sending from accounts@…"* — and
+§38 declined exactly that for the webhook host, because it would put which
+provider each tenant uses into an artifact §17 is already uneasy about, to save
+an owner from remembering a choice they made themselves.
+
+`restore.mjs` rewrites `{ redacted: true }` to `{ needsReentry: true }` rather
+than deleting it, and `deliverMail` and `publicMail` both key on `mail.key`
+being absent. Without that marker a recovery silently switches off every
+customer's sending and the settings card is byte-identical to one nobody ever
+filled in — §38's defect, on the messages that ask customers for money, which
+nobody notices going missing.
+
+### The one shared-helper change: `sendGuarded` takes headers
+
+Both providers authenticate with a **header** rather than with a token in the
+path, so the credential has to be able to get into the request and this
+function is the only place that can put it there. Default `{}`, so every
+existing caller is byte-identical.
+
+- **`Content-Length` sits after the spread and is not overridable.** It
+  describes the buffer about to be written; a caller-supplied one that
+  disagrees either truncates the payload or leaves the socket waiting for bytes
+  that never arrive — the hang §38 spent an afternoon on. `Content-Type` sits
+  above it, because a caller may legitimately need a different one.
+- **The credential is now somewhere `scrub()` cannot see.** It only knows how
+  to remove the URL from a message, because until now the URL was the only
+  place a secret lived. Nothing reads a request header back out — the errors
+  there come from DNS and the socket — so there is nothing to scrub today, and
+  the rule that keeps it true is written into the function: a header value must
+  never reach an error, a log line or a stored `lastError`.
+
+§9's shared-helper rule applies: `sendGuarded` is on the feedback, alert,
+digest and Telegram paths, so this had a full run before it was trusted.
+
+### The adapter (`lib/mail-send.js`)
+
+**Not a new SSRF sink**, which is what makes it affordable — the Telegram case
+(§38) exactly. The host is fixed and ours to choose; only the key varies, and
+it varies in a header. Everything goes through `sendGuarded`, so the block
+list, the DNS pin and refuse-redirects all still apply.
+
+**The provider is detected from the key, never asked for.** `re_` → Resend, a
+UUID → Postmark; the shapes do not overlap, so the paste carries the answer and
+an owner who has to be told which service their own key came from was asked a
+question they had already answered. §18's precedent: one payload builder, two
+shapes, no setting to get wrong.
+
+**§18's rule arrives at two more providers, and Postmark is the sharp one.** It
+answers **200 with a non-zero `ErrorCode`** for an ordinary refusal — an
+inactive recipient, an unconfirmed sender signature — so reading the status
+alone files a refusal as a sent message and an unpaid invoice goes unchased
+with the screen saying it was chased. It also uses 406 and 422, which a
+status-only reading reports as a transport fault. `read()` keys on `ErrorCode`
+and `MessageID`, not on the status.
+
+**`unconfirmed` is a third state and must not be collapsed into either
+neighbour.** A 2xx whose body could not be read — unparseable, or over
+`maxBytes` — is neither delivery nor refusal; the mail may well have gone. §38
+found the hang underneath exactly this state. Reporting it as sent leaves an
+unpaid invoice unchased; reporting it as failed invites a second copy to a
+customer who already has the first. The wording says the message may have gone
+and points at the provider's own dashboard. **Two ways to arrive there**, and
+reading only the second is how §38 filed a truncated Telegram refusal as a
+delivery: `ok` with no `json`, and `too_large`, which is *not* ok but still
+carries the 2xx the provider sent before the body ran away.
+
+**`MessageStream: 'outbound'` is pinned rather than left to the account
+default.** Postmark is strict about not letting marketing leak into the
+transactional stream, which is precisely the line an invoice chaser must not
+cross — an owner whose default has been changed would otherwise send a payment
+reminder down a broadcast stream and collect an unsubscribe footer with it.
+
+**`redactKey` removes nothing today, and that is the reason to have it.**
+Neither service echoes a key into an error, but the message is persisted on the
+meta doc and rendered on a settings card, so the guarantee should be local and
+testable rather than emergent from two vendors' current habits — §30's argument
+for the prototype-pollution guard, in a new place.
+
+**`MAIL_API_BASE` is one seam for both providers**, not one each: their paths
+differ (`/emails` against `/email`), so a single capture server tells them
+apart. The guard relaxation hangs off that same variable being set rather than
+a flag of its own, because two independent switches is how the wrong one ends
+up set in production (§38, and §30's `GOOGLE_TOKEN_URL` before it).
+
+### Verification
+
+Every mutation was run, and each fails the test that names it (§9):
+
+| Mutation | Fails |
+|---|---|
+| drop `...headers` from the request | *a caller's own headers reach the destination* |
+| make `Content-Length` overridable | *a caller cannot override the length of the body it is not writing* — HTTP 400, or a hang |
+| read Postmark by status alone | *a 200 carrying a Postmark ErrorCode is a refusal* |
+| drop `MessageStream` | *a chaser goes down the transactional stream* |
+| collapse `unconfirmed` into sent | *a 2xx whose answer we could not read says so* |
+| drop `redactKey` | *a key echoed back by the provider is removed* |
+| carry the previous row forward on PUT | *replacing the key does not carry the old one's history* |
+| gate GET like the webhook | *a member may read the configuration but not change it* |
+| open PUT to a member | the same test, from the other end |
+| let a viewer read it | *a viewer cannot even read it* |
+| stop redacting `mail` on export | four backup tests |
+| strip the marker instead of rewriting it | *the restored deployment carries the re-entry marker* |
+| mark every empty mail config | *a workspace that never had one is not told to re-enter anything* |
+
+`tests/mail.test.mjs` is new, ports **9800–9850** (§9), and split the same way
+`ssrf.test.mjs` is: detection is pure and needs no sockets, the provider shapes
+run against a capture server with the block list stood down, because a local
+server is loopback and loopback is the first thing the guard refuses.
+
+`tests/smoke.mjs` asserts `/lib/mail-send.js` is a **404** — the allow-list
+check run backwards, beside `safe-fetch.js`. It is the file it would hurt most
+to serve: a served copy is a standing invitation to move it to `js/` so a
+browser could call it, which is exactly how a provider key ends up in
+front-end code. Smoke **45 → 46** locally.
+
+### No `CACHE_VERSION` bump, and no docs walk
+
+**Checked rather than assumed.** Nothing under `js/`, `css/` or the app shell
+changed — this is entirely `server.js`, `lib/`, `scripts/` and tests — so
+`crmbuilder-v50` stands.
+
+`docs/API.md` carries the two new routes and its count moves **52 → 54**,
+verified with `grep -cE "^app\.(get|post|put|patch|delete)\(" server.js`
+rather than incremented by hand (§29 records that number going stale twice).
+
+**§27's six user-facing documents need nothing, and that is a checked
+omission**: no client calls either route, so there is no capability a user has
+gained. Padding them to look thorough is its own inaccuracy (§40, §41). They
+get walked with the send UI, which is when a user can do something new.
+
+### `privacy.html` is deliberately NOT updated
+
+**Nothing calls the adapter, so no personal data leaves the deployment through
+it.** A paragraph saying customer addresses go to Resend or Postmark would be
+an intention written as a fact — §38 caught that exact shape before a commit
+(backups *"are encrypted"* when they were not), §40 records it as the standing
+rule, and §41 published the encryption sentence only once an encrypted artifact
+had been downloaded and restored end to end.
+
+The paragraph is **drafted** in `docs/CHASER-AND-TRACKERS.md` § *"The
+`privacy.html` paragraph"*, with the four things in it that are load-bearing,
+so it is written while the design is in front of somebody rather than
+summarised at the end of the send commit. It moves onto the page when the first
+send actually runs.
+
+### What is still not built
+
+The send route, the button, and the `privacy.html` paragraph. **Automated
+escalation remains rejected** and the reason is unchanged: the scheduler, not
+the email. §40 records the `/health` ping having never once fired the reminder
+engine for weeks, invisibly to every test here — an acceptable foundation for a
+message nobody loses money over, and not one for money collection.

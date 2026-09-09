@@ -1251,6 +1251,32 @@ function canDeleteRecords(user) {
   return user.role !== 'viewer' && user.role !== 'contributor';
 }
 
+/*
+ * Who may send a chaser to a customer under the workspace's own name.
+ *
+ * Owner and member — one rung above canEditRecords, because this is not an
+ * edit that a colleague can see and undo. It leaves the deployment, arrives in
+ * somebody's inbox with the business's address on it, and cannot be recalled.
+ * A contributor keeping records up to date is not the same authority as one
+ * asking a customer for money.
+ *
+ * A NEW PREDICATE, not the existing seam, and that is the substance rather
+ * than the name. canEditRecords and canDeleteRecords are enforced inside
+ * applyPush because they gate SYNC; a send is a route call and never passes
+ * through that seam at all, so it has to be checked on the endpoint. A
+ * client-side hide is a courtesy — §14's standing rule, that the client avoids
+ * offering a button whose effect would be undone a second later, and the
+ * server is what decides.
+ *
+ * The `mailto:` chaser (§51) is deliberately NOT gated by this. It composes a
+ * draft in the reader's own mail client, from their own address, out of an
+ * address already on the record — nothing leaves the deployment and there is
+ * no route to check. §36 keeps export open to every role for the same reason.
+ */
+function canSendMail(user) {
+  return user.role === 'owner' || user.role === 'platformAdmin' || user.role === 'member';
+}
+
 function requirePlatformAdmin(req, res, next) {
   if (req.user.role !== 'platformAdmin') return res.status(403).json({ error: 'Platform admin only' });
   next();
@@ -3407,6 +3433,14 @@ app.delete('/api/me', requireAuth, async (req, res) => {
 const { sendGuarded, maskUrl, hostOf, emptyBlockList } = require('./lib/safe-fetch');
 
 /*
+ * The bring-your-own-key email adapter. Same guard, same block list, same DNS
+ * pin — only the destination is a constant we chose and the credential rides
+ * in a header. See lib/mail-send.js, and docs/CHASER-AND-TRACKERS.md for why a
+ * tenant's own key is what makes a payment reminder land.
+ */
+const { detectProvider, providerName, sendMail } = require('./lib/mail-send');
+
+/*
  * The SAME file the browser loads and tests/dateRules.test.mjs evaluates —
  * js/date-rules.js ends with a `typeof module` guard so all three read one
  * copy of the arithmetic (§39). Not a duplicate in lib/, which would be a
@@ -3432,6 +3466,28 @@ const TELEGRAM_LOOKUP_PER_MIN = Number(process.env.RATE_TELEGRAM_MAX || 12);
 async function getHook(wsId) {
   const meta = await store.getData(wsId);
   return (meta && meta.hook) || null;
+}
+
+/*
+ * The tenant's own email provider key — a SIBLING of settings and of hook on
+ * the meta doc, for the reason §38 established for the webhook URL and every
+ * word of which transfers.
+ *
+ * pullChanges sends `meta.settings` WHOLE to anyone whose cursor is behind —
+ * member, contributor, VIEWER — so a key kept there would land in every
+ * colleague's IndexedDB, offline, permanently. And masking it out on the way
+ * down would then destroy it: the client merges the pulled document into local
+ * settings and pushes the whole thing back, where last-write-wins accepts it,
+ * so `re_•••••` overwrites the real key the first time an owner changes the
+ * currency. Redaction and last-write-wins cannot both apply to one document.
+ *
+ * As a sibling, putData merges it on both stores and pullChanges names
+ * `meta.settings` specifically — so sync STRUCTURALLY cannot reach it, which
+ * is a guarantee that holds for somebody who never reads this comment.
+ */
+async function getMail(wsId) {
+  const meta = await store.getData(wsId);
+  return (meta && meta.mail) || null;
 }
 
 /*
@@ -3468,6 +3524,47 @@ function publicHook(hook) {
     lastOkAt: hook.lastOkAt || 0,
     lastErrorAt: hook.lastErrorAt || 0,
     lastError: hook.lastError || '',
+  };
+}
+
+/*
+ * What anyone may see of the mail configuration. NEVER the key, and never any
+ * part of it.
+ *
+ * publicHook returns `masked` because a webhook URL has a non-secret half that
+ * is genuinely useful — the host is what tells a Slack hook from a Discord one
+ * at a glance. A key has no such half. The two facts that identify this
+ * configuration are the PROVIDER and the FROM-ADDRESS, and both are here in
+ * full, so a hint like `re_••••9f2c` would be returning bytes of the secret
+ * for no operational gain. There is no rotation flow that needs two keys told
+ * apart. Do not add one back as an improvement.
+ *
+ * Three states, same as publicHook and for the same reason: a restore cannot
+ * bring the key back, so `needsReentry` is what stops a recovery that switched
+ * off a customer's sending from being byte-identical to their never having set
+ * it up (§38).
+ *
+ * `verified` is the fourth thing worth reading and it is deliberately not a
+ * boolean the save path can set. Nothing here has asked the provider whether
+ * the key works — see the PUT — so it is true only once a real send has
+ * succeeded, which is what lastOkAt records.
+ */
+function publicMail(mail) {
+  if (!mail || !mail.key) {
+    if (mail && mail.needsReentry) return { configured: false, needsReentry: true };
+    return { configured: false };
+  }
+  return {
+    configured: true,
+    provider: mail.provider || '',
+    providerName: providerName(mail.provider),
+    from: mail.from || '',
+    verified: Boolean(mail.lastOkAt),
+    addedAt: mail.addedAt || 0,
+    addedBy: mail.addedBy || '',
+    lastOkAt: mail.lastOkAt || 0,
+    lastErrorAt: mail.lastErrorAt || 0,
+    lastError: mail.lastError || '',
   };
 }
 
@@ -3754,6 +3851,164 @@ app.post('/api/org/hook/telegram/chats', requireAuth, requireSettingsOwner,
     if (!out.ok) return res.status(400).json({ error: out.error });
     res.json({ ok: true, chats: out.chats });
   });
+
+/* ---- the tenant's own email provider -------------------------------------
+ *
+ * Storage and permissions only. Nothing here sends anything: the chaser's send
+ * UI and its route land on top of this, and building the credentials store
+ * first is deliberate — §38 built the webhook transport before the digest that
+ * uses it for exactly this reason. The alternative is writing the part that
+ * handles a key under pressure with the feature already half-built.
+ *
+ * A from-address with an optional display name: `Accounts <a@b.co.uk>` is what
+ * a customer should see, and both providers accept that form. Validated
+ * loosely — this is a shape check to catch a paste that went wrong, not an
+ * attempt to decide what a valid mailbox is, which nothing short of sending to
+ * it can do.
+ */
+const FROM_ADDRESS = /^(?:[^<>]{1,64}\s)?<?([^\s@<>]+@[^\s@<>]+\.[^\s@<>]{2,})>?$/;
+
+/*
+ * The test seam, and ONE condition rather than two — TELEGRAM_API_BASE's
+ * precedent exactly (§38), which is itself GOOGLE_TOKEN_URL's (§30).
+ *
+ * A fixed host cannot be pointed at a local capture server, and sendGuarded
+ * refuses loopback besides, so without a seam this adapter is only testable
+ * against Resend and Postmark themselves — which is how §30's OAuth callback
+ * went years with no test at all. Tying the guard relaxation to the same
+ * variable being set, rather than to a flag of its own, is what stops the
+ * wrong one ending up set in production: a deployment that does not redirect
+ * the host cannot reach the relaxed path.
+ *
+ * One base serves both providers because their paths differ (/emails against
+ * /email), so a single capture server can tell them apart.
+ */
+const MAIL_API_BASE = process.env.MAIL_API_BASE || '';
+const MAIL_OVERRIDDEN = Boolean(MAIL_API_BASE);
+
+/*
+ * Send one message using the workspace's own key, and record what happened.
+ *
+ * No route calls this yet — the chaser's send UI is the next piece of work.
+ * It exists now because it is the join between the two halves this phase
+ * built: the key on the meta doc and the provider adapter. Without it the
+ * storage seam is only ever tested against itself.
+ *
+ * `needsReentry` gets its own words rather than falling into "not configured".
+ * That distinction is the entire point of the marker surviving a restore
+ * (§38): an owner told to set up email they never set up will go looking for a
+ * screen they have already filled in.
+ */
+async function deliverMail(wsId, { to, subject, text }) {
+  const mail = await getMail(wsId);
+  if (!mail || !mail.key) {
+    return mail && mail.needsReentry
+      ? { ok: false, code: 'needs_reentry', error: 'The provider key did not survive a recovery and has to be entered again in Settings.' }
+      : { ok: false, code: 'not_configured', error: 'No email provider is configured for this workspace.' };
+  }
+
+  const out = await sendMail({ key: mail.key, from: mail.from, to, subject, text }, {
+    base: MAIL_API_BASE || undefined,
+    allowHttp: MAIL_OVERRIDDEN,
+    blockList: MAIL_OVERRIDDEN ? emptyBlockList() : undefined,
+  });
+
+  /*
+   * `unconfirmed` is written to lastError but does NOT clear lastOkAt, and
+   * that is deliberate: it is neither a success to claim nor a failure to
+   * report. The message may have gone (lib/mail-send.js says why), so marking
+   * the key unverified over it would be as wrong as marking the send done.
+   */
+  await store.putData(wsId, {
+    mail: out.ok
+      ? { ...mail, lastOkAt: Date.now(), lastErrorAt: 0, lastError: '' }
+      : { ...mail, lastErrorAt: Date.now(), lastError: out.error || 'the message was not sent' },
+  });
+  return out;
+}
+
+app.get('/api/org/mail', requireAuth, async (req, res) => {
+  /*
+   * Readable by anyone who may SEND, writable only by an owner — and the two
+   * gates differ on purpose.
+   *
+   * Mirroring the hook exactly (owner-only on both) would leave a member with
+   * no way to know whether sending is available, so their client would either
+   * hide a capability they have or offer a button that 403s. Neither is
+   * honest. What a member sees here is the provider, the from-address their
+   * mail would go out under, and whether it has ever worked — the facts they
+   * need to decide whether to press send. Never the key, which is not a
+   * question of role: publicMail does not return it to anybody.
+   */
+  if (!canSendMail(req.user)) {
+    return res.status(403).json({ error: 'Only an owner or a member can send email from this workspace' });
+  }
+  if (!req.user.orgId) return res.status(400).json({ error: 'You are not in an organisation' });
+  res.json({ mail: publicMail(await getMail(workspaceIdFor(req.user))) });
+});
+
+app.put('/api/org/mail', requireAuth, requireSettingsOwner, async (req, res) => {
+  const wsId = workspaceIdFor(req.user);
+  const key = String((req.body && req.body.key) || '').trim();
+  const from = String((req.body && req.body.from) || '').trim();
+
+  if (!key) {
+    await store.putData(wsId, { mail: null });
+    return res.json({ ok: true, mail: publicMail(null) });
+  }
+  if (key.length > 512) return res.status(413).json({ error: 'That key is too long to be real.' });
+
+  /*
+   * NO OUTBOUND CALL, and the difference from PUT /api/org/hook is a decision
+   * rather than an omission.
+   *
+   * The webhook probes at save because it can: a test notification into a chat
+   * channel costs nothing and proves the destination. The only way to prove an
+   * email key is to send an email, which would put a message in somebody's
+   * inbox every time an owner corrects a typo in the from-address. So what is
+   * refused here is what can NEVER work — a key matching neither provider's
+   * shape, and a from-address that is not one — and that needs no network at
+   * all.
+   *
+   * The consequence is stated rather than discovered: a wrong-but-well-formed
+   * key is stored, and the first real send is what finds out. publicMail
+   * reports `verified: false` until one has succeeded, so the screen can say
+   * "not checked yet" instead of implying a confirmation nobody made. §38's
+   * refuse/warn split, with the warn half moved to the send because that is
+   * the only place the answer exists.
+   */
+  const provider = detectProvider(key);
+  if (!provider) {
+    return res.status(400).json({
+      error: 'That does not look like a Resend or a Postmark key. A Resend key starts with re_; a Postmark server token is a long code with dashes in it.',
+    });
+  }
+  if (!FROM_ADDRESS.test(from)) {
+    return res.status(400).json({
+      error: 'Enter the address your reminders should come from — one your provider has verified, like accounts@yourbusiness.co.uk.',
+    });
+  }
+
+  /*
+   * The previous key's send history is NOT carried forward. lastOkAt is what
+   * publicMail reports as `verified`, and a new key has proved nothing — so
+   * keeping it would show a green tick over a credential that has never been
+   * used. Same class of claim as §17's workflow reporting success while
+   * producing no backups.
+   */
+  const mail = {
+    provider,
+    key,
+    from,
+    addedAt: Date.now(),
+    addedBy: req.user.email,
+    lastOkAt: 0,
+    lastErrorAt: 0,
+    lastError: '',
+  };
+  await store.putData(wsId, { mail });
+  res.json({ ok: true, mail: publicMail(mail) });
+});
 
 /* ---- reminders: what a workspace would be told about today ----------------
  *
@@ -4220,7 +4475,16 @@ app.get('/api/admin/export', async (req, res) => {
    */
   const redactMeta = (meta) => {
     if (!meta) return meta;
-    if (!meta.hook || !meta.hook.url) return meta;
+    const hooked = Boolean(meta.hook && meta.hook.url);
+    /*
+     * The tenant's email provider key is the second credential on this
+     * document and gets identical treatment. It is worth MORE than the webhook
+     * URL to whoever downloads the artifact — a bot token posts into one chat,
+     * a Resend key sends mail as that business to anyone — so there was never
+     * a question of exporting it.
+     */
+    const mailed = Boolean(meta.mail && meta.mail.key);
+    if (!hooked && !mailed) return meta;
     /*
      * NOT EVEN THE HOST. Carrying it was considered when the re-entry notice
      * was built — "you were sending to api.telegram.org" is a better prompt
@@ -4228,8 +4492,14 @@ app.get('/api/admin/export', async (req, res) => {
      * tenant uses into an artifact §17 is already uneasy about, to save an
      * owner from remembering a choice they made themselves. The notice reads
      * fine without it.
+     *
+     * The same call for mail, which is why the provider name and the
+     * from-address go too rather than riding along as harmless context.
      */
-    return { ...meta, hook: { redacted: true } };
+    const out = { ...meta };
+    if (hooked) out.hook = { redacted: true };
+    if (mailed) out.mail = { redacted: true };
+    return out;
   };
 
   const wsIds = await store.listWorkspaceIds();

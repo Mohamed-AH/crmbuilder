@@ -5,7 +5,9 @@
 > If you change something this file names, change this file.
 >
 > **Parts 1 and 2 are built (`CLAUDE.md` §49, §50), and part 3's `mailto:`
-> half is (§51). The BYOK send is not.** This
+> half is (§51). BYOK's storage seam, export redaction and provider adapter
+> are built (§52). The send itself — the route, the button, and the
+> `privacy.html` paragraph — is not.** This
 > was the spec agreed before any code, written so that the decisions are
 > recorded with their reasoning rather than reconstructed from a diff. Where a
 > choice was taken, the alternatives are kept beside it — a decision without
@@ -490,6 +492,56 @@ more often than a feature.
 same feature. §40's lesson: a page claiming a complete list has to be
 re-checked against what the deployment actually does, not against what the
 code could do.
+
+## The `privacy.html` paragraph — drafted here, deliberately not published
+
+**Written now, published when the first send actually runs**, and the deferral
+is the point rather than caution about wording. §52 built the storage, the
+redaction and the adapter; nothing calls the adapter, so **no personal data
+leaves the deployment through it today.** A privacy page saying otherwise
+would be an intention written as a fact — which is exactly what §38 caught
+before a commit (backups *"are encrypted"* when they were not), what §40
+records as the standing rule, and what §41 finally published only once an
+encrypted artifact had been downloaded and restored end to end.
+
+Drafting it here rather than leaving it to the send commit is the other half:
+the sentence gets written while the design is in front of somebody, not at the
+end of a feature when the temptation is to summarise.
+
+The paragraph, ready to move into `privacy.html`'s roster section:
+
+> **Sending reminders by email.** A workspace owner may connect their own
+> email account with Resend or Postmark. When they do, and when somebody on
+> that team sends an overdue reminder, the customer's email address and the
+> text of that reminder go to whichever of those two services the owner chose.
+> That is their account and their contract with that provider, not ours — we
+> hold the key only so the reminder can be sent, we never show it back to
+> anybody, and it is removed from our nightly backup. **Nothing is sent
+> automatically.** If no provider is connected, reminders are written into the
+> sender's own email program instead and never reach us or anybody else at
+> all.
+
+Four things in it that are load-bearing, so a later edit does not smooth them
+away:
+
+- **It names the two providers.** §40 was caught twice by a roster that closed
+  with *"That is the complete list"* and omitted first GitHub and then
+  Telegram — both found by looking at what the deployment was doing rather
+  than at the code. This is a third recipient of personal data and it goes on
+  the list.
+- **It is scoped to the owner's choice**, like §40's treatment of the
+  workspace digest. The provider is the tenant's, on the tenant's contract, so
+  it is disclosed without being claimed as one of our own processors.
+- **"Nothing is sent automatically"** is a real property, not reassurance:
+  automated escalation is rejected above, and the reason is the scheduler
+  rather than the email.
+- **The `mailto:` fallback is described in the same paragraph**, because it
+  remains the permanent behaviour for every workspace that never connects a
+  key. Describing only the send would leave the majority of users reading
+  about something that does not happen to them.
+
+`terms.html` needs nothing: the provider relationship is the controller's, and
+the retention sentence there is unchanged.
 
 ## Not planned, and what they would cost
 

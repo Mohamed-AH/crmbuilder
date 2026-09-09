@@ -115,6 +115,23 @@ for (const ws of workspaces) {
 }
 
 /*
+ * And the same again for the tenant's own email provider key, which is the
+ * second credential to live on the meta doc.
+ *
+ * Kept as a marker for the same reason and with a sharper edge: a workspace
+ * whose sending quietly stops after a recovery does not merely go silent, it
+ * goes silent on the messages that ask customers for money. `deliverMail`
+ * tests `mail.key`, which is absent here, so nothing tries to send with it —
+ * and publicMail reports `needsReentry` so the settings card says the key did
+ * not survive a recovery rather than offering a blank field that is
+ * indistinguishable from one nobody ever filled in.
+ */
+const redactedMail = workspaces.filter((w) => w.meta && w.meta.mail && w.meta.mail.redacted).length;
+for (const ws of workspaces) {
+  if (ws.meta && ws.meta.mail && ws.meta.mail.redacted) ws.meta.mail = { needsReentry: true };
+}
+
+/*
  * The same shape again, for the two collections a backup does not carry at all.
  *
  * Invites and beta codes are bearer credentials (§13, §16), so they are not in
@@ -170,6 +187,12 @@ if (redactedHooks) {
   console.log(`\n  ${redactedHooks} workspace(s) had a notification webhook configured.`);
   console.log('  Webhook URLs are credentials and are never exported, so they do NOT come back.');
   console.log('  Each of those owners must re-enter theirs in Settings, or their notifications stay off.');
+  console.log('  Their Settings screen now says so — they do not have to be told individually.');
+}
+if (redactedMail) {
+  console.log(`\n  ${redactedMail} workspace(s) had an email provider key configured.`);
+  console.log('  Provider keys are credentials and are never exported, so they do NOT come back.');
+  console.log('  Until each owner re-enters theirs, that workspace cannot send overdue reminders.');
   console.log('  Their Settings screen now says so — they do not have to be told individually.');
 }
 if (lostInvites || lostBetaCodes) {

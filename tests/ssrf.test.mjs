@@ -300,7 +300,7 @@ describe('the transport', () => {
       req.on('data', (c) => chunks.push(c));
       req.on('end', () => {
         const raw = Buffer.concat(chunks).toString('utf8');
-        received.push({ url: req.url, host: req.headers.host, body: raw });
+        received.push({ url: req.url, host: req.headers.host, headers: req.headers, body: raw });
 
         if (req.url === '/redirect') {
           res.writeHead(302, { Location: `http://127.0.0.1:${REDIRECT_TARGET_PORT}/landed` });
@@ -358,6 +358,42 @@ describe('the transport', () => {
     assert.equal(out.status, 200);
     assert.equal(received.length, 1);
     assert.deepEqual(JSON.parse(received[0].body), { text: 'hello' });
+  });
+
+  /*
+   * The `headers` option, added for bring-your-own-key email: Resend and
+   * Postmark both authenticate with a header rather than with a token in the
+   * path, so the credential has to be able to get into the request.
+   */
+  test("a caller's own headers reach the destination", async () => {
+    received = [];
+    const out = await sendGuarded(`http://127.0.0.1:${PORT}/keyed`, { text: 'x' }, {
+      ...OPEN,
+      headers: { Authorization: 'Bearer re_notreal', 'X-Postmark-Server-Token': 'tok' },
+    });
+    assert.equal(out.ok, true);
+    assert.equal(received[0].headers.authorization, 'Bearer re_notreal');
+    assert.equal(received[0].headers['x-postmark-server-token'], 'tok');
+    // The defaults are still there — a caller adds, it does not replace.
+    assert.equal(received[0].headers['content-type'], 'application/json');
+  });
+
+  /*
+   * Content-Length sits AFTER the spread deliberately, and this is what says
+   * so. A caller-supplied one that disagrees with the buffer either truncates
+   * the payload or leaves the socket waiting for bytes that never arrive — the
+   * hang §38 already spent an afternoon on. Made overridable, this test fails
+   * with a short body or by timing out.
+   */
+  test('a caller cannot override the length of the body it is not writing', async () => {
+    received = [];
+    const out = await sendGuarded(`http://127.0.0.1:${PORT}/length`, { text: 'the whole body' }, {
+      ...OPEN,
+      timeoutMs: 1500,
+      headers: { 'Content-Length': '2' },
+    });
+    assert.equal(out.ok, true, `expected the request to complete, got: ${out.error}`);
+    assert.deepEqual(JSON.parse(received[0].body), { text: 'the whole body' });
   });
 
   /*

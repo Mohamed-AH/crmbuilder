@@ -54,6 +54,16 @@ const BETA_REVOKED = 'CANARY-BETA-REVOKED-P8XM';
 const HOOK_TOKEN = 'CANARY-WEBHOOK-TOKEN-J8P2';
 const HOOK_URL = `https://hooks.drill.invalid/services/T9/B9/${HOOK_TOKEN}`;
 let hookWsId = null;
+/*
+ * The second credential on the meta doc, and the more valuable one to whoever
+ * downloads the artifact: a bot token posts into one chat, a provider key
+ * sends mail as that business to anyone. Same treatment for the same reason.
+ * Shaped so detectProvider recognises it, or the save path would refuse it and
+ * the seeded state would be unreachable through the endpoint the last test
+ * uses.
+ */
+const MAIL_KEY = 're_CANARYMAILKEY7Q2X';
+const MAIL_FROM = 'Accounts <accounts@drill.invalid>';
 let restoreOutput = '';
 
 let srcDir;
@@ -185,6 +195,14 @@ before(async () => {
   store.data[hookWsId] = {
     ...(store.data[hookWsId] || {}),
     hook: { url: HOOK_URL, addedAt: DECIDED_AT, addedBy: 'maya@fixture.invalid', lastOkAt: DECIDED_AT },
+    mail: {
+      provider: 'resend',
+      key: MAIL_KEY,
+      from: MAIL_FROM,
+      addedAt: DECIDED_AT,
+      addedBy: 'maya@fixture.invalid',
+      lastOkAt: DECIDED_AT,
+    },
   };
   /*
    * Two live credentials and two dead ones, in the collections the export does
@@ -264,6 +282,8 @@ before(async () => {
   // counts write merges rather than replaces.
   assert.equal(sourceStore.data?.[hookWsId]?.hook?.url, HOOK_URL,
     'the source lost the webhook before the export — the redaction tests would be hollow');
+  assert.equal(sourceStore.data?.[hookWsId]?.mail?.key, MAIL_KEY,
+    'the source lost the provider key before the export — the redaction tests would be hollow');
 
   const restored = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'restore.mjs')], {
     cwd: ROOT,
@@ -571,6 +591,76 @@ describe('a webhook URL does not travel in a backup', () => {
     assert.equal(saved.status, 200);
     assert.equal(saved.json.hook.configured, true);
     assert.equal(saved.json.hook.needsReentry, undefined, 'the notice must not outlive the fix');
+  });
+});
+
+/*
+ * The same set again for the tenant's own email provider key, and it is a
+ * separate describe rather than four more assertions in the one above on
+ * purpose: they are two credentials with two failure stories, and a webhook
+ * regression that also broke mail would otherwise be one red test rather than
+ * two.
+ *
+ * The stake is higher here. A workspace whose sending quietly stops after a
+ * recovery does not merely go silent — it goes silent on the messages that ask
+ * customers for money, and nobody notices an invoice that was never chased.
+ */
+describe('an email provider key does not travel in a backup', () => {
+  test('the artifact carries the marker and not the credential', () => {
+    const raw = readFileSync(backupFile, 'utf8');
+    assert.ok(!raw.includes(MAIL_KEY), 'the backup file contains a live provider key');
+    /*
+     * Searched across the WHOLE artifact rather than a named field, §38's rule:
+     * a field-by-field check only covers the fields somebody thought of, and
+     * would pass on a version that smuggled the key somewhere else entirely.
+     * The from-address goes too — the same call as declining to carry the
+     * webhook host, and for the same reason (server.js redactMeta says why).
+     */
+    assert.ok(!raw.includes('accounts@drill.invalid'), 'the backup file names the sending address');
+    assert.ok(!raw.includes('"provider":"resend"'), 'the backup file names which provider this tenant uses');
+
+    const ws = backup.workspaces.find((w) => w.wsId === hookWsId);
+    assert.ok(ws, 'the workspace with the provider key is missing from the backup entirely');
+    assert.deepEqual(ws.meta.mail, { redacted: true });
+    assert.equal(ws.meta.settings !== undefined, true, 'the rest of the meta doc still travels');
+  });
+
+  test('the restored deployment carries the re-entry marker and no key', () => {
+    const mail = restoredStore.data?.[hookWsId]?.mail;
+    assert.deepEqual(mail, { needsReentry: true });
+    assert.equal(mail.key, undefined, 'a restored mail config must never have a key behind it');
+  });
+
+  test('and the restore says so, because the owner is not watching the terminal', () => {
+    assert.match(restoreOutput, /1 workspace\(s\) had an email provider key configured/);
+    assert.match(restoreOutput, /cannot send overdue reminders/);
+  });
+
+  test('the owner is told their sending is off, rather than left to find out', async () => {
+    const maya = await signIn(DST, 'maya@fixture.invalid');
+    const { json } = await req(DST, '/api/org/mail', { cookies: maya });
+    assert.equal(json.mail.configured, false, 'nothing can be sent — there is no key');
+    assert.equal(json.mail.needsReentry, true, 'and the owner is told why, rather than seeing a blank field');
+  });
+
+  test('a workspace that never had one is not told to re-enter anything', async () => {
+    // The other half of the distinction. Without it, marking every empty mail
+    // config as needing re-entry would "pass" the test above while telling
+    // people to restore something they never had.
+    const nadia = await signIn(DST, 'nadia@fixture.invalid');
+    const { json } = await req(DST, '/api/org/mail', { cookies: nadia });
+    assert.deepEqual(json.mail, { configured: false });
+  });
+
+  test('re-entering one clears the notice', async () => {
+    const maya = await signIn(DST, 'maya@fixture.invalid');
+    const saved = await req(DST, '/api/org/mail', {
+      method: 'PUT', cookies: maya, body: { key: 're_REPLACEDKEY4B7Y', from: MAIL_FROM },
+    });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.json.mail.configured, true);
+    assert.equal(saved.json.mail.needsReentry, undefined, 'the notice must not outlive the fix');
+    assert.equal(saved.json.mail.verified, false, 'and a replacement key has still proved nothing');
   });
 });
 

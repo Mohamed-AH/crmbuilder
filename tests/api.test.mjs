@@ -2321,6 +2321,194 @@ describe('workspace webhook routes', () => {
 });
 
 /*
+ * The tenant's own email provider key — the second credential to live on the
+ * meta doc, and the storage half of the BYOK chaser
+ * (docs/CHASER-AND-TRACKERS.md decision 3; the `mailto:` half is §51).
+ *
+ * Nothing here sends anything. What these tests are about is the property that
+ * makes the key safe to store at all: it is a SIBLING of settings, so the sync
+ * seam structurally cannot carry it, and no route returns it to anybody.
+ */
+describe('workspace email provider routes', () => {
+  const owner = jar();
+  const hand = jar();
+  const looker = jar();
+  let wsId = null;
+
+  // Well-formed and entirely fictional. It never reaches a socket: the save
+  // path makes no outbound call at all — see "refuses only what can never
+  // work" below — which is what makes these tests offline-safe.
+  const KEY = 're_TESTONLYKEYc3d4e5f6';
+  const POSTMARK = '1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d';
+  const FROM = 'Accounts <accounts@team.test>';
+
+  const readMail = async (id) => {
+    const raw = JSON.parse(await readFile(join(dataDir, 'store.json'), 'utf8'));
+    return (raw.data[id] || {}).mail;
+  };
+
+  before(async () => {
+    const o = await req('/auth/dev', { method: 'POST', body: { email: 'mail-owner@team.test' }, cookies: owner });
+    wsId = o.json.user.orgId;
+    await req('/auth/dev', { method: 'POST', body: { email: 'mail-hand@team.test' }, cookies: hand });
+    const look = await req('/auth/dev', { method: 'POST', body: { email: 'mail-look@team.test' }, cookies: looker });
+    for (const [who, id] of [[hand, null], [looker, look.json.user.id]]) {
+      const code = (await req('/api/org/invites', { method: 'POST', body: {}, cookies: owner })).json.invite.code;
+      await req('/api/org/join', { method: 'POST', body: { code }, cookies: who });
+      if (id) await req(`/api/org/members/${id}`, { method: 'PATCH', body: { role: 'viewer' }, cookies: owner });
+    }
+  });
+
+  test('nothing is configured to begin with', async () => {
+    const { status, json } = await req('/api/org/mail', { cookies: owner });
+    assert.equal(status, 200);
+    assert.deepEqual(json.mail, { configured: false });
+  });
+
+  /*
+   * The one class of failure a save can catch without a network call. Sending
+   * a real email to prove a key would put a message in somebody's inbox every
+   * time an owner corrects a typo in the from-address, so what is refused here
+   * is what can NEVER work: a key matching neither provider's shape.
+   */
+  test('a key that is neither provider is refused, and names both', async () => {
+    const { status, json } = await req('/api/org/mail', {
+      method: 'PUT', body: { key: 'hunter2', from: FROM }, cookies: owner,
+    });
+    assert.equal(status, 400);
+    assert.match(json.error, /Resend/);
+    assert.match(json.error, /Postmark/);
+    assert.equal(await readMail(wsId), undefined, 'a refused key must not be stored');
+  });
+
+  test('a from-address that is not an address is refused', async () => {
+    const { status } = await req('/api/org/mail', {
+      method: 'PUT', body: { key: KEY, from: 'the accounts team' }, cookies: owner,
+    });
+    assert.equal(status, 400);
+    assert.equal(await readMail(wsId), undefined);
+  });
+
+  test('a good key is stored, with the provider read off it rather than asked for', async () => {
+    const { status, json } = await req('/api/org/mail', {
+      method: 'PUT', body: { key: KEY, from: FROM }, cookies: owner,
+    });
+    assert.equal(status, 200);
+    assert.equal(json.mail.configured, true);
+    assert.equal(json.mail.provider, 'resend');
+    assert.equal(json.mail.providerName, 'Resend');
+    assert.equal(json.mail.from, FROM);
+    assert.equal(json.mail.addedBy, 'mail-owner@team.test');
+    assert.equal((await readMail(wsId)).key, KEY, 'it is on the meta doc');
+  });
+
+  /*
+   * Nothing has asked the provider whether the key works, so nothing may imply
+   * it has. `verified` moves only when a real send succeeds — a green tick
+   * over an unused credential is §17's workflow reporting success while
+   * producing no backups, in a smaller place.
+   */
+  test('a key nobody has used yet is not reported as verified', async () => {
+    assert.equal((await req('/api/org/mail', { cookies: owner })).json.mail.verified, false);
+  });
+
+  /*
+   * THE PROPERTY THE WHOLE DESIGN RESTS ON. pullChanges sends meta.settings
+   * whole to every rung of the ladder, so a key kept there would land in every
+   * colleague's IndexedDB permanently — and masking it on the way down would
+   * then have last-write-wins push the mask back over the real key (§38).
+   *
+   * Searched across the WHOLE response rather than a named field: a
+   * field-by-field check only covers the fields somebody thought of.
+   */
+  test('the key never reaches a sync response, for any role', async () => {
+    for (const cookies of [owner, hand, looker]) {
+      const { text } = await req('/api/sync?since=0', { cookies });
+      assert.ok(!text.includes(KEY), 'the provider key crossed the sync seam');
+    }
+  });
+
+  test('and no route hands it back — not even to the owner who set it', async () => {
+    const { text } = await req('/api/org/mail', { cookies: owner });
+    assert.ok(!text.includes(KEY));
+    assert.ok(!text.includes(KEY.slice(-6)), 'not even a hint: a key has no non-secret half (see publicMail)');
+  });
+
+  /*
+   * Read and write are gated DIFFERENTLY here, unlike the webhook, and this is
+   * the pair of tests that pins it. A member may send, so a member has to be
+   * able to learn that sending is available and what address it goes out
+   * under; gating the read like the webhook's would leave their client either
+   * hiding a capability they have or offering a button that 403s.
+   */
+  test('a member may read the configuration but not change it', async () => {
+    const read = await req('/api/org/mail', { cookies: hand });
+    assert.equal(read.status, 200);
+    assert.equal(read.json.mail.configured, true);
+    assert.equal(read.json.mail.from, FROM);
+    assert.ok(!read.text.includes(KEY));
+
+    const write = await req('/api/org/mail', {
+      method: 'PUT', body: { key: POSTMARK, from: 'Them <them@evil.test>' }, cookies: hand,
+    });
+    assert.equal(write.status, 403);
+    assert.equal((await readMail(wsId)).key, KEY, "the owner's key is untouched by the attempt");
+  });
+
+  test('a viewer cannot even read it — they have nothing to send', async () => {
+    assert.equal((await req('/api/org/mail', { cookies: looker })).status, 403);
+  });
+
+  test('a stranger gets their own empty workspace, never this one', async () => {
+    const outsider = jar();
+    await req('/auth/dev', { method: 'POST', body: { email: 'mail-outsider@other.test' }, cookies: outsider });
+    const { json } = await req('/api/org/mail', { cookies: outsider });
+    assert.deepEqual(json.mail, { configured: false });
+  });
+
+  test('replacing the key does not carry the old one\'s history with it', async () => {
+    /*
+     * The stored row is aged into a state only a successful send can produce,
+     * because otherwise this test passes on the bug: lastOkAt is 0 on a fresh
+     * key, so an implementation that spread the previous row forward would be
+     * indistinguishable from one that did not. §9 — a test checked only
+     * against the fixed code proves nothing.
+     *
+     * Planted directly, stop-edit-start like plantHook, since there is no
+     * endpoint that can produce a successful send without one.
+     */
+    await stopServer();
+    const file = join(dataDir, 'store.json');
+    const raw = JSON.parse(await readFile(file, 'utf8'));
+    raw.data[wsId].mail = { ...raw.data[wsId].mail, lastOkAt: 1756000000000, lastError: 'stale' };
+    await writeFile(file, JSON.stringify(raw));
+    await startServer();
+    assert.equal((await req('/api/org/mail', { cookies: owner })).json.mail.verified, true);
+
+    const { json } = await req('/api/org/mail', {
+      method: 'PUT', body: { key: POSTMARK, from: FROM }, cookies: owner,
+    });
+    assert.equal(json.mail.provider, 'postmark');
+    assert.equal(json.mail.verified, false, 'a new key has proved nothing — a green tick over it is a false claim');
+    assert.equal(json.mail.lastError, '', "and the previous key's last failure is not the new one's");
+    assert.equal((await readMail(wsId)).key, POSTMARK);
+  });
+
+  test('clearing it removes the credential rather than blanking a field', async () => {
+    const { json } = await req('/api/org/mail', { method: 'PUT', body: { key: '' }, cookies: owner });
+    assert.deepEqual(json.mail, { configured: false });
+    assert.equal(await readMail(wsId), null);
+  });
+
+  test('an absurd key is refused before it is stored', async () => {
+    const { status } = await req('/api/org/mail', {
+      method: 'PUT', body: { key: `re_${'x'.repeat(600)}`, from: FROM }, cookies: owner,
+    });
+    assert.equal(status, 413);
+  });
+});
+
+/*
  * Finding a Telegram chat without reading raw JSON.
  *
  * Telegram is the one provider that hands you no webhook URL — a bot token,

@@ -171,6 +171,13 @@ const MUST_NOT_SERVE = [
    * adding 'lib' to ASSET_DIRS to make an import work.
    */
   ['/lib/safe-fetch.js', 'server-side source'],
+  /*
+   * The second file in lib/, and the one it would hurt most to serve: it names
+   * both providers' API shapes and, more to the point, a served copy is a
+   * standing invitation to move it to js/ so a browser could call it — which
+   * is exactly how a provider key would end up in front-end code.
+   */
+  ['/lib/mail-send.js', 'server-side source'],
 ];
 
 for (const [path, what] of MUST_NOT_SERVE) {
