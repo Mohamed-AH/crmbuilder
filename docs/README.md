@@ -36,7 +36,8 @@ is why status is declared, not inferred.
 | **call or extend the API** | [API.md](API.md) — every route, auth, sync, roles, alerts, reminders |
 | **understand why a decision was made** | [archive/](archive/) |
 | **sell it** | [../MARKETING.md](../MARKETING.md) — internal source copy. It makes strong claims about price, so read [LAUNCH-CHECKLIST.md](LAUNCH-CHECKLIST.md) §2.1 before publishing any of it |
-| **launch a domain, or start charging** | [LAUNCH-CHECKLIST.md](LAUNCH-CHECKLIST.md) — everything both touch, code and docs |
+| **launch a domain, or start charging** | [LAUNCH-CHECKLIST.md](LAUNCH-CHECKLIST.md) — everything both touch, code and docs. The domain is `nimbleclerk.com` |
+| **decide what to build next** | [ROADMAP.md](ROADMAP.md) — dark mode, accessibility, a security re-audit, integrations and localization, each costed against what is already here |
 | **build the chaser or the trackers** | [CHASER-AND-TRACKERS.md](CHASER-AND-TRACKERS.md) — the spec agreed before any code, and the five decisions behind it |
 
 ---
@@ -51,7 +52,8 @@ is why status is declared, not inferred.
 | [DEMO-SCRIPT.md](DEMO-SCRIPT.md) | presenter | Timed 10-minute demo, imperative, with the expected questions. |
 | [ONBOARDING.md](ONBOARDING.md) | rollout | Getting a business *using* it inside a week. |
 | [BETA.md](BETA.md) | operator | Runbook: consent screen, codes, usage, alerts, access requests, plus the note to send testers. |
-| [LAUNCH-CHECKLIST.md](LAUNCH-CHECKLIST.md) | operator | What an own-domain move and a pricing launch each have to change. Live, not frozen. |
+| [LAUNCH-CHECKLIST.md](LAUNCH-CHECKLIST.md) | operator | What the move to `nimbleclerk.com` and a pricing launch each have to change. Live, not frozen. |
+| [ROADMAP.md](ROADMAP.md) | developers | Five candidate items sized against the real code, with what already exists measured rather than recalled. Nothing scheduled. Live, not frozen. |
 | [CHASER-AND-TRACKERS.md](CHASER-AND-TRACKERS.md) | developers | Overdue chaser, renewal tracker, dormancy report — the spec, and the options rejected. Parts 1 and 2 built; part 3's mailto: half built, BYOK send not. |
 | [API.md](API.md) | developers | The HTTP contract and the rules behind it. Carries the route count; nothing else should. |
 | [../DEPLOYMENT.md](../DEPLOYMENT.md) | operator | Render + Atlas + OAuth, the env matrix, backups, what the deployment publishes. |

@@ -4,11 +4,17 @@
 > §29 defines as the tier that is maintained — not `docs/archive/`, which is
 > frozen. If you change something this file names, change this file.
 >
-> **Nothing here is decided.** There is no domain chosen and no price set, and
-> this document does not argue for either. It is the reference to open **when**
-> those decisions are made — a list of what would have to change, so that
-> nothing is remembered late. Where a choice is unavoidable it is written as a
-> question with the prior reasoning attached (§2.4), never as an answer.
+> **The domain is decided: `nimbleclerk.com`.** Nothing else here is. No price
+> is set, no date is fixed, and this document does not argue for either. It is
+> the reference to open **when** those decisions are made — a list of what would
+> have to change, so that nothing is remembered late. Where a choice is
+> unavoidable it is written as a question with the prior reasoning attached
+> (§2.4), never as an answer.
+>
+> **A chosen name is not a move.** Everything in Part 1 is still outstanding;
+> what changed is that `<new-domain>` now has a value, so the strings below can
+> be written out rather than left as placeholders — and §1.1's four silent
+> failures are unaffected by knowing the name.
 
 Two launches that are not yet done, each of which touches code, configuration
 we do not control, legal text and a dozen documents. They are written together
@@ -29,7 +35,26 @@ differently (`CLAUDE.md` §36, §38, §39).
 
 ---
 
-# Part 1 — moving to our own domain
+# Part 1 — moving to `nimbleclerk.com`
+
+## 1.0 The two things the name itself decides
+
+Small, and both are the kind of thing that is annoying to change afterwards.
+
+**Apex or `www`, and pick one.** Whichever is not canonical must 301 to the one
+that is. Two hosts answering the same app is two origins, and §1.1's first row
+is what that costs: IndexedDB, the service worker cache and the session cookie
+are all per-origin, so a user who reaches `www.nimbleclerk.com` on Monday and
+`nimbleclerk.com` on Tuesday is a user with two empty workspaces and no
+explanation. `server.js` sets no cookie `domain`, deliberately, so nothing in
+the code papers over it.
+
+**The OAuth consent screen may need the domain verified**, not just the URLs
+updated — Google asks for proof of ownership of the domain a published consent
+screen names. That is a Search Console step outside this repository, it can
+take a day, and §19 is the reminder of what an unpublished consent screen
+costs: every tester added by hand. Start it early; it does not block anything
+else.
 
 ## 1.1 The four things that break silently, and they are the whole risk
 
@@ -74,9 +99,9 @@ Open each of these and look. Do not infer them from this table.
 
 | Where | Item | Note |
 |---|---|---|
-| Google Cloud Console | **Authorised redirect URI** → `https://<new>/auth/google/callback` | Sign-in is dead without it. Add the new one **before** the switch; both can be listed at once |
+| Google Cloud Console | **Authorised redirect URI** → `https://nimbleclerk.com/auth/google/callback` | Sign-in is dead without it. Add the new one **before** the switch; both can be listed at once. Add the `www` form too if `www` is the canonical host (§1.0) |
 | Google Cloud Console | **OAuth consent screen**: privacy policy and terms URLs | These point at `/privacy` and `/terms` on the old host. §19: an unpublished consent screen means adding every tester by hand |
-| Render | custom domain + TLS certificate | Certificate issuance is not instant; do it before, not during |
+| Render | custom domain `nimbleclerk.com` (+ `www`) and TLS certificate | Certificate issuance is not instant; do it before, not during |
 | Render | env vars — check nothing carries a host | `REMINDER_HEALTHCHECK_URL` and `FEEDBACK_WEBHOOK_URL` are third-party and unaffected |
 | UptimeRobot | the keep-warm monitor — **and confirm it is on `/health`, not `/healthz`** | §40 in full. Moving the monitor is the moment to re-check which path it hits, because only `/health` runs the alert rules and the digest |
 | healthchecks.io | nothing to change (it receives pings, it does not call us) | Recorded so it is not "checked" pointlessly |
@@ -87,8 +112,9 @@ Open each of these and look. Do not infer them from this table.
 
 `terms.html` line 7: *"applies to the free beta **at this address**"*.
 
-That sentence makes the terms specific to the current host, so a move either
-changes it or leaves a contract pointing somewhere the product no longer is.
+That sentence makes the terms specific to the current host, so the move to
+`nimbleclerk.com` either changes it or leaves a contract pointing somewhere the
+product no longer is.
 Two options and they are not equivalent:
 
 - **Preferred: drop "at this address"** and let the terms be about the service.
@@ -127,10 +153,14 @@ Not a footnote. Someone with the PWA installed has no other way to find out.
 Order matters at three points and the reasons are given; the rest is
 preference.
 
-1. Set the `LIVE_URL` repo variable → **before** editing the workflow fallback.
+0. Start Google's **domain verification** for `nimbleclerk.com` (§1.0) — it is
+   the only step here that waits on somebody else, and it blocks nothing.
+1. Set the `LIVE_URL` repo variable to `https://nimbleclerk.com` → **before**
+   editing the workflow fallback.
 2. Add the new redirect URI in Google → **before** the domain switch, so
    sign-in works the moment DNS moves.
-3. Provision the domain and certificate on Render.
+3. Provision the domain and certificate on Render, and decide apex vs `www`
+   (§1.0) before anything is announced — the announcement names one of them.
 4. Announce the date. Ask everyone to confirm *Synced* (§1.1).
 5. Switch DNS. Update `BACKUP_URL` in the private repo **the same day**.
 6. Move the UptimeRobot monitor, on `/health`.
@@ -142,16 +172,19 @@ preference.
 ## 1.7 Verification
 
 ```sh
-BASE_URL=https://<new-domain> npm run test:smoke     # expect 50 passed
+BASE_URL=https://nimbleclerk.com npm run test:smoke   # expect 51 passed
 grep -rn "onrender\.com" --include="*.md" --include="*.html" --include="*.yml" . \
-  | grep -v docs/archive                             # expect: nothing
+  | grep -v docs/archive                              # expect: nothing
 ```
 
 Then, by hand, because none of it is greppable:
 
-- Sign in with Google on the new domain — the redirect URI is the one thing
+- Sign in with Google on `nimbleclerk.com` — the redirect URI is the one thing
   that fails completely and silently in configuration rather than in code.
-- `https://<new>/privacy` and `/terms` render (the consent-screen URLs).
+- The non-canonical host redirects to the canonical one (§1.0), including on a
+  deep link such as `/guide`.
+- `https://nimbleclerk.com/privacy` and `/terms` render (the consent-screen
+  URLs).
 - The **deployed build** line in the smoke output names the commit you pushed
   (§46) — it is what proves you are auditing the new deployment.
 - Wait for one UptimeRobot interval and check the `reminders` healthcheck goes
@@ -319,8 +352,9 @@ incremented by hand.
 
 ## What this document does not do
 
-- It does not decide anything. Every row in §2.4 is a question with the prior
-  reasoning attached, not an answer.
+- It decides nothing except what it is told. `nimbleclerk.com` is recorded here
+  because the owner chose it, not argued for here; every row in §2.4 is still a
+  question with the prior reasoning attached, not an answer.
 - It does not cover company formation, VAT registration, or the ICO
   registration and solicitor-drafted DPA already outstanding from the UK
   launch. Those are real and they are not this repository's business.

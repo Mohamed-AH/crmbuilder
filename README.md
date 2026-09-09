@@ -44,6 +44,7 @@ trying to do, and marks what is current versus frozen. The short version:
 | **[Working notes](CLAUDE.md)** | **Read this before changing code.** Architecture, invariants, and every trap that has already cost time. Has a topic index at the top. |
 | **[Deployment](DEPLOYMENT.md)** | Getting it running on Render + MongoDB Atlas + Google OAuth, and what the deployment publishes. |
 | **[Running the beta](docs/BETA.md)** | Operator runbook for opening it to testers, plus the tester-facing note to send with the invite. |
+| **[Roadmap](docs/ROADMAP.md)** | Candidate work — dark mode, accessibility, a security re-audit, integrations, localization — each sized against what is already in the repository. Nothing scheduled. |
 | **[Archive](docs/archive/)** | Frozen plans and decision records — kept for the *why*, **not maintained**, and some of it is now false. |
 | **[Marketing](MARKETING.md)** | B2B/B2C copy and launch threads. |
 | **[Posts](docs/posts/)** | Story-led pieces, **dated and not maintained** — a published post cannot be edited afterwards. |

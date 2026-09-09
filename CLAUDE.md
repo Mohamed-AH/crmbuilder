@@ -96,6 +96,11 @@ never change, because everything cross-references them.
 | **A test that passes in a UTC container** — and the save it was hiding | §55 · §45 · §39 |
 | **Reaching a prebuilt module you skipped at onboarding** | §56 · §49 · §42 |
 | **Where BYOK setup is written down** | §56 · §52 · §53 |
+| **What to build next** — dark mode, a11y, i18n, integrations, re-audit | [`docs/ROADMAP.md`](docs/ROADMAP.md) · §57 |
+| **The domain is `nimbleclerk.com`** — and apex vs `www` is two origins | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0 · §57 |
+| Dark mode: what already exists, and the half-toggle in `legal.css` | §57 · [`docs/ROADMAP.md`](docs/ROADMAP.md) §1 |
+| Why a security re-audit is due, and what it must NOT re-raise | §57 · §30 |
+| **The Windows skip count that proved the rename retry** | §55 |
 
 ---
 
@@ -7322,10 +7327,22 @@ tried, found not to block, and skipped over — `chattr` still wins, and the fil
 runs 5/5 unchanged. On Windows it either blocks, and four skips become four
 real assertions, or it does not, and they skip exactly as they do today.
 
-**Unverified from here, and that is the honest state** (§8): this container is
-Linux, so the branch that matters can only be exercised by the reporter. The
-skip message names all three mechanisms now rather than saying *"needs chattr
-or a non-root user"*, which was wrong on the platform doing the skipping.
+**~~Unverified from here, and that is the honest state~~ (§8) — now confirmed,
+and the confirmation is a number rather than a report.** The reporter's next
+Windows run came back **`skipped 1`** where the previous one said **`skipped 5`**.
+Four more tests ran, and there are exactly four conditional skips in
+`resilience.test.mjs`: the read-only-attribute mechanism blocks on Windows, so
+the rename retry is now exercised **on the platform fault 2 was written for**.
+
+Left hedged rather than rewritten, because the hedge was correct when it was
+written and the shape is §46's: this container is Linux, so the one thing that
+could settle it was a run on the reporter's machine. What settled it was not a
+test result anybody read as a result — it was **a skip count in the summary
+line**, which nothing asserts on and which reads as noise. §33's lesson, from
+the other side: two adjacent numbers that both look fine are worth diffing.
+
+The skip message names all three mechanisms now rather than saying *"needs
+chattr or a non-root user"*, which was wrong on the platform doing the skipping.
 
 **§2's count is not pinned any more.** "One Node test skips itself" was true
 when written and went stale the moment a second conditional skip existed — a
@@ -7493,3 +7510,160 @@ was real rather than a checked omission.
 `js/app.js` is in `APP_SHELL`, so `CACHE_VERSION` → **`crmbuilder-v54`**. No new
 served file, so smoke stays **46 local / 51 live**. Full run, because a shared
 entry point moved: Node **498**, Playwright **125 → 126**, smoke **46** locally.
+
+
+---
+
+## 57. The domain, and five items sized against the code rather than the name
+
+Two documents and no code. `docs/ROADMAP.md` is new; `docs/LAUNCH-CHECKLIST.md`
+gains the domain it was written without.
+
+### `nimbleclerk.com`
+
+The checklist (§48) opened *"Nothing here is decided. There is no domain chosen
+and no price set."* Half of that is now false, so the banner says which half —
+and says the thing that is easy to elide: **a chosen name is not a move.**
+Everything in Part 1 is still outstanding, and §1.1's four silent failures
+(stranded IndexedDB, installed PWAs serving the old origin, everybody signed
+out, a cache on an origin you no longer serve) are exactly as true as they were
+before anybody knew the name.
+
+`<new-domain>` had a value, so the placeholders are written out — `LIVE_URL`,
+the Google redirect URI, the smoke invocation, the verification greps.
+
+**Two things the name itself decides**, added as §1.0 because both are annoying
+to change afterwards:
+
+- **Apex or `www`, and pick one.** Whichever is not canonical must 301. Two
+  hosts answering the same app is **two origins**, and this codebase already
+  knows exactly what that costs — IndexedDB, the service worker cache and the
+  session cookie are all per-origin, so somebody who reaches `www` on Monday
+  and the apex on Tuesday has two empty workspaces and no explanation.
+  `server.js` sets no cookie `domain` (deliberately), so nothing in the code
+  papers over it. Step 3 of the sequence now says to decide it before the
+  announcement, because the announcement names one of them.
+- **Google may want the DOMAIN verified**, not merely the consent-screen URLs
+  updated. That is a Search Console step, it waits on somebody else, and it
+  blocks nothing — so it is step **0** rather than buried in §1.3's table.
+  §19's cost of an unpublished consent screen is every tester added by hand.
+
+One stale number fixed while in there: the verification block said *expect 50
+passed*, written when smoke was 45/50. It is **51** live now (§46's two-number
+rule). A count in a second place, going stale, in the document that exists to
+stop things being remembered late.
+
+### `docs/ROADMAP.md`
+
+Five items, named by the owner: security re-audit · dark mode · email and
+social integrations · accessibility and screen-reader compatibility ·
+multi-language localization including Arabic, Indian and Southeast Asian
+languages.
+
+**Sized against this repository, with every figure measured in the session that
+wrote it.** The commands are in the document so they can be re-run; §29's rule
+is that a number written in a second place goes stale, so the check is
+reproducible rather than trusted.
+
+**Two of the five are not what their names suggest, and planning either from
+the name would have produced a wrong estimate:**
+
+- **Dark mode is not greenfield.** The palette is already tokenised — 18
+  properties on `:root`, **13 of them redefined** under
+  `@media (prefers-color-scheme: dark)` — so the app has followed the OS for a
+  long time. What is missing is a *choice*. The work is 12 hex literals that
+  sit outside the token blocks, a synchronous read at boot (§3's paint-first
+  invariant meeting §11's synchronous-scope rule), a second `theme-color`
+  meta, and three values not two, because a light/dark toggle silently opts
+  every existing user out of the behaviour they have today.
+- **"Email integration" is not the email that shipped in §53.** Outbound
+  exists twice over — the BYOK chaser and the webhook digest. What does not
+  exist is **inbound**, and `lib/safe-fetch.js` guards *outbound* and does
+  nothing whatever for a request arriving at us. An inbound mail webhook is
+  §30 Phase 4 from scratch: its own body limit, its own bucket, and signature
+  verification, because the sender carries no session.
+
+**A live half-finished pattern found while measuring dark mode.** `legal.css`
+already carries `:root:not([data-theme="light"])` inside its dark media query
+and has **no `:root[data-theme="dark"]` block** — so the legal pages can be
+forced light by an attribute nothing sets, and can never be forced dark on a
+light OS. Half a toggle, shipped. It is the trap for whoever builds this: the
+app and `/privacy` `/terms` `/guide` would then disagree, and those three share
+one stylesheet (§47).
+
+**Two assumptions corrected by measuring rather than reasoning**, which is why
+the fact-check happened before the writing:
+
+- **The guided tour is NOT RTL surface**, though it looks like it must be.
+  `js/tour.js` computes placement from `getBoundingClientRect()` and writes
+  `style.left` / `style.top` — physical viewport coordinates, which mean the
+  same thing in both directions. Its `left`/`right` identifiers are placement
+  *names*. Given §35's history, that is a relief and it is worth stating so
+  nobody opens that file.
+- **The app is already half-localized, in the direction nobody chose.** Every
+  date and number goes through `toLocaleString(undefined, …)` — the *device's*
+  locale — so an Arabic-locale phone renders Arabic-Indic digits and Arabic
+  month names inside English chrome today. A UI-language picker would have to
+  deliberately override that, not extend it.
+
+And the RTL surface is small and measurable: **22 physical left/right
+declarations and 8 `text-align`, in an 892-line stylesheet, with zero logical
+properties in use.** That is a mechanical conversion with an end state a grep
+can confirm — which is why the roadmap sequences RTL **first**, ahead of string
+extraction: it is provable with one `dir="rtl"` and no translations at all.
+
+**The hard part of localization is `TERMS_VERSION`.** §41 records it as one
+fact in two places that must move together, compared with `!==` so any change
+re-prompts everybody. A second language makes it one fact in **four**, and
+raises a question with no cheap answer: if the Arabic terms are translated a
+week after the English, what did an Arabic-speaking user agree to? The safe
+answer — English is operative, translations are a convenience — is ordinary
+practice and has to be *written on the page* rather than assumed.
+
+**Accessibility is a measurement job before it is a building job.** 28 `aria-`
+attributes are already in `js/app.js`, `#toast-root` carries
+`aria-live="polite"`, and `lang="en"` is on all four root pages. Three leads
+are offered **as leads, not findings**, because §36's whole lesson is that
+driving the product is a different instrument from reading it: `aria-modal="true"`
+is a promise the focus management does not keep (focus moves to the first
+control, Escape closes, and there is **no Tab trap and no focus restore**); the
+template cards wrap a visually hidden checkbox, which §4 already records as a
+*test* trap and is the same shape as a keyboard question; and whether a kanban
+card can be moved without a mouse is not answerable from the source, and is
+what decides whether this item is small or large.
+
+**The security re-audit is due, and the number says why.** §30 ran against 47
+routes; there are **55** now, and three credential classes exist that did not —
+a workspace webhook URL, a mail provider key, and `REMINDER_HEALTHCHECK_URL`.
+The roadmap is explicit about what a re-audit must **not** re-raise: §30's five
+FALSE findings, which a reader working from a generic checklist would "fix"
+and make the code worse. And about the one verdict that is already superseded —
+row 12's *SSRF: FALSE, env-only*, which §38's runtime setter overtook.
+
+### Why these are documents and not a plan in a chat
+
+§48 is the precedent and its correction is the reusable part: a real finding
+("no rule covers this") plus the wrong reflex ("put it on the nearest existing
+list") produced a rule that would have decayed into furniture. The question to
+ask is *when* a thing can hurt you, and put the check there. A roadmap's moment
+is when somebody decides what to build, so it lives beside the checklist, is
+routed from `docs/README.md`, is reachable from this file's topic index, and
+404s in production by construction (§28) — which is what lets it say plainly
+what is unfinished.
+
+**Both files are `docs/`, not `docs/archive/`** — the maintained tier (§29). A
+roadmap item that gets built moves out of it and becomes a numbered section
+here, like everything else; a plan left in place to describe what happened is
+the exact drift §29 exists to prevent.
+
+### Blast radius
+
+**None.** No code, no served file, no route, no wire change. `CACHE_VERSION`
+stays `crmbuilder-v54` and smoke stays 46 local / 51 live — checked rather than
+assumed, per §41's rule for a docs-only change.
+
+`docs/API.md` needed nothing: no route moved and no response shape moved, which
+is the check §46 and §54 both say to run rather than reading the route count.
+§27's six user-facing documents needed nothing either, and that is a checked
+omission rather than a skipped step — no capability changed, and padding them
+to look thorough is its own inaccuracy (§40, §41).
