@@ -2676,6 +2676,7 @@
           <div class="read-label">Message</div>
           <div class="read-value"><p class="read-note" id="chase-body">${esc(out.body)}</p></div>
         </div>
+        ${chaseSummary(record) ? `<p class="settings-hint" id="chase-already"><strong>${chaseSummary(record)}</strong> Check with whoever sent it before sending another — a second demand for money that has already been chased reads as nagging, or as a mistake.</p>` : ''}
         <p class="settings-hint" id="chase-caveat">This reads the record as it stands now, ${draft.amount ? `including the ${esc(draft.amount)}` : 'and found no amount on it'}. Check it before you send: a reminder with the wrong figure reaches somebody who has already paid.</p>
         ${out.trimmed ? `<p class="settings-hint" id="chase-trimmed"><strong>Shortened by ${out.trimmed} characters.</strong> Some mail apps refuse a very long draft, so the end has been cut — read what is above before sending, or shorten the record name.</p>` : ''}
         <p class="settings-hint">Nothing is sent from here. This opens a draft in your own email app, from your own address, and you send it.</p>
@@ -2692,6 +2693,12 @@
     $('#chase-open', layer).addEventListener('click', () => {
       // Closed after the handoff rather than instead of it: the anchor's own
       // navigation is what opens the mail client, so this must not preventDefault.
+      //
+      // Logged as `drafted`, and NOT awaited: the anchor's navigation is what
+      // opens the mail client, and making it wait on an IndexedDB write to
+      // record something we are not even certain will be sent would put a
+      // storage failure between a person and their own email app.
+      logChase(record, 'drafted', to.email).catch(() => { /* the draft still opened */ });
       setTimeout(() => closeNested(layer), 0);
     });
 
@@ -2763,6 +2770,7 @@
         status.textContent = `Sent to ${out.to}.`;
         btn.remove();
         toast(`Reminder sent to ${out.to}`);
+        await refreshChases(ctx.record);
       } catch (err) {
         // The provider's own words, which say more than we could — an
         // unverified sending domain names itself. Left on screen rather than
@@ -2821,7 +2829,7 @@
       <div class="modal-foot">
         ${!isNew && canDeleteRecords() ? `<button class="btn btn-danger-ghost" id="record-delete">${icon('trash-2', 15)} Delete</button>` : '<span></span>'}
         <div class="modal-foot-right">
-          ${chaseTarget ? `<button class="btn" id="record-chase">${icon('mail', 15)} Chase by email</button>` : ''}
+          ${chaseTarget ? `<button class="btn" id="record-chase" ${chaseSummary(record) ? `title="${esc(chaseSummary(record))}"` : ''}>${icon('mail', 15)} Chase${chaseSummary(record) ? ' again' : ' by email'}</button>` : ''}
           <button class="btn btn-ghost" data-close>${canEditRecords() ? 'Cancel' : 'Close'}</button>
           ${canEditRecords() ? '<button class="btn btn-primary" id="record-save">Save</button>' : ''}
         </div>
@@ -2895,6 +2903,97 @@
    * the reader, and a line saying so is noise. The id is resolved against the
    * member list /api/me already carries.
    */
+  /* ---- the chase log ------------------------------------------------------
+   *
+   * So two people on a team do not chase the same invoice twice. It rides in
+   * the record row as a sibling of `data`, so it syncs like any other part of
+   * the record and the server unions it rather than letting a stale device
+   * overwrite it (see the note above unionChases in server.js).
+   *
+   * TWO WRITERS, and they claim different things. A provider send is written
+   * by the SERVER, because only the server watched the provider accept it. A
+   * draft is written here, because nothing on the server ever sees a mailto:
+   * open — and it is recorded as `drafted`, never `sent`, since opening a
+   * draft is not evidence that anybody pressed send in their own mail app.
+   * Collapsing the two would be a claim nobody can support (§52's
+   * `unconfirmed`, in a new place).
+   */
+  const CHASE_LOG_MAX = 20;
+
+  async function logChase(record, via, to) {
+    /*
+     * A viewer may open a draft (§51 — every role) and may not write a record.
+     * Attempting it anyway would push a row applyPush refuses, and the client
+     * would revert it and toast "your change was reverted" at somebody who
+     * pressed "Open in my email app". So their draft goes unlogged, which is
+     * the lesser of the two and is said plainly in the user docs.
+     */
+    if (!canEditRecords()) return record;
+    const entry = {
+      id: uid(),
+      at: Date.now(),
+      by: (Cloud.user && Cloud.user.id) || '',
+      byName: (Cloud.user && (Cloud.user.name || Cloud.user.email)) || '',
+      to,
+      via,
+    };
+    const chases = [entry, ...(record.chases || [])]
+      .sort((a, b) => b.at - a.at)
+      .slice(0, CHASE_LOG_MAX);
+    /*
+     * `updatedAt` moves, and it has to: localChanges selects on it, so a row
+     * that did not move is a row the sync engine never offers (§31). The side
+     * effect is deliberate and correct — a record somebody chased last week is
+     * not one nothing has touched, so §44's retention review and §50's
+     * dormancy report both stop counting it, which is the honest answer.
+     */
+    /*
+     * MUTATED rather than replaced, deliberately, and it is the one place here
+     * that does. The record modal, the preview and the rendered row are all
+     * holding this same object; writing a copy to IndexedDB and returning it
+     * would leave every one of them showing "Chase by email" on a record that
+     * has just been chased, until something re-rendered. A stale label on this
+     * feature is the feature not working.
+     */
+    record.chases = chases;
+    record.updatedAt = entry.at;
+    await DB.put('records', record);
+    persist();
+    return record;
+  }
+
+  /*
+   * The server writes the `sent` entry (it is the only thing that watched the
+   * provider accept it), so the device that pressed send has to go and fetch
+   * its own record back. Without this the button still reads "Chase by email"
+   * on a record the person is looking at having just chased.
+   */
+  async function refreshChases(record) {
+    try {
+      await Cloud.sync();
+      const fresh = await DB.get('records', record.id);
+      if (fresh && Array.isArray(fresh.chases)) record.chases = fresh.chases;
+    } catch { /* the send happened; the label catches up on the next sync */ }
+    return record;
+  }
+
+  /*
+   * One line, naming the most recent. Enough to stop a second chase without
+   * turning a preview into a history screen — the older entries are in the
+   * record's own JSON export for anybody who needs them.
+   */
+  function chaseSummary(record) {
+    const list = (record && record.chases ? record.chases : []).slice().sort((a, b) => b.at - a.at);
+    if (!list.length) return '';
+    const last = list[0];
+    // "Sent" and "Drafted" are different claims and the wording keeps them
+    // apart: we know one happened and only suspect the other.
+    const what = last.via === 'sent' ? 'A reminder was sent' : 'A reminder was drafted';
+    const who = last.byName ? ` by ${esc(last.byName)}` : '';
+    const more = list.length > 1 ? ` This is reminder ${list.length + 1}.` : '';
+    return `${what} ${esc(fmtWhen(last.at))}${who}.${more}`;
+  }
+
   function authorHTML(record) {
     if (!record || !record.createdBy) return '';
     const org = Cloud.me.org;

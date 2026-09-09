@@ -574,6 +574,63 @@ describe('sending a chaser', () => {
     assert.ok(!serverLog.includes(KEY), 'the key reached the server log');
   });
 
+  /*
+   * The log is written by the SERVER for a provider send, and only for one it
+   * watched succeed. The draft half is written by the client, because nothing
+   * here ever sees a mailto: open — so the two claims stay apart: `sent` is a
+   * fact the server established, `drafted` is what a browser reported.
+   */
+  test('a successful send is logged on the record, by the server', async () => {
+    reply = { status: 200, body: { id: 'msg_logged' } };
+    const before = Date.now();
+    const { status } = await send({ ...chase, recordId: invoiceId });
+    assert.equal(status, 200);
+
+    const pulled = await req('/api/sync?since=0', { cookies: owner });
+    const row = pulled.json.records.find((r) => r.id === invoiceId);
+    const entries = row.doc.chases || [];
+    assert.ok(entries.length >= 1, 'the send left no trace on the record');
+    const last = entries[0];
+    assert.equal(last.via, 'sent');
+    assert.equal(last.to, 'priya@client.test');
+    // The DISPLAY name, which is what a colleague reads — /auth/dev derives
+    // one from the address, the same way a Google sign-in carries one.
+    assert.equal(last.byName, 'send-owner');
+    assert.ok(last.at >= before);
+    /*
+     * `updatedAt` has to move, and this is the assertion that says so. The
+     * client's mergeChanges skips any incoming row whose clock is not newer
+     * than its local one, so a row that moved only its serverAt would reach
+     * every device and be ignored by all of them — §26's stamp trap, arrived
+     * at from the server's side.
+     */
+    assert.ok(row.updatedAt >= before, 'a colleague would never see this land');
+  });
+
+  test('a REFUSED send logs nothing', async () => {
+    const pulled0 = await req('/api/sync?since=0', { cookies: owner });
+    const wasCount = (pulled0.json.records.find((r) => r.id === invoiceId).doc.chases || []).length;
+
+    reply = { status: 403, body: { message: 'the domain team.test is not verified' } };
+    assert.equal((await send({ ...chase, recordId: invoiceId })).status, 502);
+
+    const pulled = await req('/api/sync?since=0', { cookies: owner });
+    const now = (pulled.json.records.find((r) => r.id === invoiceId).doc.chases || []).length;
+    // Otherwise the log says a reminder went out when the provider refused it,
+    // and the next person leaves an unpaid invoice alone on the strength of it.
+    assert.equal(now, wasCount, 'a refusal was recorded as a send');
+  });
+
+  test('a member sending is logged under the member, not the owner', async () => {
+    reply = { status: 200, body: { id: 'msg_member_log' } };
+    assert.equal((await send({ ...chase, recordId: invoiceId }, hand)).status, 200);
+
+    const pulled = await req('/api/sync?since=0', { cookies: owner });
+    const entries = pulled.json.records.find((r) => r.id === invoiceId).doc.chases;
+    assert.equal(entries[0].byName, 'send-hand',
+      'the whole point is telling a colleague who already chased this');
+  });
+
   test('an empty message is refused, and a huge one is too', async () => {
     assert.equal((await send({ recordId: invoiceId, subject: '', text: 'x' })).status, 400);
     assert.equal((await send({ recordId: invoiceId, subject: 'x', text: 'y'.repeat(4001) })).status, 413);

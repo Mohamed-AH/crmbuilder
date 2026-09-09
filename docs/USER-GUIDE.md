@@ -528,6 +528,33 @@ A few things worth knowing before you do:
 
 Disconnecting puts everything back to the draft, which never stopped working.
 
+##### Knowing whether somebody has already chased it
+
+Every reminder is recorded on the record. Once there is one, the button reads
+**Chase again** and the preview opens with a line naming the last one — who,
+when, and whether it was **sent** or only **drafted**.
+
+Those two words mean different things and the app will not blur them. *Sent*
+means your provider accepted it. *Drafted* means somebody opened it in their own
+email app, which is not proof that they pressed send — nothing outside their
+mail client can know that. It is still worth recording, because it is the thing
+that stops a colleague chasing the same invoice an hour later.
+
+- **It syncs like the rest of the record**, so a colleague's chase shows up on
+  your device the same way their edits do.
+- **Two people chasing the same record on the same day both leave a trace.**
+  Neither entry overwrites the other, even if one of them was offline.
+- **The last 20 are kept**, oldest dropped. All of them are in the record's JSON
+  export.
+- **Chasing counts as touching the record**, so a record you chased last week
+  stops appearing in *Data you have stopped using*. That is deliberate — you
+  have not stopped using it.
+- **A view-only account can draft a reminder and nothing is recorded**, because
+  a viewer cannot change a record. Their draft still opens normally.
+
+There is no way to delete an entry, and nothing expires it other than the
+twenty-entry limit.
+
 Two smaller things. Some email apps refuse a very long draft, so if yours is
 over the limit the end is cut and the screen says by how many characters,
 before you press anything. And every role can do this, including view-only: it

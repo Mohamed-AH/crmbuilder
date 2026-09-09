@@ -96,6 +96,32 @@ const DSAR = (() => {
         if (!fold(text).includes(q)) continue;
         hits.push({ key, label: field ? field.label : key, orphan: !field, value: text });
       }
+      /*
+       * The chase log too, and it is NOT in `record.data`.
+       *
+       * §43's rule is that the one answer this search must never get wrong is
+       * "we hold nothing about you". A reminder entry holds the address it
+       * went to — so a customer whose only trace in the workspace is having
+       * been chased would have been answered with silence, by the tool built
+       * to stop exactly that. Found by walking the feature that added the
+       * field rather than by re-reading this file.
+       *
+       * `byName` is searched as well: a colleague can make a subject access
+       * request too, and their name is in here.
+       */
+      for (const entry of Array.isArray(r.chases) ? r.chases : []) {
+        const parts = [entry && entry.to, entry && entry.byName].filter((v) => typeof v === 'string' && v);
+        if (!parts.some((v) => fold(v).includes(q))) continue;
+        const what = entry.via === 'sent' ? 'sent' : 'drafted';
+        hits.push({
+          key: 'chases',
+          label: 'Reminder history',
+          orphan: false,
+          chase: true,
+          value: `A reminder was ${what} to ${entry.to || '(no address)'}${entry.byName ? ` by ${entry.byName}` : ''}`,
+        });
+      }
+
       if (!hits.length) continue;
 
       matches.push({
@@ -109,7 +135,11 @@ const DSAR = (() => {
         // reviewer discard them in a glance.
         demo: !!r._demo,
         fields: hits,
+        // The log travels in the bundle as well as being searched. It is data
+        // held about the subject, and a bundle that finds a match and then
+        // omits the thing that matched is worse than not searching it.
         data: { ...r.data },
+        ...(Array.isArray(r.chases) && r.chases.length ? { chases: r.chases } : {}),
       });
     }
 

@@ -1414,6 +1414,87 @@ function hasFieldClocks(doc) {
   return !!(doc && doc.fieldsAt && typeof doc.fieldsAt === 'object');
 }
 
+/* ---- the chase log ---------------------------------------------------------
+ *
+ * A record of every reminder sent or drafted for a record, so two people on a
+ * team do not chase the same invoice twice. It rides in `doc` as a SIBLING of
+ * `data` — never inside it, because `data` is keyed by the user's own field
+ * keys and a synthetic one there would show up in every CSV export, in the
+ * subject-access search (§43), and would collide with a field somebody named
+ * `chases`. §22's ghost-data problem, invited in on purpose.
+ *
+ * A SIBLING OF `data` IS NOT AUTOMATICALLY SAFE, and that is the finding this
+ * whole helper exists for. Two push paths destroy one, not one:
+ *
+ *   - the MERGE path — docShell() is `{ ...stored, ...incoming }`, so a
+ *     sibling the pusher carries replaces the stored one outright, with no
+ *     clock anywhere in it. A device that synced yesterday, went offline, and
+ *     pushes today erases every chase logged in between.
+ *   - the PLAIN path — when neither side has field clocks, envelope() takes
+ *     the incoming `doc` WHOLESALE. A record nobody has edited since creation
+ *     carries no `fieldsAt` at all (§26), which is exactly the state a
+ *     freshly imported invoice is in, so this is the common case rather than
+ *     the exotic one.
+ *
+ * The fix is not more clocks. A chase log is APPEND-ONLY — entries are never
+ * edited and never removed — and the correct merge for an append-only set is a
+ * UNION, which needs no clocks at all and cannot lose a write in either
+ * direction. That is why this is affordable where §26's field merge was hard.
+ *
+ * Bounded, because it is unbounded growth on a row that syncs and is counted
+ * against a 512 MB shared tier (§17, §33). Newest kept; a truncated older
+ * entry re-offered by a stale device is dropped again and converges in one
+ * round rather than oscillating.
+ */
+const CHASE_LOG_MAX = 20;
+const CHASE_VIA = new Set(['sent', 'drafted']);
+
+/*
+ * Coerced key by key, never spread.
+ *
+ * §30's Phase 2 sweep found `req.body` to be the one place a non-string gets
+ * in, and this is a client-supplied array of objects landing on a stored
+ * document — the richest such payload in the codebase. Anything the client
+ * invents is dropped rather than stored, which is `sanitiseContext`'s rule
+ * (§18) applied to a second payload.
+ */
+function cleanChase(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const at = Number(raw.at);
+  const id = String(raw.id || '').slice(0, 64);
+  if (!id || !Number.isFinite(at) || at <= 0) return null;
+  return {
+    id,
+    at,
+    by: String(raw.by || '').slice(0, 64),
+    byName: String(raw.byName || '').slice(0, 120),
+    to: String(raw.to || '').slice(0, 320),
+    // An unknown value becomes `drafted`, the weaker of the two claims: we
+    // must never upgrade something into "this was sent" on a client's say-so.
+    via: CHASE_VIA.has(raw.via) ? raw.via : 'drafted',
+  };
+}
+
+function chasesOf(doc) {
+  const raw = doc && Array.isArray(doc.chases) ? doc.chases : [];
+  return raw.map(cleanChase).filter(Boolean);
+}
+
+// Union by entry id, newest first, capped. Ties go to the STORED copy, the
+// same rule every other merge here follows (§10), so a replayed push writes
+// nothing new.
+function unionChases(priorDoc, incomingDoc) {
+  const byId = new Map();
+  for (const entry of chasesOf(incomingDoc)) byId.set(entry.id, entry);
+  for (const entry of chasesOf(priorDoc)) byId.set(entry.id, entry);
+  return [...byId.values()].sort((a, b) => b.at - a.at).slice(0, CHASE_LOG_MAX);
+}
+
+function sameChases(a, b) {
+  if (a.length !== b.length) return false;
+  return a.every((entry, i) => entry.id === b[i].id);
+}
+
 /*
  * Field keys that must never be written onto an object.
  *
@@ -1556,9 +1637,42 @@ async function applyPush(user, body) {
       (await store.getItemsByIds(kind, wsId, [...byId.keys()])).map((e) => [e.id, e])
     );
     const writes = [];
-    for (const [id, item] of byId) {
+    for (const [id, rawItem] of byId) {
       const prior = existing.get(id);
-      const updatedAt = Number(item.updatedAt) || now;
+      const updatedAt = Number(rawItem.updatedAt) || now;
+
+      /*
+       * The chase log is unioned BEFORE either branch below, and that
+       * placement is the whole point.
+       *
+       * Doing it inside mergeFields would cover the merge path and leave the
+       * plain last-write-wins path — the one a record with no field clocks
+       * takes, which is every record nobody has edited since creating it —
+       * still replacing the stored doc wholesale and destroying the log. Both
+       * paths read `item` from here, so one union covers both.
+       *
+       * `chaseGrew` is what stops the row being marked as won below: a push
+       * must not be echoed back what it sent, but this row is no longer what
+       * they sent — it carries a colleague's chase — so the pusher has to
+       * receive it or their screen goes on saying nobody has chased this.
+       * Exactly the reasoning mergeFields already carries for a merged row.
+       */
+      let item = rawItem;
+      let chaseGrew = false;
+      if (kind === 'records' && !rawItem.deleted && rawItem.doc && typeof rawItem.doc === 'object') {
+        /*
+         * NO `prior &&` here, and the first version had one. A record's first
+         * push has nothing to union against, so the guard skipped it — and
+         * with it the coercion and the cap, which is where they are needed
+         * most: an id chosen by the caller, twenty-five entries, and `by` as
+         * a Mongo operator all went in untouched on a row that had never been
+         * seen before. Caught by the two tests below, which is the only reason
+         * it is not still there.
+         */
+        const merged = unionChases(prior && prior.doc, rawItem.doc);
+        chaseGrew = !sameChases(merged, chasesOf(rawItem.doc));
+        if (merged.length || chaseGrew) item = { ...rawItem, doc: { ...rawItem.doc, chases: merged } };
+      }
 
       /*
        * Three outcomes, not two.
@@ -1671,7 +1785,8 @@ async function applyPush(user, body) {
       }
 
       writes.push(envelope(kind, user, item, now, prior));
-      won[kind].add(id);
+      // Not won when the log grew under it — see the note above the union.
+      if (!chaseGrew) won[kind].add(id);
     }
     if (writes.length) await store.putItems(kind, writes);
     touched += writes.length;
@@ -4119,6 +4234,49 @@ app.post('/api/org/mail/send', requireAuth, rateLimit('mailsend', MAIL_SEND_PER_
 
   const out = await deliverMail(wsId, { to: resolved, subject, text });
   if (!out.ok) return res.status(502).json({ error: out.error, code: out.code });
+
+  /*
+   * Logged by the SERVER, and only for a send it watched succeed.
+   *
+   * The draft path is logged by the client, because nothing here ever sees a
+   * mailto: open. This one is different in the way that matters: the provider
+   * accepted it, so "it was sent" is a fact the server established rather than
+   * a claim a browser made — and a browser that closes between the send and
+   * its own write would leave a real reminder unlogged, on the one feature
+   * whose whole job is stopping somebody chasing the same money twice.
+   *
+   * Re-read rather than reusing the envelope fetched before the send: that one
+   * is seconds old across a network round trip, and writing it back would
+   * clobber an edit a colleague made in between. The remaining window is the
+   * few microseconds below, against a merge that would otherwise be the length
+   * of a provider call.
+   */
+  const [fresh] = await store.getItemsByIds('records', wsId, [recordId]);
+  if (fresh && !fresh.deletedAt && fresh.doc) {
+    const entry = {
+      id: crypto.randomUUID(),
+      at: Date.now(),
+      by: req.user.id,
+      byName: req.user.name || req.user.email || '',
+      to: resolved,
+      via: 'sent',
+    };
+    await store.putItems('records', [{
+      ...fresh,
+      /*
+       * `updatedAt` is bumped, and it has to be. The client's mergeChanges
+       * skips any incoming row whose clock is not newer than its local one, so
+       * a row that moved only its serverAt would reach every device and be
+       * ignored by all of them — §26's stamp trap, arrived at from the server
+       * side. serverAt moves too, or the delta cursor never carries it.
+       */
+      updatedAt: Date.now(),
+      serverAt: serverStamp(),
+      updatedBy: req.user.id,
+      doc: { ...fresh.doc, chases: unionChases(fresh.doc, { chases: [entry] }) },
+    }]);
+  }
+
   res.json({ ok: true, to: resolved, id: out.id || '' });
 });
 

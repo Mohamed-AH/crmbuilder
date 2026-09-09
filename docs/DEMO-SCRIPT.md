@@ -292,6 +292,13 @@ days late it is, and closes with *"if you have already paid, please disregard
 this message"*. The address is found on the record or by following the link to
 the customer, and the preview says which.
 
+If somebody asks the team question — *"how do we stop two of us chasing the
+same client?"* — that is the strongest thirty seconds here. Chase a record,
+close it, open it again: the button now says **Chase again** and the preview
+names who chased it and when. Say that a colleague's chase arrives on your
+device the way their edits do, and that two people chasing the same afternoon
+both leave a trace rather than one overwriting the other.
+
 If they ask whether it can just send it: yes, if they connect their own Resend
 or Postmark account — a *Send it now* button appears beside the draft. Their
 key, their sending domain, their bill, and still nothing automatic. **Do not

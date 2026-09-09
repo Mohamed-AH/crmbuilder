@@ -181,6 +181,36 @@ A **wire item** is one of two shapes:
 indistinguishable from one the server has never seen, so it would be handed
 straight back on the next pull.
 
+### `doc.chases` — the one field that is neither replaced nor clocked
+
+A record's `doc` may carry `chases`, a list of reminders sent or drafted for it
+(`CLAUDE.md` §54). It is a **sibling of `data`**, so it does not appear as one
+of the user's own field keys, and it is the only part of a record that merges
+by **union** rather than by last-write-wins or by a `fieldsAt` clock:
+
+```jsonc
+{ "id": "...", "at": 173…, "by": "<userId>", "byName": "Sam",
+  "to": "someone@example.com", "via": "sent" | "drafted" }
+```
+
+Everything a caller sends here is **coerced key by key and re-sorted**, so what
+comes back is not always what went out:
+
+- entries with no `id` or no usable `at` are **dropped** — an entry with no id
+  cannot be unioned, so it has no identity to merge on;
+- unknown fields are dropped, and every value is stringified;
+- an unrecognised `via` becomes **`drafted`**, never `sent`. Nothing may be
+  upgraded into "this was sent" on a caller's say-so;
+- the list is capped at **20**, newest first.
+
+**A push whose union changed anything is echoed back**, unlike an ordinary
+accepted row — the same rule a merged row follows. The row is no longer what
+the caller sent, so withholding it would leave their copy claiming nobody had
+chased the record.
+
+`via: "sent"` is written by the server on `POST /api/org/mail/send` and by
+nothing else; a client can only ever record `drafted`.
+
 ### Response
 
 ```jsonc

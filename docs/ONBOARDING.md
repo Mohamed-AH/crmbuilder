@@ -149,6 +149,12 @@ Three things to say if you do set it up, because each one comes back later:
 - **Owners and members can send; contributors and viewers cannot.** That is one
   rung tighter than editing records, because a sent reminder cannot be recalled.
 
+**Point out that it remembers**, because on a team this is the part that earns
+its keep: once anybody has chased a record, the button reads *Chase again* and
+the preview names who did it and when. Say the distinction while you are there
+— *sent* means the provider took it, *drafted* means somebody opened it in their
+own email app, and only the first is something anybody watched happen.
+
 ### Add a "Last contacted" field while they are still keen
 
 One date field on whichever module holds their customers, and one habit: fill

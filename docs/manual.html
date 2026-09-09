@@ -830,6 +830,20 @@
       </div>
       <p>Disconnecting puts everything back to the draft, which never stopped working.</p>
 
+      <h4>Knowing whether somebody has already chased it</h4>
+      <p>Every reminder is recorded on the record. Once there is one, the button reads <strong>Chase again</strong> and the preview opens with a line naming the last one &mdash; who, when, and whether it was <strong>sent</strong> or only <strong>drafted</strong>.</p>
+      <div class="note tip">
+        <span class="note-label">Tip</span>
+        <p>Those two words mean different things and the app will not blur them. <em>Sent</em> means your provider accepted it. <em>Drafted</em> means somebody opened it in their own email app, which is not proof they pressed send &mdash; nothing outside their mail client can know that.</p>
+      </div>
+      <ul>
+        <li><strong>It syncs like the rest of the record</strong>, so a colleague's chase reaches your device the way their edits do.</li>
+        <li><strong>Two people chasing the same record both leave a trace</strong>, even if one of them was offline. Neither entry overwrites the other.</li>
+        <li><strong>The last 20 are kept</strong>, oldest dropped; all of them are in the record's JSON export.</li>
+        <li><strong>Chasing counts as touching the record</strong>, so one you chased last week stops appearing in <em>Data you have stopped using</em>. That is deliberate &mdash; you have not stopped using it.</li>
+        <li><strong>A view-only account can draft a reminder and nothing is recorded</strong>, because a viewer cannot change a record. Their draft still opens normally.</li>
+      </ul>
+
       <h3>The daily digest</h3>
       <p>With a webhook set, an owner can turn on a once-a-day message: a count of what is due or already overdue, per module &mdash; the same rows the <strong>Due date</strong> filter shows. Set how far to <strong>look ahead</strong>, the earliest hour it may go out (read in the workspace&rsquo;s time zone), and whether to send it at all. It is off until you turn it on, and the settings screen shows you the exact message your team would get before you do.</p>
       <ul>

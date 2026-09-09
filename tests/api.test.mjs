@@ -816,6 +816,210 @@ describe('per-record sync', () => {
     assert.equal(json.modules.length, 0);
     assert.equal((await req('/api/sync?since=0')).status, 401, 'signed out gets nothing at all');
   });
+
+  /*
+   * The chase log, and the two ways a doc sibling gets destroyed.
+   *
+   * `chases` rides in `doc` beside `data` rather than inside it, so it does
+   * not pollute a user's own field keys — and a sibling is NOT automatically
+   * safe, which is what these cover. Both push paths lose one:
+   *
+   *   - the MERGE path, because docShell() is `{ ...stored, ...incoming }`;
+   *   - the PLAIN path, because envelope() takes the incoming doc wholesale
+   *     when neither side carries field clocks — the state every record is in
+   *     until somebody edits it.
+   *
+   * The answer is a UNION rather than more clocks: a chase log is append-only,
+   * so entries never conflict and there is nothing for a clock to arbitrate.
+   */
+  const chase = (id, at, via = 'sent') => ({ id, at, by: 'u1', byName: 'Sam', to: 'a@b.test', via });
+
+  test('a stale device pushing a record does not erase a chase logged since', async () => {
+    const a = device();
+    const b = device();
+    await a.pull();
+    await b.pull();
+
+    await a.push({ records: [{
+      id: 'chased', updatedAt: 1000,
+      doc: { id: 'chased', moduleId: 'm1', data: { title: 'INV-1' } },
+    }] });
+    await b.pull();
+
+    // A chases it. B knows nothing about that.
+    await a.push({ records: [{
+      id: 'chased', updatedAt: 2000,
+      doc: { id: 'chased', moduleId: 'm1', data: { title: 'INV-1' }, chases: [chase('c1', 2000)] },
+    }] });
+
+    /*
+     * B edits the title with NO field clocks, which is the plain path — and
+     * the one that would take the doc wholesale. This is not an exotic state:
+     * a record nobody has edited since creating it carries no `fieldsAt` at
+     * all, so a freshly imported invoice is exactly here.
+     */
+    await b.push({ records: [{
+      id: 'chased', updatedAt: 3000,
+      doc: { id: 'chased', moduleId: 'm1', data: { title: 'INV-1 revised' } },
+    }] });
+
+    const after = (await device().pull()).records.find((r) => r.id === 'chased');
+    assert.equal(after.doc.data.title, 'INV-1 revised', "B's edit still lands");
+    assert.deepEqual((after.doc.chases || []).map((c) => c.id), ['c1'],
+      'the chase was erased by a device that never knew about it');
+  });
+
+  test('the same holds on the merge path, where a sibling is replaced rather than dropped', async () => {
+    const a = device();
+    const b = device();
+    await a.pull();
+    await b.pull();
+
+    await a.push({ records: [{
+      id: 'merged', updatedAt: 1000,
+      doc: { id: 'merged', moduleId: 'm1', data: { title: 'INV-2' }, fieldsAt: { title: 1000 } },
+    }] });
+    await b.pull();
+
+    await a.push({ records: [{
+      id: 'merged', updatedAt: 2000,
+      doc: { id: 'merged', moduleId: 'm1', data: { title: 'INV-2' }, fieldsAt: { title: 1000 }, chases: [chase('c9', 2000)] },
+    }] });
+
+    // B carries field clocks, so this takes mergeFields — and its docShell
+    // would hand B's (absent) chases straight over the top.
+    await b.push({ records: [{
+      id: 'merged', updatedAt: 3000,
+      doc: { id: 'merged', moduleId: 'm1', data: { title: 'INV-2 revised' }, fieldsAt: { title: 3000 } },
+    }] });
+
+    const after = (await device().pull()).records.find((r) => r.id === 'merged');
+    assert.equal(after.doc.data.title, 'INV-2 revised');
+    assert.deepEqual((after.doc.chases || []).map((c) => c.id), ['c9']);
+  });
+
+  /*
+   * The reason it is a union and not last-write-wins: two people chasing two
+   * different records on the same afternoon is ordinary, and both of them
+   * chasing the SAME one is precisely what this feature exists to stop
+   * happening a third time. Losing either entry loses the evidence.
+   */
+  test('two devices each logging a chase keep both', async () => {
+    const a = device();
+    const b = device();
+    await a.pull();
+    await b.pull();
+
+    await a.push({ records: [{
+      id: 'both', updatedAt: 1000,
+      doc: { id: 'both', moduleId: 'm1', data: { title: 'INV-3' } },
+    }] });
+    await b.pull();
+
+    await a.push({ records: [{
+      id: 'both', updatedAt: 2000,
+      doc: { id: 'both', moduleId: 'm1', data: { title: 'INV-3' }, chases: [chase('from-a', 2000)] },
+    }] });
+    await b.push({ records: [{
+      id: 'both', updatedAt: 2500,
+      doc: { id: 'both', moduleId: 'm1', data: { title: 'INV-3' }, chases: [chase('from-b', 2500)] },
+    }] });
+
+    const after = (await device().pull()).records.find((r) => r.id === 'both');
+    // Newest first, so a preview reading `[0]` names the most recent.
+    assert.deepEqual(after.doc.chases.map((c) => c.id), ['from-b', 'from-a']);
+  });
+
+  /*
+   * A push must not be echoed back what it sent (§10) — but a row whose log
+   * grew underneath it is no longer what they sent, so withholding it leaves
+   * the pusher's screen saying nobody has chased this. The same rule
+   * mergeFields already carries for a merged row.
+   */
+  test("a pusher receives back a record whose log grew under it", async () => {
+    const a = device();
+    const b = device();
+    await a.pull();
+    await b.pull();
+
+    await a.push({ records: [{
+      id: 'echo', updatedAt: 1000,
+      doc: { id: 'echo', moduleId: 'm1', data: { title: 'INV-4' } },
+    }] });
+    await b.pull();
+    await a.push({ records: [{
+      id: 'echo', updatedAt: 2000,
+      doc: { id: 'echo', moduleId: 'm1', data: { title: 'INV-4' }, chases: [chase('c-a', 2000)] },
+    }] });
+
+    const out = await b.push({ records: [{
+      id: 'echo', updatedAt: 3000,
+      doc: { id: 'echo', moduleId: 'm1', data: { title: 'INV-4 edited' } },
+    }] });
+    const echoed = out.records.find((r) => r.id === 'echo');
+    assert.ok(echoed, 'B was not told about the chase it had just overwritten');
+    assert.deepEqual(echoed.doc.chases.map((c) => c.id), ['c-a']);
+  });
+
+  test('a client cannot invent a shape, and cannot upgrade a draft into a send', async () => {
+    const a = device();
+    await a.pull();
+    await a.push({ records: [{
+      id: 'dirty', updatedAt: 1000,
+      doc: {
+        id: 'dirty',
+        moduleId: 'm1',
+        data: { title: 'INV-5' },
+        chases: [
+          // Coerced key by key, never spread — §30's Phase 2 rule about a JSON
+          // body being the one place a non-string gets in.
+          { id: 'ok', at: 1000, by: { $ne: null }, byName: 42, to: 'x@y.test', via: 'sent', extra: 'dropped' },
+          // `via` is an allow-list, and an unknown value falls to the WEAKER
+          // claim: nothing may be upgraded into "this was sent" on a client's
+          // say-so.
+          { id: 'weird', at: 900, via: 'exploded' },
+          { id: '', at: 900 },          // no id: cannot be unioned, so dropped
+          { id: 'nan', at: 'soon' },     // no usable clock
+          'not an object',
+        ],
+      },
+    }] });
+
+    const after = (await device().pull()).records.find((r) => r.id === 'dirty');
+    assert.deepEqual(after.doc.chases.map((c) => c.id), ['ok', 'weird']);
+    assert.equal(after.doc.chases[0].by, '[object Object]', 'coerced, not stored as an object');
+    assert.equal(after.doc.chases[0].byName, '42');
+    assert.equal(after.doc.chases[0].extra, undefined, 'a field nobody defined is not stored');
+    assert.equal(after.doc.chases[1].via, 'drafted');
+  });
+
+  test('the log is bounded, keeping the most recent', async () => {
+    const a = device();
+    await a.pull();
+    const many = Array.from({ length: 25 }, (unused, i) => chase(`c${i}`, 1000 + i));
+    await a.push({ records: [{
+      id: 'many', updatedAt: 5000,
+      doc: { id: 'many', moduleId: 'm1', data: { title: 'INV-6' }, chases: many },
+    }] });
+
+    const after = (await device().pull()).records.find((r) => r.id === 'many');
+    assert.equal(after.doc.chases.length, 20, 'unbounded growth on a synced row against a 512 MB shared tier');
+    assert.equal(after.doc.chases[0].id, 'c24', 'newest kept');
+    assert.equal(after.doc.chases[19].id, 'c5');
+  });
+
+  test('a record nobody has chased grows no key at all', async () => {
+    const a = device();
+    await a.pull();
+    await a.push({ records: [{
+      id: 'clean', updatedAt: 1000,
+      doc: { id: 'clean', moduleId: 'm1', data: { title: 'INV-7' } },
+    }] });
+    const after = (await device().pull()).records.find((r) => r.id === 'clean');
+    // The overwhelming majority of rows are this one, and they must cost
+    // nothing — §26's rule for `fieldsAt`, which the same reasoning covers.
+    assert.equal('chases' in after.doc, false);
+  });
 });
 
 /*

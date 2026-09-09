@@ -1043,6 +1043,13 @@ shows up on the first real send rather than when you paste it, and the message
 you get back is the provider's own. Owners and members can send; contributors
 and viewers see the draft only.
 
+**Every reminder is recorded on the record**, so the button becomes *Chase
+again* and the preview names the last one. Two things worth poking at: a
+reminder you *drafted* is labelled differently from one that was *sent* — only
+the second is something the server watched happen — and a colleague's chase
+should reach your device on the next sync, including when both of you chased
+the same record while one was offline. Neither entry should disappear.
+
 **If you want the list of customers nobody has called**, Settings → *Data you
 have stopped using* and switch the first dropdown to *People nobody has
 contacted*. It ages on a date field you pick rather than on the record's last

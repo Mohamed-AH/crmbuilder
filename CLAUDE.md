@@ -90,6 +90,8 @@ never change, because everything cross-references them.
 | **A provider key on the meta doc** — where it goes, and what redacts it | §52 · §38 · §17 |
 | Resend vs Postmark, detected rather than asked | §52 |
 | **Sending a chaser** — the recipient rule, and the relay it closes | §53 · §51 |
+| **A doc sibling that survives a stale push** — the union, not more clocks | §54 · §26 · §10 |
+| Who already chased this, and sent vs drafted | §54 |
 
 ---
 
@@ -131,7 +133,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 480 Node tests + 123 Playwright tests, and the smoke audit at
+**All green:** 493 Node tests + 125 Playwright tests, and the smoke audit at
 **46 passing locally / 51 against production** — the same checks either way,
 with five of them informational on a local file-store HTTP deployment and real
 assertions against a live one (§46). On Windows one Node test skips itself —
@@ -221,7 +223,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v51`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v52`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -6787,14 +6789,15 @@ terms is meant to be announced rather than slipped in.
 
 ### Not built, and still not
 
-**No per-record send log.** "Did somebody already chase this?" is a real
-question on a team and the answer here is that nobody can tell. Recording it
-means a **server-originated write into a record's `doc`** — the first one in
-this codebase — which lands in the §26 field-merge seam: a value with no
-`fieldsAt` entry loses to a colleague's stale copy and is silently erased. That
-is a sync-seam change, and decision 5 also notes the log becomes financial
-data. Costed and deliberately deferred; the meta doc's `lastOkAt` /
-`lastError` answer *"is sending working"*, which is the operational half.
+**~~No per-record send log.~~ Built — see §54**, and the paragraph that stood
+here got the mechanism wrong, which is why it is corrected rather than deleted.
+It said a `doc` sibling would lose to a stale copy through the **§26 field-merge
+seam**. That is not what destroys one: `docShell()` is `{ ...stored,
+...incoming }`, so a sibling is replaced **with no clock involved at all** — and
+`envelope()` takes the incoming doc wholesale on the plain path besides. Two
+mechanisms, neither of them the one named. The fix turned out to be *simpler*
+than field clocks rather than harder, because an append-only log merges by
+union. Deferring it was still right; the reasoning for deferring it was not.
 
 **Automated escalation remains rejected**, unchanged: the scheduler, not the
 email. §40 records the `/health` ping having never once fired the reminder
@@ -6815,3 +6818,215 @@ documents needed something this time, because a user can now do something new �
 which is the difference from §52, where the omission was the checked answer.
 
 Counts: Node **467 → 480**, Playwright **121 → 123**, smoke **46** locally.
+
+
+---
+
+## 54. The chase log, and a doc sibling that nothing was protecting
+
+"Has anyone already chased this?" — on a team, the question that decides
+whether a customer gets one reminder or two demands for the same money on the
+same afternoon. Every reminder sent or drafted is now recorded on the record.
+
+### §53 deferred this for the wrong reason, and the right reason was worse
+
+§53 said a per-record log needed a server-originated write that would land in
+**§26's field-merge seam**, where a value carrying no `fieldsAt` entry loses to
+a colleague's stale copy. That was reasoned about rather than read, and it is
+not the mechanism. Reading `applyPush` first found **two** destroyers, neither
+of them clocks:
+
+| Path | What happens to a `doc` sibling |
+|---|---|
+| **merge** (`canMerge`) | `docShell()` is `{ ...stored, ...incoming }` — the pusher's copy replaces the stored one outright, with no clock anywhere in it |
+| **plain** (no field clocks either side) | `envelope()` takes the incoming `doc` **wholesale** |
+
+The second is the common case, not the exotic one: **a record nobody has
+edited since creating it carries no `fieldsAt` at all** (§26), which is exactly
+where a freshly imported invoice sits. So a device that synced yesterday, went
+offline, and pushes today erases every chase logged in between — and it does
+that whoever wrote them.
+
+**The fix is simpler than field clocks, not harder.** A chase log is
+**append-only**: entries are never edited and never removed, so there is
+nothing for a clock to arbitrate. The correct merge for an append-only set is a
+**union**, which cannot lose a write in either direction and needs no clocks.
+That is why this was affordable where §26's field merge was genuinely hard, and
+it is the part the deferral got backwards.
+
+### Where the union sits, and why not inside mergeFields
+
+**Hoisted above both branches**, before either is chosen. Putting it in
+`mergeFields` — the obvious home, since that is where merging lives — covers
+the merge path and leaves the plain path still replacing the doc wholesale.
+Both branches read `item` from one place, so one union covers both.
+
+**`chaseGrew` keeps the row out of `won`.** A push must not be echoed back what
+it sent (§10), but a row whose log grew underneath it is no longer what they
+sent — withholding it leaves the pusher's screen saying nobody has chased this.
+Exactly the rule `mergeFields` already carries for a merged row.
+
+**The `prior &&` guard was wrong and the tests caught it.** The first version
+only unioned when there was something to union against, so a record's **first**
+push skipped it — and with it the coercion and the cap, which is where they
+matter most: a caller-chosen id, twenty-five entries and `by` as a Mongo
+operator all went in untouched on a row nobody had seen before. Two tests
+failed on it; without them it would still be there.
+
+### Two writers, and they claim different things
+
+| | Written by | Because |
+|---|---|---|
+| `via: 'sent'` | the **server**, on a successful `/api/org/mail/send` | only the server watched the provider accept it |
+| `via: 'drafted'` | the **client**, on the `mailto:` handoff | nothing on the server ever sees a mailto open |
+
+**A draft is never recorded as a send**, and an unrecognised `via` from a
+client falls to `drafted` rather than being rejected — the weaker of the two
+claims, because nothing may be upgraded into "this was sent" on a browser's
+say-so. §52's `unconfirmed`, in a new place. The wording on screen keeps them
+apart too: *a reminder was sent* against *a reminder was drafted*.
+
+**A refused send logs nothing.** Otherwise the log says a reminder went out
+when the provider refused it, and the next person leaves an unpaid invoice
+alone on the strength of it. Guarded by a test that moves the write above the
+`502` and fails.
+
+**The server bumps `updatedAt`, not only `serverAt`.** `mergeChanges` on the
+client skips any incoming row whose clock is not newer than its local one, so a
+row that moved only its `serverAt` would reach every device and be ignored by
+all of them — §26's stamp trap, arrived at from the server's side. Asserted,
+because the row still *arrives* either way and only a colleague would notice.
+
+**It re-reads the record after the send** rather than writing back the envelope
+fetched before it: that one is seconds old across a network round trip and
+would clobber a colleague's edit made in between.
+
+### Traps and decisions
+
+- **A sibling of `data`, never a key inside it.** `data` is keyed by the user's
+  own field keys, so a synthetic one there would appear in every CSV export, be
+  searched as a field, and collide with a field somebody named `chases` —
+  §22's ghost data, invited in deliberately.
+- **Coerced key by key, never spread.** This is a client-supplied array of
+  objects landing on a stored document, which is the richest such payload here.
+  §30's Phase 2 rule about a JSON body; `sanitiseContext`'s whitelist (§18) at
+  a second site.
+- **Capped at 20.** Unbounded growth on a row that syncs, against a 512 MB
+  shared tier (§17, §33). A truncated entry re-offered by a stale device is
+  dropped again and converges in one round.
+- **A record nobody has chased grows no key at all**, so the overwhelming
+  majority of rows cost nothing — §26's rule for `fieldsAt`, and it has its own
+  test because "costs nothing" is the kind of claim that quietly stops holding.
+- **`logChase` MUTATES the record the UI is holding.** The modal, the preview
+  and the rendered row are all the same object; writing a copy would leave every
+  one of them saying "Chase by email" on a record just chased. Ugly, and the
+  alternative is a label that lies.
+- **The draft write is not awaited.** The anchor's own navigation is what opens
+  the mail client, and making it wait on an IndexedDB write — to record
+  something we are not even certain will be sent — would put a storage failure
+  between a person and their own email app.
+- **A viewer's draft is not logged, deliberately.** A viewer may draft (§51 —
+  every role) and may not write a record, so attempting it pushes a row
+  `applyPush` refuses and the client reverts it and toasts *"your change was
+  reverted"* at somebody who pressed **Open in my email app**. A rule arriving
+  as a bug report (§14). Said plainly in the user docs.
+- **Chasing counts as touching the record**, so §44's retention review and
+  §50's dormancy report stop counting it. Correct rather than incidental — a
+  record you chased last week is not one nothing has touched — but it is a
+  consequence, so it is written down.
+
+### The subject-access search could not see it, and that is the find
+
+§43's whole premise is that *"we hold nothing about you"* is the one answer a
+subject access request must never get wrong. The search walks `record.data` —
+and the log is **not in `record.data`**. So a customer whose only trace in a
+workspace was having been chased for money would have been answered with
+silence, **by the tool built to stop exactly that**.
+
+Found by walking the feature that added the field, not by re-reading
+`js/dsar.js`, which read perfectly correctly the whole time. That is §46's
+shape: a contract moved underneath a line that still says something true.
+
+`js/dsar.js` searches `to` and `byName` now — a colleague can make a request
+too, and their name is only in here — reports the hit as *Reminder history*,
+and carries the log in the downloaded bundle. A bundle that finds a match and
+then omits the thing that matched is worse than not searching for it.
+
+### Verification
+
+Eleven mutations, each failing the test that names it (§9):
+
+| Mutation | Fails |
+|---|---|
+| union only inside `mergeFields` | four tests, including *a stale device pushing a record does not erase a chase logged since* |
+| last-write-wins instead of a union | three, including *two devices each logging a chase keep both* |
+| `won` set even when the log grew | *a pusher receives back a record whose log grew under it* |
+| no cap | *the log is bounded, keeping the most recent* |
+| `via` trusted from the client | *a client cannot invent a shape, and cannot upgrade a draft into a send* |
+| the send does not log | *a successful send is logged on the record, by the server* |
+| the log written before the provider answers | *a REFUSED send logs nothing* |
+| `updatedAt` not bumped on the server write | *a successful send is logged…* |
+| the draft is not logged | the draft journey |
+| a draft claims it was sent | the same journey, on the wording |
+| the role gate removed | *a view-only account can still draft a chase…* |
+| the DSAR walk skips the log | *somebody who only appears in a reminder is still found* |
+
+**And the viewer journey passed against its own mutation three times.** It
+asserted the toast and the stored count, and **both read identically on a build
+with the role gate removed** — `applyPush` refuses the row and
+`applyRejections` restores the server's copy, so the end state is clean either
+way, and the toast is a paint race on top of that. It was not diagnosed by
+reading: the mutation was applied, `grep` confirmed the line was gone from the
+file, and the test still passed. A probe printing the state at each step is
+what showed the toast arriving *after* the assertion, and that the earlier
+2-second wait — which I had removed as noise — was the thing letting the
+**debounced** push fire at all (§39).
+
+It asserts on **the push bodies** now: a correct build never writes, so the row
+never goes dirty and `"chases"` never appears in a request at all. Timing-proof,
+and it names the actual rule rather than a symptom of it. §9's *"a test that
+passes on the bug is worthless"*, earned the hard way.
+
+### One failure in two of four full runs, recorded rather than dismissed
+
+Two full runs were 125/125; two had one failure each — *signing out hides the
+workspace* and *an owner invites, and the colleague joins* — **different tests,
+both multi-context team journeys, both passing in isolation** (8.1s and 12.8s
+against 25s budgets).
+
+What is known, and it is deliberately not inflated into a diagnosis:
+
+- **`data/e2e` does not accumulate across runs.** 12K before a run, 560K after
+  — `playwright.config.js` clears it (§32), so that mechanism is not this.
+- **The suite went 5.6m → 5.7–6.2m**, and the three journeys added here
+  (two of them multi-context) account for roughly that.
+- **Nothing in this change sits on the sync path measurably.** `unionChases`
+  on a record with no log is two maps over empty arrays.
+- **23 `newContext()` calls against 23 `close()` calls** — but every one of
+  them is skipped on a failure, which is pre-existing and is a real
+  within-a-run leak once something fails.
+
+**The budgets are the lever and widening them is the wrong move** (§42): they
+are what makes "the join did not happen" distinguishable from "the join was
+slow". If it recurs, start from the failing page's console rather than from the
+timeout — and note that both failures so far were on the *owner's* page, not
+the colleague's, which the snapshot is what says.
+
+### Blast radius
+
+`js/app.js`, `js/cloud.js` and `js/dsar.js` are in `APP_SHELL`, so
+`CACHE_VERSION` → **`crmbuilder-v52`**. No new served file, so smoke stays
+**46 local / 51 live** — running it is what proves that (§9).
+
+**`docs/API.md` gains a section and no route.** The count stays 55 and the file
+*looked* current, which is §46's exact trap — what moved is a **wire shape**:
+`doc.chases` is the only part of a record that merges by union, and a caller's
+push comes back re-sorted, coerced and possibly capped. A client reading the
+old page would have had no way to know any of that.
+
+`privacy.html` and `terms.html` need **nothing**, checked rather than skipped:
+the log holds a customer's address that was already on the record and a
+colleague's name already on the Team screen, it goes nowhere new, and it is
+covered by "your CRM contents are stored on our server".
+
+Counts: Node **480 → 493**, Playwright **123 → 125**, smoke **46** locally.

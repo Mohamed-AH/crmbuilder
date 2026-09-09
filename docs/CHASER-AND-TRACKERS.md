@@ -427,6 +427,12 @@ email carries:
 
 > If you have already paid, please disregard this message.
 
+> **BUILT — `CLAUDE.md` §54.** It holds no amount, in the end: the entry
+> records who, when, where to, and sent-versus-drafted, and the message body is
+> not kept. So the financial-data concern below is narrower than it was written
+> to be — but the rule it produced still holds and is still enforced, because
+> the recipient's address is in there.
+
 **The send log becomes financial data.** Whatever records what was sent now
 holds an amount owed by the tenant's customer. That is fine inside their own
 workspace — and it must never reach the digest, an alert, or the feedback

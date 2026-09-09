@@ -84,6 +84,21 @@ async function onboard(page, { name = 'Test Co', currency = 'USD', templates = n
  * The prompt only appears when there is something to decide, so a sign-in on a
  * device with nothing on it simply proceeds.
  */
+/*
+ * Hoisted to file scope when a second describe needed it. A function declared
+ * inside a describe callback is scoped to it, which is a ReferenceError two
+ * files' worth of scrolling away from where it reads as available.
+ */
+async function inviteLink(page) {
+  await page.goto('/#/settings');
+  await page.click('#invite-btn');
+  const field = page.locator('#invite-url');
+  await expect(field).toBeVisible({ timeout: 20000 });
+  const url = await field.inputValue();
+  await page.click('.modal [data-close]');
+  return url;
+}
+
 async function signIn(page, email, { claim = 'work' } = {}) {
   const trigger = page.locator('#signin-btn, #onboard-signin').first();
   await trigger.waitFor({ state: 'visible' });
@@ -1074,6 +1089,133 @@ test.describe('CSV', () => {
     expect(sent.recordId).toBeTruthy();
   });
 
+  /*
+   * The log, which exists so two people do not chase the same money twice.
+   *
+   * The DRAFT half is written by the client, because nothing on the server
+   * ever sees a mailto: open — and it is recorded as `drafted`, never `sent`,
+   * since opening a draft is not evidence anybody pressed send in their own
+   * mail app. The server writes the `sent` half; that is covered against a
+   * real provider in tests/mail.test.mjs.
+   */
+  test('drafting a chase is remembered, so the next person is warned rather than repeating it', async ({ page }) => {
+    await seedOverdueInvoice(page, 'Log Co');
+    await page.click('tr:has-text("INV-1042") td:first-child');
+
+    // Nothing has been chased, so nothing is claimed.
+    await expect(page.locator('#record-chase')).toHaveText(/Chase by email/);
+    await page.click('#record-chase');
+    await expect(page.locator('#chase-already')).toHaveCount(0);
+
+    await page.locator('#chase-open').click();
+    await expect(page.locator('#record-save')).toBeVisible();
+    await page.click('.modal-foot [data-close]');
+
+    /*
+     * Reopened from the table rather than asserted on the still-open modal.
+     * logChase MUTATES the row the UI is holding for exactly this reason, but
+     * asserting only against that object would pass on a version that never
+     * wrote to IndexedDB at all — the round trip is the thing under test.
+     */
+    await page.reload();
+    await page.click('#nav-modules .nav-link:has-text("Invoices")');
+    await page.click('tr:has-text("INV-1042") td:first-child');
+    await expect(page.locator('#record-chase')).toHaveText(/Chase again/);
+
+    await page.click('#record-chase');
+    const already = page.locator('#chase-already');
+    await expect(already).toBeVisible();
+    // "Drafted", not "sent": the two are different claims and only one of them
+    // is something anybody watched happen.
+    await expect(already).toContainText('A reminder was drafted');
+    await expect(already).not.toContainText('was sent');
+    await expect(already).toContainText('Check with whoever sent it');
+
+    // Stored on the record itself, so it reaches a colleague's device the way
+    // every other part of the record does.
+    const stored = await page.evaluate(async () => {
+      const rows = await DB.getAll('records');
+      const row = rows.find((r) => r.data && r.data.name === 'INV-1042');
+      return (row.chases || []).map((c) => ({ via: c.via, to: c.to }));
+    });
+    expect(stored).toEqual([{ via: 'drafted', to: 'priya@dockside.example' }]);
+  });
+
+  /*
+   * A viewer may draft (§51 — every role) and may not write a record, so their
+   * draft goes UNLOGGED. That is the deliberate half of the design and this is
+   * what pins it, because the alternative is far worse than a missing entry:
+   * writing anyway pushes a row applyPush refuses, and the client dutifully
+   * reverts it and toasts "your change was reverted" at somebody who pressed
+   * "Open in my email app". A rule that fires as a bug report (§14).
+   */
+  test('a view-only account can still draft a chase, and is not told its change was reverted', async ({ page, browser }) => {
+    await seedOverdueInvoice(page, 'Viewer Draft Co');
+    await signIn(page, uniqueEmail('draft-owner'));
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
+    const url = await inviteLink(page);
+
+    const second = await browser.newContext();
+    const mate = await second.newPage();
+    await mate.goto(new URL(url).pathname + new URL(url).search);
+    const mateEmail = uniqueEmail('draft-mate');
+    await signIn(mate, mateEmail, { claim: 'none' });
+    await expect(mate.locator('[data-join]').first()).toBeVisible({ timeout: 25000 });
+    await mate.click('[data-join="fresh"]');
+    await expect(mate.locator('#nav-modules .nav-link:has-text("Invoices")')).toBeVisible({ timeout: 25000 });
+
+    const members = await (await page.request.get('/api/org/members')).json();
+    const target = members.members.find((m) => m.email === mateEmail);
+    expect((await page.request.patch(`/api/org/members/${target.id}`, { data: { role: 'viewer' } })).ok()).toBeTruthy();
+    await mate.reload();
+
+    /*
+     * Every push this device makes from here on, captured.
+     *
+     * THIS IS THE ASSERTION, and three earlier versions of it were not. They
+     * checked the toast and the stored count, and BOTH read identically on a
+     * build with the role gate removed — because applyPush refuses the row and
+     * applyRejections restores the server's copy, so the end state is clean
+     * either way and the toast is a paint race on top of that. Measured, not
+     * reasoned about: the mutation was applied, verified absent from the file,
+     * and the test still passed.
+     *
+     * What actually differs is whether the device ever OFFERS the entry. On a
+     * correct build logChase returns before writing, so the row never goes
+     * dirty and `chases` never appears in a push body at all.
+     */
+    const pushes = [];
+    mate.on('request', (r) => {
+      if (r.method() === 'POST' && r.url().includes('/api/sync')) pushes.push(r.postData() || '');
+    });
+
+    await mate.click('#nav-modules .nav-link:has-text("Invoices")');
+    await mate.click('tr:has-text("INV-1042") td:first-child');
+    // The draft is offered, because it opens their own mail client with an
+    // address already on the record. §36 keeps export open for the same reason.
+    await mate.click('#record-chase');
+    await expect(mate.locator('#chase-open')).toBeVisible();
+    await mate.locator('#chase-open').click();
+
+    // persist() schedules a DEBOUNCED push (§39), so the wait is what lets it
+    // fire; the explicit sync is the backstop for a build that never scheduled
+    // one. Both are needed — driving the sync alone runs before the write
+    // lands, which is how an earlier version of this read clean on both.
+    await mate.waitForTimeout(2000);
+    await mate.evaluate(() => Cloud.sync());
+    await mate.waitForTimeout(500);
+
+    expect(pushes.length, 'the device never contacted the server at all').toBeGreaterThan(0);
+    const offered = pushes.filter((body) => body.includes('"chases"'));
+    expect(offered, "a viewer's device offered a chase the server was always going to refuse").toEqual([]);
+
+    // And the consequence a person would actually see: nothing was refused,
+    // so nothing is said. A revert toast here would be a rule arriving as a
+    // bug report (§14), on a button that only opens their own email app.
+    await expect(mate.locator('.toast')).toHaveCount(0);
+    await second.close();
+  });
+
   test('a workspace with no provider still gets the draft, and is offered nothing that cannot work', async ({ page }) => {
     // The default state: no key. §36's rule 1 - absent, rather than a button
     // that opens a dialog to explain it cannot do anything.
@@ -1866,16 +2008,6 @@ test.describe('sample data', () => {
  * Driven in two browser contexts because that is the only way to see it.
  */
 test.describe('team workspaces', () => {
-  async function inviteLink(page) {
-    await page.goto('/#/settings');
-    await page.click('#invite-btn');
-    const field = page.locator('#invite-url');
-    await expect(field).toBeVisible({ timeout: 20000 });
-    const url = await field.inputValue();
-    await page.click('.modal [data-close]');
-    return url;
-  }
-
   test('an owner invites, and the colleague joins and sees the same records', async ({ page, browser }) => {
     const ownerEmail = uniqueEmail('team-owner');
     await onboard(page, { name: 'Team Co' });

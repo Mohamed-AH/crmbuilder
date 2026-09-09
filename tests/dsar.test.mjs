@@ -167,6 +167,56 @@ describe('the subject-access search', () => {
     assert.equal(out.tooShort, false, '"we hold nothing" and "ask a longer question" are different answers');
   });
 
+  /*
+   * The chase log is data held ABOUT the customer and it does not live in
+   * `record.data`, so the walk above cannot see it.
+   *
+   * A person whose only trace in a workspace is having been chased for money
+   * would otherwise be answered "we hold nothing about you" — by the tool
+   * built so that answer is never wrong (§43). Found by walking §54's feature,
+   * not by re-reading this file.
+   */
+  test('somebody who only appears in a reminder is still found', () => {
+    const rows = [{
+      id: 'inv1',
+      moduleId: 'm-deals',
+      data: { title: 'INV-1042' },
+      chases: [{ id: 'c1', at: 1, by: 'u1', byName: 'Sam Ellis', to: 'priya@dockside.example', via: 'sent' }],
+    }];
+    const out = run('priya@dockside.example', rows);
+    assert.equal(out.total, 1, 'a chased customer was answered with silence');
+    const hit = out.matches[0].fields.find((f) => f.chase);
+    assert.ok(hit, 'the match was not attributed to the reminder history');
+    assert.match(hit.value, /A reminder was sent to priya@dockside\.example by Sam Ellis/);
+    // It travels in the bundle too: finding a match and then omitting the
+    // thing that matched is worse than not searching for it.
+    assert.equal(out.matches[0].chases.length, 1);
+  });
+
+  test('a colleague named only in a reminder is found as well', () => {
+    // A colleague can make a subject access request too, and their name is in
+    // the log rather than in any field of the record.
+    const rows = [{
+      id: 'inv2',
+      moduleId: 'm-deals',
+      data: { title: 'INV-2000' },
+      chases: [{ id: 'c2', at: 1, by: 'u2', byName: 'Nadia Okonkwo', to: 'x@y.test', via: 'drafted' }],
+    }];
+    const out = run('Nadia', rows);
+    assert.equal(out.total, 1);
+    assert.match(out.matches[0].fields[0].value, /drafted/, 'a draft must not be reported as sent');
+  });
+
+  test('a record with a log that matches nothing is not dragged in', () => {
+    const rows = [{
+      id: 'inv3',
+      moduleId: 'm-deals',
+      data: { title: 'INV-3000' },
+      chases: [{ id: 'c3', at: 1, byName: 'Sam', to: 'someone@else.test', via: 'sent' }],
+    }];
+    assert.equal(run('Amira', rows).total, 0, 'the log must narrow like every other field');
+  });
+
   test('an empty workspace and a missing argument both answer rather than throw', () => {
     assert.equal(DSAR.search({ query: 'Amira' }).total, 0);
     assert.equal(DSAR.search().tooShort, true);
