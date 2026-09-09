@@ -333,6 +333,32 @@ const Cloud = (() => {
        * it would do is how a surprise message reaches a team channel.
        */
       reminders: () => api('/api/org/reminders', {}, TIMEOUT.admin),
+      /*
+       * The workspace's own email provider.
+       *
+       * getMail never returns the key, and there is no masked form of one
+       * either — a webhook URL has a non-secret half worth showing (the host),
+       * and a key has none. What comes back is the provider, the address mail
+       * goes out under, and whether a send has ever succeeded.
+       *
+       * READABLE by anyone who may send, writable only by an owner. That
+       * asymmetry is deliberate: a member needs to know whether sending is
+       * available before a button is offered to them.
+       */
+      getMail: () => api('/api/org/mail', {}, TIMEOUT.admin),
+      setMail: (key, from) => api('/api/org/mail', { method: 'PUT', body: JSON.stringify({ key, from }) }, TIMEOUT.admin),
+      /*
+       * TIMEOUT.admin, for setHook's reason: the server opens an outbound
+       * connection with its own 10s budget, and a client that gave up first
+       * would report a failure the server does not agree with — which here
+       * means telling somebody a payment reminder did not go when it did.
+       *
+       * `to` is sent so the SERVER can refuse a mismatch, never so it can use
+       * it. The address that is mailed is the one the server resolves off the
+       * record; this is the address the reader was shown, handed back so the
+       * two can be compared.
+       */
+      sendChase: (body) => api('/api/org/mail/send', { method: 'POST', body: JSON.stringify(body) }, TIMEOUT.admin),
     },
 
     acceptBeta: () => api('/api/me/beta-accepted', { method: 'POST', body: '{}' }, TIMEOUT.auth),

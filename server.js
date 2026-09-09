@@ -990,7 +990,7 @@ const store = process.env.MONGODB_URI
  * (§30) there is nothing to point it at — the E2E half fakes the version by
  * intercepting `/api/me`, which needs no override at all.
  */
-const TERMS_VERSION = '2026-09-07';
+const TERMS_VERSION = '2026-09-09';
 
 // ------------------------------------------------------------------ auth
 function publicUser(u) {
@@ -4008,6 +4008,118 @@ app.put('/api/org/mail', requireAuth, requireSettingsOwner, async (req, res) => 
   };
   await store.putData(wsId, { mail });
   res.json({ ok: true, mail: publicMail(mail) });
+});
+
+/*
+ * Higher than /api/org/hook/test's six, and for §38's reason about the
+ * Telegram lookup: they are limited for the same cause — an authenticated
+ * caller making the server dial out — but the RHYTHM differs. Proving a
+ * webhook works is done once; working down a morning's overdue invoices is a
+ * person clicking through a list, and a bound tuned for the first refuses the
+ * eleventh of the second. The first run of the tests below hit it, which was
+ * the limiter working and the number being wrong.
+ */
+const MAIL_SEND_PER_MIN = Number(process.env.RATE_MAIL_SEND_MAX || 20);
+
+/*
+ * Who a chaser may be addressed to, resolved SERVER-SIDE from the record.
+ *
+ * The client walks the same two steps (chaseRecipient in js/app.js) so the
+ * preview can name the address before anything is sent. This is not that walk
+ * duplicated for convenience — it is the boundary. Taking `to` from the body
+ * would make an authenticated member of any workspace with a key into a relay
+ * that can send arbitrary text, from a verified business domain, to any
+ * address on the internet. Resolving it here bounds a send to the addresses
+ * the workspace already holds, which is the difference between a CRM feature
+ * and an open relay.
+ *
+ * Same two steps and the same order as the client: an `email` field on the
+ * record, then the first relation that leads to a record carrying one.
+ */
+async function mailRecipient(wsId, mod, record) {
+  const fields = (mod && mod.fields) || [];
+  const data = (record && record.data) || {};
+
+  const own = fields.find((f) => f.type === 'email' && data[f.key]);
+  if (own) return String(data[own.key]).trim();
+
+  const modules = await store.listItems('modules', wsId, { since: 0, includeDeleted: false });
+  for (const f of fields.filter((x) => x.type === 'relation' && x.relatedModule && data[x.key])) {
+    const relEnvelope = modules.find((m) => m.id === f.relatedModule);
+    const relMod = relEnvelope && relEnvelope.doc;
+    if (!relMod) continue;
+    const emailField = (relMod.fields || []).find((x) => x.type === 'email');
+    if (!emailField) continue;
+    const [hit] = await store.getItemsByIds('records', wsId, [String(data[f.key])]);
+    if (hit && !hit.deletedAt && hit.doc && hit.doc.data && hit.doc.data[emailField.key]) {
+      return String(hit.doc.data[emailField.key]).trim();
+    }
+  }
+  return '';
+}
+
+/*
+ * Send one overdue chaser through the workspace's own provider.
+ *
+ * Rate-limited for the reason /api/org/hook/test is: an authenticated caller
+ * making the server dial out. The bound is higher because working through a
+ * morning's overdue invoices is an ordinary thing to do and a limit tuned for
+ * "prove it works" would refuse the sixth one.
+ */
+app.post('/api/org/mail/send', requireAuth, rateLimit('mailsend', MAIL_SEND_PER_MIN), async (req, res) => {
+  if (!canSendMail(req.user)) {
+    return res.status(403).json({ error: 'Only an owner or a member can send email from this workspace' });
+  }
+  if (!req.user.orgId) return res.status(400).json({ error: 'You are not in an organisation' });
+  const wsId = workspaceIdFor(req.user);
+
+  const recordId = String((req.body && req.body.recordId) || '');
+  const to = String((req.body && req.body.to) || '').trim();
+  const subject = String((req.body && req.body.subject) || '').trim();
+  const text = String((req.body && req.body.text) || '');
+  if (!recordId) return res.status(400).json({ error: 'No record was named' });
+  if (!subject || !text) return res.status(400).json({ error: 'A reminder needs a subject and a message' });
+  if (subject.length > 200 || text.length > 4000) return res.status(413).json({ error: 'That message is too long to send' });
+
+  /*
+   * The record is fetched under the SESSION's wsId, so a caller cannot name
+   * another tenant's row — §5, and it needs no extra check because the
+   * workspace is not a parameter. A row that is not there answers 404 the same
+   * way a row in somebody else's workspace does.
+   */
+  const [envelope] = await store.getItemsByIds('records', wsId, [recordId]);
+  if (!envelope || envelope.deletedAt || !envelope.doc) {
+    return res.status(404).json({ error: 'That record is not on the server' });
+  }
+  const record = envelope.doc;
+  const modules = await store.listItems('modules', wsId, { since: 0, includeDeleted: false });
+  const modEnvelope = modules.find((m) => m.id === record.moduleId);
+  const mod = modEnvelope && modEnvelope.doc;
+  if (!mod) return res.status(404).json({ error: 'That record is not on the server' });
+
+  const resolved = await mailRecipient(wsId, mod, record);
+  if (!resolved) return res.status(422).json({ error: 'This record has no email address on it, and none on anything it links to.' });
+
+  /*
+   * A MISMATCH IS REFUSED LOUDLY, rather than quietly preferring one side.
+   *
+   * The client shows the reader an address in the preview and sends that same
+   * address back. If the server resolves a different one, the two copies of
+   * the record disagree — a colleague changed it, or this device's replica is
+   * behind — and that is exactly the state in which a demand for money must
+   * not go out. Silently sending to the server's answer mails somebody the
+   * reader never saw; silently trusting the body reopens the relay above.
+   */
+  if (to && to.toLowerCase() !== resolved.toLowerCase()) {
+    return res.status(409).json({
+      error: 'The address on this record has changed since the draft was written. Close this and open it again.',
+      resolved,
+    });
+  }
+
+  const out = await deliverMail(wsId, { to: resolved, subject, text });
+  if (!out.ok) return res.status(502).json({ error: out.error, code: out.code });
+  res.json({ ok: true, to: resolved, id: out.id || '' });
 });
 
 /* ---- reminders: what a workspace would be told about today ----------------

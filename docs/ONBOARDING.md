@@ -133,6 +133,22 @@ If the invoice module has no email field, the chaser follows a link to the
 customer. That only works if the invoice actually links to one — worth checking
 while you are setting the module up, not after.
 
+**If they ask "can it just send it?", the answer is yes, with their own
+account.** Settings → *Sending reminders by email*, paste a Resend or Postmark
+key, and a *Send it now* button appears in the preview. Do not set this up in
+week 1 unless they ask: it needs a verified sending domain at the provider,
+which is a DNS job on their side, and the draft works with no setup at all.
+
+Three things to say if you do set it up, because each one comes back later:
+
+- **It is their account, their domain and their bill.** We hold the key to send
+  with and nothing else — never shown back, never in a backup.
+- **The first send is the test.** Saving a key checks its shape and no more:
+  proving an email key works means sending an email, so an unverified sending
+  domain surfaces on the first real reminder, in the provider's own words.
+- **Owners and members can send; contributors and viewers cannot.** That is one
+  rung tighter than editing records, because a sent reminder cannot be recalled.
+
 ### Add a "Last contacted" field while they are still keen
 
 One date field on whichever module holds their customers, and one habit: fill

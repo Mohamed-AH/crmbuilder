@@ -4,10 +4,11 @@
 > §29 defines as the maintained tier — not `docs/archive/`, which is frozen.
 > If you change something this file names, change this file.
 >
-> **Parts 1 and 2 are built (`CLAUDE.md` §49, §50), and part 3's `mailto:`
-> half is (§51). BYOK's storage seam, export redaction and provider adapter
-> are built (§52). The send itself — the route, the button, and the
-> `privacy.html` paragraph — is not.** This
+> **All three parts are built.** Renewals (`CLAUDE.md` §49), dormancy (§50),
+> the `mailto:` chaser (§51), BYOK storage and the provider adapter (§52), and
+> the send route, the button and the disclosure (§53). **Automated escalation
+> remains rejected**, and the reason is unchanged: the scheduler, not the
+> email. This
 > was the spec agreed before any code, written so that the decisions are
 > recorded with their reasoning rather than reconstructed from a diff. Where a
 > choice was taken, the alternatives are kept beside it — a decision without
@@ -36,7 +37,7 @@ The other three are planned here.
 |---|---|---|---|
 | 1 | Renewal reminder window | **Single workspace `remind.days`** — shipped | per-module windows |
 | 2 | Dormancy clock | **A date field the user picks**, falling back to `updatedAt` — shipped | a mandatory schema field · a full activity model |
-| 3 | Chaser dispatch | **BYOK manual send**, with `mailto:` as the built-in fallback — the fallback is shipped, the BYOK send is not | `mailto:` only · automated escalation |
+| 3 | Chaser dispatch | **BYOK manual send**, with `mailto:` as the built-in fallback — both shipped | `mailto:` only · automated escalation |
 | 4 | Who may send | **Owner + member** | owner only · every role |
 | 5 | Message content | **Invoice number and balance** | counts only |
 

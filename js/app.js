@@ -94,6 +94,18 @@
   // on the server, which is the one that decides (§14).
   const canEditSettings = () => canEditSchema();
   /*
+   * One rung ABOVE canEditRecords, and the only gate here that goes up rather
+   * than down: sending a chaser is not an edit a colleague can see and undo.
+   * It leaves the deployment, arrives in a customer's inbox with the
+   * business's address on it, and cannot be recalled. Mirrors canSendMail() on
+   * the server, which is the one that decides — this only avoids offering a
+   * button whose effect would be refused a second later (§14).
+   *
+   * Signed out is false, unlike the gates above: there is no workspace key to
+   * send with, so the control would be an offer nothing could honour.
+   */
+  const canSendMail = () => myRole() === 'owner' || myRole() === 'platformAdmin' || myRole() === 'member';
+  /*
    * Read-only is a state worth naming once rather than testing for everywhere.
    *
    * The rule behind every gate below (§36): creating something is HIDDEN,
@@ -2669,10 +2681,10 @@
         <p class="settings-hint">Nothing is sent from here. This opens a draft in your own email app, from your own address, and you send it.</p>
       </div>
       <div class="modal-foot">
-        <span></span>
+        <span class="settings-hint" id="chase-status"></span>
         <div class="modal-foot-right">
           <button class="btn btn-ghost" id="chase-cancel">Close</button>
-          <a class="btn btn-primary" id="chase-open" href="${esc(out.href)}">${icon('mail', 15)} Open in my email app</a>
+          <a class="btn btn-primary" id="chase-open" href="${esc(out.href)}">${icon('external-link', 15)} Open in my email app</a>
         </div>
       </div>`);
 
@@ -2682,7 +2694,83 @@
       // navigation is what opens the mail client, so this must not preventDefault.
       setTimeout(() => closeNested(layer), 0);
     });
+
+    offerToSend(layer, { mod, record, to, draft, body: out.body });
     return layer;
+  }
+
+  /*
+   * Add "Send it now" to a preview that is already on screen, if this
+   * workspace has its own provider key and this person may send.
+   *
+   * PAINTED IN, never re-rendered, and asked for AFTER the layer exists —
+   * §38's Telegram rule. The mailto half is the permanent fallback (§51) and
+   * has to be usable instantly, offline, and for every role; making the whole
+   * preview wait on a round trip to find out whether a second button exists
+   * would slow the path everybody uses to serve the one some workspaces have.
+   *
+   * A workspace with no key simply never grows the button — §36's rule 1,
+   * rather than a control that opens a dialog to explain it cannot work.
+   */
+  async function offerToSend(layer, ctx) {
+    if (!Cloud.isAuthed || !canSendMail()) return;
+    let mail;
+    try {
+      mail = (await Cloud.org.getMail()).mail;
+    } catch {
+      // Offline, or the server refused. The draft still works, which is the
+      // whole point of it being the fallback rather than the scaffolding.
+      return;
+    }
+    if (!mail || !mail.configured || !layer.isConnected) return;
+
+    const open = $('#chase-open', layer);
+    // Demoted rather than removed: a reader who would rather send it from
+    // their own outbox keeps that option, and on a first send most will.
+    //
+    // The two icons are `external-link` and `mail`, and that is not a
+    // shortage — LUCIDE carries no `send` and js/icons.js is generated (§6),
+    // but the pair it does carry describes these two buttons better than one
+    // envelope on both would: one hands off to another app, one is the mail.
+    // An unknown name falls back to a BOX, which renders plausibly and means
+    // nothing — this file's standing failure shape.
+    open.classList.remove('btn-primary');
+    open.insertAdjacentHTML('afterend',
+      `<button class="btn btn-primary" id="chase-send">${icon('mail', 15)} Send it now</button>`);
+
+    const status = $('#chase-status', layer);
+    status.textContent = `Sending goes out from ${mail.from}.`;
+
+    $('#chase-send', layer).addEventListener('click', async () => {
+      const btn = $('#chase-send', layer);
+      btn.disabled = true;
+      status.textContent = 'Sending…';
+      try {
+        /*
+         * Pushed FIRST, because the server resolves the recipient off its own
+         * copy of the record and refuses if that copy disagrees with what the
+         * reader was just shown. persist() only schedules a debounced push
+         * (§39), so a record edited a moment ago is not there yet — and the
+         * refusal it would earn is correct but reads as a bug.
+         */
+        await Cloud.sync();
+        const out = await Cloud.org.sendChase({
+          recordId: ctx.record.id,
+          to: ctx.to.email,
+          subject: ctx.draft.subject,
+          text: ctx.body,
+        });
+        status.textContent = `Sent to ${out.to}.`;
+        btn.remove();
+        toast(`Reminder sent to ${out.to}`);
+      } catch (err) {
+        // The provider's own words, which say more than we could — an
+        // unverified sending domain names itself. Left on screen rather than
+        // toasted, because the reader has to decide what to do next.
+        status.textContent = err.message || 'It could not be sent.';
+        btn.disabled = false;
+      }
+    });
   }
 
   async function openRecord(staleMod, record) {
@@ -3201,8 +3289,20 @@
           const wh = canEditSettings()
             ? await Cloud.org.reminders().catch(() => null)
             : null;
+          /*
+           * Asked for by anyone who may SEND, not only by an owner — the one
+           * gate on this screen that is wider than canEditSettings(). A member
+           * cannot change the key and can still see which address their
+           * reminders go out under, which is what they need in order to decide
+           * whether to press Send on a record. A viewer's request is a 403,
+           * expected and not an error worth surfacing, like the two above.
+           */
+          const mailState = canSendMail()
+            ? await Cloud.org.getMail().catch(() => null)
+            : null;
           org = {
             hook: (wh && wh.hook) || null,
+            mail: (mailState && mailState.mail) || null,
             reminders: (wh && wh.reminders) || null,
             reminded: (wh && wh.reminded) || null,
             ...res.org,
@@ -3451,6 +3551,70 @@
           ${digestStatusHTML(org)}
           <button class="btn btn-primary" id="remind-save">Save digest settings</button>
         </div>` : ''}
+        ${authed && org && canEditSettings() ? `
+        <div class="card">
+          <div class="card-head"><h2>Sending reminders by email</h2></div>
+          <p class="settings-hint">Overdue records can be chased by email straight from the record. <strong>Without this, the reminder opens as a draft in your own email app</strong> and you send it — which needs no setup and is what most people use. Connecting your own <strong>Resend</strong> or <strong>Postmark</strong> account lets your team send it in one press instead, from your own address.</p>
+          ${org.mail && org.mail.needsReentry ? `
+            <!-- A recovery cannot bring a provider key back: it is a credential
+                 and is never exported (§38, §52). Without this line the card
+                 below looks exactly like a workspace that never set one up, so
+                 a restore switches off every reminder and nothing says so. -->
+            <div class="note-restore">
+              <strong>Your email provider key needs re-entering.</strong>
+              This workspace had one, but it could not be restored from a backup — it works like a
+              password, so we never keep a copy we could give back. Until you paste a new one,
+              reminders open as a draft instead of sending.
+            </div>` : ''}
+          ${org.mail && org.mail.configured ? `
+            <!-- A read view, not a filled-in input (§36 rule 2). There is no
+                 read-back: the key is never sent to a browser again, and there
+                 is no masked form of one either — a webhook URL has a
+                 non-secret half worth showing, a key has none (§52). -->
+            <div class="record-read">
+              <div class="read-row"><div class="read-label">Provider</div>
+                <div class="read-value">${esc(org.mail.providerName || org.mail.provider)}</div></div>
+              <div class="read-row"><div class="read-label">Sending from</div>
+                <div class="read-value">${esc(org.mail.from)}</div></div>
+              <div class="read-row"><div class="read-label">Last send</div>
+                <div class="read-value">${org.mail.lastError
+    ? `<span class="pill">Failed</span> ${esc(org.mail.lastError)}`
+    : (org.mail.lastOkAt
+      ? esc(fmtWhen(org.mail.lastOkAt))
+      : '<span class="muted">Not tried yet — the key has not been checked</span>')}</div></div>
+            </div>
+            <div class="btn-row">
+              <button class="btn btn-danger-ghost" id="mail-clear">${icon('trash-2', 15)} Disconnect</button>
+            </div>
+            ${org.mail.verified ? '' : `
+              <!-- Nothing has asked the provider whether this key works: proving
+                   an email key means sending an email, which would land a
+                   message in somebody's inbox every time a typo was corrected
+                   (§52). So the card says what is true rather than implying a
+                   confirmation nobody made. -->
+              <p class="settings-hint" style="margin:12px 0 0">We have not checked this key with ${esc(org.mail.providerName || 'the provider')} — that only happens on a real send. The first reminder you send will say if anything is wrong with it.</p>`}
+            <p class="settings-hint" style="margin:12px 0 0">We never show the key again — it works like a password. To change it, paste a new one below.</p>` : ''}
+          <div class="settings-grid" style="margin-top:12px">
+            <div class="form-row">
+              <label for="mail-key">${org.mail && org.mail.configured ? 'Replace the API key' : 'API key'}</label>
+              <input class="input" id="mail-key" type="password" autocomplete="off" spellcheck="false"
+                     placeholder="re_... or a Postmark server token">
+            </div>
+            <div class="form-row">
+              <label for="mail-from">Send from</label>
+              <input class="input" id="mail-from" type="text" autocomplete="off" spellcheck="false"
+                     placeholder="Accounts &lt;accounts@yourbusiness.co.uk&gt;"
+                     value="${esc((org.mail && org.mail.from) || '')}">
+            </div>
+          </div>
+          <!-- We do not ask which provider it is. The two key shapes do not
+               overlap, so the paste already carries the answer, and an owner
+               who has to be told which service their own key came from was
+               asked a question they had already answered (§52). -->
+          <p class="settings-hint">Your provider must have verified that address, or it will refuse to send from it. We work out which service the key belongs to from the key itself.</p>
+          <button class="btn btn-primary" id="mail-save">Save email settings</button>
+          <p class="settings-hint" style="margin:12px 0 0">The key stays on the server and is never sent to a browser, never shared with your team, and never included in a backup. It is your account with your provider — reminders leave from your address, on your billing, and we never see who you sent one to.</p>
+        </div>` : ''}
         <div class="card">
           <div class="card-head"><h2>Backup & restore</h2></div>
           <p class="settings-hint">Export a backup file anytime, or use one to move your CRM between devices.</p>
@@ -3684,6 +3848,39 @@
         await renderSettings();
       } catch (err) {
         toast(err.message || 'Could not turn notifications off');
+      }
+    });
+    /*
+     * The provider key. Guarded like every bind on this screen: the card is
+     * conditional on role, and an addEventListener on null throws and takes
+     * the whole of Settings down rather than one button (§36).
+     */
+    const mailSave = $('#mail-save');
+    if (mailSave) mailSave.addEventListener('click', async () => {
+      const key = $('#mail-key').value.trim();
+      const from = $('#mail-from').value.trim();
+      if (!key) return toast('Paste your provider key first');
+      try {
+        const out = await Cloud.org.setMail(key, from);
+        // Cleared straight away rather than left in a password field for the
+        // next person at this desk to reveal. The server has it; nothing here
+        // needs it again, and there is no read-back to recover it from.
+        $('#mail-key').value = '';
+        toast(`Connected to ${out.mail.providerName}`);
+        await renderSettings();
+      } catch (err) {
+        toast(err.message || 'Could not save those email settings');
+      }
+    });
+    const mailClear = $('#mail-clear');
+    if (mailClear) mailClear.addEventListener('click', async () => {
+      if (!confirm('Disconnect your email provider? Overdue reminders will open as a draft in your own email app instead. The key is not stored anywhere else, so you will need to paste it again to reconnect.')) return;
+      try {
+        await Cloud.org.setMail('', '');
+        toast('Email provider disconnected');
+        await renderSettings();
+      } catch (err) {
+        toast(err.message || 'Could not disconnect');
       }
     });
     const inviteBtn = $('#invite-btn');

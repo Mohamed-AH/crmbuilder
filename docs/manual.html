@@ -815,6 +815,21 @@
 
       <p>Some email apps refuse a very long draft, so if yours is over the limit the end is cut and the screen says by how many characters before you press anything. Every role can do this, including view-only: it opens your own email app with an address you can already read off the record.</p>
 
+      <h4>Sending it from the app instead</h4>
+      <p>An owner can connect the workspace&rsquo;s own email account &mdash; <strong>Settings &rarr; Sending reminders by email</strong> &mdash; by pasting a <strong>Resend</strong> or <strong>Postmark</strong> API key and the address reminders should come from. A <strong>Send it now</strong> button then appears in the preview beside <em>Open in my email app</em>, and one press sends it.</p>
+      <ul>
+        <li><strong>It is your account with them, not ours.</strong> Your sending domain, your deliverability, your bill. We hold the key so the reminder can be sent and nothing else: it is never shown back to anybody, never sent to a browser, and never included in a backup.</li>
+        <li><strong>You do not pick the provider.</strong> We work out which service the key belongs to from the key itself.</li>
+        <li><strong>The address must be one your provider has verified</strong>, or it will refuse to send from it. We cannot check that when you save the key &mdash; proving an email key works means sending an email &mdash; so the card says the key has not been checked until your first real send, and that send reports any problem with it in your provider&rsquo;s own words.</li>
+        <li><strong>Owners and members can send; contributors and viewers cannot.</strong> Sending is a rung above editing a record, because it leaves the building with your business&rsquo;s name on it and cannot be recalled.</li>
+        <li><strong>Nothing sends on its own.</strong> There is no automatic escalation and no schedule &mdash; a person presses the button every time.</li>
+      </ul>
+      <div class="note caution">
+        <span class="note-label">Careful</span>
+        <p><strong>A restore cannot bring the key back.</strong> It works like a password, so it is never in a backup. After one, the card says the key needs re-entering rather than looking like a workspace that never had one &mdash; but until somebody does, reminders open as a draft instead of sending.</p>
+      </div>
+      <p>Disconnecting puts everything back to the draft, which never stopped working.</p>
+
       <h3>The daily digest</h3>
       <p>With a webhook set, an owner can turn on a once-a-day message: a count of what is due or already overdue, per module &mdash; the same rows the <strong>Due date</strong> filter shows. Set how far to <strong>look ahead</strong>, the earliest hour it may go out (read in the workspace&rsquo;s time zone), and whether to send it at all. It is off until you turn it on, and the settings screen shows you the exact message your team would get before you do.</p>
       <ul>

@@ -1035,6 +1035,14 @@ up when the record is past its date and an address can be found, on the record
 or on whatever it is linked to. Read the preview: the amount comes from the
 record as it stands right now.
 
+**If you have a Resend or Postmark account**, Settings → *Sending reminders by
+email* takes the key and the address to send from, and a *Send it now* button
+then appears in that same preview. Worth knowing while testing it: the save
+only checks the key's shape, so a wrong key or an unverified sending domain
+shows up on the first real send rather than when you paste it, and the message
+you get back is the provider's own. Owners and members can send; contributors
+and viewers see the draft only.
+
 **If you want the list of customers nobody has called**, Settings → *Data you
 have stopped using* and switch the first dropdown to *People nobody has
 contacted*. It ages on a date field you pick rather than on the record's last

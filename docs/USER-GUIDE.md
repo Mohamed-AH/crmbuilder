@@ -497,6 +497,37 @@ it stands right now, so if the amount is out of date, the reminder is wrong —
 and a demand sent to somebody who has already paid is worse than not sending
 one. Nothing here checks that for you.
 
+##### Sending it from the app instead
+
+An owner can connect the workspace's own email account — **Settings → Sending
+reminders by email** — by pasting a **Resend** or **Postmark** API key and the
+address reminders should come from. A **Send it now** button then appears in the
+preview beside *Open in my email app*, and one press sends it.
+
+A few things worth knowing before you do:
+
+- **It is your account with them, not ours.** Your sending domain, your
+  deliverability, your bill. We hold the key so the reminder can be sent and
+  nothing else — it is never shown back to anybody, never sent to a browser,
+  and never included in a backup.
+- **You do not pick the provider.** We work out which service the key belongs
+  to from the key itself.
+- **The address must be one your provider has verified**, or it will refuse to
+  send from it. We cannot check that when you save the key — proving an email
+  key works means sending an email — so the card says the key has not been
+  checked until your first real send, and that send is what reports any problem
+  with it, in your provider's own words.
+- **Owners and members can send. Contributors and viewers cannot.** Sending is
+  a rung above editing a record, because it leaves the building with your
+  business's name on it and cannot be recalled.
+- **A restore cannot bring the key back.** It works like a password, so it is
+  never in a backup. After one, the card says the key needs re-entering rather
+  than looking like a workspace that never had one.
+- **Nothing sends on its own.** There is no automatic escalation and no
+  schedule — a person presses the button every time.
+
+Disconnecting puts everything back to the draft, which never stopped working.
+
 Two smaller things. Some email apps refuse a very long draft, so if yours is
 over the limit the end is cut and the screen says by how many characters,
 before you press anything. And every role can do this, including view-only: it

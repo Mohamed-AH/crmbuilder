@@ -806,8 +806,19 @@ test.describe('CSV', () => {
    * CI run UTC, so a date test that does not pin a zone passes on a whole class
    * of off-by-one.
    */
-  test('an overdue record offers a draft, addressed through the record it is linked to', async ({ page }) => {
-    await onboard(page, { name: 'Harbour Electrical', templates: ['Contacts'] });
+  /*
+   * A customer with an address, an Invoices module built through the real
+   * builder, and two invoices - one forty days overdue and one not due yet.
+   *
+   * Extracted rather than copied: three journeys need this exact arrangement,
+   * and a second copy is the thing that goes stale in one direction while the
+   * other keeps passing (§29). The module is built through the BUILDER on
+   * purpose - §36 records that every role test until then drove a template,
+   * so "does this hold for a module somebody made themselves" was an
+   * assumption rather than a result.
+   */
+  async function seedOverdueInvoice(page, businessName) {
+    await onboard(page, { name: businessName, templates: ['Contacts'] });
 
     // The customer, with the address the invoice does not carry.
     await page.click('#nav-modules .nav-link:has-text("Contacts")');
@@ -862,6 +873,10 @@ test.describe('CSV', () => {
     };
     await add('INV-1042', 2400, 40);      // overdue
     await add('INV-1099', 800, -30);      // due in 30 days
+  }
+
+  test('an overdue record offers a draft, addressed through the record it is linked to', async ({ page }) => {
+    await seedOverdueInvoice(page, 'Harbour Electrical');
 
     // --- the one that is not overdue has no button at all -------------------
     // §36's rule 1: absent, rather than present and explaining itself away.
@@ -992,6 +1007,101 @@ test.describe('CSV', () => {
     const shown = await page.locator('#chase-body').textContent();
     expect(shown.endsWith('\u2026')).toBe(true);
     expect(decodeURIComponent(href.split('&body=')[1]).replace(/\r\n/g, '\n')).toBe(shown);
+  });
+
+  /*
+   * The BYOK half, injected rather than real - §20's and §38's precedent.
+   *
+   * A real send needs a provider key and a provider on the other end, neither
+   * of which exists in a browser test; the route, the recipient rule and the
+   * role gate are covered against a real server in tests/mail.test.mjs. What
+   * only a browser can prove is that the second button appears when a
+   * workspace has a provider, does NOT when it has none, and that the draft
+   * still works either way - because the draft is the permanent fallback and
+   * not scaffolding for this.
+   */
+  test('a workspace with its own email provider can send the chaser, not just draft it', async ({ page }) => {
+    let sent = null;
+    await page.route('**/api/org/mail', (route) => (route.request().method() === 'GET'
+      ? route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ mail: { configured: true, provider: 'resend', providerName: 'Resend', from: 'Accounts <accounts@harbour.example>', verified: true, lastOkAt: Date.now(), lastErrorAt: 0, lastError: '', addedAt: Date.now(), addedBy: 'o@x.test' } }),
+      })
+      : route.continue()));
+    await page.route('**/api/org/mail/send', async (route) => {
+      sent = JSON.parse(route.request().postData() || '{}');
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, to: sent.to, id: 'msg_1' }) });
+    });
+
+    await seedOverdueInvoice(page, 'Harbour Electrical');
+    /*
+     * SIGNED IN, and the first version of this was not — it failed with the
+     * button simply absent, which is offerToSend working: an anonymous
+     * workspace has no server-side key, so there is nothing that could send.
+     * The failure was the product being right about the state the test was in.
+     */
+    await signIn(page, 'byok-owner@team.test');
+    await page.click('#nav-modules .nav-link:has-text("Invoices")');
+    await page.click('tr:has-text("INV-1042") td:first-child');
+    await page.click('#record-chase');
+
+    const preview = page.locator('.modal-backdrop').last();
+    // Painted in AFTER the layer exists, so the draft is usable instantly and
+    // offline - the button arrives when the answer does (§38's rule).
+    await expect(preview.locator('#chase-send')).toBeVisible();
+    // It says which address the team's customers will see it come from. A
+    // reminder from an address nobody recognises is the one that gets ignored.
+    await expect(preview.locator('#chase-status')).toContainText('accounts@harbour.example');
+    // The draft is DEMOTED, never removed: somebody who would rather send it
+    // from their own outbox keeps that option, and on a first send most will.
+    await expect(preview.locator('#chase-open')).toBeVisible();
+
+    await preview.locator('#chase-send').click();
+    await expect(preview.locator('#chase-status')).toContainText('Sent to priya@dockside.example');
+    // Gone once it has gone, so a second press cannot be an accident.
+    await expect(preview.locator('#chase-send')).toHaveCount(0);
+
+    /*
+     * The body posted is the body that was on screen. The server resolves the
+     * recipient off its own copy and refuses a mismatch, so `to` travels only
+     * to be COMPARED - but it still has to be the address the reader saw, or
+     * that comparison is checking the wrong thing.
+     */
+    expect(sent.to).toBe('priya@dockside.example');
+    expect(sent.subject).toContain('INV-1042');
+    expect(sent.text).toContain('If you have already paid, please disregard this message.');
+    expect(sent.recordId).toBeTruthy();
+  });
+
+  test('a workspace with no provider still gets the draft, and is offered nothing that cannot work', async ({ page }) => {
+    // The default state: no key. §36's rule 1 - absent, rather than a button
+    // that opens a dialog to explain it cannot do anything.
+    await page.route('**/api/org/mail', (route) => (route.request().method() === 'GET'
+      ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ mail: { configured: false } }) })
+      : route.continue()));
+
+    await seedOverdueInvoice(page, 'Draft Only Co');
+    /*
+     * Signed in too, and that is what makes this test mean something. Without
+     * it the button would be absent because nobody is signed in rather than
+     * because no provider is configured — the assertion would pass on a build
+     * that ignored the mail state entirely (§9: a test that passes for the
+     * wrong reason is worthless). The first draft of this did exactly that.
+     */
+    await signIn(page, 'no-byok@team.test');
+    await page.click('#nav-modules .nav-link:has-text("Invoices")');
+    await page.click('tr:has-text("INV-1042") td:first-child');
+    await page.click('#record-chase');
+
+    const preview = page.locator('.modal-backdrop').last();
+    await expect(preview.locator('#chase-open')).toBeVisible();
+    // Waited on properly: the send button is painted in asynchronously, so
+    // asserting its absence immediately would pass before the answer arrived
+    // and prove nothing (§4's re-render race, in a new place).
+    await expect(preview.locator('#chase-status')).toBeEmpty();
+    await expect(preview.locator('#chase-send')).toHaveCount(0);
+    await expect(preview.locator('#chase-open')).toHaveClass(/btn-primary/);
   });
   });
 

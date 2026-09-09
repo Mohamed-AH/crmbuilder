@@ -292,6 +292,13 @@ days late it is, and closes with *"if you have already paid, please disregard
 this message"*. The address is found on the record or by following the link to
 the customer, and the preview says which.
 
+If they ask whether it can just send it: yes, if they connect their own Resend
+or Postmark account — a *Send it now* button appears beside the draft. Their
+key, their sending domain, their bill, and still nothing automatic. **Do not
+lead with this.** The draft is the answer for almost everybody in the room, and
+opening with the version that needs a DNS record makes a two-click feature
+sound like a project.
+
 **Say what it does not do, immediately and in this order**, because the second
 one is the objection they will otherwise raise themselves. It does not send:
 the draft opens in their email app, from their address, with their signature —

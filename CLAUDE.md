@@ -89,6 +89,7 @@ never change, because everything cross-references them.
 | **Chasing an overdue record** — the draft, and the two escapes | §51 |
 | **A provider key on the meta doc** — where it goes, and what redacts it | §52 · §38 · §17 |
 | Resend vs Postmark, detected rather than asked | §52 |
+| **Sending a chaser** — the recipient rule, and the relay it closes | §53 · §51 |
 
 ---
 
@@ -130,7 +131,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 467 Node tests + 121 Playwright tests, and the smoke audit at
+**All green:** 480 Node tests + 123 Playwright tests, and the smoke audit at
 **46 passing locally / 51 against production** — the same checks either way,
 with five of them informational on a local file-store HTTP deployment and real
 assertions against a live one (§46). On Windows one Node test skips itself —
@@ -172,7 +173,9 @@ live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable)
   what is due or overdue — off by default, counts only — see §38, §39
 - **An overdue chaser that drafts rather than sends** — it writes the reminder
   and hands it to the reader's own mail client, so there is no key, no
-  sub-processor and nothing sent from the deployment — see §51
+  sub-processor and nothing sent from the deployment — see §51. A workspace
+  that connects **its own Resend or Postmark account** can send it in one press
+  instead; the draft stays the default and needs no setup — see §52, §53
 - **A dormancy report** beside the retention one — same card, same scan, a
   different clock: who nobody has *contacted*, aged on a date field you pick
   rather than on the record's last edit. Reports and never deletes — see §50
@@ -218,7 +221,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v50`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v51`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -465,7 +468,7 @@ parallel and they each spawn real servers:
 | `backup.test.mjs` | 9500–9550 | 2 |
 | `ssrf.test.mjs` | 9600–9650 | 2 (capture servers, not the app) |
 | `reminders.test.mjs` | 9700–9750 | 1 app + 1 capture |
-| `mail.test.mjs` | 9800–9850 | 1 (a capture server, not the app) |
+| `mail.test.mjs` | 9800–9850 | 2 capture (9800–9839) + 1 app (9840–9849) |
 
 They used to overlap badly — `api.test.mjs` alone spanned 8300–8899, across
 three other files' ranges. Widen a block and check the neighbours.
@@ -6610,3 +6613,205 @@ escalation remains rejected** and the reason is unchanged: the scheduler, not
 the email. §40 records the `/health` ping having never once fired the reminder
 engine for weeks, invisibly to every test here — an acceptable foundation for a
 message nobody loses money over, and not one for money collection.
+
+
+---
+
+## 53. The send, and the relay it would have been
+
+The button §52 built the storage and the adapter for. `POST /api/org/mail/send`
+takes an overdue record, sends the chaser through the workspace's own provider,
+and reports what the provider said.
+
+**§51's `mailto:` draft is untouched and stays the default.** It needs no
+setup, works offline, works for every role, and is what a sole trader will use
+for ever. The send is the second button on the same preview, demoted from
+primary rather than replacing it — somebody who would rather send from their
+own outbox keeps that option, and on a first send most will.
+
+### The recipient is resolved by the SERVER, and that is the whole route
+
+The obvious shape is `{ to, subject, text }` and it is an **open relay**: an
+authenticated member of any workspace holding a key could send arbitrary text,
+from a verified business domain, to any address on the internet. The key is the
+tenant's and the reputation burned is theirs, which makes it their problem and
+not ours — and shipping it would still be shipping a relay.
+
+So the server looks the record up under the session's `wsId` and walks the same
+two steps the client does: an `email` field on the record, then the first
+relation leading to a record that carries one. **That bounds a send to the
+addresses the workspace already holds**, which is the difference between a CRM
+feature and a mailer.
+
+**`to` still travels, and only to be COMPARED.** A mismatch is a **409** naming
+both addresses, because it means the two copies of the record disagree — a
+colleague edited it, or this replica is behind — and that is exactly the state
+in which a demand for money must not go out. Silently preferring the server's
+answer mails somebody the reader never saw; silently trusting the body reopens
+the relay. Guarded by *"the recipient comes from the record, never from the
+body"*, which asserts **nothing was sent** as well as the status.
+
+**The client pushes before sending**, because the server reads its own copy.
+`persist()` only schedules a debounced push (§39), so a record edited a moment
+ago is not there yet and would earn a refusal that is correct and reads as a
+bug. §43's delete confirmation had the same shape.
+
+### What is NOT server-established, and the trade
+
+`subject` and `text` come from the client, bounded at 200 and 4 000. A member
+can therefore send arbitrary text — to an address already in their own CRM,
+under their own business's name, which they could equally do from their own mail
+client. The recipient is the half that matters and it is closed.
+
+**The alternative was costed.** The server could compose the message: it has
+`DateRules`, the currency, and the record. §39's digest preview is the
+precedent, and returning the real string is the better product answer. It was
+not done because **the `mailto:` half must work offline**, so the client
+composer has to exist regardless — and then two composers must agree with
+nothing checking that they do. If it is ever wanted, the thing that makes it
+safe is a parity test, exactly as §39 pinned the digest count against the
+filter's.
+
+### `canSendMail` on the route, and one rung up
+
+Owner and member. `canEditRecords` and `canDeleteRecords` live inside
+`applyPush` because they gate **sync**; a send is a route call and never passes
+through that seam, so it is checked on the endpoint (§52). A client-side
+`canSendMail()` mirrors it and only avoids offering a button whose effect would
+be refused a second later.
+
+A record in another workspace answers **404, not 403** — the workspace is never
+a parameter, so this is not a permission answer at all: the row genuinely is not
+in the caller's workspace, and a different code would confirm it exists
+somewhere (§5).
+
+### A 403 from the provider is not a bad key, and saying so was a bug
+
+**Found by a test asserting on the wording rather than on the code**, which is
+the only thing that could have found it: the status was right on the broken
+version.
+
+`lib/mail-send.js` mapped 401 **and 403** to *"refused that key"*. Resend
+answers 401 for a key it does not recognise and **403 for a key that is fine
+but is not allowed to send from that domain** — the unverified sending domain,
+which is the single most common way a first send fails. So an owner was told to
+replace a perfectly good key while the real problem was a DNS record at their
+provider; they would have replaced it, seen the same 403, and concluded the
+feature was broken.
+
+403 falls through to `provider` now and carries the service's own words, which
+name the domain. Guarded by *"a provider's refusal reaches the caller in the
+provider's own words"*; restoring the 403 fails it and its companion.
+
+### The rate limit was wrong, and the tests are what said so
+
+20/min, not the 10 it shipped with. §38 records the same shape for the Telegram
+lookup: the first run failed with 429s, **which was the limiter working and the
+number being wrong.** Proving a webhook works is done once; working down a
+morning's overdue invoices is a person clicking through a list, and a bound
+tuned for the first refuses the eleventh of the second. Raised on its own
+merits rather than overridden in the test environment, so the suite still
+exercises the production default.
+
+### The screen
+
+The Send button is **painted in after the preview exists**, never by
+re-rendering — §38's Telegram rule. Making the whole preview wait on a round
+trip to discover whether a second button exists would slow the path everybody
+uses in order to serve the one some workspaces have, and the draft has to be
+usable instantly and offline. A workspace with no key simply never grows it
+(§36's rule 1).
+
+The failure is left **on screen rather than toasted**: the provider's message
+is what the reader has to act on, and a toast fades.
+
+Settings gains a *Sending reminders by email* card — owner-only to write,
+mirroring the webhook's. It renders the provider, the from-address and when a
+send last worked as a **read view, never a filled-in input** (§36 rule 2), and
+says plainly that the key has not been checked when `verified` is false.
+
+**Two things were nearly invented, and §27's trap is why they were checked.**
+`LUCIDE` has no `send` — `js/icons.js` is generated (§6) and an unknown name
+falls back to a **box**, which renders plausibly and means nothing. The pair it
+does carry describes the two buttons better anyway: `external-link` hands off to
+another app, `mail` is the mail. And `.is-disabled` does not exist in
+`css/style.css`; the juggling that wanted it was dropped rather than the class
+added.
+
+### The E2E was signed out, and one test was passing for the wrong reason
+
+The first run failed with the Send button simply absent — which was
+`offerToSend` **working**: an anonymous workspace has no server-side key, so
+there is nothing that could send. The failure was the product being right about
+the state the test was in.
+
+The more useful half is the companion. *"a workspace with no provider still
+gets the draft"* **passed** on that same signed-out build, and would have passed
+on a version that ignored the mail state entirely — the button was absent for
+the wrong reason. Both sign in now, and each mutation fails a different one:
+never calling `offerToSend` fails the first, offering it regardless of
+`configured` fails the second. That split is what shows they cover different
+things rather than one twice.
+
+The provider is intercepted rather than real (§20's precedent) — a browser test
+cannot hold a key or reach Resend. `seedOverdueInvoice()` was **extracted**
+from §51's journey rather than copied, because a second copy is what goes stale
+in one direction while the other keeps passing (§29).
+
+### `privacy.html` says it now, because it is now true
+
+§52 deferred the paragraph with a condition: *"it moves onto the page when the
+first send actually runs."* It can, so it has. The four load-bearing parts,
+drafted in `docs/CHASER-AND-TRACKERS.md` before any of this was built:
+
+- **Resend and Postmark are named.** §40 was caught twice by a roster closing
+  with *"That is the complete list"* while omitting first GitHub and then
+  Telegram — both found by looking at what the deployment does rather than at
+  the code. This is a third recipient of personal data.
+- **Scoped to the owner's choice**, like §40's treatment of the digest: their
+  account, their contract, disclosed without being claimed as one of ours.
+- **"Nothing is sent automatically"** is a property, not reassurance.
+- **The `mailto:` fallback is in the same paragraph**, because it stays the
+  behaviour for every workspace that never connects a key. Describing only the
+  send would leave the majority reading about something that does not happen to
+  them.
+
+**`terms.html` moved too, and so did `TERMS_VERSION`.** It gained a sentence
+saying that a digest destination or an email provider the tenant connects is
+their own relationship rather than one of our sub-processors — which is the
+controller/processor split, and belongs there rather than on the privacy page.
+§41's rule is that the constant in `server.js` and the *Last updated* line are
+one fact in two places and must move together, so both went to `2026-09-09`.
+**Everybody is re-prompted**, which is the mechanism working: a change to the
+terms is meant to be announced rather than slipped in.
+
+### Not built, and still not
+
+**No per-record send log.** "Did somebody already chase this?" is a real
+question on a team and the answer here is that nobody can tell. Recording it
+means a **server-originated write into a record's `doc`** — the first one in
+this codebase — which lands in the §26 field-merge seam: a value with no
+`fieldsAt` entry loses to a colleague's stale copy and is silently erased. That
+is a sync-seam change, and decision 5 also notes the log becomes financial
+data. Costed and deliberately deferred; the meta doc's `lastOkAt` /
+`lastError` answer *"is sending working"*, which is the operational half.
+
+**Automated escalation remains rejected**, unchanged: the scheduler, not the
+email. §40 records the `/health` ping having never once fired the reminder
+engine for weeks, invisibly to every test here — an acceptable foundation for a
+message nobody loses money over, and not one for money collection.
+
+### Blast radius
+
+`js/app.js` and `js/cloud.js` are in `APP_SHELL` → `CACHE_VERSION`
+**`crmbuilder-v51`**. `privacy.html` and `terms.html` are in
+`STANDALONE_PAGES` and go straight to the network, never precached (§19) —
+checked, not assumed. No new served file, so smoke stays **46 local / 51 live**,
+and running it is what proves that (§9).
+
+`docs/API.md` carries the route and its count moves **54 → 55**, counted with
+`grep -cE "^app\.(get|post|put|patch|delete)\(" server.js`. Every one of §27's
+documents needed something this time, because a user can now do something new —
+which is the difference from §52, where the omission was the checked answer.
+
+Counts: Node **467 → 480**, Playwright **121 → 123**, smoke **46** locally.

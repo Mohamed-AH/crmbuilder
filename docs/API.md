@@ -7,7 +7,7 @@
 > and every section here points at the relevant one rather than restating it —
 > one fact, one home (`CLAUDE.md` §27).
 
-54 routes over six boundaries. All JSON unless noted. All authenticated routes
+55 routes over six boundaries. All JSON unless noted. All authenticated routes
 take the session cookie; there is no bearer token anywhere except
 `/api/admin/export`, which is deliberately different (see §5).
 
@@ -63,6 +63,7 @@ much as where they apply:
 | `POST /api/access-request` | 5/min per IP | The queue an operator works by hand is otherwise trivially floodable |
 | `GET /auth/google/callback` | 60/min per IP | Each call makes the server exchange a token with Google — outbound work an anonymous caller can trigger. **Not** brute-force protection; there is nothing to guess |
 | `POST /api/feedback` | 10/hour per user | Bounded because it writes to the same 512 MB the customers use |
+| `POST /api/org/mail/send` | 20/min per caller | An authenticated caller making the server dial out. Higher than the webhook test because working down a morning of overdue invoices is a person clicking through a list |
 | `POST /api/sync` | **none** | A large workspace, or a week offline, legitimately pushes hard. Throttling it turns a slow sync into lost work |
 | `POST /auth/dev` | **none** | 404s in production, so a limit protects nothing real |
 
@@ -289,6 +290,7 @@ POST   /api/org/hook/test           owner only — sends one, 6/min per caller
 POST   /api/org/hook/telegram/chats owner only — { token } → chats, 12/min per caller
 GET    /api/org/mail                owner OR member — NEVER the key
 PUT    /api/org/mail                owner only — { key, from }; '' removes it
+POST   /api/org/mail/send           owner OR member — sends one, 20/min per caller
 GET    /api/org/reminders           owner only — counts + the exact message, sends nothing
 ```
 
@@ -332,6 +334,24 @@ which is the one place this diverges from the webhook: `GET` needs
 `canSendMail()` (owner or member — the people who may send, so their client can
 know whether sending is available and under what address), `PUT` needs
 `canEditSettings()`. A viewer gets **403** on both.
+
+**The recipient of a send is resolved by the SERVER, never taken from the
+body.** `POST /api/org/mail/send` takes `{ recordId, to, subject, text }`, looks
+the record up under the session's workspace, and resolves the address the same
+two ways the client does — an `email` field on the record, then the first
+relation leading to a record carrying one. `to` travels only to be **compared**:
+a value that does not match what the server resolved is a **409** naming both,
+because that means the two copies of the record disagree and a demand for money
+must not go out in that state. Taking `to` from the body instead would make an
+authenticated member of any workspace holding a key into a relay that can send
+arbitrary text from a verified business domain to any address.
+
+Other answers: **403** for a contributor or viewer, **404** for a record that is
+not in the caller's own workspace (the workspace is never a parameter, so this
+is not a permission answer), **422** when nothing on the record resolves to an
+address, **413** over 200 characters of subject or 4 000 of body, and **502**
+carrying the provider's own words when the provider refused — including the
+`unconfirmed` case, which is neither a delivery nor a refusal. `CLAUDE.md` §53.
 
 **`PUT` makes no outbound call**, and that is the difference from the webhook's
 save rather than an omission. The only way to prove an email key is to send an
