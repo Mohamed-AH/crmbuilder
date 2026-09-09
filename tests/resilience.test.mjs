@@ -67,16 +67,21 @@ async function req(path, { method = 'GET', body } = {}) {
 /*
  * Make the store impossible to replace, and PROVE it rather than assume it.
  *
- * Two mechanisms, because which one works depends on who the suite runs as and
- * neither covers both. A read-only parent directory stops an ordinary user —
- * which is CI — and root walks straight through it. `chattr +i` stops root,
- * and needs root to set. So: try, verify by attempting the write, and if
- * neither actually blocks anything, SKIP with the reason said out loud (§4's
- * SIGTERM precedent — a platform limit named rather than a test quietly
- * asserting nothing).
+ * THREE mechanisms, because which one works depends on the platform and on who
+ * the suite runs as, and no one of them covers the others:
  *
- * Both produce EPERM or EACCES, which is the same errno class Windows raises,
- * so the retry under test is the retry that runs in production.
+ *   chmod(dir, 0o500)    stops an ordinary user — which is CI; root walks through
+ *   chattr +i            stops root, and needs root to set; Linux only
+ *   chmod(file, 0o444)   stops WINDOWS, and is inert on POSIX
+ *
+ * Each is tried, then VERIFIED by attempting a real replace — a setup that
+ * silently did nothing gives a test that passes and proves nothing. If none of
+ * them blocks anything the tests SKIP with the reason said out loud (§4's
+ * SIGTERM precedent — a platform limit named rather than quietly asserted
+ * around).
+ *
+ * All three produce EPERM or EACCES, which is the same errno class Windows
+ * raises, so the retry under test is the retry that runs in production.
  */
 async function blockStoreWrites() {
   const file = join(dataDir, 'store.json');
@@ -92,6 +97,28 @@ async function blockStoreWrites() {
     return async () => { spawnSync('chattr', ['-i', file]); };
   }
   if (done.status === 0) spawnSync('chattr', ['-i', file]);
+
+  /*
+   * The WINDOWS one, and the reason it is here at all.
+   *
+   * Neither branch above works there — chmod on a directory does not stop a
+   * file being created inside it, and chattr does not exist — so on the one
+   * platform fault 2 was written for, all four tests skipped and the retry
+   * went unverified. A skip that reads as fine while proving nothing.
+   *
+   * `fs.chmod(file, 0o444)` sets FILE_ATTRIBUTE_READONLY, and MoveFileEx with
+   * REPLACE_EXISTING onto a read-only destination fails ACCESS_DENIED — the
+   * same errno class Windows raises for the real fault. On POSIX it is inert:
+   * rename keys on the DIRECTORY's permissions, not the destination file's,
+   * so this branch is measured not to block here and is skipped over. That
+   * costs nothing, because every mechanism is verified by attempting a real
+   * replace rather than trusted.
+   */
+  await chmod(file, 0o444);
+  if (!(await canReplace(file))) {
+    return async () => { await chmod(file, 0o666); };
+  }
+  await chmod(file, 0o666);
   return null;
 }
 
@@ -162,8 +189,12 @@ before(async () => {
 after(async () => {
   if (child) { const dead = new Promise((r) => child.once('exit', r)); child.kill(); await dead; }
   if (dataDir) {
+    // Undo all three blocks before removing the directory: a read-only file
+    // left behind is one Windows will refuse to delete, so the temp directory
+    // would survive the run and accumulate.
     await chmod(dataDir, 0o700).catch(() => {});
     spawnSync('chattr', ['-i', join(dataDir, 'store.json')]);
+    await chmod(join(dataDir, 'store.json'), 0o666).catch(() => {});
     await rm(dataDir, { recursive: true, force: true });
   }
 });
@@ -172,7 +203,7 @@ describe('a write the server cannot make', () => {
   test('answers 500 and leaves the server running', async (t) => {
     const unblock = await blockStoreWrites();
     if (!unblock) {
-      t.skip('nothing here can stop root replacing a file — needs chattr or a non-root user');
+      t.skip('nothing here could make a write fail: chmod, chattr and the read-only attribute all left it replaceable');
       return;
     }
     try {
@@ -197,7 +228,7 @@ describe('a write the server cannot make', () => {
   test('and says nothing about where the store lives', async (t) => {
     const unblock = await blockStoreWrites();
     if (!unblock) {
-      t.skip('nothing here can stop root replacing a file — needs chattr or a non-root user');
+      t.skip('nothing here could make a write fail: chmod, chattr and the read-only attribute all left it replaceable');
       return;
     }
     try {
@@ -220,7 +251,7 @@ describe('a write the server cannot make', () => {
   test('recovers once the write is possible again', async (t) => {
     const unblock = await blockStoreWrites();
     if (!unblock) {
-      t.skip('nothing here can stop root replacing a file — needs chattr or a non-root user');
+      t.skip('nothing here could make a write fail: chmod, chattr and the read-only attribute all left it replaceable');
       return;
     }
     await push('during-outage').catch(() => {});
@@ -240,7 +271,7 @@ describe('a write the server cannot make', () => {
   test('a transient block is waited out rather than failed', async (t) => {
     const unblock = await blockStoreWrites();
     if (!unblock) {
-      t.skip('nothing here can stop root replacing a file — needs chattr or a non-root user');
+      t.skip('nothing here could make a write fail: chmod, chattr and the read-only attribute all left it replaceable');
       return;
     }
     const started = Date.now();

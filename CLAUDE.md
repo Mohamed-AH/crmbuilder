@@ -138,8 +138,11 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 **All green:** 498 Node tests + 125 Playwright tests, and the smoke audit at
 **46 passing locally / 51 against production** — the same checks either way,
 with five of them informational on a local file-store HTTP deployment and real
-assertions against a live one (§46). On Windows one Node test skips itself —
-see §4's SIGTERM note; it is a platform limit, not a failure.
+assertions against a live one (§46). **On Windows some Node tests skip
+themselves** and say why — §4's SIGTERM note is one, and `resilience.test.mjs`
+skips whichever of its cases cannot be made to fail on the platform in hand
+(§55). A named platform limit, not a failure; the count is whatever the run
+prints, so do not pin it here.
 
 ```sh
 npm install
@@ -7282,3 +7285,51 @@ thorough is its own inaccuracy (§40, §41).
 served file and no route, so smoke stays **46 local / 51 live**. Full run,
 because `sw.js` and `CACHE_VERSION` are shared surface (§9): Node **498**,
 Playwright **125**, smoke **46** locally.
+
+---
+
+### And the green run said one more thing, in a number
+
+The reporter's next run was clean — Node 498, Playwright 125/125 — and carried
+`skipped 5` where §2 claimed one. Not noise: **four of the five are this
+section's own tests.**
+
+| Skips | Which |
+|---|---|
+| 1 | `signup.test.mjs`, `process.platform === 'win32'` — §4's SIGTERM note |
+| 4 | `resilience.test.mjs` — nothing there could make a write fail |
+
+So on **the one platform fault 2 was written for**, every test that exercises
+the rename retry stepped aside. `chmod` on a directory does not stop a file
+being created inside it on Windows, and `chattr` does not exist, so
+`blockStoreWrites()` returned null and the suite reported four tidy skips. That
+is §17's no-op-that-reports-success in a smaller costume — the skip is honest
+about *itself* and says nothing about the retry, which shipped unverified where
+it matters.
+
+**A third mechanism, and it is inert exactly where the other two work.**
+`fs.chmod(file, 0o444)` sets `FILE_ATTRIBUTE_READONLY`, and `MoveFileEx` with
+`REPLACE_EXISTING` onto a read-only destination fails `ACCESS_DENIED`. On POSIX
+it does nothing at all — measured, not assumed: rename keys on the
+**directory's** permissions, not the destination file's, so a 0444 store is
+still replaceable here. That asymmetry is the point.
+
+**It cannot make anything worse, by construction.** Every mechanism is verified
+by attempting a real replace before it is accepted, so on Linux this branch is
+tried, found not to block, and skipped over — `chattr` still wins, and the file
+runs 5/5 unchanged. On Windows it either blocks, and four skips become four
+real assertions, or it does not, and they skip exactly as they do today.
+
+**Unverified from here, and that is the honest state** (§8): this container is
+Linux, so the branch that matters can only be exercised by the reporter. The
+skip message names all three mechanisms now rather than saying *"needs chattr
+or a non-root user"*, which was wrong on the platform doing the skipping.
+
+**§2's count is not pinned any more.** "One Node test skips itself" was true
+when written and went stale the moment a second conditional skip existed — a
+number in a second place (§29), in this file's own status section. It now says
+that some skip and say why, and points here.
+
+`after` clears the read-only attribute alongside the other two undos: a file
+left read-only is one Windows refuses to delete, so the temp directory would
+survive every run and accumulate.
