@@ -56,6 +56,38 @@ take a day, and §19 is the reminder of what an unpublished consent screen
 costs: every tester added by hand. Start it early; it does not block anything
 else.
 
+## 1.0b The landing page is waiting to become `/`, and this is the moment
+
+`welcome.html` is served at `/welcome` and is written to be the front door.
+It is not `/` yet **on purpose**: making it so today means changing
+`manifest.webmanifest`'s `start_url` and `scope`, moving the app to `/app`,
+rewriting 104 E2E navigations and the smoke test, and — the part that cannot be
+undone — leaving every installed PWA launching into a page that is no longer
+the app until its owner reinstalls.
+
+**§1.1 is why the move is the cheap moment to do it.** All four of those silent
+failures happen anyway when the origin changes: the installed apps are stranded
+regardless, the caches are on an origin you no longer serve, and everyone is
+signed out. Restructuring paths while that is already true costs nothing extra.
+Doing it on the old origin costs all of it twice.
+
+So, at the switch:
+
+1. `/` serves `welcome.html`; the app moves to `/app`.
+2. `manifest.webmanifest` — `start_url` and `scope` become `/app`. Both are
+   relative today (`"./"`), which is why §1.2 records the manifest as needing
+   nothing for the *domain* alone; this is a separate change to the same file.
+3. `sw.js` — the app shell is precached as `/app`, and `/` joins
+   `STANDALONE_PAGES` while `/welcome` stays as an alias so anything already
+   sent out keeps working.
+4. `tests/e2e.spec.js` and `tests/smoke.mjs` — every `goto('/')`.
+5. The moved-notice page (§1.5) points at `/`, which is now the landing page
+   rather than a cold app shell. That is a better arrival for somebody whose
+   installed app has just told them the service moved.
+
+**Decide before you announce**, because the announcement names the URL people
+will type.
+
 ## 1.1 The four things that break silently, and they are the whole risk
 
 Everything in §1.2 onward is a string to change and will announce itself if
@@ -84,6 +116,7 @@ Re-run that grep at the end; the count is the check.
 | `manifest.webmanifest` | `start_url` and `scope` are `"./"`, icons relative | Nothing. Verified — a domain move does not touch it |
 | `sw.js` | no absolute URLs; `STANDALONE_PAGES` / `STANDALONE_ASSETS` are paths | Nothing |
 | `docs/product-tour.html` | **was** an absolute link to the deployment; now `/` | Already done — made root-relative when this file was written, so the sales page cannot point at the old home |
+| `welcome.html` | `og:image` is **root-relative** (`/icons/icon-512.png`), and `og:title` / `og:description` name no host | Make `og:image` absolute. The spec wants an absolute URL and some scrapers will not resolve a relative one, so link previews are the thing that silently looks broken. It is relative today only because hardcoding the old host is what this section exists to prevent |
 | `tests/smoke.mjs` | a comment showing the `BASE_URL=…` invocation | Update the example |
 | `README.md`, `DEPLOYMENT.md`, `docs/BETA.md`, `CLAUDE.md`, `.claude/skills/verify/SKILL.md` | the same `BASE_URL=…` command, plus DEPLOYMENT.md's verification URLs | Update. `docs/archive/SECURITY-AUDIT.md` is **frozen** — leave it (§29) |
 

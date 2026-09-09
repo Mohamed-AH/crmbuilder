@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CRM Builder — a CRM shaped like your business</title>
+<meta name="description" content="Pick the modules that match your work, add the fields you actually use, and keep working when the connection doesn't. A modular CRM for small businesses, free while in beta.">
+<meta name="theme-color" content="#1570ef">
+<meta name="theme-color" content="#0c111d" media="(prefers-color-scheme: dark)">
+
+<!--
+  Link previews. These are ROOT-RELATIVE, which most scrapers resolve against
+  the page URL and some do not — the spec wants absolute. They are deliberately
+  not absolute today because hardcoding the host is the thing
+  docs/LAUNCH-CHECKLIST.md §1.2 exists to stop; the move to nimbleclerk.com is
+  where they become absolute, and that file carries the item.
+-->
+<meta property="og:type" content="website">
+<meta property="og:title" content="CRM Builder — a CRM shaped like your business">
+<meta property="og:description" content="Pick the modules that match your work, add the fields you actually use, and keep working when the connection doesn't.">
+<meta property="og:image" content="/icons/icon-512.png">
+<meta name="twitter:card" content="summary">
+
+<link rel="icon" href="/icons/icon-192.png">
+<link rel="preload" href="/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
+
+<style>
+/*
+ * welcome.html — the splash / landing page, served at /welcome.
+ *
+ * STANDALONE, like privacy.html and terms.html: no app JS, no service-worker
+ * shell, so it renders for somebody who has never opened the app and may have
+ * JavaScript off. It MUST stay in sw.js's STANDALONE_PAGES or the worker
+ * answers the navigation with the app instead (§19, and §47 where exactly that
+ * had been live on the doc pages for twenty-one cache versions).
+ *
+ * CSS IS INLINE, deliberately, and this is the departure from guide.html.
+ * That page shares legal.css, which is a 720px prose stylesheet — right for a
+ * document and wrong for a full-bleed splash. Giving this page its own
+ * stylesheet would mean a second served file, a second entry in each of §3's
+ * four places, and a subresource of a standalone page — which is precisely the
+ * class of bug §47 found when /legal.css fell through STANDALONE_PAGES into the
+ * runtime cache and shipped stale for a whole cache version. One file has none
+ * of that, and docs/product-tour.html is the precedent. `style-src` keeps
+ * 'unsafe-inline' (§30 Phase 4), so a <style> block is fine where a <script>
+ * block would be refused.
+ *
+ * NO EXTERNAL FONTS. §47: the CSP refuses fonts.googleapis.com, so the doc
+ * pages had been rendering in their fallback stacks since that header shipped.
+ * Inter is in the repo and is served (ASSET_DIRS names `fonts`), so it is
+ * @font-face'd here rather than merely named — which is the bug legal.css
+ * still has: it asks for 'Inter' and the only @font-face lives in
+ * css/style.css, which the standalone pages deliberately do not load.
+ */
+
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/inter-var-latin.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/*
+ * Tokens. Same values as css/style.css and docs/product-tour.html so the
+ * landing page, the tour and the app read as one product.
+ *
+ * BOTH dark branches are defined, and that is not belt-and-braces. The media
+ * query guarded with :not([data-theme="light"]) follows the OS; the explicit
+ * [data-theme="dark"] block is what lets a manual choice win in the other
+ * direction. legal.css has only the first, so those pages can be forced light
+ * by an attribute nothing sets and can never be forced dark on a light OS —
+ * half a toggle, shipped (CLAUDE.md §57). Do not copy that half here.
+ */
+:root {
+  --paper:        #ffffff;
+  --paper-sunk:   #f7f8fa;
+  --paper-raised: #ffffff;
+  --ink:          #101828;
+  --ink-soft:     #475467;
+  --ink-faint:    #8b95a7;
+  --rule:         #e4e7ec;
+  --rule-strong:  #d0d5dd;
+  --accent:       #1570ef;
+  --accent-deep:  #175cd3;
+  --accent-quiet: #1570ef14;
+  --good:         #0e9384;
+  --warn:         #b54708;
+  --shadow-lg:    0 24px 48px -16px rgb(16 24 40 / 18%);
+  --shadow-sm:    0 1px 2px rgb(16 24 40 / 6%);
+  --glow-a:       #1570ef26;
+  --glow-b:       #0e938417;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0c111d; --paper-sunk: #111725; --paper-raised: #151c2b;
+    --ink: #e8edf5; --ink-soft: #9aa7bd; --ink-faint: #66738b;
+    --rule: #232c3d; --rule-strong: #33405a;
+    --accent: #5f9df7; --accent-deep: #8ab8fa; --accent-quiet: #5f9df71f;
+    --good: #3cbfae; --warn: #f5b678;
+    --shadow-lg: 0 24px 48px -16px rgb(0 0 0 / 60%);
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+    --glow-a: #5f9df72e; --glow-b: #3cbfae1c;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0c111d; --paper-sunk: #111725; --paper-raised: #151c2b;
+  --ink: #e8edf5; --ink-soft: #9aa7bd; --ink-faint: #66738b;
+  --rule: #232c3d; --rule-strong: #33405a;
+  --accent: #5f9df7; --accent-deep: #8ab8fa; --accent-quiet: #5f9df71f;
+  --good: #3cbfae; --warn: #f5b678;
+  --shadow-lg: 0 24px 48px -16px rgb(0 0 0 / 60%);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  --glow-a: #5f9df72e; --glow-b: #3cbfae1c;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+a { color: var(--accent); }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
+/*
+ * .wrap INSIDE the splash needs an explicit width, and this was measured
+ * rather than reasoned about.
+ *
+ * .splash is `display: flex; flex-direction: column`, so .topbar and
+ * .splash-body are flex ITEMS. An `auto` margin on a flex item overrides
+ * `align-items: stretch`, so both shrink to fit their content instead of
+ * filling the line: the topbar measured 447px wide with 496px of margin on
+ * each side, which puts the wordmark and the nav side by side in the middle of
+ * a 1440px page while `justify-content: space-between` quietly does nothing.
+ *
+ * .splash-body measured 1080 and looked correct — BY COINCIDENCE. Its content
+ * is wide enough to reach the max-width, so shrink-to-fit lands on the same
+ * number. Trimming a sentence would have collapsed it, months later, for no
+ * visible reason. Both get the width.
+ */
+.splash > .wrap { width: 100%; }
+
+/* Keyboard users must be able to see where they are. There is no app JS here
+   to manage focus, so the ring is the whole affordance. */
+a:focus-visible, .btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* ------------------------------------------------------------------ splash */
+/*
+ * 100svh, not 100vh: on mobile Safari and Chrome the large viewport unit is
+ * measured with the browser chrome retracted, so a 100vh hero is taller than
+ * the screen on arrival and the actions sit under the fold — on the one screen
+ * whose entire job is to be seen without scrolling. svh is the small viewport,
+ * which is what is actually visible. The vh line below is the fallback for
+ * anything that does not know svh, and must stay ABOVE it.
+ */
+.splash {
+  position: relative;
+  min-height: 100vh;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-bottom: 1px solid var(--rule);
+}
+/*
+ * The backdrop: two soft radial washes over a faint grid. Pure CSS on purpose —
+ * there is no image anywhere in this repository except the three PWA icons, and
+ * a landing page that waits on a hero photograph is a landing page that renders
+ * late on the connection it is trying to impress.
+ */
+.splash::before {
+  content: '';
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(58rem 32rem at 12% -8%, var(--glow-a), transparent 62%),
+    radial-gradient(46rem 30rem at 92% 8%, var(--glow-b), transparent 60%);
+  pointer-events: none;
+}
+.splash::after {
+  content: '';
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(to right, var(--rule) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--rule) 1px, transparent 1px);
+  background-size: 68px 68px;
+  /* Fades out downward so the grid never crosses the text it sits behind. */
+  -webkit-mask-image: radial-gradient(70rem 42rem at 50% 0%, #000 20%, transparent 78%);
+  mask-image: radial-gradient(70rem 42rem at 50% 0%, #000 20%, transparent 78%);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/*
+ * PADDING LONGHANDS, not the shorthand, on everything that also carries .wrap.
+ * §4's cascade trap, walked into while writing this file: .wrap sets
+ * `padding: 0 28px` and these rules sit later at equal specificity, so a
+ * `padding: 22px 0 0` here wins outright and takes the horizontal gutter with
+ * it — the topbar would run to the edge of the viewport on every screen.
+ */
+.topbar {
+  position: relative;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px;
+  padding-top: 22px;
+}
+.mark { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); text-decoration: none; }
+.mark svg { display: block; }
+.topbar nav { display: flex; gap: 22px; font-size: 14.5px; }
+.topbar nav a { color: var(--ink-soft); text-decoration: none; }
+.topbar nav a:hover { color: var(--ink); }
+
+.splash-body {
+  position: relative;
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 56px;
+  align-items: center;
+  padding-top: 48px;
+  padding-bottom: 64px;
+}
+
+.kicker {
+  display: inline-flex; align-items: center; gap: 9px;
+  font-size: 12.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  /* --accent-deep, not --accent: measured 4.12:1 against the 8% accent tint it
+     sits on, under AA for 12.5px text. --accent-deep is the higher-contrast
+     direction in BOTH themes — darker in light, lighter in dark — so one token
+     fixes both ends rather than needing a per-theme override. */
+  color: var(--accent-deep);
+  background: var(--accent-quiet);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 5px 13px 5px 10px;
+  margin: 0 0 22px;
+}
+.kicker .dot { width: 7px; height: 7px; border-radius: 999px; background: var(--accent-deep); }
+
+h1 {
+  font-size: clamp(34px, 5.4vw, 58px);
+  line-height: 1.06;
+  letter-spacing: -0.033em;
+  margin: 0 0 20px;
+  font-weight: 700;
+  text-wrap: balance;
+}
+.lede {
+  font-size: clamp(17px, 1.9vw, 20px);
+  line-height: 1.58;
+  color: var(--ink-soft);
+  margin: 0 0 30px;
+  max-width: 34em;
+}
+
+.actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.btn {
+  display: inline-flex; align-items: center; gap: 9px;
+  font: inherit; font-size: 15.5px; font-weight: 600;
+  padding: 12px 22px;
+  border-radius: 10px;
+  text-decoration: none;
+  border: 1px solid transparent;
+  transition: transform 120ms ease, background-color 120ms ease, border-color 120ms ease;
+}
+.btn-primary { background: var(--accent); color: #fff; box-shadow: var(--shadow-sm); }
+.btn-primary:hover { background: var(--accent-deep); transform: translateY(-1px); }
+.btn-ghost { background: var(--paper-raised); color: var(--ink); border-color: var(--rule-strong); }
+.btn-ghost:hover { border-color: var(--ink-faint); transform: translateY(-1px); }
+/* A dark theme's --accent is a light blue, so white-on-accent inverts. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .btn-primary { color: #06101f; }
+}
+:root[data-theme="dark"] .btn-primary { color: #06101f; }
+
+/* --ink-faint here measured 3.02:1 in light and 3.94 in dark, under WCAG AA's
+   4.5 for body text at 13.5px. Only the separators were actually faint — every
+   word sits in a <b> — but a rule that depends on which characters happen to be
+   bold is one edit from being wrong, so the whole line moves up. */
+.note { font-size: 13.5px; color: var(--ink-soft); margin: 20px 0 0; }
+.note b { font-weight: 600; }
+
+/*
+ * The beta is stated in the splash, not further down and not only on /terms.
+ * §47 added the same line to guide.html for a reason worth repeating here:
+ * without it a prospect reads four confident minutes and then discovers the
+ * framing on the legal page, which is the exact failure these pages are
+ * written against.
+ */
+.beta {
+  margin: 26px 0 0;
+  padding: 12px 15px;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--warn);
+  border-radius: 9px;
+  background: var(--paper-sunk);
+  font-size: 14px;
+  color: var(--ink-soft);
+  max-width: 34em;
+}
+.beta strong { color: var(--ink); }
+
+/* -------------------------------------------------------------- the figure */
+.figure { position: relative; }
+.figure svg { display: block; width: 100%; height: auto; filter: drop-shadow(var(--shadow-lg)); }
+/*
+ * The float is 6px over 7s. Motion on a landing page earns its place only if it
+ * is slow enough not to compete with reading, and it is removed outright for
+ * anyone who has asked for less.
+ */
+@keyframes drift { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+.figure .floater { animation: drift 7s ease-in-out infinite; transform-origin: center; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .figure .floater { animation: none; }
+  .btn { transition: none; }
+}
+
+/* ------------------------------------------------------------------ spine */
+.spine { padding-top: 76px; padding-bottom: 12px; }
+.spine h2 {
+  font-size: 13px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--ink-faint); margin: 0 0 30px;
+}
+.beats { display: grid; grid-template-columns: repeat(auto-fit, minmax(276px, 1fr)); gap: 26px; }
+.beat h3 { font-size: 20px; letter-spacing: -0.018em; margin: 14px 0 8px; }
+.beat p { color: var(--ink-soft); margin: 0; }
+.beat .icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px; border-radius: 10px;
+  background: var(--accent-quiet); color: var(--accent);
+  border: 1px solid var(--rule);
+}
+/*
+ * Every beat names a limit in the same breath as the capability. That is
+ * guide.html's rule (§47) and it is what keeps a page like this from reading
+ * as a pitch — the limit is not a disclaimer bolted on, it is the second half
+ * of the sentence.
+ */
+/*
+ * --ink-soft, and this was an accident that turned out to be right.
+ *
+ * It was written as --ink-faint and never applied: `.beat p` is (0,1,1) and
+ * `.limit` is (0,1,0), so the rule above won and the limits rendered at
+ * --ink-soft. §4's cascade trap, for the third time in this one file — and
+ * measuring is what found it, since 7.69:1 came back where 3.02 was expected.
+ *
+ * Made explicit rather than "fixed", because the accident is the better
+ * design: THE LIMIT MUST NOT BE FAINTER THAN THE CLAIM. Greying out the honest
+ * half of each sentence to 3:1 would undercut the one rule this page is
+ * written on. The smaller size and the left rule do the separating.
+ */
+.beat .limit {
+  margin: 12px 0 0; padding-left: 13px;
+  border-left: 2px solid var(--rule-strong);
+  font-size: 14px; color: var(--ink-soft);
+}
+
+/* ------------------------------------------------------------------- next */
+.next { padding-top: 60px; padding-bottom: 76px; }
+.next h2 { font-size: 13px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-faint); margin: 0 0 22px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(248px, 1fr)); gap: 16px; }
+.card {
+  display: block; text-decoration: none; color: inherit;
+  background: var(--paper-raised); border: 1px solid var(--rule);
+  border-radius: 12px; padding: 20px;
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.card b { display: block; font-size: 16.5px; letter-spacing: -0.01em; margin-bottom: 5px; }
+/*
+ * `display: block` on the description, and it is not tidiness. A <span> is
+ * inline, so the description and the "Read the guide →" span below it are
+ * inline SIBLINGS and flow into one another: in the first screenshot of this
+ * page the tour card read "…and where it fits. Take the tour →" on one line,
+ * while the other two cards happened to wrap in a way that hid it. A bug whose
+ * appearance depends on the length of the copy beside it.
+ */
+.card span { display: block; font-size: 14px; color: var(--ink-soft); }
+.card .go { margin-top: 12px; font-size: 14px; font-weight: 600; color: var(--accent); }
+
+/* ----------------------------------------------------------------- footer */
+footer { border-top: 1px solid var(--rule); background: var(--paper-sunk); padding: 26px 0 40px; }
+.foot-row { display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: center; justify-content: space-between; font-size: 14px; color: var(--ink-faint); }
+.foot-row nav { display: flex; flex-wrap: wrap; gap: 18px; }
+
+/* ------------------------------------------------------------ narrow view */
+@media (max-width: 900px) {
+  .splash-body { grid-template-columns: 1fr; gap: 34px; padding-top: 34px; padding-bottom: 52px; }
+  /* The figure follows the words on a phone: a splash that opens on artwork
+     with the sentence below the fold has spent the screen on decoration. */
+  .figure { order: 2; }
+  .splash-copy { order: 1; }
+  .topbar nav { display: none; }
+  .spine { padding-top: 52px; padding-bottom: 4px; }
+  .next { padding-top: 44px; padding-bottom: 56px; }
+}
+</style>
+</head>
+<body>
+
+<section class="splash">
+  <div class="wrap topbar">
+    <a class="mark" href="/welcome">
+      <svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true">
+        <rect x="1" y="1" width="24" height="24" rx="7" fill="var(--accent)"/>
+        <rect x="6.5" y="7" width="6" height="6" rx="2" fill="#fff" opacity="0.95"/>
+        <rect x="14.5" y="7" width="5" height="6" rx="2" fill="#fff" opacity="0.6"/>
+        <rect x="6.5" y="15" width="5" height="4" rx="1.6" fill="#fff" opacity="0.6"/>
+        <rect x="13.5" y="15" width="6" height="4" rx="1.6" fill="#fff" opacity="0.95"/>
+      </svg>
+      CRM Builder
+    </a>
+    <nav>
+      <a href="/guide">What you can do</a>
+      <a href="/docs/product-tour.html">Tour</a>
+      <a href="/docs/manual.html">Manual</a>
+    </nav>
+  </div>
+
+  <div class="wrap splash-body">
+    <div class="splash-copy">
+      <p class="kicker"><span class="dot"></span> Free beta</p>
+
+      <h1>A CRM shaped like the business you actually run</h1>
+
+      <p class="lede">
+        Pick the modules that match your work, add the fields you actually use,
+        and keep working when the connection doesn&rsquo;t. No setup call, no
+        migration project before you can see anything on screen.
+      </p>
+
+      <div class="actions">
+        <a class="btn btn-primary" href="/">
+          Open the app
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </a>
+        <a class="btn btn-ghost" href="/guide">See what you can do</a>
+      </div>
+
+      <p class="note">
+        <b>Works offline</b> &middot; <b>Installs like an app</b> &middot; <b>Export everything, any time</b>
+      </p>
+
+      <p class="beta">
+        <strong>This is a free beta.</strong> It is a small service run by one
+        person, so keep your own exports &mdash; data could be lost.
+        <a href="/terms">What to expect from a beta</a>.
+      </p>
+    </div>
+
+    <div class="figure">
+      <!--
+        The product, drawn rather than photographed. Inline SVG so it themes
+        with the page (every fill is a token), costs no request, and cannot be
+        the thing that renders late. It shows the two facts the copy claims —
+        modules down the side, a board of records — plus the digest, which is
+        the feature people recognise fastest.
+      -->
+      <svg viewBox="0 0 640 470" role="img" aria-label="A CRM window: a list of modules down the left, a board of records in the middle, and a morning digest saying two invoices are overdue.">
+        <!-- window -->
+        <rect x="24" y="20" width="592" height="392" rx="15" fill="var(--paper-raised)" stroke="var(--rule-strong)"/>
+        <path d="M24 35a15 15 0 0 1 15-15h562a15 15 0 0 1 15 15v23H24z" fill="var(--paper-sunk)"/>
+        <line x1="24" y1="58" x2="616" y2="58" stroke="var(--rule)"/>
+        <circle cx="46" cy="39" r="4.5" fill="var(--rule-strong)"/>
+        <circle cx="62" cy="39" r="4.5" fill="var(--rule-strong)"/>
+        <circle cx="78" cy="39" r="4.5" fill="var(--rule-strong)"/>
+        <rect x="240" y="32" width="160" height="14" rx="7" fill="var(--rule)"/>
+
+        <!-- sidebar: the modules -->
+        <path d="M24 58h164v339a15 15 0 0 1-15 15H39a15 15 0 0 1-15-15z" fill="var(--paper-sunk)"/>
+        <line x1="188" y1="58" x2="188" y2="412" stroke="var(--rule)"/>
+        <g>
+          <rect x="44" y="80" width="124" height="26" rx="7" fill="var(--accent-quiet)"/>
+          <circle cx="58" cy="93" r="4" fill="var(--accent)"/>
+          <rect x="70" y="88" width="72" height="9" rx="4.5" fill="var(--accent)" opacity="0.72"/>
+        </g>
+        <g fill="var(--ink-faint)" opacity="0.5">
+          <circle cx="58" cy="126" r="4"/><rect x="70" y="121" width="60" height="9" rx="4.5"/>
+          <circle cx="58" cy="157" r="4"/><rect x="70" y="152" width="82" height="9" rx="4.5"/>
+          <circle cx="58" cy="188" r="4"/><rect x="70" y="183" width="52" height="9" rx="4.5"/>
+          <circle cx="58" cy="219" r="4"/><rect x="70" y="214" width="74" height="9" rx="4.5"/>
+          <circle cx="58" cy="250" r="4"/><rect x="70" y="245" width="64" height="9" rx="4.5"/>
+        </g>
+        <!-- the add-a-module affordance, dashed because it is an invitation -->
+        <rect x="44" y="278" width="124" height="26" rx="7" fill="none" stroke="var(--rule-strong)" stroke-dasharray="4 4"/>
+        <path d="M99 291h14M106 284v14" stroke="var(--ink-faint)" stroke-width="1.8" stroke-linecap="round"/>
+
+        <!-- board -->
+        <g>
+          <rect x="212" y="80" width="118" height="10" rx="5" fill="var(--ink-faint)" opacity="0.45"/>
+          <rect x="212" y="102" width="118" height="58" rx="9" fill="var(--paper)" stroke="var(--rule)"/>
+          <rect x="224" y="115" width="76" height="8" rx="4" fill="var(--ink-soft)" opacity="0.55"/>
+          <rect x="224" y="131" width="48" height="8" rx="4" fill="var(--ink-faint)" opacity="0.4"/>
+          <rect x="212" y="170" width="118" height="58" rx="9" fill="var(--paper)" stroke="var(--rule)"/>
+          <rect x="224" y="183" width="62" height="8" rx="4" fill="var(--ink-soft)" opacity="0.55"/>
+          <rect x="224" y="199" width="70" height="8" rx="4" fill="var(--ink-faint)" opacity="0.4"/>
+        </g>
+        <g>
+          <rect x="346" y="80" width="118" height="10" rx="5" fill="var(--ink-faint)" opacity="0.45"/>
+          <!-- the one card that is "yours": accent edge, and an overdue chip -->
+          <rect x="346" y="102" width="118" height="72" rx="9" fill="var(--paper)" stroke="var(--accent)"/>
+          <rect x="346" y="102" width="4" height="72" rx="2" fill="var(--accent)"/>
+          <rect x="360" y="116" width="80" height="8" rx="4" fill="var(--ink)" opacity="0.72"/>
+          <rect x="360" y="132" width="54" height="8" rx="4" fill="var(--ink-faint)" opacity="0.45"/>
+          <rect x="360" y="150" width="58" height="15" rx="7.5" fill="var(--warn)" opacity="0.16"/>
+          <rect x="367" y="155" width="44" height="5" rx="2.5" fill="var(--warn)" opacity="0.85"/>
+          <rect x="346" y="184" width="118" height="58" rx="9" fill="var(--paper)" stroke="var(--rule)"/>
+          <rect x="358" y="197" width="70" height="8" rx="4" fill="var(--ink-soft)" opacity="0.55"/>
+          <rect x="358" y="213" width="46" height="8" rx="4" fill="var(--ink-faint)" opacity="0.4"/>
+        </g>
+        <g>
+          <rect x="480" y="80" width="118" height="10" rx="5" fill="var(--ink-faint)" opacity="0.45"/>
+          <rect x="480" y="102" width="118" height="58" rx="9" fill="var(--paper)" stroke="var(--rule)"/>
+          <rect x="492" y="115" width="58" height="8" rx="4" fill="var(--ink-soft)" opacity="0.55"/>
+          <rect x="492" y="131" width="74" height="8" rx="4" fill="var(--ink-faint)" opacity="0.4"/>
+          <rect x="480" y="170" width="118" height="58" rx="9" fill="var(--paper)" stroke="var(--rule)"/>
+          <rect x="492" y="183" width="72" height="8" rx="4" fill="var(--ink-soft)" opacity="0.55"/>
+          <rect x="492" y="199" width="50" height="8" rx="4" fill="var(--ink-faint)" opacity="0.4"/>
+        </g>
+
+        <!-- table rows below the board, so both views are visible at once -->
+        <g opacity="0.55">
+          <line x1="212" y1="268" x2="598" y2="268" stroke="var(--rule)"/>
+          <rect x="212" y="282" width="92" height="8" rx="4" fill="var(--ink-faint)" opacity="0.5"/>
+          <rect x="330" y="282" width="120" height="8" rx="4" fill="var(--ink-faint)" opacity="0.35"/>
+          <rect x="480" y="282" width="60" height="8" rx="4" fill="var(--ink-faint)" opacity="0.35"/>
+          <line x1="212" y1="306" x2="598" y2="306" stroke="var(--rule)"/>
+          <rect x="212" y="320" width="76" height="8" rx="4" fill="var(--ink-faint)" opacity="0.5"/>
+          <rect x="330" y="320" width="104" height="8" rx="4" fill="var(--ink-faint)" opacity="0.35"/>
+          <rect x="480" y="320" width="72" height="8" rx="4" fill="var(--ink-faint)" opacity="0.35"/>
+          <line x1="212" y1="344" x2="598" y2="344" stroke="var(--rule)"/>
+          <rect x="212" y="358" width="88" height="8" rx="4" fill="var(--ink-faint)" opacity="0.5"/>
+          <rect x="330" y="358" width="88" height="8" rx="4" fill="var(--ink-faint)" opacity="0.35"/>
+          <rect x="480" y="358" width="54" height="8" rx="4" fill="var(--ink-faint)" opacity="0.35"/>
+        </g>
+
+        <!-- the morning digest, floating clear of the window -->
+        <g class="floater">
+          <rect x="316" y="374" width="300" height="80" rx="13" fill="var(--paper-raised)" stroke="var(--rule-strong)"/>
+          <circle cx="348" cy="404" r="15" fill="var(--accent-quiet)"/>
+          <path d="M341 404l4.6 4.6L356 398" stroke="var(--accent)" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="376" y="392" width="106" height="9" rx="4.5" fill="var(--ink)" opacity="0.68"/>
+          <rect x="376" y="409" width="196" height="8" rx="4" fill="var(--ink-faint)" opacity="0.5"/>
+          <rect x="376" y="425" width="148" height="8" rx="4" fill="var(--ink-faint)" opacity="0.32"/>
+        </g>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<section class="wrap spine">
+  <h2>What it is</h2>
+  <div class="beats">
+
+    <div class="beat">
+      <span class="icon" aria-hidden="true">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/></svg>
+      </span>
+      <h3>Shape it around your work</h3>
+      <p>
+        Start from a prebuilt module &mdash; contacts, deals, invoices,
+        renewals &mdash; or build one field by field. Rename anything later and
+        the data comes with it.
+      </p>
+      <p class="limit">
+        Everyone on a team sees every module. Roles govern what people can
+        <em>do</em>, not what they can see.
+      </p>
+    </div>
+
+    <div class="beat">
+      <span class="icon" aria-hidden="true">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v5l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+      </span>
+      <h3>Nothing slips quietly</h3>
+      <p>
+        Filter any module by what is due or overdue, get one digest a morning
+        in your team chat, and draft the chaser for an overdue invoice in a
+        single press.
+      </p>
+      <p class="limit">
+        The digest says <em>how many</em>, never which &mdash; a chat channel
+        usually has more people in it than your CRM does.
+      </p>
+    </div>
+
+    <div class="beat">
+      <span class="icon" aria-hidden="true">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3.4-7"/><path d="M21 4v5h-5"/></svg>
+      </span>
+      <h3>It stays yours</h3>
+      <p>
+        It works with the connection off and syncs when it comes back, record
+        by record, so two people editing different things both keep their edit.
+        Export the whole workspace as CSV or JSON whenever you want.
+      </p>
+      <p class="limit">
+        A delete cannot be undone, and on a team it deletes for everybody.
+      </p>
+    </div>
+
+  </div>
+</section>
+
+<section class="wrap next">
+  <h2>Where to go next</h2>
+  <div class="cards">
+    <a class="card" href="/guide">
+      <b>What you can do</b>
+      <span>The short version &mdash; every capability and its limit, in about four minutes.</span>
+      <span class="go">Read the guide &rarr;</span>
+    </a>
+    <a class="card" href="/docs/product-tour.html">
+      <b>The full tour</b>
+      <span>Why it is built this way, what comes as standard, and where it fits.</span>
+      <span class="go">Take the tour &rarr;</span>
+    </a>
+    <a class="card" href="/docs/manual.html">
+      <b>The manual</b>
+      <span>Every feature in the order you need it, from first module to backups.</span>
+      <span class="go">Open the manual &rarr;</span>
+    </a>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-row">
+    <span>CRM Builder &mdash; a modular CRM for small businesses.</span>
+    <nav>
+      <a href="/">Open the app</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>

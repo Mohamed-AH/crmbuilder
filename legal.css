@@ -5,6 +5,29 @@
  * app, are read once, and should not pull the whole CRM stylesheet — or be
  * affected when it changes.
  */
+/*
+ * The font this file has always ASKED for and never loaded.
+ *
+ * `body` below names 'Inter' and the only @font-face in the repository is in
+ * css/style.css — which these pages deliberately do not load, because the whole
+ * point of them is that they render with no app CSS and no app JS (§19). So
+ * /privacy, /terms and /guide have been falling through to system-ui since they
+ * shipped, while a self-hosted Inter sat served (ASSET_DIRS names `fonts`) and
+ * unused. §47 found the OTHER half of this — the doc pages' blocked Google
+ * Fonts link — and fixed it by leaning on the fallback stack; nobody looked at
+ * whether the font we already own was reaching the pages that name it.
+ *
+ * Nothing here is precached: legal.css is in sw.js's STANDALONE_ASSETS and goes
+ * straight to the network (§47), so this needs no CACHE_VERSION bump of its own.
+ */
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/inter-var-latin.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --paper: #ffffff;
   --paper-sunk: #f7f8fa;

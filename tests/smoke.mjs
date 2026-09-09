@@ -437,7 +437,7 @@ await check('sync model', async () => {
  * be in somebody's inbox.
  */
 await check('the shareable pages are reachable', async () => {
-  const pages = [['/guide', 'What you can do'], ['/docs/manual.html', 'CRM Builder Manual'], ['/docs/product-tour.html', 'Build Your Own CRM']];
+  const pages = [['/welcome', 'A CRM shaped like'], ['/guide', 'What you can do'], ['/docs/manual.html', 'CRM Builder Manual'], ['/docs/product-tour.html', 'Build Your Own CRM']];
   const broken = [];
   for (const [path, marker] of pages) {
     const { res, err } = await get(path);

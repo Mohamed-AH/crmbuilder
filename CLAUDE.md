@@ -101,6 +101,10 @@ never change, because everything cross-references them.
 | Dark mode: what already exists, and the half-toggle in `legal.css` | §57 · [`docs/ROADMAP.md`](docs/ROADMAP.md) §1 |
 | Why a security re-audit is due, and what it must NOT re-raise | §57 · §30 |
 | **The Windows skip count that proved the rename retry** | §55 |
+| **The landing page** — why `/welcome` and not `/` | §58 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b |
+| Auto margins on a flex child, and a width that was right by luck | §58 · §4 |
+| Contrast measured rather than judged; the limit that must not be faint | §58 · §47 |
+| The legal pages never loaded the font they ask for | §58 · §19 |
 
 ---
 
@@ -118,7 +122,10 @@ lib/safe-fetch.js     SSRF guard for customer-chosen webhook destinations (§38)
 lib/mail-send.js      bring-your-own-key email — Resend and Postmark (§52)
 index.html            app shell (script order matters — see §3)
 privacy.html          privacy policy | terms.html  terms of use  (see §19)
-legal.css             styling for those two — they load no app JS at all
+guide.html            the short "what you can do" page, at /guide (§47)
+welcome.html          the splash / landing page, at /welcome — CSS and figure
+                      INLINE, no app JS, and the page meant to become / (§58)
+legal.css             styling for privacy/terms/guide — they load no app JS at all
 css/style.css         Inter + blue/slate palette, light/dark, desktop-first
 js/icons.js           inline Lucide SVGs (generated — see §6)
 js/boot-icons.js      fills static icon placeholders — a file, not inline (§30 CSP)
@@ -235,7 +242,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v54`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v55`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -7667,3 +7674,183 @@ is the check §46 and §54 both say to run rather than reading the route count.
 §27's six user-facing documents needed nothing either, and that is a checked
 omission rather than a skipped step — no capability changed, and padding them
 to look thorough is its own inaccuracy (§40, §41).
+
+
+---
+
+## 58. The landing page, and three bugs that only measuring found
+
+Asked for "a good looking landing page with splash". Two things were settled
+before any markup, and the first changed what the work was.
+
+### There was already a landing page, at a URL nobody would type
+
+`docs/product-tour.html` is 512 lines with a hero, eleven tiles, an FAQ and a
+closing call to action, and its own complete design system — Literata + IBM
+Plex, the full token set, and **both** dark branches. It is a real marketing
+page. It is filed under `docs/` and its path is frozen (§28, §29), so it reads
+as documentation and arrives by link rather than by anybody landing on it.
+
+So the gap was never "write a landing page". It was that **`/` is the app**: a
+first-time visitor to the domain gets the CRM's onboarding screen rather than
+anything explaining what they have opened.
+
+That makes the new page's job narrow, and keeping it narrow is what stops it
+becoming §27's fourth stale document: a splash, three beats, and **routing** —
+guide, tour, manual. It restates none of them. If it ever starts explaining
+features, it has become the tour and one of the two should go.
+
+### `/welcome` today, `/` at the domain move — and the move is what makes it cheap
+
+Making it `/` now means moving the app to `/app`: `start_url` and `scope` in the
+manifest, `sw.js`'s precached shell, **104 `goto('/')` calls** in the E2E suite,
+the smoke test — and every installed PWA launching into a page that is no longer
+the app until somebody reinstalls it.
+
+Every one of those costs is **already being paid** by the move to
+nimbleclerk.com. §1.1 of the checklist: the origin changes, so installed apps
+are stranded, the caches sit on an origin we no longer serve and everybody is
+signed out regardless. Restructuring paths while that is already true is free;
+doing it first pays it twice. `docs/LAUNCH-CHECKLIST.md` §1.0b carries the
+five-step version, and the decision has to be made **before the announcement**,
+because the announcement names the URL people will type.
+
+### The CSS is inline, which is the departure from `guide.html`
+
+`guide.html` shares `legal.css`. That is a 720px prose stylesheet — right for a
+document, wrong for a full-bleed splash — so this page would have needed its
+own, which means a second served file, a second entry in each of §3's four
+places, and **a subresource of a standalone page**. That last one is not
+hypothetical: §47 records `/legal.css` falling through `STANDALONE_PAGES` into
+the runtime cache and shipping stale for an entire cache version, invisibly,
+because a stale stylesheet still renders. One file has none of that, and
+`docs/product-tour.html` is the precedent. `style-src` keeps `'unsafe-inline'`
+(§30 Phase 4), so a `<style>` block is fine where a `<script>` block is refused.
+
+**No external fonts, and no images.** §47 found the CSP refusing
+`fonts.googleapis.com` on the doc pages; the only font this repository owns is
+the self-hosted Inter. There is no image anywhere here except three PWA icons,
+so the splash figure is **inline SVG** whose every fill is a token — it themes
+with the page, costs no request, and cannot be the thing that renders late on
+the connection it is trying to impress.
+
+### `legal.css` has asked for Inter for its whole life and never loaded it
+
+Found while deciding what font the new page should use. `legal.css` sets
+`font: … 'Inter', system-ui, …` and **the only `@font-face` in the repository is
+in `css/style.css`** — which the standalone pages deliberately do not load,
+because rendering with no app CSS and no app JS is the entire point of them
+(§19). So `/privacy`, `/terms` and `/guide` have been falling through to
+system-ui since they shipped, while a served, self-hosted Inter sat unused.
+
+§47 found the *other* half of this — the doc pages' blocked Google Fonts link —
+and correctly leaned on the fallback stack. Nobody then asked whether the font
+we already own was reaching the pages that name it. `@font-face` added to
+`legal.css`; no `CACHE_VERSION` bump needed for it, because that file is in
+`STANDALONE_ASSETS` and goes straight to the network (§47), checked rather than
+assumed.
+
+### Three bugs, none of which reading would have found
+
+§9's *measure rather than assert* earning its keep three times in one file.
+
+**Auto margins on a flex child beat `align-items: stretch`.** `.splash` is a
+column flex container, so `.topbar` and `.splash-body` are flex items — and
+`.wrap`'s `margin: 0 auto` makes them **shrink to fit** rather than fill. The
+topbar measured **447px wide with 496px of margin each side** on a 1440px page:
+the wordmark and the nav sitting together in the middle while
+`justify-content: space-between` quietly did nothing.
+
+The instructive half is `.splash-body`, which measured a correct 1080 — **by
+coincidence**. Its content is wide enough to reach the `max-width`, so
+shrink-to-fit lands on the same number. Trimming one sentence would have
+collapsed it, months later, for no visible reason. `.splash > .wrap
+{ width: 100% }` covers both.
+
+**A `<span>` is inline, so the card link ran into the card's own text.**
+`.card b` was `display: block` and the description `<span>` was not, so it and
+the `.go` span were inline siblings: the tour card read *"…and where it fits.
+Take the tour →"* on one line while the other two happened to wrap in a way
+that hid it. **A bug whose visibility depends on the length of the copy beside
+it** — found in the first screenshot, not in the markup.
+
+**Contrast measured, not judged** — §47's rule, which caught a stated concern
+that did not exist and a real one under the same heading. Here: `.note` at
+**3.02:1** in light (under AA's 4.5 at 13.5px), and `.kicker` at **4.12:1**
+against the 8% accent tint it sits on. The kicker moved to `--accent-deep`,
+which is the higher-contrast direction in *both* themes — darker in light,
+lighter in dark — so one token fixes both ends rather than needing a per-theme
+override. Everything now measures 4.5+ in both schemes.
+
+### A cascade accident that was right, and was made deliberate
+
+`.limit` was written as `--ink-faint` and **never applied**: `.beat p` is
+(0,1,1) and `.limit` is (0,1,0), so the earlier rule won and the limits
+rendered at `--ink-soft`. §4's cascade trap for the **third time in this one
+file** — and it was found by the contrast probe returning 7.69 where 3.02 was
+expected, not by reading.
+
+Kept rather than "fixed", because the accident is the better design and the
+reason is the page's whole thesis: **the limit must not be fainter than the
+claim.** Every beat states a capability and its limit in one breath (§47's rule
+for `guide.html`); greying the honest half to 3:1 would undercut exactly what
+the page is written to do. It is `.beat .limit` now, explicitly, with the
+smaller size and the left rule doing the separating.
+
+### Verification
+
+The standalone-pages guard is a **loop**, so `/welcome` joins the array and
+inherits both assertions — that the page renders itself with the worker
+installed, and that it does not then become the cached shell. Checked against
+the broken state per §9: removing `/welcome` from `STANDALONE_PAGES` fails it by
+name. The smoke check is also a loop over pages, so **the smoke count does not
+move** — 46 either way — and a mutation (asserting on text that is not on the
+page) was run to prove it is really asserting rather than passing vacuously.
+§46 records the same shape: a check that adds coverage without moving the
+number reads as a mistake later unless it is written down.
+
+Driven at 1440 / 900 / 390 / 320 in both colour schemes: no console errors, no
+failed requests, no horizontal overflow at any width, actions above the fold
+everywhere, and Inter actually loading. `100svh` rather than `100vh` on the
+splash, with the `vh` line kept above it as the fallback — the large viewport
+unit is measured with mobile browser chrome retracted, so a `100vh` hero puts
+its own buttons under the fold on the one screen whose entire job is to be seen
+without scrolling.
+
+### Blast radius
+
+`welcome.html` is a new served file, so §3's four places had to agree:
+`PUBLIC_ROOT_FILES` in `server.js` (the extensionless alias is generated, so
+`/welcome` comes free), `STANDALONE_PAGES` in `sw.js`, the smoke test, and
+`CACHE_VERSION` → **`crmbuilder-v55`**. It is deliberately **not** in
+`index.html` or `APP_SHELL` — it is not part of the app, the same call §47 made
+for `js/manual-toc.js`.
+
+**The bump is not hygiene.** Nothing precached changed, so strictly it is not
+required — but a visitor whose worker predates this change is handled by the
+*old* worker on their first navigation to `/welcome`, which answers with the app
+shell and caches the welcome page over it. `activate` deleting every cache whose
+key is not the current one is the only thing that repairs an installation
+already in that state (§47), so the bump is what makes the recovery one reload
+instead of never.
+
+Counts: Node **498**, Playwright **126 → 127**, smoke **46** locally.
+
+### Docs walked (§27)
+
+| | Needed |
+|---|---|
+| `README.md` | the file map, a row in the documents table, and `legal.css`'s line, which said "the two pages above" while three pages load it |
+| `docs/LAUNCH-CHECKLIST.md` | §1.0b (the `/` swap) and the `og:image` row — a root-relative one is what most scrapers resolve and some do not, so link previews are what silently look broken |
+| `USER-GUIDE.md`, `manual.html`, `ONBOARDING.md`, `DEMO-SCRIPT.md`, `BETA.md` | **nothing** — no capability moved. A marketing page is not a feature, and padding them to look thorough is its own inaccuracy (§40, §41) |
+| `guide.html`, `product-tour.html` | **nothing**, and this is a decision: the landing page links *out* to both, and a link back from a page somebody was sent directly is circular |
+| `docs/API.md` | nothing — no route, no wire shape, and it does not list public pages |
+
+### One thing deliberately not decided
+
+**The product is still called CRM Builder.** The domain is `nimbleclerk.com`,
+and a landing page is exactly where a brand name would live — but renaming is a
+real decision that touches the manifest, `terms.html`, `TERMS_VERSION` (§41),
+every document and the app itself. It is not something to do silently while
+building a page. The wordmark sits in one place in `welcome.html` and in the
+manifest; if the name changes, those are the two starts.

@@ -4022,6 +4022,7 @@ test.describe('settings', () => {
  */
 test.describe('pages that are not the app', () => {
   for (const [path, title] of [
+    ['/welcome', 'CRM shaped like'],
     ['/guide', 'What you can do'],
     ['/docs/manual.html', 'CRM Builder Manual'],
     ['/docs/product-tour.html', 'Build Your Own CRM'],

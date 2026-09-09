@@ -4,7 +4,7 @@
  * API/auth requests are network-only (never cached).
  * Bump CACHE_VERSION whenever any precached asset changes.
  */
-const CACHE_VERSION = 'crmbuilder-v54';
+const CACHE_VERSION = 'crmbuilder-v55';
 const APP_SHELL = [
   './',
   './index.html',
@@ -69,7 +69,7 @@ self.addEventListener('fetch', (event) => {
    * not the app belongs here, which is why the entries are listed beside the
    * server's own PUBLIC_ROOT_FILES / PUBLIC_DOCS rather than added ad hoc.
    */
-  const STANDALONE_PAGES = ['/privacy', '/terms', '/guide', '/docs/manual', '/docs/product-tour'];
+  const STANDALONE_PAGES = ['/privacy', '/terms', '/guide', '/welcome', '/docs/manual', '/docs/product-tour'];
   /*
    * …and the files those pages load. The early return below matches a
    * NAVIGATION, so a subresource never reached it: /legal.css fell through to

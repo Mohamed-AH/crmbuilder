@@ -5702,6 +5702,16 @@ const PUBLIC_ROOT_FILES = [
   // is frozen for the same reason manual.html's is (§28), and it must stay in
   // sw.js's STANDALONE_PAGES or the service worker serves the app instead (§47).
   'guide.html',
+  // welcome.html is the splash / landing page, at /welcome. Root rather than
+  // docs/ for the same reason as guide.html — the extensionless alias gives it
+  // a URL worth putting on something. It is the page intended to BECOME `/`
+  // at the domain move, which is why it is a separate file today rather than a
+  // branch inside index.html: docs/LAUNCH-CHECKLIST.md §1.1 records that the
+  // move already strands installed PWAs and clears the origin's cache, so
+  // restructuring paths at that moment costs nothing extra and costs a great
+  // deal now. It carries its own CSS inline and must stay in sw.js's
+  // STANDALONE_PAGES, or the worker answers it with the app (§19, §47).
+  'welcome.html',
   'legal.css', 'manifest.webmanifest', 'sw.js',
 ];
 

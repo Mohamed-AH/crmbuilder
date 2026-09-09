@@ -35,6 +35,7 @@ trying to do, and marks what is current versus frozen. The short version:
 
 | Document | For |
 |---|---|
+| **[Landing page](welcome.html)** | The front door — a splash, three beats and where to go next. Served at **`/welcome`**, and the page intended to become `/` at the domain move. |
 | **[What you can do](guide.html)** | The short version for a customer or a prospect — what the app lets you do and what it deliberately does not, in about four minutes. Served at **`/guide`**. |
 | **[User Guide](docs/USER-GUIDE.md)** | End users — every feature, in the order you need it. Also published as a [shareable web manual](docs/manual.html). |
 | **[Onboarding Playbook](docs/ONBOARDING.md)** | Whoever rolls this out to a business: session plans, data migration, week-1 check-in. |
@@ -108,8 +109,11 @@ index.html            app shell
 privacy.html          privacy policy — a real page, and what Google needs to publish the consent screen
 terms.html            terms of use
 guide.html            "what you can do with it" — the short customer-facing page, served at /guide
+welcome.html          the splash / landing page, served at /welcome — CSS and figure
+                      inline, no app JS. Intended to become `/` at the domain move
 css/style.css         styles (Inter, light/dark, desktop-first)
-legal.css             standalone styling for the two pages above (they load no app JS)
+legal.css             standalone styling for privacy.html, terms.html and guide.html
+                      (none of the three load any app JS)
 js/icons.js           inline Lucide SVG icons
 js/boot-icons.js      fills static icon placeholders (a file, not inline — CSP script-src)
 js/db.js              promise-based IndexedDB wrapper
