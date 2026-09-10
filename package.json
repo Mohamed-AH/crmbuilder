@@ -24,5 +24,9 @@
   },
   "devDependencies": {
     "@playwright/test": "1.56.1"
+  },
+  "comment:overrides": "express 4.22.2 — the last of the 4.x line — pins qs ~6.15.1, and both moderate qs advisories (array-limit bypass via bracket-key comma parsing, and DoS via attacker-controlled isBuffer) are fixed in 6.16.0. So `npm audit fix` can move body-parser and CANNOT move express: the range forbids it. qs parses req.query on every request here (express 4 defaults the query parser to 'extended'), so this is reachable on every route rather than theoretical. 6.16.0 is a minor bump inside the same major and the tilde is the maintainer's caution rather than a known incompatibility. Express 5 pins a fixed qs and is the real answer; it is not a change to make inside a security patch. Remove this override when express moves. CLAUDE.md §61 R5.",
+  "overrides": {
+    "qs": "^6.16.0"
   }
 }

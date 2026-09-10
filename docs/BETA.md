@@ -96,6 +96,14 @@ FEEDBACK_WEBHOOK_URL=https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CH
 The `chat_id` has to be on the URL — without it the report is still stored, and
 the log says why nothing arrived.
 
+**No username or password in that URL.** `https://user:pw@host/…` is refused
+with a warning naming the reason, because `fetch` will not send credentials in
+a URL, so the webhook would silently never authenticate. Only a self-hosted
+receiver behind basic auth would want one; put the credential in the path or
+proxy it. Before `CLAUDE.md` §61 the refusal came from inside `fetch`, in an
+error message carrying the whole URL — which was then logged, bot token and
+password together.
+
 **Treat that URL as a credential.** It carries the bot token, so anyone holding
 it can post as your bot. It is an environment variable for the same reason
 `BACKUP_TOKEN` is, and nothing logs it. Revoke with `/revoke` in BotFather.

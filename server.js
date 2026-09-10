@@ -1530,9 +1530,22 @@ function chasesOf(doc) {
   return raw.map(cleanChase).filter(Boolean);
 }
 
-// Union by entry id, newest first, capped. Ties go to the STORED copy, the
-// same rule every other merge here follows (§10), so a replayed push writes
-// nothing new.
+/*
+ * Union by entry id, newest first, capped. Ties go to the STORED copy, the
+ * same rule every other merge here follows (§10), so a replayed push writes
+ * nothing new.
+ *
+ * A `Map` RATHER THAN A PLAIN OBJECT, and that is load-bearing — §61's R3.
+ * An entry's `id` is the second client-chosen key in this file (the first is a
+ * field key, which UNSAFE_KEYS guards), and Map keys are not prototype
+ * properties. Swapping in `{}` — the obvious simplification — costs two
+ * things at once: `byId['__proto__'] = entry` creates no own property, so the
+ * entry is SILENTLY DROPPED from the log that exists to stop two people
+ * chasing the same money, and the assignment fires the setter that
+ * UNSAFE_KEYS exists to avoid. Measured: the mutation loses one of three
+ * entries, and "a chase entry cannot use a dangerous key as its id" fails on
+ * it by name.
+ */
 function unionChases(priorDoc, incomingDoc) {
   const byId = new Map();
   for (const entry of chasesOf(incomingDoc)) byId.set(entry.id, entry);
@@ -2156,9 +2169,75 @@ function wrapAsync(fn) {
   };
 }
 
+/*
+ * Arguments are mapped RECURSIVELY, because Express accepts an array of
+ * handlers and the first version of this did not look inside one. §61's R4.
+ *
+ * `app.get('/x', [requireAuth, requireSettingsOwner, handler])` is an ordinary
+ * idiom — it is what somebody reaches for the moment two routes share a stack
+ * of guards, and four routes here already share the same three. Handed an
+ * array, `wrapAsync` saw a non-function and returned it untouched, so nothing
+ * inside was wrapped: measured on a throwaway app, a rejection in an array
+ * member produced an unhandled rejection and a request that hung until the
+ * client gave up. That is §55's crash, still open for one syntax.
+ *
+ * NOT REACHABLE TODAY — there is no array-form handler anywhere in this file
+ * (checked), so this has no test that fails without it, exactly like
+ * scrubOutbound below. It is here because the whole point of putting the wrap
+ * at the ROUTER rather than on 48 handlers was that the next route somebody
+ * adds is covered without them knowing this exists, and an argument shape it
+ * silently skips defeats that.
+ */
+const wrapArg = (arg) => (Array.isArray(arg) ? arg.map(wrapArg) : wrapAsync(arg));
+
+/*
+ * No outbound URL reaches a log line intact. §61's R1.
+ *
+ * Four places log `err.message` from a failed outbound call, and every one of
+ * those URLs is a bearer credential: a Telegram webhook URL contains the bot
+ * token (§18), and the reminder healthcheck URL lets anyone holding it fake a
+ * success and silence the dead-man's switch (§39). Both sections say nothing
+ * may interpolate one into a log line, and §39's code said WHY it was safe:
+ * "Node's network errors carry hostnames, not paths, and the secret is in the
+ * path."
+ *
+ * That is true of every fetch FAILURE and false of the one case where no
+ * request is ever constructed. Measured, on the real undici:
+ *
+ *   unresolvable host  -> "fetch failed" / cause "getaddrinfo ENOTFOUND host"
+ *   refused, bad port  -> "fetch failed" / cause "bad port"
+ *   ftp:// scheme      -> "fetch failed" / cause "unknown scheme"
+ *   URL with a user:pw -> "Request cannot be constructed from a URL that
+ *                          includes credentials: <THE WHOLE URL>"
+ *
+ * The last one parses cleanly through `new URL`, so nothing upstream catches
+ * it — and a self-hosted Healthchecks or webhook receiver behind basic auth is
+ * exactly the deployment that would carry one. So a misconfiguration wrote the
+ * password AND the token into the production log of a public repository's
+ * deployment.
+ *
+ * ONE helper for all four sites rather than a check at each: three of them were
+ * copies of one another already, and §38 and §52 both record the shape where
+ * the export half of a redaction was right while another half was wrong.
+ *
+ * Every spelling is removed — the raw environment value and whatever
+ * webhookRequest or reminderCheckUrl derived from it — because they differ
+ * whenever a URL is written without a trailing slash, with a default port, or
+ * with a query string moved into the body (§18's Telegram reshaping).
+ */
+function scrubOutbound(message, ...secrets) {
+  let out = String(message || 'failed');
+  for (const secret of secrets) {
+    if (secret) out = out.split(String(secret)).join('[url]');
+  }
+  // A backstop for a form nobody passed: §18's rule that a bot token must
+  // never be logged, applied to the message rather than to a known URL.
+  return out.replace(/\/bot[^/\s]+\//g, '/bot[token]/');
+}
+
 for (const verb of ['get', 'post', 'put', 'patch', 'delete', 'all', 'use']) {
   const original = app[verb].bind(app);
-  app[verb] = (...args) => original(...args.map(wrapAsync));
+  app[verb] = (...args) => original(...args.map(wrapArg));
 }
 
 /*
@@ -2612,7 +2691,7 @@ function notifyAlerts(fired) {
     signal: AbortSignal.timeout(8000),
   }).then((r) => {
     if (!r.ok) console.warn(`Alert webhook rejected the notification: HTTP ${r.status}`);
-  }).catch((err) => console.warn('Alert webhook failed:', err.message));
+  }).catch((err) => console.warn('Alert webhook failed:', scrubOutbound(err.message, req.url, FEEDBACK_WEBHOOK_URL)));
 }
 
 /*
@@ -3964,6 +4043,36 @@ function requireSettingsOwner(req, res, next) {
   next();
 }
 
+/*
+ * The same shape for canSendMail, and it is middleware now rather than a check
+ * inside two handlers. §61's R2 finding.
+ *
+ * The order is what this fixes, not the predicate. `/api/org/mail/send` read
+ * `requireAuth, rateLimit(…)` and then tested the role in its first statement —
+ * so a signed-in viewer or contributor was refused 403 *after* spending a slot
+ * in the bucket. `rateLimit` keys on `req.ip`, so on any shared office
+ * connection that slot belonged to a colleague: a refused caller could exhaust
+ * a member's send budget for the minute.
+ *
+ * Both sibling routes already had it the right way round — `/api/org/hook/test`
+ * and `/api/org/hook/telegram/chats` are `requireAuth, requireSettingsOwner,
+ * rateLimit(…)`, and hook/test's own comment states the relationship: "the
+ * guard is the control; this bounds what a compromised owner account can do
+ * with it." A limiter in front of the guard is metering an unauthorized caller,
+ * which is the reverse. The inconsistency with its own siblings is what makes
+ * this a finding rather than a preference.
+ *
+ * Authenticate → authorize → meter. `requireAuth` still runs first, so nothing
+ * anonymous reaches either.
+ */
+function requireSendMail(req, res, next) {
+  if (!canSendMail(req.user)) {
+    return res.status(403).json({ error: 'Only an owner or a member can send email from this workspace' });
+  }
+  if (!req.user.orgId) return res.status(400).json({ error: 'You are not in an organisation' });
+  next();
+}
+
 app.get('/api/org/hook', requireAuth, requireSettingsOwner, async (req, res) => {
   res.json({ hook: publicHook(await getHook(workspaceIdFor(req.user))) });
 });
@@ -4136,23 +4245,19 @@ async function deliverMail(wsId, { to, subject, text }) {
   return out;
 }
 
-app.get('/api/org/mail', requireAuth, async (req, res) => {
-  /*
-   * Readable by anyone who may SEND, writable only by an owner — and the two
-   * gates differ on purpose.
-   *
-   * Mirroring the hook exactly (owner-only on both) would leave a member with
-   * no way to know whether sending is available, so their client would either
-   * hide a capability they have or offer a button that 403s. Neither is
-   * honest. What a member sees here is the provider, the from-address their
-   * mail would go out under, and whether it has ever worked — the facts they
-   * need to decide whether to press send. Never the key, which is not a
-   * question of role: publicMail does not return it to anybody.
-   */
-  if (!canSendMail(req.user)) {
-    return res.status(403).json({ error: 'Only an owner or a member can send email from this workspace' });
-  }
-  if (!req.user.orgId) return res.status(400).json({ error: 'You are not in an organisation' });
+/*
+ * Readable by anyone who may SEND, writable only by an owner — and the two
+ * gates differ on purpose.
+ *
+ * Mirroring the hook exactly (owner-only on both) would leave a member with no
+ * way to know whether sending is available, so their client would either hide
+ * a capability they have or offer a button that 403s. Neither is honest. What a
+ * member sees here is the provider, the from-address their mail would go out
+ * under, and whether it has ever worked — the facts they need to decide whether
+ * to press send. Never the key, which is not a question of role: publicMail
+ * does not return it to anybody.
+ */
+app.get('/api/org/mail', requireAuth, requireSendMail, async (req, res) => {
   res.json({ mail: publicMail(await getMail(workspaceIdFor(req.user))) });
 });
 
@@ -4275,11 +4380,9 @@ async function mailRecipient(wsId, mod, record) {
  * morning's overdue invoices is an ordinary thing to do and a limit tuned for
  * "prove it works" would refuse the sixth one.
  */
-app.post('/api/org/mail/send', requireAuth, rateLimit('mailsend', MAIL_SEND_PER_MIN), async (req, res) => {
-  if (!canSendMail(req.user)) {
-    return res.status(403).json({ error: 'Only an owner or a member can send email from this workspace' });
-  }
-  if (!req.user.orgId) return res.status(400).json({ error: 'You are not in an organisation' });
+// requireSendMail sits BEFORE the limiter, matching the two hook routes. A
+// refused caller must not spend a slot in a bucket keyed by IP — see §61's R2.
+app.post('/api/org/mail/send', requireAuth, requireSendMail, rateLimit('mailsend', MAIL_SEND_PER_MIN), async (req, res) => {
   const wsId = workspaceIdFor(req.user);
 
   const recordId = String((req.body && req.body.recordId) || '');
@@ -4578,8 +4681,14 @@ let lastRemindRun = 0;
  * `fetch` like FEEDBACK_WEBHOOK_URL — no runtime setter, which is what keeps
  * §30's SSRF finding false for it. The URL is a bearer credential (anyone
  * holding it can fake a success), so it must never reach `platform` (§17's
- * rule) and nothing here interpolates it into a log line. Node's network
- * errors carry hostnames, not paths, and the secret is in the path.
+ * rule) and nothing here interpolates it into a log line.
+ *
+ * THAT LAST CLAIM USED TO CARRY A REASON, AND THE REASON WAS WRONG: "Node's
+ * network errors carry hostnames, not paths, and the secret is in the path."
+ * True of every fetch failure and false of the case where no request is ever
+ * constructed — see reminderCheckUrl below, which is where §61 found it. Left
+ * quoted rather than deleted, because a comment that talked itself into a
+ * guarantee is worth more as a warning than as a gap.
  */
 const REMINDER_HEALTHCHECK_URL = process.env.REMINDER_HEALTHCHECK_URL || '';
 
@@ -4587,6 +4696,39 @@ function reminderCheckUrl(failed) {
   if (!REMINDER_HEALTHCHECK_URL) return '';
   try {
     const u = new URL(REMINDER_HEALTHCHECK_URL);
+    /*
+     * A URL CARRYING CREDENTIALS IS REFUSED HERE, and this is §61's R1 finding
+     * rather than tidiness.
+     *
+     * `new URL('https://user:pw@hc.example/ping/<uuid>')` parses happily and
+     * round-trips through toString(), and then undici refuses to build the
+     * Request with:
+     *
+     *   Request cannot be constructed from a URL that includes credentials:
+     *   https://user:pw@hc.example/ping/<uuid>
+     *
+     * — the whole URL, in `err.message`, which pingReminderCheck below used to
+     * hand straight to console.warn. So a misconfiguration wrote both the
+     * basic-auth password and the ping UUID into the production log, and §39
+     * records that UUID as a bearer credential: anyone holding it can fake a
+     * success and silence the dead-man's switch.
+     *
+     * Measured, not reasoned. The comment above this function asserted the
+     * opposite — "Node's network errors carry hostnames, not paths, and the
+     * secret is in the path" — which is true of every fetch failure except the
+     * one that happens before a request exists. A plain unresolvable host gives
+     * `fetch failed` and a cause of `getaddrinfo ENOTFOUND <host>`; this case
+     * is not a network error at all.
+     *
+     * Refused rather than stripped, because it is a property of the URL and not
+     * of the moment (§38's split): the credentials would never have reached the
+     * far end anyway, so silently dropping them would leave an operator with a
+     * check that fails authentication and no idea why.
+     */
+    if (u.username || u.password) {
+      console.warn('REMINDER_HEALTHCHECK_URL carries a username or password, which fetch will not send — the reminder pass has no dead-man\'s switch. Put the credential in the path or use a URL without one.');
+      return '';
+    }
     if (failed) u.pathname = `${u.pathname.replace(/\/$/, '')}/fail`;
     return u.toString();
   } catch {
@@ -4620,7 +4762,7 @@ function pingReminderCheck(pass) {
     signal: AbortSignal.timeout(5000),
   }).then((r) => {
     if (!r.ok) console.warn(`Reminder healthcheck rejected the ping: HTTP ${r.status}`);
-  }).catch((err) => console.warn('Reminder healthcheck ping failed:', err.message));
+  }).catch((err) => console.warn('Reminder healthcheck ping failed:', scrubOutbound(err.message, url, REMINDER_HEALTHCHECK_URL)));
 }
 
 function digestText(name, due) {
@@ -5034,6 +5176,20 @@ function webhookRequest(rawUrl, { rich, plain }) {
   } catch {
     return { error: 'FEEDBACK_WEBHOOK_URL is not a valid URL' };
   }
+  /*
+   * A URL carrying a username or password is refused here, matching
+   * reminderCheckUrl — §61's R1. `new URL` parses one happily and then undici
+   * refuses to construct the Request, with the WHOLE URL in the error message.
+   * scrubOutbound is what stops that reaching the log; this is what stops the
+   * operator being left with a webhook that fails authentication and nothing
+   * saying why, since fetch would never have sent the credentials anyway.
+   *
+   * A property of the URL, not of the moment, so it is refused rather than
+   * warned about — §38's split, and `req.error` is already the channel for it.
+   */
+  if (url.username || url.password) {
+    return { error: 'FEEDBACK_WEBHOOK_URL carries a username or password, which fetch will not send' };
+  }
   if (!TELEGRAM_PATH.test(url.pathname)) {
     // Discord reads `content`, Slack reads `text`. Sending both means one
     // shape works for either without a provider setting to get wrong.
@@ -5089,7 +5245,7 @@ function notifyFeedback(entry, user) {
     // Telegram answers 200 with {ok:false} for a bad chat_id or a bot that was
     // never started by the recipient, so a resolved fetch is not delivery.
     if (!r.ok) console.warn(`Feedback webhook rejected the notification: HTTP ${r.status}`);
-  }).catch((err) => console.warn('Feedback webhook failed:', err.message));
+  }).catch((err) => console.warn('Feedback webhook failed:', scrubOutbound(err.message, req.url, FEEDBACK_WEBHOOK_URL)));
 }
 
 app.post('/api/feedback', requireAuth, async (req, res) => {
@@ -5333,7 +5489,7 @@ function notifyAccessRequest(entry) {
     signal: AbortSignal.timeout(8000),
   }).then((r) => {
     if (!r.ok) console.warn(`Access request webhook rejected the notification: HTTP ${r.status}`);
-  }).catch((err) => console.warn('Access request webhook failed:', err.message));
+  }).catch((err) => console.warn('Access request webhook failed:', scrubOutbound(err.message, req.url, FEEDBACK_WEBHOOK_URL)));
 }
 
 app.post('/api/access-request', async (req, res) => {

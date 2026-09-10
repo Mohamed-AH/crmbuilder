@@ -373,6 +373,13 @@ which is the one place this diverges from the webhook: `GET` needs
 know whether sending is available and under what address), `PUT` needs
 `canEditSettings()`. A viewer gets **403** on both.
 
+**The role check runs BEFORE the rate limiter**, which changed a status code a
+caller sees. It used to run inside the handler, so a viewer or contributor
+calling `POST /api/org/mail/send` past the bound got **429**; now they get
+**403** however many times they call, and their calls do not count against the
+bound at all. The bucket keys on the caller's IP, so a refused caller was
+spending a colleague's send budget on any shared connection. `CLAUDE.md` §61.
+
 **The recipient of a send is resolved by the SERVER, never taken from the
 body.** `POST /api/org/mail/send` takes `{ recordId, to, subject, text }`, looks
 the record up under the session's workspace, and resolves the address the same

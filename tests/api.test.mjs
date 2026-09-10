@@ -2244,6 +2244,47 @@ describe('a pushed record cannot carry dangerous field keys', () => {
     const me = await req('/api/me', { cookies: hand });
     assert.ok(!JSON.stringify(me.json).includes('polluted'), 'Object.prototype is untouched');
   });
+
+  /*
+   * THE SECOND client-chosen key, which this test did not cover — §61's R3.
+   *
+   * A chase entry's `id` is keyed into a collection by unionChases (§54), so it
+   * is the same shape as a field key and it arrived after this test was
+   * written. It is safe today because `byId` is a `Map`, whose keys are not
+   * prototype properties — but that is safety by data-structure choice rather
+   * than by a stated rule, which is the exact situation UNSAFE_KEYS' own
+   * comment argues against: swap the Map for a plain object, the obvious
+   * simplification, and it is live with nothing to notice.
+   *
+   * So this asserts the OUTCOME rather than the mechanism: the entry survives
+   * as an ordinary entry, and nothing on the server grew a property.
+   */
+  test('a chase entry cannot use a dangerous key as its id', async () => {
+    const chases = JSON.parse(
+      '[{"id": "__proto__", "at": 5000, "via": "sent", "byName": "x", "polluted": "yes"},'
+      + ' {"id": "constructor", "at": 4000, "via": "drafted", "byName": "y"},'
+      + ' {"id": "ok-1", "at": 3000, "via": "drafted", "byName": "z"}]',
+    );
+    const pushed = await req('/api/sync', {
+      method: 'POST', cookies: hand,
+      body: { since: 0, records: [{ id: 'evil-chase', updatedAt: 1000, doc: { moduleId: 'm1', data: {}, chases } }] },
+    });
+    assert.equal(pushed.status, 200, 'a hostile entry id must not crash the union');
+
+    const pulled = await req('/api/sync?since=0', { cookies: hand });
+    const row = pulled.json.records.find((r) => r.id === 'evil-chase');
+    assert.equal(row.doc.chases.length, 3, 'the entries are kept — the id is data, not a rule');
+    // Coerced to the allowed shape, so the extra property the payload smuggled
+    // alongside is gone. cleanChase builds an explicit literal, never a spread.
+    for (const entry of row.doc.chases) {
+      assert.deepEqual(Object.keys(entry).sort(), ['at', 'by', 'byName', 'id', 'to', 'via']);
+    }
+    const me = await req('/api/me', { cookies: hand });
+    assert.ok(!JSON.stringify(me.json).includes('polluted'), 'Object.prototype is untouched');
+    // And the record itself did not sprout one, which a plain-object byId
+    // would have produced on the way back out.
+    assert.equal(row.doc.polluted, undefined);
+  });
 });
 
 /*

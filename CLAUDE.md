@@ -113,6 +113,13 @@ never change, because everything cross-references them.
 | A script that must run before first paint, under `script-src 'self'` | §60 · §30 · §3 |
 | Which subresources belong in `STANDALONE_ASSETS`, and which must not | §60 · §47 |
 | **Contrast failures left deliberately** — and where the decision lives | §60 · [`docs/ROADMAP.md`](docs/ROADMAP.md) §2 |
+| **The security re-audit** — what it found, and what it must not re-raise | §61 · §30 |
+| **A credential that reached the log** — the one fetch error that carries a URL | §61 · §18 · §39 |
+| Headers a caller may not set, and why `Host` is one of them | §61 · §38 |
+| **Authorize, then meter** — a limiter in front of a guard | §61 · §24 |
+| A `Map` that is load-bearing, and the entry it would silently drop | §61 · §54 · §30 |
+| The router wrap and the argument shape it skipped | §61 · §55 |
+| **Why the CI audit gate stays at `high`** | §61 · §25 · §30 |
 
 ---
 
@@ -160,7 +167,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 498 Node tests + 133 Playwright tests, and the smoke audit at
+**All green:** 504 Node tests + 133 Playwright tests, and the smoke audit at
 **47 passing locally / 52 against production** — the same checks either way,
 with five of them informational on a local file-store HTTP deployment and real
 assertions against a live one (§46). The local figure is observed; the live one
@@ -2043,6 +2050,11 @@ Recorded so they are not mistaken for oversights:
 **This section is the record of what the audit found and changed.** The plan
 and the reconnaissance are in `docs/archive/SECURITY-AUDIT.md`, which is frozen.
 All five phases shipped; the per-phase findings are below.
+
+> **A later pass exists: §61.** This audit ran against **42** routes; there are
+> 55, and three credential classes arrived afterwards. §61 covers that ground
+> and re-raises none of the FALSE findings below. Nothing here is retracted by
+> it except row 12, which §38 had already superseded.
 
 **Read the *false* findings as carefully as the real ones.** Four things the
 checklist asked for were already correct or did not apply here, and a later
@@ -7652,9 +7664,12 @@ template cards wrap a visually hidden checkbox, which §4 already records as a
 card can be moved without a mouse is not answerable from the source, and is
 what decides whether this item is small or large.
 
-**The security re-audit is due, and the number says why.** §30 ran against 47
-routes; there are **55** now, and three credential classes exist that did not —
-a workspace webhook URL, a mail provider key, and `REMINDER_HEALTHCHECK_URL`.
+**The security re-audit is due, and the number says why.** §30 ran against ~~47~~
+**42** routes — counted at the audit's own commit by §61, which is where this
+figure was recalled rather than measured, so **thirteen** were unaudited and
+not eight; there are **55** now, and three credential classes exist that did
+not — a workspace webhook URL, a mail provider key, and
+`REMINDER_HEALTHCHECK_URL`.
 The roadmap is explicit about what a re-audit must **not** re-raise: §30's five
 FALSE findings, which a reader working from a generic checklist would "fix"
 and make the code worse. And about the one verdict that is already superseded —
@@ -8193,3 +8208,316 @@ omission.
 | `docs/ONBOARDING.md`, `docs/DEMO-SCRIPT.md` | nothing — neither describes appearance |
 | `privacy.html`, `terms.html` | nothing — a device-level key that never leaves the device is not a processing activity |
 | `docs/API.md` | nothing — no route, no wire shape. §46's check run rather than the route count read |
+
+
+---
+
+## 61. The security re-audit: four latent guards, one live leak, and a threshold that was doing its job
+
+§30's audit ran against **42** routes; there are **55**. This is the focused
+re-audit [`docs/ROADMAP.md`](docs/ROADMAP.md) §3 asked for — not a five-phase
+re-run, but the ground that did not exist then: two `lib/` modules, thirteen
+routes, three credential classes, a client-supplied array that lands in
+storage, and a patch that wraps every handler in the application.
+
+Phases are numbered `R1`–`R5` to mirror §30's, so the two records read
+together.
+
+### What it must NOT re-raise, and this is the first thing to read
+
+§30's **five FALSE findings** stand and are not revisited: no CORS middleware
+(absence *is* the mitigation), `SESSION_SECRET` falling back to
+`crypto.randomBytes(32)`, no reachable NoSQL injection, no mass assignment, no
+exploitable prototype pollution. §30's own warning is that a reader working
+from a generic checklist would "fix" those and make the code worse. Row 12's
+SSRF verdict was already superseded by §38 and stays that way.
+
+### The result in one table
+
+| | Verdict |
+|---|---|
+| R1 · a caller header could override `Host` | **REAL**, not reachable — fixed |
+| R1 · a caller header could set `Transfer-Encoding` | **REAL**, not reachable — fixed |
+| R1 · a credentialled webhook URL wrote itself into the log | **REAL, LIVE** — fixed, four sites |
+| R2 · the send route metered before it authorized | **REAL, LIVE** — fixed |
+| R2 · coercion and body limits on 13 new routes | **CLEAN** — swept, six read no input at all |
+| R3 · `unionChases` coercion, cap, `UNSAFE_KEYS` | **CLEAN** — one coverage gap closed |
+| R4 · arity-4 error handlers still reached | **CLEAN** — driven, not read |
+| R4 · a response sent, then a rejection | **CLEAN** — `headersSent` guards it |
+| R4 · array-form middleware was not wrapped | **REAL**, not reachable — fixed |
+| R5 · three moderate `qs` advisories | **REAL** — patched; the gate stays at `high` |
+
+**Four of the six real findings were not reachable through any current caller**,
+and that is the character of a *re*-audit rather than an audit: the live holes
+were closed the first time, and what accumulates afterwards is safety that
+holds by accident. §30's argument for the prototype-pollution guard is the
+precedent and it applies four more times here — *safety that emerges from
+properties nobody stated is safety a refactor removes without touching the
+file.*
+
+### R1 — the outbound surface, and the one that was live
+
+**Measured, never read.** A capture server and a probe, because every one of
+these is about what arrives on the wire rather than what the code appears to
+construct.
+
+**`Host` was overridable.** `sendGuarded(url, body, { headers: { Host:
+'evil.example' } })` and the receiving server reported `req.headers.host` as
+`evil.example`. `lib/safe-fetch.js`'s own opening comment promises the socket
+"connects to the address we validated with SNI and **Host** still correct" —
+false for any caller that supplied one. Pin a validated public address, then
+ask that address for a different virtual host, and you have the SSRF variant
+the DNS pin exists to close, reached from inside the module instead of through
+DNS. **`Transfer-Encoding`** is the same class one step over: set beside a
+`Content-Length` the request is ambiguously framed, and it reached the wire —
+the receiving server answered 400 without invoking its handler.
+
+`RESERVED_HEADERS` (`host`, `content-length`, `transfer-encoding`) is filtered
+out of the caller's object, **case-insensitively**, before the spread.
+`Content-Length` was already safe but **only by iteration order** — set after
+the spread, so the later key won — which is exactly the guarantee a refactor
+that moves one line reverses in silence. `Host` is *stripped* rather than
+re-set from the URL: Node derives it from the URL it was handed, brackets and
+all, so setting it ourselves would be a second place to get that wrong.
+
+Not reachable today — `lib/mail-send.js` passes two fixed provider header
+names — which is the reason to close it. The obvious next extension is headers
+built from something a user chose.
+
+**And a header value cannot carry CRLF**, which is the one thing §52 asserted
+and nobody had checked. Confirmed both ways: the key regexes are anchored and
+their character classes exclude CR and LF, so a smuggled header is
+structurally impossible; and Node refuses one anyway with `Invalid character in
+header content ["X-Key"]` — the header **name**, never the value. So
+`scrub()`'s blind spot (§52: "the credential is now somewhere scrub cannot
+see") is real and unreachable.
+
+#### The live one: `err.message` carried the whole URL
+
+Four places log `err.message` from a failed outbound `fetch`, and every one of
+those URLs is a bearer credential — a Telegram webhook URL contains the bot
+token (§18), and the reminder healthcheck URL lets anyone holding it fake a
+success and silence the dead-man's switch (§39). Both sections state that
+nothing may interpolate one into a log line, and §39's code said **why** it was
+safe:
+
+> Node's network errors carry hostnames, not paths, and the secret is in the
+> path.
+
+True of every fetch *failure*. False of the one case where **no request is ever
+constructed**:
+
+| Input | `err.message` |
+|---|---|
+| unresolvable host | `fetch failed` (cause: `getaddrinfo ENOTFOUND <host>`) |
+| refused / bad port | `fetch failed` (cause: `bad port`) |
+| `ftp://` | `fetch failed` (cause: `unknown scheme`) |
+| **`https://user:pw@host/bot<token>/sendMessage`** | **`Request cannot be constructed from a URL that includes credentials: <the whole URL>`** |
+
+`new URL()` parses that happily and it round-trips through `toString()`, so
+nothing upstream refused it — and a self-hosted Healthchecks or webhook
+receiver behind basic auth is exactly the deployment that carries one. A
+misconfiguration therefore wrote **the password and the bot token together**
+into the production log of a public repository's deployment.
+
+Two defences, and they close different halves:
+
+- **Refused up front** — `reminderCheckUrl` and `webhookRequest` both reject a
+  URL carrying a username or password, naming the reason. §38's split: it is a
+  property of the URL and not of the moment, and `fetch` would never have sent
+  the credentials, so an operator would otherwise have a webhook that silently
+  never authenticates.
+- **`scrubOutbound`** removes every spelling of every outbound URL from any
+  message that is logged — the raw environment value and whatever
+  `webhookRequest` or `reminderCheckUrl` derived from it, which differ whenever
+  a URL is written without a trailing slash, with a default port, or with a
+  query string moved into the body (§18's Telegram reshaping). Plus §18's
+  `/bot<token>/` pattern as a backstop for a URL nobody passed.
+
+**One helper for all four sites, not a check at each.** Three of them were
+already copies of one another, and §38 and §52 both record the shape where the
+export half of a redaction was right while a different half was wrong.
+
+**The scrub alone has no failing test, and that is stated rather than implied.**
+With the refusal in place there is no reachable failure whose message carries
+the URL — measured, per the table above. Same status as §52's `redactKey` and
+§30's `UNSAFE_KEYS`: one reachable fix plus one class closed, and the second
+half is what a future undici wording cannot quietly reopen.
+
+**The stale comment is left quoted rather than deleted.** A comment that talked
+itself into a guarantee is worth more as a warning than as a gap.
+
+### R2 — the thirteen routes, and an ordering that was the reverse of its siblings
+
+Counted rather than recalled, which is where §57's error came from:
+
+```sh
+git show f51656d:server.js | grep -cE "^app\.(get|post|put|patch|delete)\("   # 42
+grep -cE "^app\.(get|post|put|patch|delete)\(" server.js                      # 55
+```
+
+**Coercion and limits: clean.** `String(...)` on every body value that reaches
+a URL, a filter or storage — the hook URL, the mail key and from-address, the
+Telegram token, all four `mail/send` fields — and **six of the thirteen read no
+`req.body`, `req.query` or `req.params` at all**, so the only thing that varies
+is the session. All thirteen sit under the global 64 KB body limit, with their
+own field caps above it.
+
+**The finding: `POST /api/org/mail/send` metered before it authorized.** It
+read `requireAuth, rateLimit('mailsend', …)` and then tested the role in the
+handler's first statement — so a signed-in viewer or contributor was refused
+403 **after** taking a slot. `rateLimit` keys on `req.ip`, so on any shared
+office connection that slot belonged to a colleague: **a refused caller could
+exhaust a member's send budget for the minute.**
+
+Both sibling routes already had it the right way round —
+`/api/org/hook/test` and `/api/org/hook/telegram/chats` are `requireAuth,
+requireSettingsOwner, rateLimit(…)` — and hook/test's own comment states the
+relationship: *"the guard is the control; this bounds what a compromised owner
+account can do with it."* **The inconsistency with its own siblings is what
+makes this a finding rather than a preference.** Authenticate → authorize →
+meter.
+
+`canSendMail` is `requireSendMail` middleware now, which also removes the
+oddity the plan flagged: it was the only guard on the list checked in-handler.
+It was the *first statement* of both handlers, so nothing reached the work
+before it — the defect was never that, it was what ran before *it*.
+
+Guarded from both ends, because they fail differently: **an unauthorized caller
+must never see 429**, because seeing one means the limiter ran first; and a
+member must still be able to send after fifty-one refusals. The mutation fails
+by name and **no other test notices**, which is why it survived. The suite
+raises `RATE_MAIL_SEND_MAX` to 50 so the test can fill the bucket on purpose —
+§38's precedent, and its rule that "the tests made the limit looser" should be
+visible rather than inferred.
+
+### R3 — `unionChases`, and the second client-chosen key
+
+The coercion is right: `cleanChase` builds an **explicit literal** rather than
+spreading the caller's object, `String(...)`s and length-caps every field,
+requires a finite positive `at`, allow-lists `via` (falling to the weaker
+`drafted`), and the union caps at 20 after sorting newest-first. §54's
+`prior &&` bug — which skipped all of that on a record's first push — is fixed
+and tested.
+
+**The gap was coverage, not code.** An entry's `id` is the *second*
+client-chosen key in `server.js` (the first is a field key, which `UNSAFE_KEYS`
+guards), and it arrived after §30's prototype-pollution test was written, which
+covers `data` and `fieldsAt` keys only. It is safe because `byId` is a **`Map`**,
+whose keys are not prototype properties — safety by data-structure choice
+rather than by a stated rule, which is precisely what `UNSAFE_KEYS`' own
+comment argues against.
+
+**Measured what the "obvious simplification" costs.** Swapping the `Map` for
+`{}` loses **one of three entries**: `byId['__proto__'] = entry` creates no own
+property, so an entry is **silently dropped from the log that exists to stop
+two people chasing the same money** — a product bug, not only a pollution one.
+The new test fails by name on that mutation and the field-key test does not,
+which is what shows they cover different things.
+
+### R4 — the router patch, driven rather than read
+
+§55's patch wraps **every** handler in the application, including `app.use`,
+and had never been reviewed. Four properties, all driven on a throwaway app:
+
+| | |
+|---|---|
+| an async rejection reaches the arity-4 error handler | ✅ |
+| a synchronous throw does too | ✅ |
+| middleware ordering is unchanged | ✅ |
+| a response already sent, **then** a rejection | ✅ — 200 delivered, handler runs, `res.headersSent` returns; no double-response crash |
+
+**The finding: array-form arguments were not wrapped.**
+`app.get('/x', [requireAuth, requireSettingsOwner, handler])` is an ordinary
+Express idiom — it is what somebody reaches for the moment two routes share a
+stack of guards, and **four routes here already share the same three**. Handed
+an array, `wrapAsync` saw a non-function and returned it untouched, so nothing
+inside was wrapped: a rejection in an array member produced an **unhandled
+rejection and a request that hung until the client gave up**. That is §55's
+crash, still open for one syntax.
+
+`wrapArg` maps recursively. Not reachable today — there is no array-form
+handler in the file, checked — so it has no failing test, like `scrubOutbound`.
+It is here because **the whole point of patching the router rather than 48
+handlers was that the next route somebody adds is covered without them knowing
+this exists**, and an argument shape it silently skips defeats exactly that.
+
+### R5 — three moderate advisories, and a threshold that was working
+
+`npm audit --omit=dev` reported **3 moderate** in `qs` (via `express` and
+`body-parser`) where §30 recorded zero: an array-limit bypass via bracket-key
+comma parsing, and a DoS via attacker-controlled `isBuffer`. Both fixed in
+`qs@6.16.0`.
+
+**`npm audit fix` could not finish the job, and the reason is the interesting
+half.** It moved `body-parser` to a fixed `qs` and left `express` on `6.15.3`,
+because **express 4.22.2 — the last of the 4.x line — pins `qs@~6.15.1`**, a
+range that forbids the fix. Express 5 pins a fixed one and is the real answer;
+it is not a change to make inside a security patch, and §55 already declined it
+for the same reason.
+
+So an `overrides` entry, with the reasoning **in `package.json`** where the
+next reader will be standing: `qs` parses `req.query` on every request here
+(express 4 defaults the query parser to `extended`), so this is reachable on
+every route rather than theoretical; `6.16.0` is a minor bump inside the same
+major and the tilde is the maintainer's caution rather than a known
+incompatibility. Remove the override when express moves. Full Node **and**
+Playwright runs after it, because query parsing is every-route surface.
+
+**The gate stays at `high`, and that is a decision written down rather than an
+oversight.** These sat under it green *by design* — which is what a threshold
+means. They were patched on their merits, not because a tick demanded it.
+Lowering it to `moderate` was declined for §25's reason: a check that fires
+when nothing much is wrong trains the reader to skip it, and a red tick on
+every deploy over a transitive moderate is how a genuine high gets waved
+through. The never-failing full report is what the moderates are for — and the
+discipline that makes that work is **reading it**, which is why running the
+audit by hand is part of a re-audit rather than left to CI.
+
+### The three credential classes, walked
+
+Four questions each: never logged, never exported un-redacted, never read back,
+never in `platform`.
+
+| | Logged | Exported | Read back | In `platform` |
+|---|---|---|---|---|
+| workspace webhook URL | ✅ fixed here | `{redacted:true}` → `{needsReentry:true}` (§38) | never — no read-back exists (§38) | no |
+| mail provider key | `redactKey` (§52) + fixed here | redacted (§52) | `publicMail` returns it to nobody (§52) | no |
+| `REMINDER_HEALTHCHECK_URL` | ✅ **fixed here — this was the live leak** | env-only, never stored | never returned | no |
+
+Every one of the export and read-back halves was already right and tested. The
+**log** half was wrong for all three, in one shared mechanism, which is the
+§38/§52 shape a third time: one half of a redaction correct while another half
+nobody had connected to it was not.
+
+### Corrections this produces
+
+- **§57's "§30 ran against 47 routes" → 42.** §29's own failure mode — a number
+  written in a second place — in a section that states it. `docs/ROADMAP.md`
+  §3 carried the same figure and now carries the command instead.
+- **`lib/safe-fetch.js`'s "Host still correct"** was a promise the `headers`
+  option broke. Fixed rather than reworded.
+- **§39's reason for why the healthcheck URL could not be logged** was wrong,
+  and is quoted in place with the counter-example.
+- **§30's row 12** was already superseded by §38 and is unchanged.
+
+### Blast radius
+
+`server.js`, `lib/safe-fetch.js`, `package.json`, `package-lock.json`,
+`.github/workflows/test.yml` and four test files. **No client file, no served
+file, no route added, no wire shape moved** — so `CACHE_VERSION` stays
+`crmbuilder-v56` and smoke stays **47 local / 52 live**, checked rather than
+assumed (§41's rule for a change that touches no asset).
+
+`wrapArg` and the `qs` bump are both whole-application surface, so this had
+full runs rather than targeted ones (§9): Node **498 → 504**, Playwright
+**133**, smoke **47** locally, `npm audit --omit=dev` **0 vulnerabilities**.
+
+**`docs/API.md` needs one line and no route.** §46's trap again: the count is
+still 55 and the file reads correctly, while a **status code moved** — a viewer
+or contributor calling `POST /api/org/mail/send` now gets 403 before the
+limiter rather than after it, so a client that was seeing 429 on a refused call
+sees 403. §27's six user-facing documents need nothing, and that is checked
+rather than skipped: no capability changed, and `DEPLOYMENT.md`'s environment
+matrix gains the note that a webhook or healthcheck URL carrying credentials is
+refused, because that is the one thing an operator could hit.

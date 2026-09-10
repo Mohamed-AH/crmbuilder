@@ -362,6 +362,16 @@ describe('sending a chaser', () => {
          * found the OAuth callback had gone years with no test at all.
          */
         MAIL_API_BASE: `http://127.0.0.1:${CAPTURE}`,
+        /*
+         * Raised from the production default of 20 so the ordering test at the
+         * foot of this file can fill the bucket ON PURPOSE and still leave the
+         * suite's own two dozen sends room underneath. §38's precedent, and its
+         * rule that "the tests made the limit looser" should be visible rather
+         * than inferred: what is under test there is the ORDER of the guard and
+         * the limiter, not the bound, which rateLimit() already enforces
+         * identically on four other routes.
+         */
+        RATE_MAIL_SEND_MAX: '50',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -634,5 +644,40 @@ describe('sending a chaser', () => {
   test('an empty message is refused, and a huge one is too', async () => {
     assert.equal((await send({ recordId: invoiceId, subject: '', text: 'x' })).status, 400);
     assert.equal((await send({ recordId: invoiceId, subject: 'x', text: 'y'.repeat(4001) })).status, 413);
+  });
+
+  /*
+   * AUTHORIZE, THEN METER — §61's R2 finding, and it is about the ORDER rather
+   * than the bound.
+   *
+   * The route read `requireAuth, rateLimit(…)` and then tested the role in its
+   * first statement, so a signed-in viewer was refused 403 *after* taking a
+   * slot. rateLimit keys on `req.ip`, so on any shared office connection that
+   * slot belonged to a colleague: a refused caller could exhaust a member's
+   * send budget for the minute. Both sibling routes already had it the right
+   * way round, and hook/test's own comment states the relationship — the
+   * inconsistency is what makes this a finding rather than a preference.
+   *
+   * Asserted from BOTH ends, because they fail differently. The status is the
+   * mechanism: an unauthorized caller must never see 429, because seeing one
+   * means the limiter ran first. The member send is the consequence somebody
+   * actually feels.
+   *
+   * Last in the file on purpose — it deliberately makes more requests than the
+   * bucket holds, so anything after it would be metering against a full one.
+   */
+  test('a refused caller does not spend a colleague\'s send budget', async () => {
+    captured = [];
+    const seen = new Set();
+    for (let i = 0; i < 51; i += 1) {
+      seen.add((await send({ ...chase, recordId: invoiceId }, looker)).status);
+    }
+    assert.deepEqual([...seen], [403],
+      'a viewer saw something other than 403 — a 429 in there means the limiter ran before the guard');
+    assert.equal(captured.length, 0, 'nothing may be dialled for a caller who is not allowed to send');
+
+    reply = { status: 200, body: { id: 'msg_after_refusals' } };
+    const { status } = await send({ ...chase, recordId: invoiceId }, hand);
+    assert.equal(status, 200, 'a member was throttled out of sending by somebody else\'s refusals');
   });
 });

@@ -10,6 +10,11 @@
 > than against the feature's usual price elsewhere. Where an item forces a
 > decision it is written as a question with the prior reasoning attached, never
 > as an answer — the same rule `docs/LAUNCH-CHECKLIST.md` runs on.
+>
+> **Two are built** — dark mode (§60) and the security re-audit (§61). Their
+> entries are reduced to what survives being finished: where the estimate held,
+> where it did not, and what a future reader must not undo. Both kept their
+> numbers, because everything else cross-references them (§29).
 
 **Every number below was measured, not recalled.** The commands are given so
 they can be re-run; a figure that has gone stale is worse than none (§29).
@@ -25,7 +30,7 @@ asked in and is the more useful order to read.
 |---|---|---|
 | ~~**Dark mode**~~ | **built — `CLAUDE.md` §60** | it already worked; what was missing was a *choice*. The estimate held |
 | **Accessibility** | small to start, open-ended after | the primitives are in place — `aria-live`, `aria-modal`, `aria-sort`, `lang`. It needs measuring before it needs building — and dark mode's contrast pass already produced three findings for it |
-| **Security re-audit** | medium, and overdue | eight new routes and three new credential classes have landed since §30 |
+| ~~**Security re-audit**~~ | **done — `CLAUDE.md` §61** | thirteen routes and three credential classes had landed since §30. Six real findings, four of them latent, one live |
 | **Email & social integrations** | large, and it is two different projects | outbound already exists twice over. **Inbound** is the new thing, and it is a new trust boundary |
 | **Multi-language, incl. Arabic** | large, and the translation is the cheap half | there is no string table, no build step, and one word — *versioned* — makes the legal pages the hard part |
 
@@ -159,75 +164,64 @@ from the rest.
 
 ---
 
-## 3. Security re-audit
+## 3. Security re-audit — **done, see `CLAUDE.md` §61**
 
-### Why it is due, in one number
-
-§57 said the audit *"ran against 47 routes"*, and this entry repeated it. Both
-were wrong, and the number is measurable rather than recalled — count them at
-the audit's own commit:
+Per the banner: a built item moves out of here. What is worth keeping is that
+**the item's own opening number was wrong, and it was wrong in the direction
+that undersold the work.** It said §30 "ran against 47 routes", repeating §57.
+Counted at the audit's own commit rather than recalled:
 
 ```sh
 git show f51656d:server.js | grep -cE "^app\.(get|post|put|patch|delete)\("   # 42
 grep -cE "^app\.(get|post|put|patch|delete)\(" server.js                      # 55
 ```
 
-**Thirteen unaudited routes, not eight** — and more importantly **three new
-classes of thing** the audit never saw. §29's own failure mode (a number
-written in a second place goes stale) landing in the entry that states it, which
-is why the command is here and the figure is not left to be trusted. §30's own conclusion was *eight real, five false, one inapplicable,
-one partial — and the one that would have cost the most (#8) was not on the
-checklist at all.* That is the argument for re-running it against what is here
-now rather than against the list.
+Thirteen unaudited routes, not eight. §29's own failure mode — a number written
+in a second place — landing in the entry that states it, twice over.
 
-### What has landed since, and what each opens
+### What it found, and the shape of the answer
 
-| Since | What it added | Why the audit does not cover it |
-|---|---|---|
-| §38 | the **workspace webhook** — a customer-chosen outbound URL | The audit's row 12 read *"SSRF — FALSE, env-only, no runtime setter."* This **is** the runtime setter. The row was corrected and the guard (`lib/safe-fetch.js`) written for it, but the guard has never been audited by anybody but its author |
-| §39 | the digest, running off `/health` | A public endpoint that now does work after responding |
-| §52, §53 | **BYOK provider keys** on the meta doc, and a send route | A second credential class in workspace storage, and the first route that makes the server send mail on a caller's behalf |
-| §54 | the **chase log** — a client-supplied array of objects merged onto a stored document | The richest such payload in the codebase. §30's Phase 2 swept `req.body` for filter injection; this is a different question — what a caller can put *into storage* |
-| §55 | the **router-level async wrap** | It wraps every handler in the application. Nothing that broad has been reviewed since it was added |
+Six real findings, and **four of them were not reachable through any current
+caller**. That is the character of a re-audit rather than an audit: the live
+holes were closed the first time, and what accumulates afterwards is safety
+that holds by accident — a `Host` header that could override a validated
+destination, an argument shape the router wrap silently skipped, a `Map` whose
+replacement with `{}` would drop a chase entry, and a scrub with nothing yet to
+scrub. §30's argument for the prototype-pollution guard, four more times.
 
-Three credentials now exist that did not at audit time: a workspace webhook URL
-(a Telegram one contains a bot token), a mail provider key, and
-`REMINDER_HEALTHCHECK_URL`. Each has a redaction path; each path is one edit
-away from being undone, and §38 and §52 both record the *export* half being
-right while a different half was wrong.
+The two that were **live**:
 
-### What the re-audit should carry over, and what it must not
+- **A webhook or healthcheck URL carrying credentials wrote itself into the
+  log** — password and bot token together, in the log of a public
+  repository's deployment. The guarding comment claimed Node's network errors
+  carry hostnames and not paths; true of every fetch *failure*, false of the
+  one case where no request is ever constructed.
+- **`POST /api/org/mail/send` metered before it authorized**, so a refused
+  viewer could exhaust a colleague's send budget on a shared IP — the reverse
+  of its own two siblings' ordering.
 
-**Carry over: the five FALSE findings.** §30 says to read them as carefully as
-the real ones, because a later reader working from a generic checklist would
-"fix" them and make the code worse — no CORS middleware is the mitigation,
-`SESSION_SECRET` falling back to random bytes is correct, and there is no
-client-supplied ID token to verify. A re-audit that re-raises those has
-regressed, not progressed.
+### What a future re-audit must still not re-raise
 
-**Do not carry over: row 12's verdict.** It is already superseded. The
-question now is not *is there an SSRF sink* — there is, deliberately — it is
-whether the DNS-pinned, redirect-refusing, block-listed guard in front of it
-still holds after `sendGuarded` grew a `headers` option in §52.
+**§30's five FALSE findings.** No CORS middleware (absence *is* the
+mitigation), `SESSION_SECRET` falling back to random bytes, no reachable NoSQL
+injection, no mass assignment, no exploitable prototype pollution. §30 says to
+read them as carefully as the real ones, because a reader working from a
+generic checklist would "fix" them and make the code worse. §61 re-raised none
+of them, and a next pass that does has regressed rather than progressed.
 
-### Suggested shape
+**Row 12's SSRF verdict stays superseded** by §38. The question is not whether
+there is an outbound sink — there is, deliberately — but whether the guard in
+front of it still holds. §61 asked that of the `headers` option specifically
+and found two ways it did not.
 
-Four phases, mirroring §30's numbering so the two documents can be read
-together:
+**And the audit gate stays at `high`.** §61 R5 records why in full: the three
+moderate `qs` advisories were green *by design*, were patched on their merits,
+and lowering the threshold would trade a real high-severity catch for a red
+tick on every deploy (§25).
 
-1. **The new outbound surface** — `lib/safe-fetch.js` and `lib/mail-send.js`,
-   including the header path added for BYOK.
-2. **The new inbound surface** — the eight routes added since, against §30's
-   Phase 2 sweep (coercion at every call site) and Phase 4 (per-route body
-   limits, rate-limit buckets, the non-leaking error handler).
-3. **Storage** — what a caller can write into a document, which is `chases`
-   and anything the next feature adds beside it.
-4. **The dependency and secret gates**, which already run in CI and should be
-   confirmed still green rather than assumed (§30 Phase 5).
-
-An outside checklist is welcome and should be treated the way §21 and §30 both
-treated one: **checked against the code, with the false findings recorded as
-false.**
+An outside checklist is welcome and should be treated the way §21, §30 and §61
+all treated one: **checked against the code, with the false findings recorded
+as false.**
 
 ---
 

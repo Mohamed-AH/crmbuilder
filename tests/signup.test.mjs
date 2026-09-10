@@ -743,6 +743,53 @@ describe('webhook payload', () => {
     assert.match(srv.log(), /no \?chat_id=/, 'and the operator is told why nothing arrives');
     assert.doesNotMatch(srv.log(), /FAKE-TOKEN/, 'without writing the bot token into the logs');
   });
+
+  /*
+   * A WEBHOOK URL CARRYING CREDENTIALS PUT THE WHOLE URL IN THE LOG — §61's R1,
+   * and the test above is the one it sits beside because they are the same
+   * guarantee: §18's rule that a bot token must never be written out.
+   *
+   * `new URL('https://user:pw@host/bot<token>/sendMessage')` parses cleanly, so
+   * nothing upstream refused it — and then undici will not build the Request:
+   *
+   *   Request cannot be constructed from a URL that includes credentials:
+   *   https://user:pw@host/bot<token>/sendMessage
+   *
+   * That message went straight to `console.warn('Feedback webhook failed:',
+   * err.message)`, so a self-hosted receiver behind basic auth wrote both the
+   * password and the bot token into the log of a public repository's
+   * deployment. The comment guarding this claimed Node's network errors carry
+   * hostnames and not paths, which is true of every fetch FAILURE and false of
+   * the case where no request is ever made.
+   *
+   * Both halves are asserted, because they are different defences: it is
+   * refused up front (or the operator has a webhook that silently never
+   * authenticates), and nothing about it reaches the log even if a future
+   * undici wording brings the URL back.
+   */
+  test('a webhook URL with credentials in it is refused, and never written out', async () => {
+    const srv = await boot({
+      signupMode: 'open',
+      adminEmails: 'tg-admin3@operator.test',
+      webhook: 'https://ops:hunter2@api.telegram.org/bot98765:SECRET-TOKEN/sendMessage?chat_id=-100',
+    });
+    const admin = await adminOf(srv, 'tg-admin3@operator.test');
+    const user = (await srv.signUp('tg-user3@tester.test')).setCookie;
+
+    const out = await srv.req('/api/feedback', {
+      method: 'POST', cookies: user, body: { message: 'credentials in the hook' },
+    });
+    assert.equal(out.status, 200, 'a misconfigured webhook is not the reporter’s problem');
+    const { reports } = (await srv.req('/api/admin/feedback', { cookies: admin })).json;
+    assert.equal(reports.length, 1, 'the record is what survives a bad notification path');
+
+    await new Promise((r) => setTimeout(r, 300));
+    // The leak first: it is the serious half, and it is the assertion that
+    // should name the failure when somebody removes either defence.
+    assert.doesNotMatch(srv.log(), /SECRET-TOKEN/, 'the bot token reached the log');
+    assert.doesNotMatch(srv.log(), /hunter2/, 'the password reached the log');
+    assert.match(srv.log(), /carries a username or password/, 'the operator is told, or the webhook silently never works');
+  });
 });
 
 /*

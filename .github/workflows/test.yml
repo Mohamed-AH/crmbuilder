@@ -82,6 +82,21 @@ jobs:
       # The gate. Production dependencies only: a Playwright advisory should
       # not block a deploy of the server, and there are four production deps to
       # keep clean. High and critical fail; anything lower is reported below.
+      #
+      # THE THRESHOLD IS A DECISION, NOT AN OVERSIGHT, and §61's R5 is the
+      # reason it is written down here. Three MODERATE qs advisories sat under
+      # this gate for a while — green by design, which is exactly what a
+      # threshold means, and they were found by running the audit by hand
+      # rather than by CI telling anybody. They were patched on their merits
+      # (qs parses req.query on every request), not because a gate demanded it.
+      #
+      # Lowering it to `moderate` was considered and declined: §25's lesson is
+      # that a check which fires when nothing much is wrong trains the reader
+      # to skip it, and a red tick on every deploy over a transitive moderate
+      # is how a real high-severity one gets waved through. The moderate ones
+      # are what the never-failing report below is for — the discipline that
+      # makes that work is reading it, which is why the audit is part of the
+      # re-audit's own checklist rather than left to the tick.
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 

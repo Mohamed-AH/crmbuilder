@@ -579,3 +579,94 @@ describe("the reminder pass reports to a dead-man's switch", () => {
     assert.match(last.body, /failed [1-9]/);
   });
 });
+
+/*
+ * §61's R1 finding: the ping URL reached the production log.
+ *
+ * The URL is a bearer credential — anyone holding it can fake a success and
+ * silence this whole mechanism — so §39 records that nothing may interpolate it
+ * into a log line, and the code above it asserted why that was safe: "Node's
+ * network errors carry hostnames, not paths, and the secret is in the path."
+ * True of every fetch FAILURE and false of the one case where no request is
+ * ever constructed. Measured: undici refuses a URL carrying credentials with
+ *
+ *   Request cannot be constructed from a URL that includes credentials:
+ *   https://user:pw@host/ping/<uuid>
+ *
+ * in `err.message`, and that message went straight to console.warn — the
+ * basic-auth password and the ping UUID together, in the log of a deployment
+ * whose operator was only trying to point at a self-hosted Healthchecks behind
+ * basic auth.
+ *
+ * A THIRD deployment, because the value has to be in the environment at boot
+ * and the two servers above are asserting on healthy pings. It needs no
+ * capture server: the point is that nothing is sent.
+ *
+ * Asserted on the server's OWN OUTPUT, because the defect lived only there.
+ * Every status code, every response body and every stored field was already
+ * correct on the broken version — the same reason §40's refused-413 finding
+ * could only be caught by reading the log.
+ */
+describe('the healthcheck URL is a credential and never reaches the log', () => {
+  const CRED_PORT = 9734;
+  const CRED = `http://127.0.0.1:${CRED_PORT}`;
+  const SECRET_PATH = '/hc/leaky-uuid-9z4q';
+  const PASSWORD = 'notarealpassword';
+  const admin = jar();
+  let credChild = null;
+  let credDir = null;
+  let credLog = '';
+
+  before(async () => {
+    credDir = await mkdtemp(join(tmpdir(), 'crmb-remind-cred-'));
+    credChild = spawn(process.execPath, ['server.js'], {
+      cwd: ROOT,
+      env: {
+        ...process.env,
+        PORT: String(CRED_PORT),
+        DATA_DIR: credDir,
+        ALLOW_DEV_LOGIN: '1',
+        MONGODB_URI: '',
+        SESSION_SECRET: 'reminder-cred-secret',
+        SIGNUP_MODE: 'open',
+        NODE_ENV: 'test',
+        REMIND_MIN_GAP_MS: '0',
+        // 127.0.0.2 so nothing is listening even if the port were reachable —
+        // what is under test is that no request is attempted at all.
+        REMINDER_HEALTHCHECK_URL: `http://ops:${PASSWORD}@127.0.0.2:9/hc${SECRET_PATH}`,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    credChild.stdout.on('data', (d) => { credLog += d; });
+    credChild.stderr.on('data', (d) => { credLog += d; });
+
+    const deadline = Date.now() + 20000;
+    for (;;) {
+      if (Date.now() > deadline) throw new Error(`server did not start:\n${credLog}`);
+      try { if ((await fetch(`${CRED}/healthz`, { signal: AbortSignal.timeout(1500) })).ok) break; } catch { /* not up */ }
+      await new Promise((r) => setTimeout(r, 120));
+    }
+    // The first account on a deployment that names nobody is the platform
+    // admin (§21), which is what /api/admin/reminders/run needs.
+    await req('/auth/dev', { method: 'POST', body: { email: 'ops@cred.test' }, cookies: admin, base: CRED });
+  });
+
+  after(async () => {
+    if (credChild) credChild.kill();
+    if (credDir) await rm(credDir, { recursive: true, force: true });
+  });
+
+  test('a credentialled ping URL is refused, and neither half of it is logged', async () => {
+    const { status } = await req('/api/admin/reminders/run', { method: 'POST', body: {}, cookies: admin, base: CRED });
+    assert.equal(status, 200, `the pass itself must still run:\n${credLog}`);
+    // The ping is fired after the pass returns, so give the rejected promise
+    // its chance to reach the .catch that used to do the logging.
+    await new Promise((r) => setTimeout(r, 1200));
+
+    assert.ok(!credLog.includes(SECRET_PATH), `the ping path reached the log:\n${credLog}`);
+    assert.ok(!credLog.includes(PASSWORD), `the password reached the log:\n${credLog}`);
+    // And the operator is told, or a check that silently never fires is
+    // indistinguishable from one that is working (§39's whole argument).
+    assert.match(credLog, /carries a username or password/);
+  });
+});

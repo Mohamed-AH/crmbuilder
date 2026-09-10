@@ -379,18 +379,71 @@ describe('the transport', () => {
   });
 
   /*
-   * Content-Length sits AFTER the spread deliberately, and this is what says
-   * so. A caller-supplied one that disagrees with the buffer either truncates
-   * the payload or leaves the socket waiting for bytes that never arrive — the
-   * hang §38 already spent an afternoon on. Made overridable, this test fails
-   * with a short body or by timing out.
+   * HOST WAS OVERRIDABLE, and this is the R1 finding of the re-audit (§61).
+   *
+   * safe-fetch's own opening comment promises the socket "connects to the
+   * address we validated with SNI and Host still correct". A caller supplying
+   * a Host header made the second half false: measured against this capture
+   * server, `req.headers.host` came back as the caller's string. Pin a
+   * validated public address, then ask that address for a different virtual
+   * host, and you have the SSRF variant the pin exists to close — reached from
+   * inside the module rather than through DNS.
+   *
+   * Not reachable through any caller today (lib/mail-send.js passes two fixed
+   * provider header names), which is precisely why it is worth closing: the
+   * obvious next extension is headers built from something a user chose.
+   *
+   * Asserted on what the SERVER received, never on the options object — the
+   * whole defect was that the header we constructed and the header that
+   * arrived were different things.
+   */
+  test('a caller cannot redirect the request to a different virtual host', async () => {
+    received = [];
+    const out = await sendGuarded(`http://127.0.0.1:${PORT}/hook`, { text: 'x' }, {
+      ...OPEN,
+      headers: { Host: 'evil.example', 'X-Kept': 'yes' },
+    });
+    assert.equal(out.ok, true, `expected the request to complete, got: ${out.error}`);
+    assert.equal(received[0].host, `127.0.0.1:${PORT}`, 'the Host header must name the destination we validated');
+    // The filter must be a named list, not a purge: an ordinary caller header
+    // still has to arrive, or this "fix" breaks bring-your-own-key email.
+    assert.equal(received[0].headers['x-kept'], 'yes');
+  });
+
+  /*
+   * Transfer-Encoding is FRAMING, so it belongs to this module for the same
+   * reason Content-Length does. Set alongside a Content-Length the request is
+   * ambiguous — request-smuggling territory — and it reached the wire: the
+   * receiving server answered 400 without ever invoking its handler, so the
+   * pre-fix symptom is a webhook that fails for a reason nothing explains.
+   */
+  test('a caller cannot make the request ambiguously framed', async () => {
+    received = [];
+    const out = await sendGuarded(`http://127.0.0.1:${PORT}/hook`, { text: 'framed' }, {
+      ...OPEN,
+      headers: { 'Transfer-Encoding': 'chunked' },
+    });
+    assert.equal(out.ok, true, `expected the request to complete, got: ${out.error}`);
+    assert.equal(received.length, 1);
+    assert.equal(received[0].headers['transfer-encoding'], undefined);
+    assert.deepEqual(JSON.parse(received[0].body), { text: 'framed' });
+  });
+
+  /*
+   * Content-Length is set after the spread AND filtered out of the caller's
+   * object, and this is what says so. A caller-supplied one that disagrees with
+   * the buffer either truncates the payload or leaves the socket waiting for
+   * bytes that never arrive — the hang §38 already spent an afternoon on.
+   *
+   * The lower-case spelling is the one the ordering alone was covering only by
+   * accident of key iteration, which is why it is the spelling asserted here.
    */
   test('a caller cannot override the length of the body it is not writing', async () => {
     received = [];
     const out = await sendGuarded(`http://127.0.0.1:${PORT}/length`, { text: 'the whole body' }, {
       ...OPEN,
       timeoutMs: 1500,
-      headers: { 'Content-Length': '2' },
+      headers: { 'content-length': '2' },
     });
     assert.equal(out.ok, true, `expected the request to complete, got: ${out.error}`);
     assert.deepEqual(JSON.parse(received[0].body), { text: 'the whole body' });
