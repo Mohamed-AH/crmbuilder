@@ -86,7 +86,14 @@
   --accent-quiet: #1570ef14;
   --good:         #0e9384;
   --warn:         #b54708;
-  --shadow-lg:    0 24px 48px -16px rgb(16 24 40 / 18%);
+  /* NO SPREAD on this one, and that is not a style choice. It is consumed by
+     `filter: drop-shadow()` (the figure, and nothing else in this file), and
+     drop-shadow accepts only `offset-x offset-y blur colour` — a fourth length
+     makes the function invalid, so the entire declaration is dropped and the
+     computed `filter` is `none`. It shipped that way: measured, not guessed.
+     css/style.css has its own --shadow-lg WITH a spread, which is correct
+     there because it is used as `box-shadow`, where spread is legal. */
+  --shadow-lg:    0 18px 34px rgb(16 24 40 / 16%);
   --shadow-sm:    0 1px 2px rgb(16 24 40 / 6%);
   --glow-a:       #1570ef26;
   --glow-b:       #0e938417;
@@ -98,7 +105,7 @@
     --rule: #232c3d; --rule-strong: #33405a;
     --accent: #5f9df7; --accent-deep: #8ab8fa; --accent-quiet: #5f9df71f;
     --good: #3cbfae; --warn: #f5b678;
-    --shadow-lg: 0 24px 48px -16px rgb(0 0 0 / 60%);
+    --shadow-lg: 0 18px 34px rgb(0 0 0 / 55%);
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
     --glow-a: #5f9df72e; --glow-b: #3cbfae1c;
   }
@@ -109,7 +116,7 @@
   --rule: #232c3d; --rule-strong: #33405a;
   --accent: #5f9df7; --accent-deep: #8ab8fa; --accent-quiet: #5f9df71f;
   --good: #3cbfae; --warn: #f5b678;
-  --shadow-lg: 0 24px 48px -16px rgb(0 0 0 / 60%);
+  --shadow-lg: 0 18px 34px rgb(0 0 0 / 55%);
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
   --glow-a: #5f9df72e; --glow-b: #3cbfae1c;
 }
@@ -369,10 +376,28 @@ h1 {
 .next { padding-top: 60px; padding-bottom: 76px; }
 .next h2 { font-size: 13px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-faint); margin: 0 0 22px; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(248px, 1fr)); gap: 16px; }
+/*
+ * A full-bleed tinted band, so the white cards have something to sit ON.
+ *
+ * The review reported the card text as washed out. Measured, the text is
+ * 7.69:1 — the concern does not exist. What does is one line up: in light,
+ * --paper-raised and --paper are BOTH #ffffff, so a card had a fill
+ * distinction from the page of 1.00:1 and hung entirely off a --rule border at
+ * 1.24:1. §47's callout finding, same hairline number, on a different
+ * component — and exactly what washes out on a dim screen while the text
+ * stays legible.
+ *
+ * Fixed by giving the section a ground rather than by darkening a shared
+ * surface token (§47's precedent: a token named for a surface should not be
+ * tuned for one component). Now --paper-raised actually means something in
+ * light, which it never did.
+ */
+.band { background: var(--paper-sunk); border-top: 1px solid var(--rule); }
 .card {
   display: block; text-decoration: none; color: inherit;
-  background: var(--paper-raised); border: 1px solid var(--rule);
+  background: var(--paper-raised); border: 1px solid var(--rule-strong);
   border-radius: 12px; padding: 20px;
+  box-shadow: var(--shadow-sm);
   transition: border-color 120ms ease, transform 120ms ease;
 }
 .card:hover { border-color: var(--accent); transform: translateY(-2px); }
@@ -389,7 +414,7 @@ h1 {
 .card .go { margin-top: 12px; font-size: 14px; font-weight: 600; color: var(--accent); }
 
 /* ----------------------------------------------------------------- footer */
-footer { border-top: 1px solid var(--rule); background: var(--paper-sunk); padding: 26px 0 40px; }
+footer { background: var(--paper-sunk); padding: 26px 0 40px; }
 .foot-row { display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: center; justify-content: space-between; font-size: 14px; color: var(--ink-faint); }
 .foot-row nav { display: flex; flex-wrap: wrap; gap: 18px; }
 
@@ -612,7 +637,8 @@ footer { border-top: 1px solid var(--rule); background: var(--paper-sunk); paddi
   </div>
 </section>
 
-<section class="wrap next">
+<section class="band">
+<div class="wrap next">
   <h2>Where to go next</h2>
   <div class="cards">
     <a class="card" href="/guide">
@@ -631,6 +657,7 @@ footer { border-top: 1px solid var(--rule); background: var(--paper-sunk); paddi
       <span class="go">Open the manual &rarr;</span>
     </a>
   </div>
+</div>
 </section>
 
 <footer>

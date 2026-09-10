@@ -4188,6 +4188,59 @@ test('the guide states the beta and lists all four roles', async ({ page }) => {
   await expect(page.locator('.callout').filter({ hasText: 'see every module' })).toHaveCount(1);
 });
 
+/*
+ * The landing page's two raised surfaces, asserted on the COMPUTED value.
+ *
+ * Both bugs this covers rendered perfectly plausibly, which is why nothing
+ * caught them:
+ *
+ *  - `filter: drop-shadow(var(--shadow-lg))` was invalid, because that token
+ *    carried a SPREAD and drop-shadow() takes none. An invalid filter value
+ *    drops the whole declaration, so the computed filter was `none` and the
+ *    figure had no shadow at all. A review noticed the symptom and read it as
+ *    a missing shadow; it was a declared one that never rendered.
+ *  - `.card` used --paper-raised, which in LIGHT is the same #ffffff as
+ *    --paper, so a card had no fill distinction from the page whatsoever.
+ *
+ * Neither is visible to an assertion about text or layout, and the second is
+ * invisible in dark mode entirely — the tokens differ there — so this runs in
+ * light, which is the theme that was broken.
+ */
+test.describe('the landing page renders its raised surfaces', () => {
+  test.use({ colorScheme: 'light' });
+
+  test('the figure has a shadow and the cards are lighter than their band', async ({ page }) => {
+    await page.goto('/welcome');
+
+    const filter = await page.locator('.figure svg').evaluate((el) => getComputedStyle(el).filter);
+    expect(filter, 'the figure\'s drop-shadow is invalid, so no shadow renders').not.toBe('none');
+
+    /*
+     * Compare the card against the EFFECTIVE ground behind it, resolved by
+     * walking ancestors for the first non-transparent background.
+     *
+     * The first version of this compared `.card` to `.band`'s own computed
+     * background and PASSED against the broken state: strip the band's fill and
+     * it computes to `rgba(0, 0, 0, 0)`, which differs from the card's white, so
+     * the assertion was satisfied by exactly the bug it was written for. §34's
+     * shape — a test passing against its own broken fixture — caught by running
+     * the mutation rather than by reading the test.
+     */
+    const [card, ground] = await page.evaluate(() => {
+      const effective = (el) => {
+        for (let n = el; n; n = n.parentElement) {
+          const bg = getComputedStyle(n).backgroundColor;
+          if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') return bg;
+        }
+        return 'rgb(255, 255, 255)';
+      };
+      const c = document.querySelector('.card');
+      return [getComputedStyle(c).backgroundColor, effective(c.parentElement)];
+    });
+    expect(card, 'the card has no fill distinction from the ground behind it').not.toBe(ground);
+  });
+});
+
 test('javascript: URLs in link fields are not rendered as executable hrefs', async ({ page }) => {
   await onboard(page, { templates: ['Companies'] });
   await page.click('#nav-modules .nav-link:has-text("Companies")');

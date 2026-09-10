@@ -239,6 +239,7 @@ product read as inconsistent if it is worked partially.
 |---|---|
 | `terms.html` | *"This is a free beta"* · *"offered free of charge during the beta"* · **"There is no payment, no subscription, and no contract term."** |
 | `terms.html` | *"applies to the free beta at this address"* — §1.4 again |
+| `welcome.html` | the amber **beta box** in the splash, and the `FREE BETA` kicker above the headline. A review proposed swapping the box for a positive trust badge at the *domain* move — **do not**: the domain move is not the end of the beta, `terms.html` still says data loss is possible, and §47's rule exists because *"a prospect read four confident minutes and then discovered the framing on the legal page"*. The trust badge is the right thing to put there when the **beta actually ends**, which is a terms change with its own re-prompt (§2.2) |
 | `guide.html` | the opening callout: *"The first one: this is a free beta."* (§47 added it precisely so the framing is not discovered later on the legal page — the same reasoning applies in reverse) |
 | `privacy.html` | the processor roster, and *"That is the complete list."* |
 | `docs/product-tour.html` | *"Nothing to install, nothing to sign up for"* and the comparison framing |

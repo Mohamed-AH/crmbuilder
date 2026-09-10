@@ -105,6 +105,9 @@ never change, because everything cross-references them.
 | Auto margins on a flex child, and a width that was right by luck | §58 · §4 |
 | Contrast measured rather than judged; the limit that must not be faint | §58 · §47 |
 | The legal pages never loaded the font they ask for | §58 · §19 |
+| **A shadow that never rendered** — `drop-shadow()` takes no spread | §59 |
+| A token that is a no-op in one theme, and how "raised" is signalled | §59 · §47 |
+| Why the beta box is not a trust badge at the domain move | §59 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1 |
 
 ---
 
@@ -7854,3 +7857,112 @@ real decision that touches the manifest, `terms.html`, `TERMS_VERSION` (§41),
 every document and the app itself. It is not something to do silently while
 building a page. The wordmark sits in one place in `welcome.html` and in the
 manifest; if the name changes, those are the two starts.
+
+
+---
+
+## 59. A review of the landing page: one right, one right about the wrong thing
+
+Three points came back on `/welcome`. §21's treatment — checked against the
+code rather than accepted — and the split is the useful part: **the two the
+review got wrong, it got wrong in this file's own recurring shape.**
+
+### A shadow that had been declared and silently discarded
+
+*"Add a subtle drop shadow so the mockup pops against the light background."*
+There already was one: `filter: drop-shadow(var(--shadow-lg))`.
+
+**`drop-shadow()` takes no spread radius.** It accepts
+`offset-x offset-y blur colour` and nothing else, and `--shadow-lg` in this
+file was `0 24px 48px -16px …`. A fourth length makes the function invalid, an
+invalid filter value drops the whole declaration, and
+`getComputedStyle(el).filter` was **`none`** in both themes. Measured, not
+inferred from the spec.
+
+So the reviewer saw the symptom exactly and named the wrong cause — the same
+shape §47 records, where a stated concern and its real mechanism were different
+things. Nothing was missing; something was broken.
+
+**The token is confined to this file, which is what made the fix safe.**
+`css/style.css` has its own `--shadow-lg` **with** a spread, used as
+`box-shadow` in six places where spread is perfectly legal. `welcome.html`'s
+copy is consumed by the figure and by nothing else — checked before touching
+it, so dropping the spread here cannot reach the app.
+
+### The text contrast was fine. The card had no fill at all.
+
+*"Ensure the secondary callout text meets WCAG AA, as light grey on off-white
+can get washed out."* Measured: `.limit` is **7.69:1** light / **7.76** dark and
+`.card span` **7.69 / 7.01**. The stated concern does not exist.
+
+One line up, it does. In light, `--paper-raised` and `--paper` are **both
+`#ffffff`** — so a card had a fill distinction from the page of **1.00:1** and
+hung entirely off a `--rule` border at **1.24:1**. That is §47's callout
+finding, the same hairline number, on a different component, and it is exactly
+what washes out on a dim screen while the text stays perfectly legible.
+
+**A token that was a no-op.** `--paper-raised` existed, was used by `.card`,
+`.btn-ghost` and two SVG rects, and in the light theme meant nothing whatever.
+Worth noting for §60: a light palette whose ground is pure white has no room
+above it, so "raised" has to come from somewhere other than the fill.
+
+**Fixed by giving the section a ground, not by darkening a token.** §47's
+precedent is explicit that a token named for a surface should not be tuned for
+one component. `.band` puts the *Where to go next* row on `--paper-sunk`, so
+the white cards finally sit on something, `--rule-strong` replaces `--rule`,
+and `--shadow-sm` supplies real elevation.
+
+**And it does NOT reach WCAG's 3.0 for non-text — the plan said it would, and
+that was wrong.** Measured after: the card is 1.06 against its band (was 1.00
+against the page), the border 1.39 light / 1.72 dark (was 1.24). Reaching 3.0
+needs an `--ink-faint` border, which computes to 3.02 and reads as a wireframe.
+The honest description is that the card now signals elevation the way light UI
+normally does — **lighter than its ground, with a shadow** — rather than that a
+boundary line crossed a threshold. Said plainly rather than rounded up, because
+§47's whole lesson here was about measuring instead of asserting.
+
+### The beta box should not become a trust badge at the domain move
+
+The third suggestion: swap the amber beta warning for a positive trust badge
+when `nimbleclerk.com` goes live. **Declined, and recorded rather than
+silently skipped.**
+
+The domain move is not the end of the beta. `terms.html` still says free beta
+and that data loss is possible, `TERMS_VERSION` governs it (§41), and §47's
+rule for these pages exists precisely because *"a prospect read four confident
+minutes and then discovered the framing on the legal page"*. Replacing the
+warning while the terms still say beta re-creates that failure and lands on
+`docs/LAUNCH-CHECKLIST.md` §2.1's list of claims that go false.
+
+The idea is right about *where* it belongs: the trust badge is what should
+replace the box **when the beta actually ends**, which is a terms change with
+its own re-prompt. It is a row in the checklist now, next to the pricing
+claims, rather than an action attached to the wrong trigger.
+
+### The regression test passed on the bug, and the mutation is what said so
+
+§9's rule, earned again. The first version compared `.card`'s computed
+background against `.band`'s — and **passed against the broken state**: strip
+the band's fill and it computes to `rgba(0, 0, 0, 0)`, which differs from the
+card's white, so the assertion was satisfied by exactly the defect it was
+written for. §34's shape, a test passing against its own broken fixture.
+
+It resolves the **effective** ground now, walking ancestors for the first
+non-transparent background — which is what the probe had been doing all along
+and what the test should have copied. Both halves fail by name on their own
+mutation: restoring the invalid spread fails on the filter, stripping the band
+fails on the fill, and neither fails the other's.
+
+The test runs in **light only** (`test.use({ colorScheme: 'light' })`), because
+the second bug does not exist in dark — the tokens genuinely differ there — so
+a theme-agnostic test would have been half vacuous.
+
+### Blast radius
+
+`welcome.html` and one E2E test. **No `CACHE_VERSION` bump**, checked rather
+than assumed per §41: `welcome.html` is in `STANDALONE_PAGES` and absent from
+`APP_SHELL`, so it goes straight to the network. No served file added, so smoke
+stays **46 local / 51 live**.
+
+`footer`'s own `border-top` was removed, because `.band` now supplies the rule
+above it and two adjacent 1px borders read as a 2px one.
