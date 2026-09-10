@@ -24,6 +24,13 @@
 <link rel="icon" href="/icons/icon-192.png">
 <link rel="preload" href="/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
 
+<!-- The stored appearance choice, so a reader who picked dark in the app does
+     not get a light page when they click through. NOT `defer`: deferred runs
+     after parsing, which is the flash this exists to avoid. These pages still
+     render with JavaScript off (§19) — they simply follow the OS then, which
+     is what they did before the choice existed. -->
+<script src="/js/boot-theme.js"></script>
+
 <style>
 /*
  * welcome.html — the splash / landing page, served at /welcome.

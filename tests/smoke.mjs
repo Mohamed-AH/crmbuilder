@@ -113,6 +113,7 @@ const ASSETS = [
   ['/js/db.js', 'javascript'],
   ['/js/icons.js', 'javascript'],
   ['/js/boot-icons.js', 'javascript'],
+  ['/js/boot-theme.js', 'javascript'],
   ['/js/templates.js', 'javascript'],
   ['/js/csv.js', 'javascript'],
   ['/js/date-rules.js', 'javascript'],

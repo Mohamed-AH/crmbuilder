@@ -113,9 +113,13 @@ welcome.html          the splash / landing page, served at /welcome — CSS and 
                       inline, no app JS. Intended to become `/` at the domain move
 css/style.css         styles (Inter, light/dark, desktop-first)
 legal.css             standalone styling for privacy.html, terms.html and guide.html
-                      (none of the three load any app JS)
+                      (they load no app JS — js/boot-theme.js is the one exception,
+                      so the appearance choice reaches them too)
 js/icons.js           inline Lucide SVG icons
 js/boot-icons.js      fills static icon placeholders (a file, not inline — CSP script-src)
+js/boot-theme.js      light/dark/system, applied before the first paint — first in <head>,
+                      and the only reader of `crmb:theme`. Loaded by the standalone
+                      pages too, so the whole site follows one choice
 js/db.js              promise-based IndexedDB wrapper
 js/cloud.js           account + sync layer (server ⇄ local fallback)
 js/csv.js             RFC 4180 CSV reader/writer

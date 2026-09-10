@@ -13,6 +13,7 @@
   --accent: #1570ef;
   --accent-hover: #175cd3;
   --accent-soft: #1570ef14;
+  --on-accent: #ffffff;
   --bg: #f7f8fa;
   --surface: #ffffff;
   --surface-2: #f2f4f7;
@@ -29,11 +30,36 @@
   --radius: 10px;
   --sidebar-w: 250px;
 }
+/*
+ * DARK IN TWO BLOCKS, AND BOTH ARE LOAD-BEARING.
+ *
+ * The media query guarded with :not([data-theme="light"]) follows the OS and is
+ * what everybody has today. The explicit [data-theme="dark"] block is what lets
+ * a manual choice win in the OTHER direction — dark on a light OS. legal.css
+ * shipped with only the first half, so its pages could be forced light by an
+ * attribute nothing set and could never be forced dark (§57). Half a toggle.
+ *
+ * THE TWO LISTS MUST MOVE TOGETHER. CSS has no mixin and a media query cannot
+ * be folded into a selector, so the duplication is unavoidable. The tempting
+ * alternative — resolve `system` in JS and keep one attribute-keyed block —
+ * was rejected: it makes the palette depend on a script, so the boot read
+ * failing (it is wrapped in try/catch, §3) would render light on a dark OS,
+ * turning a currently invisible failure into a visible one. It would also give
+ * the app and legal.css two different mechanisms to keep in step, and
+ * legal.css cannot use JS at all (§19).
+ */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --accent: #4692f5;
     --accent-hover: #6ba6f2;
     --accent-soft: #4692f51f;
+    /* Ink FOR the accent, not the accent itself. In light the accent is dark
+       enough for white (4.57:1); in dark it is a LIGHTER blue, so white on it
+       measured 3.14:1 on `.btn-primary` — under AA, on the first button a new
+       user presses, live for every dark-OS visitor. Measured in the running
+       app, not computed. Three sites used a literal #fff over var(--accent);
+       they all take this token now. */
+    --on-accent: #06101f;
     --bg: #0c111d;
     --surface: #131722;
     --surface-2: #1c2130;
@@ -42,9 +68,41 @@
     --text: #ecf0f6;
     --text-soft: #98a5bd;
     --text-faint: #5f6c85;
+    /* Raised so they clear AA on a dark ground; the light values are too
+       saturated to read on #0c111d and the dark block never redefined them. */
+    --danger: #ff8a80;
+    --ok: #3ddc97;
+    --warn: #f5b678;
     --shadow: 0 1px 2px rgb(0 0 0 / 30%);
     --shadow-lg: 0 12px 24px rgb(0 0 0 / 40%);
   }
+}
+:root[data-theme="dark"] {
+  --accent: #4692f5;
+  --accent-hover: #6ba6f2;
+  --accent-soft: #4692f51f;
+  /* Ink FOR the accent, not the accent itself. In light the accent is dark
+     enough for white (4.57:1); in dark it is a LIGHTER blue, so white on it
+     measured 3.14:1 on `.btn-primary` — under AA, on the first button a new
+     user presses, live for every dark-OS visitor. Measured in the running
+     app, not computed. Three sites used a literal #fff over var(--accent);
+     they all take this token now. */
+  --on-accent: #06101f;
+  --bg: #0c111d;
+  --surface: #131722;
+  --surface-2: #1c2130;
+  --border: #283041;
+  --border-strong: #333e54;
+  --text: #ecf0f6;
+  --text-soft: #98a5bd;
+  --text-faint: #5f6c85;
+  /* Raised so they clear AA on a dark ground; the light values are too
+     saturated to read on #0c111d and the dark block never redefined them. */
+  --danger: #ff8a80;
+  --ok: #3ddc97;
+  --warn: #f5b678;
+  --shadow: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-lg: 0 12px 24px rgb(0 0 0 / 40%);
 }
 
 * { box-sizing: border-box; }
@@ -143,7 +201,7 @@ svg.lucide { vertical-align: -2px; flex-shrink: 0; }
 .avatar { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
 .avatar-fallback {
   display: inline-flex; align-items: center; justify-content: center;
-  background: var(--accent); color: #fff; font-weight: 600; font-size: 13px;
+  background: var(--accent); color: var(--on-accent); font-weight: 600; font-size: 13px;
 }
 .user-chip-text { min-width: 0; display: flex; flex-direction: column; }
 .user-chip-name { font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -312,7 +370,7 @@ a.stat-card:hover, .stat-card-add:hover { border-color: var(--border-strong); bo
 .template-card:has(input:checked)::after {
   content: "✓"; position: absolute; top: 10px; right: 12px;
   width: 20px; height: 20px; border-radius: 50%;
-  background: var(--accent); color: #fff;
+  background: var(--accent); color: var(--on-accent);
   display: flex; align-items: center; justify-content: center; font-size: 12px;
 }
 .template-card input { position: absolute; opacity: 0; pointer-events: none; }
@@ -441,12 +499,16 @@ a.stat-card:hover, .stat-card-add:hover { border-color: var(--border-strong); bo
    leaving the "removed field" tag looking identical to the neutral one, which
    is the distinction it exists to draw. */
 .dsar-tag-warn { background: #fdf1e3; color: #b54708; }
-/* This file selects dark with the media query and nothing else — there is no
-   `data-theme` attribute and no `.dark` class to hang a rule on, so writing
-   one would be the invented-class trap wearing a selector. */
+/* Both branches, for the same reason as the token blocks above — and this
+   comment used to say the opposite: "there is no `data-theme` attribute and no
+   `.dark` class to hang a rule on". That was true when it was written and went
+   false the moment the toggle landed. A component-level dark override is
+   exactly the kind of rule that gets left behind by a theme change, because
+   nothing points at it from the token block. */
 @media (prefers-color-scheme: dark) {
-  .dsar-tag-warn { background: #3a2408; color: #f5b678; }
+  :root:not([data-theme="light"]) .dsar-tag-warn { background: #3a2408; color: #f5b678; }
 }
+:root[data-theme="dark"] .dsar-tag-warn { background: #3a2408; color: #f5b678; }
 .meter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin: 12px 0; }
 .meter { border: 1px solid var(--border); border-radius: 9px; padding: 12px 14px; background: var(--surface-2); }
 .meter-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; font-weight: 600; }
@@ -598,7 +660,7 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .btn:hover { background: var(--surface-2); }
 .btn-lg { padding: 10px 20px; font-size: 14.5px; }
 .btn-block { width: 100%; }
-.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .btn-outline { background: transparent; }
 .btn-outline:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }

@@ -4,7 +4,7 @@
  * API/auth requests are network-only (never cached).
  * Bump CACHE_VERSION whenever any precached asset changes.
  */
-const CACHE_VERSION = 'crmbuilder-v55';
+const CACHE_VERSION = 'crmbuilder-v56';
 const APP_SHELL = [
   './',
   './index.html',
@@ -13,6 +13,7 @@ const APP_SHELL = [
   './fonts/inter-var-latin.woff2',
   './js/icons.js',
   './js/boot-icons.js',
+  './js/boot-theme.js',
   './js/scope.js',
   './js/db.js',
   './js/csv.js',
@@ -87,6 +88,15 @@ self.addEventListener('fetch', (event) => {
    * stylesheet handled either.
    */
   const STANDALONE_ASSETS = ['/legal.css', '/js/manual-toc.js'];
+  /*
+   * `/js/boot-theme.js` is a subresource of these pages too and is deliberately
+   * NOT in that list. The reason is the difference §47 actually turned on: the
+   * files above are in neither APP_SHELL nor the precache, so the cache-first
+   * branch kept them with no revalidation and NOTHING could evict them —
+   * legal.css shipped stale for a whole cache version that way. boot-theme.js
+   * IS precached in APP_SHELL, so it lives in the CACHE_VERSION-keyed cache and
+   * a bump drops it like every other app asset. Cache-first is correct for it.
+   */
 
   /*
    * …and the two JSON endpoints that predate /api/ and are therefore not

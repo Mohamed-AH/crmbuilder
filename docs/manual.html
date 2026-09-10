@@ -1,5 +1,12 @@
 <title>CRM Builder Manual</title>
 
+<!-- The stored appearance choice, so a reader who picked dark in the app does
+     not get a light page when they click through. NOT `defer`: deferred runs
+     after parsing, which is the flash this exists to avoid. These pages still
+     render with JavaScript off (§19) — they simply follow the OS then, which
+     is what they did before the choice existed. -->
+<script src="/js/boot-theme.js"></script>
+
 <style>
   /* ---------------------------------------------------------------- tokens */
   :root {
@@ -957,6 +964,22 @@
         delete records with no connection. The sidebar shows <em>Offline — changes saved
         locally</em>, and anything you changed syncs automatically when you're back online.
         This is deliberate: the app never makes you wait for a server to reach your own data.
+      </p>
+
+      <h3>Light, dark, or whatever your device does</h3>
+      <p><strong>Settings → Appearance</strong> offers three choices:</p>
+      <ul>
+        <li><strong>System</strong> — follow whatever your phone or computer is set to. This is the default, and it is what the app has always done.</li>
+        <li><strong>Light</strong> — always light, even on a device set to dark.</li>
+        <li><strong>Dark</strong> — always dark, even on a device set to light.</li>
+      </ul>
+      <p>
+        <strong>It applies to this device only.</strong> It is not part of your workspace, so it
+        does not travel to your other devices and it is not shared with your team — a colleague
+        on a dark screen and one on a light screen each keep their own. Anyone can change it,
+        whatever their role, because it changes nothing about the data. The policy and terms
+        pages follow it too, so the whole site is consistent rather than the app being dark and
+        the policy page light.
       </p>
     </section>
 

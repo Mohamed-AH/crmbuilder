@@ -3366,6 +3366,9 @@
       demoRecords ? plural(demoRecords, 'record') : '',
       demoModules ? plural(demoModules, 'module') : '',
     ].filter(Boolean).join(', ');
+    // Read through THEME rather than localStorage: boot-theme.js owns the key,
+    // and two readers of one string is how they drift (§29).
+    const themeChoice = THEME.get();
     // Membership and whether this person may invite. Cheap enough to re-ask,
     // and /api/me's copy goes stale the moment anyone joins or leaves.
     let org = null;
@@ -3771,6 +3774,30 @@
             ${demoCount && canEditRecords() ? `<button class="btn" id="remove-demo-btn">${icon('trash-2', 15)} Remove sample data (${esc(demoBreakdown)})</button>` : ''}
           </div>
           ${canEditRecords() ? '<p class="settings-hint" style="margin:12px 0 0">Demo data fills every module with a sample business so you can explore or present without entering records first. It is added alongside anything you already have.</p>' : ''}
+          <!--
+            Appearance is a DEVICE preference, not a workspace setting, so it
+            sits in this card (which is already about this device) and is open
+            to every role. Putting it in the synced settings document would push
+            it whole to every colleague and make it owner-only to change —
+            §38's reasoning for the webhook, arriving at a preference rather
+            than a credential.
+
+            Three values, not two: System is the default and is what everybody
+            has today, so a light/dark pair would silently opt every existing
+            user out of the behaviour they already have.
+
+            NB: no backticks in here. This comment sits inside a template
+            literal, so one would close the string — which is exactly how it
+            broke the first time, and node --check named a line 300 away.
+          -->
+          <div class="hr"></div>
+          <div class="mode-switch">
+            <span class="settings-hint" style="margin:0;align-self:center">Appearance:</span>
+            ${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([value, label]) => `
+              <button class="btn ${themeChoice === value ? 'btn-primary' : ''}" data-theme-choice="${value}"
+                      ${themeChoice === value ? 'disabled' : ''}>${esc(label)}</button>`).join('')}
+          </div>
+          <p class="settings-hint" style="margin:8px 0 0">Stored on this device only, so it does not follow you to another browser or reach anyone else on your team. <b>System</b> follows whatever this device is set to.</p>
         </div>
         ${canDeleteRecords() || Cloud.isAuthed ? `
         <div class="card danger-zone">
@@ -4037,6 +4064,25 @@
     const addTemplate = $('#add-template-btn');
     if (addTemplate) addTemplate.addEventListener('click', openTemplatePicker);
     $('#replay-tour-btn').addEventListener('click', startTourWithConsent);
+    /*
+     * Appearance. Repaints the card so the pressed state moves, and that
+     * re-render is the whole reason this does NOT go through persist() or
+     * Cloud.sync(): the choice is device-local, so there is nothing to push and
+     * nothing a colleague could receive.
+     *
+     * renderSettings() is safe to call here — unlike the Telegram card (§38),
+     * which must never be re-rendered because it would wipe the token field.
+     * The token is elsewhere on the screen and is not touched by a repaint of
+     * this one, but the guard is that this handler re-renders the WHOLE settings
+     * view, so it is only safe while nothing on it holds unrecoverable input.
+     * If that changes, paint the button row instead.
+     */
+    $$('[data-theme-choice]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        THEME.set(btn.dataset.themeChoice);
+        renderSettings();
+      });
+    });
     const removeDemo = $('#remove-demo-btn');
     if (removeDemo) {
       removeDemo.addEventListener('click', async () => {

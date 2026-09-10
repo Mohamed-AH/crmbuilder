@@ -23,103 +23,45 @@ asked in and is the more useful order to read.
 
 | | Size | Because |
 |---|---|---|
-| **Dark mode** | small | it already works. The OS-following half shipped years ago; what is missing is a *choice* |
-| **Accessibility** | small to start, open-ended after | the primitives are in place — `aria-live`, `aria-modal`, `aria-sort`, `lang`. It needs measuring before it needs building |
+| ~~**Dark mode**~~ | **built — `CLAUDE.md` §60** | it already worked; what was missing was a *choice*. The estimate held |
+| **Accessibility** | small to start, open-ended after | the primitives are in place — `aria-live`, `aria-modal`, `aria-sort`, `lang`. It needs measuring before it needs building — and dark mode's contrast pass already produced three findings for it |
 | **Security re-audit** | medium, and overdue | eight new routes and three new credential classes have landed since §30 |
 | **Email & social integrations** | large, and it is two different projects | outbound already exists twice over. **Inbound** is the new thing, and it is a new trust boundary |
 | **Multi-language, incl. Arabic** | large, and the translation is the cheap half | there is no string table, no build step, and one word — *versioned* — makes the legal pages the hard part |
 
-**Two of these are not what they sound like.** Dark mode is not greenfield, and
-"email integration" is not the email sending that shipped in §53. Both are
-covered below, because planning either from the name would waste the estimate.
+**One of these is not what it sounds like.** "Email integration" is not the
+email sending that shipped in §53 — planning it from the name would waste the
+estimate. Dark mode was the other, and building it is what proved the point:
+see below.
 
 ---
 
-## 1. Dark mode — the OS half is done; the choice is not
+## 1. Dark mode — **built, see `CLAUDE.md` §60**
 
-### What is there today, measured
+Per the banner: a built item moves out of here. What is worth keeping is that
+**the estimate held and it held for the stated reason** — the palette was
+already tokenised, so the job was a choice rather than a repaint. Three of the
+four costings in the original entry survived contact:
 
-```sh
-grep -c "@media (prefers-color-scheme: dark)" css/style.css     # 2
-grep -n "data-theme" legal.css css/style.css index.html js/*.js
-```
+| Costed as | Turned out |
+|---|---|
+| both branches in both files; `legal.css` is the one that bites | correct, and it was the mutation that failed by name |
+| the attribute must be set before the first paint | correct — `js/boot-theme.js`, first in `<head>`, the `js/boot-icons.js` precedent |
+| device-level `crmb:theme`, never a workspace setting | correct, and unchanged |
+| ~~"12 loose hex literals… they are the actual work"~~ | **wrong by a factor of four.** Three literals mattered, all of them `#fff` over `var(--accent)`; the rest were in dark blocks or brand artwork |
 
-- `css/style.css` is 892 lines. **18 custom properties on `:root`**, **13 of
-  them redefined** inside `@media (prefers-color-scheme: dark)`, plus one
-  component-level dark override for `.dsar-tag-warn`. The palette is already
-  tokenised, which is the expensive part of this job and it is already paid.
-- **12 hex literals sit outside the token blocks** (44 in the file, 32 of them
-  inside `:root` and the dark media queries). Those are the ones a toggle
-  cannot reach, and they are the actual work.
-- `index.html` carries a single `<meta name="theme-color" content="#1570ef">`
-  with no dark variant.
-- **There is no `data-theme` attribute and no `.dark` class in the app.** The
-  comment at `css/style.css:445` says so in as many words, and says why: a rule
-  hung on a selector nothing sets is the invented-class trap (§27) wearing a
-  selector.
+**The one thing the entry did not predict is the thing that mattered most.**
+It said contrast should be measured rather than judged, citing §47 — and
+measuring it found a **live WCAG AA failure in the shipped app**: white on the
+dark-mode accent, on `.btn-primary`, at **3.14:1**. Every dark-OS visitor since
+the dark palette shipped has been pressing *Create my CRM* with a label under
+AA. Nothing in the suite drove `colorScheme`, so the OS-following half that had
+shipped years ago had never once been tested. The lesson is §36's, in a new
+place: **an untested code path does not have to be new to be wrong.**
 
-### The half-finished pattern that is live right now
-
-`legal.css:16-17` already carries
-
-```css
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) { … }
-}
-```
-
-and has **no `:root[data-theme="dark"]` block**. So the legal pages can already
-be forced *light* by an attribute nothing sets, and can never be forced *dark*
-on a light OS. Half a toggle, shipped, with the other half missing.
-
-That is the trap for whoever builds this: adding the toggle to the app and
-stopping there leaves `/privacy`, `/terms` and `/guide` following the OS while
-the app follows the choice — and those three share `legal.css` (§47), so it is
-one file, not three.
-
-### What the work is
-
-1. **Both directions, in both files.** `:root` light, then the tokens
-   redefined under `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) }`
-   *and* under `:root[data-theme="dark"]`. Either block alone gives a toggle
-   that works one way.
-2. **The twelve loose hex literals.** Each is either promoted to a token or
-   given a dark sibling. `.dsar-tag-warn` is the precedent and already has one.
-3. **The attribute must be set before the first paint**, or the page renders
-   light and flips. That is §3's paint-first invariant meeting §11's rule that
-   *the scope must resolve synchronously at boot* — same shape, same answer: a
-   tiny synchronous read in `index.html`'s head, not a module that runs after
-   `route()`.
-4. **`theme-color` gets a second `<meta>`** with `media="(prefers-color-scheme: dark)"`,
-   or the PWA's title bar stays blue in a dark app.
-
-### The decision it forces, and it is not cosmetic
-
-**Where does the preference live?** It must be a **device-level** key —
-`crmb:theme`, beside `crmb:auth`, `crmb:user` and `crmb:tourSeen` — and **not**
-a workspace setting.
-
-`settings` is owner-only and syncs whole (§14, §38). A theme kept there would
-mean one person's preference lands on every colleague's device, and only an
-owner could change it. That is not a hypothetical: it is exactly the mechanism
-§38 documents for why the webhook URL cannot live in `settings` either.
-
-Three values, not two: `light` · `dark` · **follow the system**, which is the
-default and is what everybody has today. A two-state toggle silently opts every
-existing user out of the behaviour they already have.
-
-### Verification
-
-- Drive both themes at both OS settings — four combinations, and the two that
-  break a half-built toggle are *dark choice on a light OS* and the reverse.
-- Load `/guide` in each, because `legal.css` is the file most likely to be
-  forgotten.
-- Contrast is **measured**, not judged. §47's callout finding is the precedent:
-  the stated concern (text contrast, 7.2:1) did not exist, and the real one
-  (a 1.06:1 fill) was a different property under the same heading.
-- No `CACHE_VERSION` surprise: `css/style.css` is in `APP_SHELL` and
-  `legal.css` is in `STANDALONE_ASSETS` (§47) — **both** need the bump, and
-  §47 records getting exactly that wrong once.
+Three further findings were **left deliberately** and belong to item 2 below,
+because they are light-mode failures with no dark-mode component and fixing
+them means retuning tokens used across the app.
 
 ---
 
@@ -159,6 +101,33 @@ turned up the moment the product was driven as a real viewer.
   is reachable without a mouse is not answerable by reading, and the answer
   decides whether this item is small or large.
 
+### Three contrast failures, measured rather than suspected
+
+These came out of §60's dark-mode pass and were **deliberately not fixed
+there** — they are light-mode failures with no dark-mode component, and each
+means retuning a token the whole app uses, which is a wider change than a theme
+toggle should carry. WCAG AA is 4.5:1 for body text.
+
+| Token | Light | Dark | Where it is text |
+|---|---|---|---|
+| `--text-faint` | **2.58** on `--surface` | **3.38** | ~17 places — `.nav-empty`, `.stat-tile-sub`, `.recent-meta`, the field hints |
+| `--ok` | **4.01** | 10.13 | `.check-yes` puts it straight on `--surface` |
+| `--warn` | **3.49** | 10.09 | the same pattern |
+
+Three things about that table, and each is the reason it is here rather than
+fixed:
+
+- **`--text-faint` fails in BOTH themes** and always has; the dark value is
+  untouched by §60. It is the only one of the three that does.
+- **They are representative, not measurement artifacts.** Checked: the tokens
+  really are used as text directly on those grounds, rather than only as
+  borders or as ink on a tinted pill where the ratio would be different.
+- **`--danger` passes at 4.83 light / 7.84 dark**, so this is not "the whole
+  status palette is wrong" — it is three specific values, and one of them is
+  the faint-text token that the fix would make less faint. That is a design
+  decision about how quiet a hint may be, not a bug fix, which is exactly why
+  it wants the axe-core pass below rather than a guess.
+
 ### The instrument matters more than the checklist
 
 §30 is emphatic that a checklist written for a different stack produces ticks
@@ -194,14 +163,19 @@ from the rest.
 
 ### Why it is due, in one number
 
-§30's audit ran against a codebase whose route count it recorded as 47. Today:
+§57 said the audit *"ran against 47 routes"*, and this entry repeated it. Both
+were wrong, and the number is measurable rather than recalled — count them at
+the audit's own commit:
 
 ```sh
-grep -cE "^app\.(get|post|put|patch|delete)\(" server.js    # 55
+git show f51656d:server.js | grep -cE "^app\.(get|post|put|patch|delete)\("   # 42
+grep -cE "^app\.(get|post|put|patch|delete)\(" server.js                      # 55
 ```
 
-Eight routes, and more importantly **three new classes of thing** the audit
-never saw. §30's own conclusion was *eight real, five false, one inapplicable,
+**Thirteen unaudited routes, not eight** — and more importantly **three new
+classes of thing** the audit never saw. §29's own failure mode (a number
+written in a second place goes stale) landing in the entry that states it, which
+is why the command is here and the figure is not left to be trusted. §30's own conclusion was *eight real, five false, one inapplicable,
 one partial — and the one that would have cost the most (#8) was not on the
 checklist at all.* That is the argument for re-running it against what is here
 now rather than against the list.

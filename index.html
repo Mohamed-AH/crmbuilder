@@ -6,6 +6,11 @@
   <title>CRM Builder</title>
   <meta name="description" content="Build your own modular CRM for your small business. Pick the modules you need, add custom fields, sync across devices, and work offline.">
   <meta name="theme-color" content="#1570ef">
+  <meta name="theme-color" content="#0c111d" media="(prefers-color-scheme: dark)">
+  <!-- Before the stylesheet and before any of <body>, so the stored choice
+       is on <html> ahead of the first paint. See the file for why it is a
+       file at all (CSP script-src 'self'), and why `system` sets nothing. -->
+  <script src="js/boot-theme.js"></script>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">

@@ -4189,6 +4189,106 @@ test('the guide states the beta and lists all four roles', async ({ page }) => {
 });
 
 /*
+ * The theme choice, and the four combinations that break a half-built toggle.
+ *
+ * Nothing in this suite drove `colorScheme` before, so the OS-following half —
+ * which has shipped for years — had never been tested at all. That is how a
+ * live AA failure on `.btn-primary` survived: in dark, --accent is a LIGHTER
+ * blue and the label was a literal #fff, measuring 3.14:1 on the first button
+ * a new user presses.
+ *
+ * Asserted on the COMPUTED BACKGROUND, never on the data-theme attribute. An
+ * attribute no rule reads is precisely the legal.css half-toggle bug (§57), and
+ * it would satisfy an attribute check while changing nothing on screen.
+ */
+const isDark = (rgb) => {
+  const [r, g, b] = rgb.match(/[\d.]+/g).slice(0, 3).map(Number).map((v) => {
+    v /= 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.2;
+};
+
+for (const osTheme of ['light', 'dark']) {
+  test.describe(`appearance on a ${osTheme} device`, () => {
+    test.use({ colorScheme: osTheme });
+
+    test(`every choice wins over the OS, and survives a reload`, async ({ page }) => {
+      await page.goto('/');
+      await page.waitForFunction(() => typeof THEME !== 'undefined');
+
+      for (const [choice, wantDark] of [
+        ['system', osTheme === 'dark'],
+        ['light', false],
+        ['dark', true],
+        // Back to system last, so the assertion is not just "the last write
+        // stuck" — it has to give the OS back control after two overrides.
+        ['system', osTheme === 'dark'],
+      ]) {
+        await page.evaluate((c) => THEME.set(c), choice);
+        // The RELOAD is the point: it proves js/boot-theme.js reads the stored
+        // choice, not merely that set() painted once.
+        await page.reload();
+        await page.waitForFunction(() => typeof THEME !== 'undefined');
+        const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+        expect(isDark(bg), `choice "${choice}" on a ${osTheme} device rendered ${bg}`).toBe(wantDark);
+      }
+    });
+
+    /*
+     * Every page that is not the app, both directions.
+     *
+     * /privacy, /terms and /guide share legal.css, which shipped with the media
+     * query and NO [data-theme="dark"] block — so a dark choice on a light OS
+     * left the app dark and those three light. /welcome, the manual and the
+     * tour each carry their OWN token blocks and their own <script> tag, so
+     * each is a separate place the reader can be forgotten. The app alone
+     * catches none of it.
+     *
+     * Driven page by page rather than trusting one representative: these six
+     * are the whole non-app surface (sw.js STANDALONE_PAGES), and a missing
+     * script tag fails by name.
+     */
+    test('the standalone pages obey the same choice', async ({ page }) => {
+      const pages = ['/privacy', '/terms', '/guide', '/welcome', '/docs/manual.html', '/docs/product-tour.html'];
+      for (const [choice, wantDark] of [['dark', true], ['light', false]]) {
+        await page.goto('/');
+        await page.waitForFunction(() => typeof THEME !== 'undefined');
+        await page.evaluate((c) => THEME.set(c), choice);
+        for (const path of pages) {
+          await page.goto(path);
+          const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+          expect(isDark(bg), `${path} with "${choice}" chosen on a ${osTheme} device rendered ${bg}`).toBe(wantDark);
+        }
+      }
+    });
+  });
+}
+
+test.describe('the primary button is readable in dark', () => {
+  test.use({ colorScheme: 'dark' });
+
+  test('white on a light accent was 3.14:1, under AA', async ({ page }) => {
+    await page.goto('/');
+    const btn = page.locator('.btn-primary').first();
+    await expect(btn).toBeVisible();
+    const ratio = await btn.evaluate((el) => {
+      const rel = (rgb) => {
+        const [r, g, b] = rgb.match(/[\d.]+/g).slice(0, 3).map(Number).map((v) => {
+          v /= 255;
+          return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const cs = getComputedStyle(el);
+      const [a, b] = [rel(cs.color), rel(cs.backgroundColor)];
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    });
+    expect(ratio, 'the primary button label fails AA on a dark device').toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+/*
  * The landing page's two raised surfaces, asserted on the COMPUTED value.
  *
  * Both bugs this covers rendered perfectly plausibly, which is why nothing

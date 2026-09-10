@@ -770,6 +770,25 @@ locally*, and anything you changed syncs automatically when you're back online.
 This is deliberate: the app never makes you wait for a server to reach your own
 data.
 
+### Light, dark, or whatever your device does
+
+**Settings → Appearance** offers three choices:
+
+- **System** — follow whatever your phone or computer is set to. This is the
+  default, and it is what the app has always done.
+- **Light** — always light, even on a device set to dark.
+- **Dark** — always dark, even on a device set to light.
+
+Two things worth knowing:
+
+- **It applies to this device only.** It is not part of your workspace, so it
+  does not travel to your other devices and it is not shared with your team —
+  a colleague on a dark screen and one on a light screen each keep their own.
+  Anyone can change it, whatever their role, because it changes nothing about
+  the data.
+- **The policy and terms pages follow it too**, so the whole site is
+  consistent rather than the app being dark and `/privacy` being light.
+
 ---
 
 ## 12. Backups

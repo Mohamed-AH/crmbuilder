@@ -36,6 +36,16 @@
   --rule: #e4e7ec;
   --accent: #1570ef;
 }
+/*
+ * The missing half, added. This file carried the :not([data-theme="light"])
+ * guard from the start and NO [data-theme="dark"] block — so these pages could
+ * be forced light by an attribute nothing set, and could never be forced dark
+ * on a light OS (§57 found it; §60 is what needed it). Half a toggle, shipped.
+ *
+ * The two lists must move together; see css/style.css for why the duplication
+ * cannot be avoided. These pages load no JS at all (§19), so resolving the
+ * choice in script is not even an option here.
+ */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --paper: #0c111d;
@@ -45,6 +55,14 @@
     --rule: #253049;
     --accent: #6aa6ff;
   }
+}
+:root[data-theme="dark"] {
+  --paper: #0c111d;
+  --paper-sunk: #111725;
+  --ink: #e8edf5;
+  --ink-soft: #9aa7bd;
+  --rule: #253049;
+  --accent: #6aa6ff;
 }
 * { box-sizing: border-box; }
 body {

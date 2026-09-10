@@ -98,7 +98,7 @@ never change, because everything cross-references them.
 | **Where BYOK setup is written down** | §56 · §52 · §53 |
 | **What to build next** — dark mode, a11y, i18n, integrations, re-audit | [`docs/ROADMAP.md`](docs/ROADMAP.md) · §57 |
 | **The domain is `nimbleclerk.com`** — and apex vs `www` is two origins | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0 · §57 |
-| Dark mode: what already exists, and the half-toggle in `legal.css` | §57 · [`docs/ROADMAP.md`](docs/ROADMAP.md) §1 |
+| **Dark mode** — the three-branch pattern, and the half-toggle it closed | §60 · §57 |
 | Why a security re-audit is due, and what it must NOT re-raise | §57 · §30 |
 | **The Windows skip count that proved the rename retry** | §55 |
 | **The landing page** — why `/welcome` and not `/` | §58 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b |
@@ -108,6 +108,11 @@ never change, because everything cross-references them.
 | **A shadow that never rendered** — `drop-shadow()` takes no spread | §59 |
 | A token that is a no-op in one theme, and how "raised" is signalled | §59 · §47 |
 | Why the beta box is not a trust badge at the domain move | §59 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1 |
+| **A shipped path that no test had ever driven** — and it was under AA | §60 · §36 |
+| **Where a per-device preference lives**, and why never in `settings` | §60 · §11 · §14 · §38 |
+| A script that must run before first paint, under `script-src 'self'` | §60 · §30 · §3 |
+| Which subresources belong in `STANDALONE_ASSETS`, and which must not | §60 · §47 |
+| **Contrast failures left deliberately** — and where the decision lives | §60 · [`docs/ROADMAP.md`](docs/ROADMAP.md) §2 |
 
 ---
 
@@ -128,10 +133,13 @@ privacy.html          privacy policy | terms.html  terms of use  (see §19)
 guide.html            the short "what you can do" page, at /guide (§47)
 welcome.html          the splash / landing page, at /welcome — CSS and figure
                       INLINE, no app JS, and the page meant to become / (§58)
-legal.css             styling for privacy/terms/guide — they load no app JS at all
+legal.css             styling for privacy/terms/guide — no app JS, but they DO
+                      load js/boot-theme.js, which is the one exception (§60)
 css/style.css         Inter + blue/slate palette, light/dark, desktop-first
 js/icons.js           inline Lucide SVGs (generated — see §6)
 js/boot-icons.js      fills static icon placeholders — a file, not inline (§30 CSP)
+js/boot-theme.js      light/dark/system, applied before first paint — first in
+                      <head>, and the ONLY reader of `crmb:theme` (§60)
 js/scope.js           whose data is this — storage scopes (see §11)
 js/db.js              IndexedDB wrapper, one database per scope
 js/csv.js             RFC 4180 CSV reader/writer
@@ -152,10 +160,12 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 498 Node tests + 126 Playwright tests, and the smoke audit at
-**46 passing locally / 51 against production** — the same checks either way,
+**All green:** 498 Node tests + 133 Playwright tests, and the smoke audit at
+**47 passing locally / 52 against production** — the same checks either way,
 with five of them informational on a local file-store HTTP deployment and real
-assertions against a live one (§46). **On Windows some Node tests skip
+assertions against a live one (§46). The local figure is observed; the live one
+is the same run plus that fixed five, and this session cannot reach the
+deployment to see it (§8). **On Windows some Node tests skip
 themselves** and say why — §4's SIGTERM note is one, and `resilience.test.mjs`
 skips whichever of its cases cannot be made to fail on the platform in hand
 (§55). A named platform limit, not a failure; the count is whatever the run
@@ -245,7 +255,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v55`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v56`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -7966,3 +7976,220 @@ stays **46 local / 51 live**.
 
 `footer`'s own `border-top` was removed, because `.band` now supplies the rule
 above it and two adjacent 1px borders read as a 2px one.
+
+
+---
+
+## 60. Dark mode had shipped for years; what was missing was a choice — and an untested path was under AA
+
+Item 1 of [`docs/ROADMAP.md`](docs/ROADMAP.md), and the estimate held for the
+reason it gave: the palette was already tokenised, so this was a *choice*
+rather than a repaint. **18 properties on `:root`, 13 redefined under
+`@media (prefers-color-scheme: dark)`** — the app has followed the OS since
+long before anybody asked for dark mode.
+
+What the roadmap did not predict is the thing that mattered most.
+
+### White on the dark accent was 3.14:1, on the first button a new user presses
+
+`.btn-primary` was `background: var(--accent); color: #fff`. In light the
+accent is `#1570ef` and white clears AA at **4.57:1**. In dark the accent
+becomes a *lighter* blue, `#4692f5`, and white on it measures **3.14:1** —
+under AA's 4.5 for body text, on **Create my CRM**, live for every dark-OS
+visitor since the dark palette shipped.
+
+**`--on-accent` is ink FOR the accent, not the accent itself**, which is the
+distinction that makes it a token rather than a per-site fix: `#ffffff` in
+light, `#06101f` in dark, **6.07:1**. Three sites took a literal `#fff` over
+`var(--accent)` — `.btn-primary`, `.avatar-fallback`, and the checked
+template-card tick — and all three take the token now.
+
+**`--danger`, `--ok` and `--warn` were never redefined in dark at all**, so the
+saturated light values were being rendered on `#0c111d`. Raised to
+**7.84 / 10.13 / 10.09**.
+
+### Why it survived: nothing in the suite had ever driven `colorScheme`
+
+133 Playwright tests and not one of them set it, so the OS-following half —
+shipped, live, years old — had never once been executed by a test. That is the
+whole answer to *"how was this missed"*, and the lesson is §36's arriving
+somewhere new: **an untested code path does not have to be new to be wrong.**
+
+`test.use({ colorScheme: 'light' | 'dark' })` now drives both, following the
+`timezoneId` precedent (§42, §45) and for exactly the same sentence: the
+container renders one way, so a test that does not name the environment passes
+on the bug.
+
+### The pattern is three branches, and each one is load-bearing
+
+```css
+:root { /* light */ }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { … } }
+:root[data-theme="dark"] { … }
+```
+
+The media query with the `:not()` guard follows the OS and is what everybody
+has today. The explicit block is what lets a choice win in the **other**
+direction — dark on a light OS. **Either block alone is a toggle that works one
+way**, which is precisely what `legal.css` had shipped: §57 found it carrying
+the guard and no `[data-theme="dark"]` sibling, so those pages could be forced
+light by an attribute nothing set and could never be forced dark. Half a
+toggle, live. Closed here.
+
+**The two lists must move together, and the duplication is unavoidable.** CSS
+has no mixin and a media query cannot be folded into a selector. The tempting
+alternative — resolve `system` in JS and keep one attribute-keyed block — was
+**rejected**: it makes the palette depend on a script, so the boot read failing
+(it is in try/catch, §3) would render light on a dark OS, turning a currently
+invisible failure into a visible one. It would also give the app and
+`legal.css` two different mechanisms to keep in step, and **`legal.css` cannot
+use JS at all** (§19).
+
+### `js/boot-theme.js`, and why a file in `<head>`
+
+The attribute has to be on `<html>` before the first paint or the page renders
+light and flips. Two facts settled the shape, and both were read rather than
+assumed:
+
+- **`index.html`'s `<head>` contained no script at all.** Every app script is
+  at the end of `<body>`, so `js/scope.js` — which already resolves
+  synchronously at boot (§11) — runs far too late.
+- **CSP is `script-src 'self'`**, so an inline block is refused, and §30
+  rejected CSP hashes outright: *"a hash breaks silently on a whitespace
+  change, and the symptom is icons quietly not appearing."*
+
+So: a file, first in `<head>`. Exactly the `js/boot-icons.js` precedent (§30),
+for exactly the same reason.
+
+**The cold-start cost is real and the default is what absorbs it.** A
+render-blocking script in `<head>` costs a round trip before any paint on a
+first visit. But `system` is the default, and with **no attribute set the CSS
+follows the OS exactly as it did before** — so a user on the default sees no
+flash *even if the script never runs at all*. Only somebody who has explicitly
+chosen against their OS can see one, once, on a cold load. That is what makes
+the §3 invariant survivable here: the failure mode of this file is the old
+behaviour, not a broken one.
+
+**It owns `crmb:theme` and nothing else reads the string.** `crmb:tourSeen` is
+the precedent — a device-level key owned by its module, not by `js/scope.js`.
+`THEME` is a **bare global**, not `window.THEME`: a top-level `const` in a
+classic script is lexical, which §39 records for `DB` and §41 for `Cloud`.
+
+### Device-level, and that is not a style preference
+
+`crmb:theme` sits beside `crmb:auth`, `crmb:user` and `crmb:tourSeen` (§11) and
+is **not** a workspace setting. `settings` syncs **whole** to every role
+including viewers and is owner-only to write (§14, §38), so a theme kept there
+would push one person's preference onto their colleagues' devices and let only
+an owner change it. Identical mechanism to §38's reason the webhook URL cannot
+live in `settings`.
+
+Three values — `light` · `dark` · **`system` (default)**. A two-state toggle
+silently opts every existing user out of the behaviour they have today.
+
+The control is in Settings' **App** card, beside *Install on this device* and
+*Replay the tour* — the card that is already about this device rather than about
+the workspace — and is available to **every role**, because it writes nothing
+to the workspace. §36's reasoning for keeping Export open.
+
+### The tests assert computed colour, never the attribute
+
+An attribute no rule reads **is** the `legal.css` half-toggle bug, and an
+attribute check passes on it. So every assertion reads
+`getComputedStyle(...).backgroundColor`, walks system → light → dark → system
+with a `reload()` after each, and is run at both OS settings.
+
+**All six non-app pages are driven, in both directions, page by page** — the
+whole of `sw.js`'s `STANDALONE_PAGES`. Not one representative: `/privacy`,
+`/terms` and `/guide` share `legal.css`, but `/welcome`, `/docs/manual.html`
+and `/docs/product-tour.html` each carry **their own** token blocks and their
+own `<script>` tag, so each is a separate place the reader can be forgotten and
+a single sample would prove nothing about the other five.
+
+**My own probe hid a real gap, and the test is what found it.** The probe
+forced `data-theme` with `setAttribute` — which proves the CSS responds and
+nothing else. The E2E then failed on `/guide` because **that page loads no app
+JS**, so nothing there read the stored choice. All six carry the reader in
+`<head>` now, and they still render with JS off (§19) — they simply follow the
+OS then, which is the old behaviour again.
+
+Five mutations, each failing by name (§9):
+
+| Mutation | Fails |
+|---|---|
+| drop the app's `[data-theme="dark"]` block | *every choice wins over the OS* — `choice "dark" on a light device rendered rgb(247, 248, 250)` |
+| drop `legal.css`'s new block | *the standalone pages obey the same choice* |
+| remove one page's `<script>` tag | the same test, **naming the page**: `/docs/product-tour.html with "dark" chosen on a light device rendered rgb(255, 255, 255)` |
+| remove `boot-theme.js` from `<head>` | **both** device tests, on timeouts |
+| put the literal `#fff` back on `.btn-primary` | *the primary button label fails AA on a dark device* |
+
+### Three contrast failures left deliberately, and they are light-mode ones
+
+Measured while checking the above, and **not fixed here**:
+
+| Token | Light | Dark |
+|---|---|---|
+| `--text-faint` | **2.58** | **3.38** — fails in *both*, and the dark value is untouched by this work |
+| `--ok` | **4.01** | 10.13 |
+| `--warn` | **3.49** | 10.09 |
+
+All three are used as text directly on `--surface` — checked, so these are
+representative rather than measurement artifacts: `--text-faint` in ~17 places
+(`.nav-empty`, `.stat-tile-sub`, `.recent-meta`, the field hints), and
+`.check-yes` puts `--ok` straight on the surface.
+
+**Not widened into this commit, for a reason rather than for scope.** Raising
+`--text-faint` is a design decision about how quiet a hint may be, across the
+whole app, and `--danger` passes at 4.83 — so this is three specific values and
+not "the status palette is wrong". They are recorded in
+[`docs/ROADMAP.md`](docs/ROADMAP.md) §2, where the axe-core pass will find them
+anyway and where the decision belongs.
+
+### `/js/boot-theme.js` is deliberately NOT in `STANDALONE_ASSETS`
+
+It is a subresource of those six pages, so the §47 rule looks like it applies.
+It does not, and the difference is the one §47 actually turned on: `legal.css`
+and `js/manual-toc.js` are in **neither** `APP_SHELL` nor the precache, so the
+cache-first branch kept them with **nothing able to evict them** — which is how
+`legal.css` shipped stale for an entire cache version. `boot-theme.js` **is**
+precached, so it lives in the `CACHE_VERSION`-keyed cache and a bump drops it
+like every other app asset. Cache-first is correct for it. The reasoning is in
+`sw.js` beside the list, because the next reader will see a standalone-page
+subresource and reach for the list.
+
+### Blast radius
+
+`js/boot-theme.js` is a new served file, so §3's four places had to agree:
+`index.html`, `sw.js` `APP_SHELL`, `tests/smoke.mjs` `ASSETS`, and
+`CACHE_VERSION` → **`crmbuilder-v56`**. `ASSET_DIRS` already allow-lists `js/`,
+so no server change — and **the smoke count moving 46 → 47 is what proves
+that** (§9).
+
+`index.html` also gains the second `<meta name="theme-color">` with
+`media="(prefers-color-scheme: dark)"`, or the PWA title bar stays blue in a
+dark app.
+
+**Full run before it was trusted**, per §9: `CACHE_VERSION`, `sw.js` and a new
+`<head>` script are all shared surface. Node **498**, Playwright **133**, smoke
+**47** locally.
+
+**A trap while editing `js/app.js`, and it is not a CSS one.** A backtick inside
+an HTML comment inside a template literal closes the template string. `node
+--check` reported *"Unexpected identifier"* on a line ~300 away from the edit,
+which is a syntax check pointing at the wrong place — §31's *"a syntax check is
+not a placement check"* in a new costume. The comment now says so in itself.
+
+### Docs walked (§27)
+
+A user can now do something new, so this was a real walk rather than a checked
+omission.
+
+| | Needed |
+|---|---|
+| `USER-GUIDE.md`, `docs/manual.html` | *Light, dark, or whatever your device does* — the three values, where the control is, that it is per-device and not shared with the team |
+| `docs/BETA.md` tester note | one line: the choice exists and is per-device |
+| `README.md` | `js/boot-theme.js` in the file map |
+| `guide.html`, `docs/product-tour.html` | **nothing** — checked. Both already read correctly in dark because both already carried the tokens; a theme control is not a reason to buy a CRM, and padding them to look thorough is its own inaccuracy (§40, §41) |
+| `docs/ONBOARDING.md`, `docs/DEMO-SCRIPT.md` | nothing — neither describes appearance |
+| `privacy.html`, `terms.html` | nothing — a device-level key that never leaves the device is not a processing activity |
+| `docs/API.md` | nothing — no route, no wire shape. §46's check run rather than the route count read |

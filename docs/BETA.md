@@ -1067,6 +1067,11 @@ Settings → **Data you have stopped using** lists what nothing has touched in a
 window you choose. That last one reports only; nothing on that screen deletes
 anything.
 
+**Light or dark is your choice**, in Settings → Appearance: *System* (the
+default, following your phone or computer), *Light* or *Dark*. It is a
+per-device setting — it does not travel to your other devices and it is not
+shared with your team.
+
 **Pass it on if you like.** Anyone can open the site and use it without an
 account. If they want one, signing in with Google shows them a *Ask to join the
 beta* button — we work through those by hand.
