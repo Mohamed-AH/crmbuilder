@@ -528,6 +528,24 @@ can do them. Steps 6 and 10 are commits.
       `node -e "require('dns').promises.resolve('nimbleclerk.com','A').then(console.log)"`
       first — a certificate cannot issue before that answers Render.
 
+      > **Verified and no certificate is a third state, and it announces
+      > itself as a server fault.** Between the two, the browser says
+      > `ERR_SSL_VERSION_OR_CIPHER_MISMATCH` — *"nimbleclerk.com uses an
+      > unsupported protocol"* — which reads as a misconfigured server and is
+      > nothing of the kind: the request reached Render, and Render had no
+      > certificate for that SNI name to answer the handshake with. It is in
+      > fact the good outcome, because a DNS fault fails earlier and
+      > differently.
+      >
+      > Tell the two apart with **plain `http://`**: if Render answers that at
+      > all, routing is right and only issuance is outstanding. And retry the
+      > `https` URL in a **fresh tab** — browsers cache a failed handshake, so
+      > reloading the error page can keep showing it after the certificate
+      > lands.
+      >
+      > Step 3 (the Google redirect URIs) does not depend on the certificate,
+      > so it is the useful thing to do while it issues.
+
    **What is true between here and step 6b, so it does not read as a failure:**
    `nimbleclerk.com` now serves the app, `/` is still the app rather than the
    landing page, and **signing in from the new host lands you back on the old
