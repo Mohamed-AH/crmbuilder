@@ -169,7 +169,9 @@ refund the fee even when it wins the dispute. If it wins, the transaction
 amount comes back; the fee does not.
 
 > **This is the one claim in this document that is not from a primary source.**
-> `paddle.com` is blocked by this session's egress proxy (§8's standing limit),
+> `www.paddle.com` is blocked by this session's egress proxy (§8's standing
+> limit — and see §8 below for the apex-versus-`www` detail that makes an
+> allow-list entry look applied when it is not),
 > so the wording above is from secondary reporting of their help centre.
 > **Read the Master Services Agreement's liability and set-off clauses before
 > signing**, and correct this section from what it actually says. §21's
@@ -422,7 +424,27 @@ Recorded so the gaps read as checked rather than missed.
 
 | | Why |
 |---|---|
-| **Paddle's exact chargeback set-off and fee wording** | `paddle.com` is blocked by this session's egress proxy (§8). Secondary sources only — §3 flags it inline |
+| **Paddle's exact chargeback set-off and fee wording** | `www.paddle.com` unreachable — see the note below. Secondary sources only, and §3 flags it inline |
+| **Whether there is a monthly platform fee** | §2 says 5% + $0.50 with **no monthly fee**, from secondary sources. One other secondary source reports *"platform fees starting at $99/month"*. Unresolved, and it changes the economics of the Solo tier materially |
+| **Their published account-verification requirements** | §7 step 3's blockers are quoted from a search summary of their help centre, not from the page. Re-read it before acting on the list |
+
+> **Why the allow-list entry did not take effect, measured 2026-10-07.**
+> `paddle.com` was added to this session's egress allow-list and answers — with
+> a **301 to `https://www.paddle.com/`** (served by Netlify). Following it gives
+> `CONNECT tunnel failed, response 403`: the `www` host is a **different host**
+> and is not on the list. `developer.paddle.com` is blocked too.
+>
+> That is `CLAUDE.md` §57 / [`LAUNCH-CHECKLIST.md`](LAUNCH-CHECKLIST.md) §1.0's
+> own rule — *apex and `www` are two origins* — arriving somewhere nobody was
+> looking for it, and it is the shape this repository keeps recording: the
+> entry **looks** applied, the apex **answers**, and nothing readable is
+> reachable.
+>
+> **To unblock, add the hosts rather than the brand:** `www.paddle.com` (every
+> help and pricing page), `developer.paddle.com` (the API reference), and
+> `api.paddle.com` + `sandbox-api.paddle.com` if anything here will ever call
+> the API. Then §2, §3 and §5's fee table can be corrected from the source
+> instead of from search summaries.
 | **Payout fee and FX spread into INR** | not published; from the MSA or from their support, and it changes the net rate in §5 |
 | **Whether Paddle's current onboarding accepts an Indian sole proprietorship** | sources say no Indian entity is *required*; none of them is Paddle's own KYC policy |
 | **Softex / STPI applicability** | §4's CA question 3 |
