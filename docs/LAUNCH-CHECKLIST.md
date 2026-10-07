@@ -29,12 +29,17 @@
 > in this repository names the new host yet, by design — see §1.6's note on why
 > that is a sequencing requirement rather than an omission.
 >
-> **The DNS pre-flight is done and clears the way (§1.0c).** No CAA record, so
-> nothing refuses Let's Encrypt; nameservers are Namecheap's own, so the
-> records are editable where you expect and an apex `ALIAS` is available — the
-> one fact that could have forced §1.0 to be re-decided. It also found **live
-> mail forwarding on the domain**, which the DNS step must not take out, and
-> **one unimplemented decision**: nothing anywhere 301s `www` to the apex.
+> **Steps 1 and 2 are done.** Both hosts are on Render and verified, the apex
+> `ALIAS` and the `www` `CNAME` are live on both nameservers, and the mail
+> records survived. The pre-flight that cleared the way is §1.0c: no CAA, so
+> nothing refuses Let's Encrypt; Namecheap's own nameservers, so an apex
+> `ALIAS` was available — the one fact that could have forced §1.0 to be
+> re-decided. It also found **live mail forwarding on the domain**, which the
+> DNS step had to leave alone.
+>
+> **The `www` → apex 301 has a home now: Render's edge**, which is better than
+> the middleware §1.0 would otherwise have needed. §1.7's `curl` is what
+> confirms it, because a badge is not a 301.
 
 Two launches that are not yet done, each of which touches code, configuration
 we do not control, legal text and a dozen documents. They are written together
@@ -434,7 +439,14 @@ can do them. Steps 6 and 10 are commits.
       issue until step 2 has moved the records. A pending state here is the
       normal state, not a fault — which is worth knowing before step 2 rather
       than after, because the obvious reading is that step 1 failed.
-   4. Leave this screen open. Step 2 is entered from it.
+   4. **Do not disable the Render subdomain**, whatever the control on that
+      screen offers. Serving exclusively from the custom domains takes
+      `crmbuilder-v1.onrender.com` down — for every current user, for CI's
+      live smoke run (§1.2), and for the moved-notice page §1.5 needs the old
+      host to serve *after* the switch. It stays enabled through the whole of
+      Part 1 and well past it. It sits directly under the add-domain control,
+      which is the only reason this needs saying.
+   5. Leave this screen open. Step 2 is entered from it.
 
 2. **Namecheap → the domain's host records.** **Two records changed, two
    deleted, and nothing else touched** — §1.0c is the measured list of what is
@@ -545,6 +557,19 @@ can do them. Steps 6 and 10 are commits.
       >
       > Step 3 (the Google redirect URIs) does not depend on the certificate,
       > so it is the useful thing to do while it issues.
+      >
+      > **And `Certificate Error` on a domain Render is redirecting is a
+      > different thing from `Certificate Pending` on the one it serves.**
+      > Observed: the apex pending and `www` errored, at the same moment. Two
+      > causes, wanting opposite responses — an attempt that fired while DNS
+      > was still settling, which Render retries and which resolves itself; or
+      > the redirect swallowing the ACME challenge, because Let's Encrypt
+      > validates by fetching `/.well-known/acme-challenge/…` on `www` and a
+      > host 301ing everything to the apex sends that away. Wait for the apex
+      > to go green, then retry `www`. If it still errors **after** the apex
+      > has a certificate, turn the redirect off, let it issue, turn it back
+      > on — and if that is what it takes, the redirect cannot stay at the
+      > edge and moves into the cutover commit after all.
 
    **What is true between here and step 6b, so it does not read as a failure:**
    `nimbleclerk.com` now serves the app, `/` is still the app rather than the
@@ -553,21 +578,24 @@ can do them. Steps 6 and 10 are commits.
    moved yet (§1.3). Expected, and exactly what steps 3 and 6b close. Do not
    announce the address until step 5.
 
-   > **The `www` 301 has no implementer, and §1.0 decided it without assigning
-   > one.** Both entries point at the same service, so after this step Render
-   > serves the app on **both** hosts and nothing redirects — which is §1.1's
-   > first row exactly: two origins, two IndexedDB stores, two session cookies,
-   > and a user who reaches each on different days has two empty workspaces.
+   > **The `www` 301 had no implementer — §1.0 decided it and assigned it to
+   > nobody — and Render turned out to be the answer.** Left alone, both
+   > entries point at the same service, Render serves the app on **both**
+   > hosts and nothing redirects, which is §1.1's first row exactly: two
+   > origins, two IndexedDB stores, two session cookies, and a user who
+   > reaches each on different days has two empty workspaces.
    >
-   > Two places it can live, and **check Render first**, because a redirect at
-   > the edge never reaches the app and so cannot be broken by a deploy: if the
-   > custom-domain screen offers a redirect-to-another-domain option for the
-   > `www` entry, use it and nothing in this repository changes. I cannot
-   > confirm from here whether it does (§8), which is why this is "check"
-   > rather than "do".
+   > **Render's custom-domain screen does offer a redirect-to-another-domain
+   > option**, and the `www` entry carries a *"redirects to nimbleclerk.com"*
+   > badge once it is set. That is the better of the two homes: an edge
+   > redirect never reaches the app, so no deploy can break it, and nothing in
+   > this repository changes. **Confirm it with a real request** (§1.7's
+   > `curl`) rather than trusting the badge — a label is not a 301.
    >
-   > Otherwise it is four lines in `server.js`, and it belongs in **step 6's
-   > commit** rather than here — `app.use` early, `301` to
+   > **The fallback, if the edge redirect cannot be made to work** — see the
+   > certificate note in step 1.3 for the one way that happens — is four lines
+   > in `server.js`, belonging to **step 6's commit** rather than here:
+   > `app.use` early, `301` to
    > `` `https://nimbleclerk.com${req.originalUrl}` `` when
    > `req.headers.host` starts `www.`. **Reading `req.headers.host` is safe for
    > this and only this**: the destination is a hardcoded constant and the
@@ -594,9 +622,10 @@ can do them. Steps 6 and 10 are commits.
      57 E2E navigations, the smoke test;
    - **the invite/beta link fix and the `/` forward** (§1.0b) — without it
      every invite link is silently dead;
-   - **the `www` → apex 301**, unless Render is doing it at the edge (step 2's
-     note) — without it §1.0's canonical-host decision is unimplemented and
-     §1.1's two-origin failure is live;
+   - **the `www` → apex 301 — only if Render's edge redirect did not hold**
+     (step 2's note; it is set, and §1.7's `curl` is what confirms it).
+     Without it somewhere, §1.0's canonical-host decision is unimplemented
+     and §1.1's two-origin failure is live;
    - `og:image` absolute in `welcome.html`;
    - the workflow fallback, and the live URLs in `CLAUDE.md` /
      `DEPLOYMENT.md` / `docs/BETA.md` / the smoke example.
