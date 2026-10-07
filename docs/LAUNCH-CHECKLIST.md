@@ -107,6 +107,40 @@ So, at the switch:
 **Decide before you announce**, because the announcement names the URL people
 will type.
 
+### The swap silently breaks invite and beta links, and nothing would say so
+
+Not in the file list above, and the worst kind of miss: it is the §36 shape —
+a defect that renders as *nothing happening*.
+
+`server.js` builds both link types from `APP_URL` **at the root**:
+
+```js
+url: `${APP_URL}/?invite=${invite.code}`      // POST /api/org/invites
+url: `${APP_URL}/?beta=${entry.code}`         // the beta-code mint
+```
+
+and the codes are captured by `captureInvite()` / `captureBetaCode()` in
+`js/app.js`, which read `location.search` and store the code before stripping it
+from the address bar (§13, §16). **`welcome.html` loads no app JS** (§58) — only
+`js/boot-theme.js`. So the moment `/` is the splash, an invite link lands on a
+page that cannot see the code: nothing is stored, nothing is stripped, and the
+colleague who clicked it gets a landing page and no team. The owner has no way
+to tell, because sending the link is the last thing they do.
+
+Two halves, and the second is what makes it safe for links already sent:
+
+1. **Generate them at `/app`** — `${APP_URL}/app?invite=…`, same for `?beta=`.
+2. **`/` forwards those two parameters to `/app`**, preserving the query, so
+   every link already in somebody's inbox keeps working. Do it as a **302 in
+   `server.js`**, not in the page: `welcome.html` has no JS to do it with, and
+   giving it some would undo the reason it is a standalone page at all (§58).
+
+The same reasoning as `/welcome` surviving as an alias — anything already sent
+out keeps working — applied to the thing people were sent rather than the page.
+
+Covered by a test that asserts the *stored* code rather than the redirect, per
+§54's lesson that asserting the symptom passes on the bug.
+
 ### This commit cannot be pushed early, and that is a hard constraint
 
 `render.yaml` carries `autoDeploy: true`, and §46 records the live smoke
@@ -202,7 +236,38 @@ Open each of these and look. Do not infer them from this table.
 | Google Cloud Console | **Authorised redirect URI** → `https://nimbleclerk.com/auth/google/callback` | Sign-in is dead without it. Add the new one **before** the switch; both can be listed at once. Add the `www` form too if `www` is the canonical host (§1.0) |
 | Google Cloud Console | **OAuth consent screen**: privacy policy and terms URLs | These point at `/privacy` and `/terms` on the old host. §19: an unpublished consent screen means adding every tester by hand |
 | Render | custom domain `nimbleclerk.com` (+ `www`) and TLS certificate | Certificate issuance is not instant; do it before, not during |
-| Render | env vars — check nothing carries a host | `REMINDER_HEALTHCHECK_URL` and `FEEDBACK_WEBHOOK_URL` are third-party and unaffected |
+| Render | **`APP_URL` — and it is the one that breaks sign-in** | See below. This row used to read *"env vars — check nothing carries a host"*, which understated the single most breaking variable on the list |
+| Render | the other env vars | `REMINDER_HEALTHCHECK_URL` and `FEEDBACK_WEBHOOK_URL` are third-party and unaffected. Checked, so it is not left as an open question |
+
+> **`APP_URL` is not a display string.** It is read once at boot
+> (`server.js:28`) and drives, in rough order of how badly each fails:
+>
+> | What it builds | What a stale value does |
+> |---|---|
+> | the OAuth **`redirect_uri`**, in both the auth request and the token exchange | sign-in sends people to the **old host** after they authenticate. The single thing that fails completely |
+> | invite links (`/?invite=`) and beta-code links (`/?beta=`) | an owner copies a link naming a host that is being wound down |
+> | the approval message — *"open \<APP_URL\> and sign in"* | the same, to somebody who has never used the product |
+> | the daily digest's tail link (§39) | every digest points at the old host |
+> | `POST /api/admin/alerts/test`'s message | cosmetic |
+>
+> **The ordering is forced, and it is the one place in Part 1 where getting it
+> wrong takes sign-in down rather than degrading something.** The `redirect_uri`
+> Google receives must exactly match one registered in the console:
+>
+> - `APP_URL` updated **before** the new redirect URI is registered →
+>   `redirect_uri_mismatch`, nobody can sign in.
+> - DNS moved but `APP_URL` **not** updated → people land back on the old host
+>   after authenticating, which looks like the move failed.
+>
+> So: **register the new redirect URI first (§1.6 step 3, both hosts listed at
+> once), and move `APP_URL` in the same window as DNS.** Both-listed is what
+> makes it non-breaking in either direction while the change propagates.
+>
+> `server.js:3374` already carries the related rule and it is worth not
+> undoing: the invite URL is built from `APP_URL` **and not from a request
+> header**, because a `Host` header is attacker-controlled (§61 R1 is the same
+> lesson one layer down). Reaching for `req.headers.host` to make this
+> self-configuring is the obvious bad fix.
 | UptimeRobot | the keep-warm monitor — **and confirm it is on `/health`, not `/healthz`** | §40 in full. Moving the monitor is the moment to re-check which path it hits, because only `/health` runs the alert rules and the digest |
 | healthchecks.io | nothing to change (it receives pings, it does not call us) | Recorded so it is not "checked" pointlessly |
 | Private repo `Mohamed-AH/crmback` | the `BACKUP_URL` secret | **The nightly backup silently stops** otherwise. §17: a job with bad configuration can report success while producing nothing |
@@ -298,11 +363,18 @@ can do them. Steps 6 and 10 are commits.
 
 ### The switch
 
-6. **The cutover commit**, which is the `/` → `/app` swap plus every string
-   that names the host: the workflow fallback, `og:image` absolute, the live
-   URLs in `CLAUDE.md` / `DEPLOYMENT.md` / `docs/BETA.md`, the smoke example.
-   One commit, pushed when DNS has propagated — see §1.0b on why it cannot go
-   earlier.
+6. **The cutover commit**, pushed when DNS has propagated — see §1.0b on why it
+   cannot go earlier. Contents:
+   - the `/` → `/app` swap: server route, `manifest.webmanifest`, `sw.js`,
+     57 E2E navigations, the smoke test;
+   - **the invite/beta link fix and the `/` forward** (§1.0b) — without it
+     every invite link is silently dead;
+   - `og:image` absolute in `welcome.html`;
+   - the workflow fallback, and the live URLs in `CLAUDE.md` /
+     `DEPLOYMENT.md` / `docs/BETA.md` / the smoke example.
+6b. **Set `APP_URL` on Render to `https://nimbleclerk.com`** — same window, and
+    only after step 3 registered the new redirect URI. §1.3: this is the one
+    that takes sign-in down rather than degrading something.
 7. Set the `LIVE_URL` repo variable to `https://nimbleclerk.com` — **this
    window, not before** (§1.2's correction). It is the reversible half: delete
    the variable and CI falls back to the committed value.
@@ -356,6 +428,11 @@ Then, by hand, because none of it is greppable:
 
 - Sign in with Google on `nimbleclerk.com` — the redirect URI is the one thing
   that fails completely and silently in configuration rather than in code.
+- **Mint an invite and open the link in a fresh profile**, and confirm the
+  joiner actually lands in the team. §1.0b: the swap breaks this in a way that
+  renders as a landing page and nothing else, and it is the one check here that
+  a stale `APP_URL` *and* a missing `/` forward both fail.
+- **Mint a beta code and open its link**, same reason, different capture path.
 - The non-canonical host redirects to the canonical one (§1.0), including on a
   deep link such as `/guide`.
 - `https://nimbleclerk.com/privacy` and `/terms` render (the consent-screen
