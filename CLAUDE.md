@@ -131,6 +131,10 @@ never change, because everything cross-references them.
 | Only one URL may become the cached shell, and why a list could not say so | §63 · §47 |
 | A state cookie is per-origin, so a stale `APP_URL` breaks sign-in rather than misrouting it | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.3 · §63 |
 | **A trailing slash made the live-smoke wait a no-op** — and a repo variable outlived the default it overrides | §63 · §46 · §40 |
+| **Taking payment** — the rail, the price, the chargeback plan, India tax | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) · §64 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2 |
+| Why Stripe cannot collect for an Indian seller, and what an MoR sidesteps | §64 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §1 |
+| What an MoR protects you from, and the half it does not | §64 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §3 |
+| Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
 
 ---
 
@@ -8894,3 +8898,140 @@ passes 49/49 after the fix and fails before it.
 general trap.** The wait loop tolerated nothing and reported absence; the smoke
 tolerated one slash and reported ill health. Neither reported a bad URL, which
 is what it was.
+
+
+---
+
+## 64. Taking payment: the rail is decided by a regulation, not by a preference
+
+Asked for a payment plan — chargeback protection, UK/EU customers, an Indian
+seller, and a proposed **$29 per seat per month**. Research only; no code, and
+nothing scheduled. The plan is [`docs/PAYMENTS.md`](docs/PAYMENTS.md) and this
+section is the findings, because three of them change assumptions that were
+already written down here.
+
+### Stripe cannot be the collection rail, and that decides the architecture
+
+**Stripe India holds a domestic payment-aggregator licence (January 2024) and
+does NOT hold PA-CB authorisation.** RBI's *Regulation of Payment Aggregator –
+Cross Border* circular (31 October 2023) brought cross-border collection under
+direct authorisation and a domestic PA **may not handle inward foreign
+remittance at all**. Razorpay, Cashfree and Xflow are among the ~19 authorised;
+Stripe is not, which is also why Indian Stripe signups went invite-only.
+
+So the choice is a PA-CB-E aggregator, or **not making a cross-border
+collection in the first place** — which is what a merchant of record is. Under
+an MoR we sell to one UK company and it pays us by bank transfer: one foreign
+customer, one export invoice per payout, and the framework never engages.
+
+**The VAT half is what makes it one-sided rather than merely easier**, and the
+numbers are not the ones usually quoted: **there is no UK registration
+threshold for a non-established business** (the £90,000 figure is for
+UK-established ones; HMRC excludes NETPs explicitly), and the EU's €10,000
+distance-selling threshold is likewise for EU-established sellers — a non-EU
+seller registers for **non-Union OSS from the first euro**. Selling direct
+means two foreign VAT registrations and quarterly filings before the first
+£1,000 of revenue.
+
+### "Chargeback protection" is two different things and only one is real
+
+What an MoR genuinely buys is that **you hold no merchant account, so your MID
+cannot be terminated and you cannot be MATCH-listed.** That is worth a lot
+right now: **Visa VAMP's excessive threshold dropped from 2.2% to 1.5% on 1
+April 2026** across US, Canada, EU and APAC, at **$8 per disputed item with no
+warning tier**; Mastercard ECM triggers at 1.5% plus 100 chargebacks in a
+month.
+
+What it does **not** buy is the cash: reporting is consistent that Paddle
+deducts the disputed amount **plus a ~£20 fee** from the seller's balance and
+keeps the fee even when it wins. **That claim is unverified from a primary
+source** — `paddle.com` is blocked by this session's egress proxy (§8) — and it
+is flagged as such in the document rather than smoothed over, with the MSA
+named as the thing to read. §21's treatment.
+
+And **3DS shifts liability only for fraud-coded disputes.** The ones this
+product will actually get — *not as described*, *subscription cancelled*, *I
+don't recognise this charge* — are a product and billing-design problem.
+`PAYMENTS.md` §3 ranks the five levers that are ours, and the first is annual
+invoicing, because **a bank transfer has no chargeback mechanism at all**.
+
+### Per-seat was rejected for a reason that is in this file already
+
+The proposal was per-seat, and three facts argued against it:
+
+- **`MARKETING.md` promises *"No per-seat pricing"* in bold** and opens by
+  attacking other CRMs for being *"rented back to you at $25 per seat per
+  month"*. §48 put the check for that at publish time in the checklist rather
+  than on §27's walk list, and this is the first time that gate has been
+  reached — it worked.
+- **The architecture has no seat concept.** A workspace is org-owned and every
+  member sees every module (§5, §14); there is no metering and §17 records that
+  *"nothing is enforced"* deliberately. Per-seat means seat counting, an
+  invite-blocked-at-limit screen that explains itself (§36), and a downgrade
+  path. **Per-workspace needs one check at invite time.**
+- At $29 it would have sat between Capsule's and Pipedrive's *mid* tiers while
+  §2's *Not built yet* list is integrations, email sending, per-module
+  permissions, undo, and a mobile app.
+
+Decided: **per-workspace tiers, GBP primary.** The prices in `PAYMENTS.md` §5
+are a starting point sized against a measured comparison table, explicitly not
+a decision.
+
+**`DEFAULT_SETTINGS.currency` is a different thing and must not be conflated.**
+§42 recorded `'USD'` as wrong for this market and deliberately left it: that is
+the *workspace's* display currency for its own records, and §23 is why changing
+it is not free. What we bill in is unrelated.
+
+### The engineering constraints exist before the code, which is the point
+
+`PAYMENTS.md` §6, and they are all restatements of rules this file already
+carries, which is why they were cheap to write and would have been expensive to
+discover:
+
+- **The API key is env-only.** §17's *NEVER PUT A CREDENTIAL IN `platform`* has
+  teeth here. It is also **not** a `settings` field and **not** a meta-doc
+  sibling — §38 and §52 both record why a credential cannot live where sync can
+  reach it, and this one has no per-tenant variation at all, so it has no
+  business being stored anywhere.
+- **The inbound webhook is §30 Phase 4 from scratch.** `lib/safe-fetch.js`
+  guards *outbound* and does nothing for a request arriving at us (§38, and §57
+  makes the same point for inbound mail). Own body limit, own rate-limit
+  bucket, **signature verification** — the sender carries no session — and
+  §61 R2's ordering: authenticate, authorize, *then* meter.
+- **Non-payment must never reach `deleteAccount()`** (§15, §24 stage B), and
+  **export stays open on suspension** (§36). A customer who stops paying and
+  cannot get their data out is both the worst version of this product and the
+  fastest route to a dispute.
+- **The MoR must be replaceable in a week.** The FTC fined Paddle **$5 million
+  in June 2025** for facilitating deceptive tech-support schemes — inadequate
+  KYC, and using Ethoca/Verifi to refund flagged transactions before they
+  became reportable chargebacks, which *masked the real fraud rate*. That is
+  not a reason to avoid them; it is the reason the integration must be thin.
+
+### Why a document and not an answer in the conversation
+
+§48's correction and §57's precedent: the question to ask is *when* a thing can
+hurt you, and put the check there. A payment plan's moment is when somebody
+decides to charge, so it sits beside the checklist, is routed from
+`docs/README.md`, and **404s in production by construction** — measured, not
+assumed: `/docs/PAYMENTS.md` answers 404 on a real server while
+`/docs/manual.html` and `/docs/product-tour.html` still answer 200 (§28's
+`PUBLIC_DOCS` is those two and nothing else). That is what lets it say plainly
+what it does not know.
+
+Its §8 is that list, and the last entry is §40's rule arriving at the largest
+such mechanism this deployment could ever have: **a payment provider's
+dashboard, webhook endpoint, dunning schedule and tax settings all live in
+somebody else's account**, so whatever monitoring is built for it has to be
+checked against the provider's own screens rather than against the code.
+
+### Blast radius
+
+**None.** No code, no served file, no route, no wire change — `CACHE_VERSION`
+stays `crmbuilder-v57` and smoke stays 49 local / 54 live, checked rather than
+assumed (§41's rule for a docs-only change). `docs/API.md` needed nothing: no
+route and no response shape moved, which is the check §46 and §54 both say to
+run instead of reading the route count. §27's user-facing documents needed
+nothing — no capability changed, and the twelve files whose text goes false
+when we *do* charge are already enumerated in the checklist's §2.1 rather than
+edited now.

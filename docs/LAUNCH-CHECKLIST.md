@@ -797,6 +797,28 @@ Then, by hand, because none of it is greppable:
 
 # Part 2 — introducing pricing
 
+> **The rail, the price and the chargeback plan live in
+> [`PAYMENTS.md`](PAYMENTS.md)**, researched after this part was written. The
+> split is deliberate and worth keeping: **Part 2 is what charging *breaks*** —
+> twelve files of live text, `TERMS_VERSION`, the privacy roster, and the six
+> product decisions in §2.4. **`PAYMENTS.md` is what charging *needs*** — a
+> payment rail that works from India, a tax position, and a number.
+>
+> Two of its findings change this part's assumptions rather than adding to
+> them, so they are stated here:
+>
+> - **Stripe cannot be the collection rail.** Stripe India holds a domestic
+>   payment-aggregator licence and **not** PA-CB authorisation, and under RBI's
+>   cross-border circular a domestic PA may not handle inward foreign
+>   remittance at all. The recommendation is a **merchant of record**, which
+>   sidesteps the framework entirely — and which also means §2.3's new
+>   processor is the MoR, and the UK/EU VAT registrations §2's first draft
+>   assumed we would need are **theirs, not ours**.
+> - **Per-seat pricing is rejected**, so §2.1's `MARKETING.md` problem is
+>   smaller than it looks: the *"no per-seat pricing"* promise survives, and
+>   only the *"free / $0/month"* half has to be rewritten. The owner has chosen
+>   **per-workspace tiers, priced in GBP**.
+
 ## 2.1 The claims that become false the moment you charge
 
 Every one of these is live text, found by grep. This is the list that makes the
