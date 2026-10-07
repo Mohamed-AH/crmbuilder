@@ -479,6 +479,31 @@ can do them. Steps 6 and 10 are commits.
    7. Save, then scroll and confirm the `eforward1`–`5` `MX` rows are still
       listed. §1.0c: nothing in the product can see mail forwarding break.
 
+   8. **Check the result against the zone's own nameservers, not a public
+      resolver**, and this is the step that cost time here. Resolve the `NS`
+      names to addresses and query those; a true authoritative answer carries
+      the record's configured TTL, a cached one carries whatever is left of it:
+
+      ```sh
+      node -e "const d=require('dns').promises;(async()=>{for(const h of
+        ['dns1.registrar-servers.com','dns2.registrar-servers.com']){
+        const [ip]=await d.resolve4(h);const {Resolver}=require('dns').promises;
+        const r=new Resolver();r.setServers([ip]);
+        console.log(h,JSON.stringify(await r.resolve4('nimbleclerk.com',{ttl:true})))}})()"
+      ```
+
+      > **A resolver I had labelled authoritative was not, and it lied in both
+      > directions within three minutes.** One run had the public resolvers on
+      > the old parking address and the "authoritative" one on Render; the next
+      > had them exactly reversed. Neither was propagation — both were caches,
+      > and the TTL was the tell: `300` is the record as configured, `1054` is
+      > a 30-minute parking record partway through expiring. Reading the second
+      > as the zone's answer produced a confident, wrong conclusion that the
+      > apex had not moved, and sent the operator back to the panel to fix
+      > something that was already right. §9's rule with the measurement itself
+      > as the defect: *measure rather than assert* only helps if you know what
+      > the instrument is reporting.
+
       > **Decline the obvious shortcut, which only becomes visible here.** A
       > `URL Redirect Record` on `www` → `https://nimbleclerk.com` looks like
       > the `www` 301 solved with no code and no Render feature. It is not:
@@ -486,6 +511,18 @@ can do them. Steps 6 and 10 are commits.
       > typing `https://www.…` gets a browser warning instead of a redirect —
       > which is step 1.1's reason for adding `www` to Render in the first
       > place, arrived at from the other end.
+
+      > **An `ALIAS` and a leftover `URL Redirect Record` can both sit on `@`,
+      > and the `ALIAS` wins.** Observed: Namecheap's panel refused to delete
+      > the redirect — *"Failed to retrieve the record!"* — while the zone it
+      > was serving had already moved to Render on both nameservers. The panel
+      > error is not the zone, so **check the zone before acting on the error**.
+      > Clear the stray record anyway when it will let you (the row checkbox
+      > and the bulk action, rather than the per-row bin that failed); two
+      > entries claiming the apex is an ambiguity on their side rather than a
+      > state to rely on. Do not reach for the *DNS Templates* control to force
+      > it — that rewrites the whole zone, including the records §1.0c says
+      > must survive.
    7. Then **go back to step 1's screen and wait for the certificate.** Minutes
       to an hour. Verify with
       `node -e "require('dns').promises.resolve('nimbleclerk.com','A').then(console.log)"`
