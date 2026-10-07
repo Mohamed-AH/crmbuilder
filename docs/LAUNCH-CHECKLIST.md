@@ -193,7 +193,8 @@ node -e "const d=require('dns').promises;(async()=>{for(const t of ['NS','CAA','
 | | Answer, 2026-10-07 | What it means |
 |---|---|---|
 | **NS** | `dns1` / `dns2.registrar-servers.com` | Namecheap BasicDNS. The records are editable in the Namecheap dashboard, and BasicDNS does `ALIAS` — so **§1.0's apex decision stands and step 2 has no blocker.** That was the one fact that would have forced reconsidering it |
-| **CAA** | `ENODATA` — none | Nothing refuses Let's Encrypt, so step 1's certificate has no obstacle. Worth knowing the failure mode anyway: adding a CAA later that omits Let's Encrypt stops the **renewal**, months after anyone connects the two |
+| **CAA** | `ENODATA` — none, on apex and `www` both | Nothing refuses Let's Encrypt, so step 1's certificate has no obstacle. Worth knowing the failure mode anyway: adding a CAA later that omits Let's Encrypt stops the **renewal**, months after anyone connects the two |
+| **AAAA** | none, on either host | Render's add-domain screen warns about AAAA and CAA specifically. Neither applies here — checked rather than assumed, because the warning reads as something to act on |
 | **A** (apex) | `192.64.119.158` | Namecheap parking. One of the two records that change |
 | **CNAME** `www` | `parkingpage.namecheap.com` | The other. Parking, and it has to go |
 | **MX** | `eforward1`–`eforward5.registrar-servers.com` | **Email forwarding is live on this domain.** See below |
@@ -413,6 +414,19 @@ can do them. Steps 6 and 10 are commits.
       the service hostname. **Copy both out of that screen**; this document
       deliberately does not state Render's apex IP, because it changes and a
       stale one here is a day of looking in the wrong place.
+
+      > **Do not resolve the service hostname and use what comes back.** That
+      > is the obvious clever move and it is wrong: `crmbuilder-v1.onrender.com`
+      > answers per-service load-balancer addresses which Render reshuffles,
+      > while the apex `A` target on the screen is a stable one. Measured on
+      > the day: they differed by the last octet, which is exactly close
+      > enough to look like a transcription slip rather than two different
+      > things.
+      >
+      > And **`@` cannot take a literal `CNAME`**, however the screen phrases
+      > it — the spec forbids one at a zone apex, which is what Render's
+      > ANAME/ALIAS/A footnote is about. Namecheap does `ALIAS` (§1.0c), so
+      > the good option is available and the `A` fallback pins an IP.
    3. **Expect both to show as unverified, and expect no certificate yet.**
       Render proves ownership by resolving the name to itself, so nothing can
       issue until step 2 has moved the records. A pending state here is the
