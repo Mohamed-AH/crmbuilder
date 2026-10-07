@@ -102,7 +102,10 @@ revenue. That is the thing 5% buys.
 
 ## 2. The recommendation: Paddle as Merchant of Record
 
-**5% + $0.50 per transaction**, no monthly fee, falling to 4% + $0.50 above
+**5% + $0.50 per transaction**, no monthly fee *(secondary sources — and one
+reports a platform fee from $99/month, which §8 records as unresolved because
+`/pricing` is client-rendered and cannot be read; confirm before relying on
+§5's net-rate table)*, falling to 4% + $0.50 above
 $100k/month and 3% + $0.50 above $1M/month. No Indian entity required; payout
 to an Indian business by bank transfer or Wise.
 
@@ -156,30 +159,83 @@ That is the protection worth having, and the thresholds say why:
 | **Mastercard HECM** | 3%+ and 300+ chargebacks |
 
 A one-person Indian merchant selling to UK/EU consumers is directly exposed to
-that. Under an MoR, it is Paddle's ratio and Paddle's problem.
+that. ~~Under an MoR, it is Paddle's ratio and Paddle's problem.~~
 
-Paddle also runs the dispute defence automatically, and **bears fraud
-liability**.
+> **That last sentence was WRONG, and the primary source is what showed it.**
+> Paddle keeps a **per-seller chargeback rate** and enforces it at a threshold
+> **tighter than either card network's**, measured by **value** rather than by
+> count:
+>
+> > *"Acceptable Chargeback Rate: Below 0.65% of transaction volume."* …
+> > *"Paddle calculates chargeback rates by comparing the total dollar value of
+> > chargebacks received against your total transaction volume for a given
+> > month."* … *"If your chargeback rate exceeds 0.65%, Paddle may require
+> > changes to your processes to bring the rate down."*
+>
+> So **0.65% by value**, against VAMP's and ECM's 1.5%. And —
+> *"Even if a dispute is won, it still counts towards your chargeback rate."*
+> The dispute defence protects the money, never the ratio.
+>
+> **What survives, stated precisely**, because it is still worth having: there
+> is no merchant account of ours to terminate, no MATCH listing, and no scheme
+> fine billed to us. What does *not* survive is the idea that the ratio stops
+> being our problem. It is measured, it is stricter, and the consequence is a
+> risk review rather than a termination.
+>
+> **And because it is measured by value, the threshold behaves backwards at
+> the volumes we will actually start at.** One disputed Team subscription at
+> £49 stays under 0.65% only above **£7,538** of monthly volume; one Business
+> subscription at £99 needs **£15,231**. Below that, **a single dispute
+> breaches the threshold on its own** — and winning it does not help, because
+> won disputes still count. So for the first several months the rate is not a
+> ratio to manage, it is a **binary**: one dispute and you are in
+> conversation with their Risk Team.
+>
+> That is the strongest argument in this document for §3's levers, and
+> especially for annual invoicing: it is not about shaving a percentage, it is
+> about keeping the count at zero while the denominator is too small to
+> absorb anything.
+
+Paddle runs the dispute defence automatically and **bears fraud liability** —
+and that automation is a constraint as much as a convenience:
+
+> *"The system is fully automated, and additional evidence submitted by sellers
+> is not required or accepted."*
+
+**So you cannot fight a dispute yourself even holding the evidence that would
+win it** — sync logs showing the customer used the workspace for a month, say.
+Every lever in this section is therefore **preventive**; there is no appeal
+stage to be good at.
+
+A second dispute (pre-arbitration) is **not contested at all** and is treated
+as a standard chargeback.
 
 ### What is not real, and must be planned around
 
-Reporting is consistent that **Paddle deducts the disputed transaction amount
-plus a chargeback fee (~$20 / £20 / €20) from your balance**, and does not
-refund the fee even when it wins the dispute. If it wins, the transaction
-amount comes back; the fee does not.
+**Confirmed from the source, 2026-10-07** — this was the document's flagged
+unverified claim and the secondary reporting was accurate word for word:
 
-> **This is the one claim in this document that is not from a primary source.**
-> `www.paddle.com` is blocked by this session's egress proxy (§8's standing
-> limit — and see §8 below for the apex-versus-`www` detail that makes an
-> allow-list entry look applied when it is not),
-> so the wording above is from secondary reporting of their help centre.
-> **Read the Master Services Agreement's liability and set-off clauses before
-> signing**, and correct this section from what it actually says. §21's
-> treatment: a claim from outside gets checked against the source, not
-> accepted.
+> *"Paddle deducts both the transaction amount and the fee from your seller
+> balance."* … *"If Paddle wins the chargeback dispute: we return the recovered
+> transaction amount to your seller balance, but the chargeback fee is not
+> refunded."* … *"The chargeback fee is 20 USD/GBP/EUR or 40 CAD/AUD."*
+
+So **£20 a dispute, kept whether they win or lose**, plus the transaction
+amount while the case runs.
+
+**And one more cost path, which is the FTC's finding as documented behaviour.**
+Paddle buys pre-chargeback alerts (~48 hours' notice) and *"issue[s] a full
+refund to the buyer before the chargeback is finalised"* — and *"a chargeback
+fee is still applied to cover the cost of the alert."* So a disputed sale can
+cost the full amount **plus £20** and **never appear as a chargeback at all**.
+§2 records the FTC fining them $5M partly for using exactly this mechanism to
+mask fraud rates; it is current, documented, and the practical consequence for
+us is that the refund figure and the dispute figure measure different things
+and neither alone tells you how much a bad month cost.
 
 **So budget as if you bear the cash cost of every dispute.** What you are
-buying is that disputes cannot end your ability to take payment at all.
+buying is that disputes cannot end your ability to take payment at all — not
+that they stop being counted against you.
 
 ### The liability shift that is yours to earn
 
@@ -424,27 +480,30 @@ Recorded so the gaps read as checked rather than missed.
 
 | | Why |
 |---|---|
-| **Paddle's exact chargeback set-off and fee wording** | `www.paddle.com` unreachable — see the note below. Secondary sources only, and §3 flags it inline |
-| **Whether there is a monthly platform fee** | §2 says 5% + $0.50 with **no monthly fee**, from secondary sources. One other secondary source reports *"platform fees starting at $99/month"*. Unresolved, and it changes the economics of the Solo tier materially |
-| **Their published account-verification requirements** | §7 step 3's blockers are quoted from a search summary of their help centre, not from the page. Re-read it before acting on the list |
+| ~~**Paddle's exact chargeback set-off and fee wording**~~ | **RESOLVED 2026-10-07** from their help centre, and the secondary reporting was right word for word. §3 carries the quotes, and the read turned up four things nobody had reported: the 0.65%-by-value rate, that won disputes still count, that sellers may not submit evidence, and the pre-chargeback refund path |
+| **Whether there is a monthly platform fee** | **still open, and not for an access reason.** §2 says 5% + $0.50 with **no monthly fee** from secondary sources; another reports *"platform fees starting at $99/month"*. `/pricing` is **client-rendered** — 7.5 KB of text, all navigation, no figures in the HTML — so it cannot be read this way. It changes the Solo tier's economics materially: $99/month against £19/month of revenue is not a rounding error. Read it in the dashboard or the MSA |
+| **Their published account-verification requirements** | **still open**, same cause: `/help/start/account-verification` is client-rendered too (4.7 KB, navigation only). §7 step 3's blockers are from a search summary of that page, not the page. The *shape* is corroborated by `nimbleclerk.com` having no pricing page and no refund policy either way |
+| **Payout fee and FX spread into INR** | no help-centre page found for fees or payouts under the paths that do render; from the MSA or their support |
 
-> **Why the allow-list entry did not take effect, measured 2026-10-07.**
-> `paddle.com` was added to this session's egress allow-list and answers — with
-> a **301 to `https://www.paddle.com/`** (served by Netlify). Following it gives
-> `CONNECT tunnel failed, response 403`: the `www` host is a **different host**
-> and is not on the list. `developer.paddle.com` is blocked too.
+> **A note on why half of this is still unknown with the site reachable.**
+> `www.paddle.com` is allow-listed now and answers 200. The **help centre
+> renders server-side** — which is how §3's quotes were read, 1.1 MB of real
+> content. The **marketing and onboarding pages do not**: `/pricing` and
+> `/help/start/account-verification` return ~1.1 MB of HTML containing ~5–7 KB
+> of text, all of it navigation. So the remaining gaps are a rendering
+> property of their site, not a permission we are missing, and no further
+> allow-list entry fixes them.
 >
-> That is `CLAUDE.md` §57 / [`LAUNCH-CHECKLIST.md`](LAUNCH-CHECKLIST.md) §1.0's
-> own rule — *apex and `www` are two origins* — arriving somewhere nobody was
-> looking for it, and it is the shape this repository keeps recording: the
-> entry **looks** applied, the apex **answers**, and nothing readable is
-> reachable.
->
-> **To unblock, add the hosts rather than the brand:** `www.paddle.com` (every
-> help and pricing page), `developer.paddle.com` (the API reference), and
-> `api.paddle.com` + `sandbox-api.paddle.com` if anything here will ever call
-> the API. Then §2, §3 and §5's fee table can be corrected from the source
-> instead of from search summaries.
+> **Getting there first cost one detour worth recording**, because it is this
+> repository's own rule arriving from outside: `paddle.com` was added and
+> answered — with a **301 to `www.paddle.com`**, which was a *different host*
+> and not on the list, giving `CONNECT tunnel failed, response 403` one hop
+> later. `CLAUDE.md` §57 and
+> [`LAUNCH-CHECKLIST.md`](LAUNCH-CHECKLIST.md) §1.0 both state that **apex and
+> `www` are two origins**; an allow-list is a third place that is true, and the
+> failure looked like the entry had been applied because the apex *did* answer.
+> **Add hosts, not brands** — and `developer.paddle.com`, `api.paddle.com` and
+> `sandbox-api.paddle.com` are each separate again.
 | **Payout fee and FX spread into INR** | not published; from the MSA or from their support, and it changes the net rate in §5 |
 | **Whether Paddle's current onboarding accepts an Indian sole proprietorship** | sources say no Indian entity is *required*; none of them is Paddle's own KYC policy |
 | **Softex / STPI applicability** | §4's CA question 3 |
