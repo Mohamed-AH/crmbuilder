@@ -304,7 +304,7 @@ Open each of these and look. Do not infer them from this table.
 >
 > | What it builds | What a stale value does |
 > |---|---|
-> | the OAuth **`redirect_uri`**, in both the auth request and the token exchange | sign-in sends people to the **old host** after they authenticate. The single thing that fails completely |
+> | the OAuth **`redirect_uri`**, in both the auth request and the token exchange | **sign-in from the new host cannot work at all** — see below. The single thing that fails completely |
 > | invite links (`/?invite=`) and beta-code links (`/?beta=`) | an owner copies a link naming a host that is being wound down |
 > | the approval message — *"open \<APP_URL\> and sign in"* | the same, to somebody who has never used the product |
 > | the daily digest's tail link (§39) | every digest points at the old host |
@@ -316,8 +316,41 @@ Open each of these and look. Do not infer them from this table.
 >
 > - `APP_URL` updated **before** the new redirect URI is registered →
 >   `redirect_uri_mismatch`, nobody can sign in.
-> - DNS moved but `APP_URL` **not** updated → people land back on the old host
->   after authenticating, which looks like the move failed.
+> - DNS moved but `APP_URL` **not** updated → **sign-in on the new host fails**,
+>   and the reason is the state cookie rather than the landing page. Observed
+>   live, and it is worse than "they end up on the old host":
+>
+>   1. `/auth/google` on `nimbleclerk.com` sets `crmb_oauth_state` — host-only,
+>      because no cookie here carries a `domain` (§1.0, deliberately).
+>   2. The `redirect_uri` comes from `APP_URL`, so Google returns the browser to
+>      `crmbuilder-v1.onrender.com/auth/google/callback`.
+>   3. **Different origin, so the cookie is not sent.** The CSRF check sees no
+>      state, refuses, and redirects to `/?auth_error=state` on the old host.
+>
+>   So this is not a cosmetic landing-page problem that resolves itself at
+>   cutover — it means the new host cannot be sign-in-tested at all until
+>   `APP_URL` moves.
+>
+> **And moving it IS the authentication cutover, not a preparatory step.** The
+> same mechanism runs backwards the moment it changes:
+>
+> | | after `APP_URL` → `https://nimbleclerk.com` |
+> |---|---|
+> | already signed in on the old host | fine — the session cookie is still valid and nothing re-checks a redirect URI |
+> | signing in **fresh** on the old host | **fails**, `?auth_error=state` |
+> | signing in on the new host | works |
+>
+> So anyone who signs out, clears cookies or opens the app on a new device at
+> the old address is stuck until they use the new one. Step 5 (announce the
+> address) belongs in the same window as 6b rather than weeks earlier — which
+> is a change to the sequence's shape, not just its order.
+>
+> **The third option was considered and declined**: an allow-list of hosts we
+> own, picking the `redirect_uri` from `req.headers.host` so both work at once.
+> It would function — Google refuses any URI not registered, so the allow-list
+> bounds what a forged `Host` can reach — but it is code on the auth path
+> during a migration, in the area §9 names as the gate, to buy a few days of
+> overlap. Recorded so it is not rediscovered as an obvious untried idea.
 >
 > So: **register the new redirect URI first (§1.6 step 3, both hosts listed at
 > once), and move `APP_URL` in the same window as DNS.** Both-listed is what
