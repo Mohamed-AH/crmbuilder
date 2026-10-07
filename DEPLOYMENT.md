@@ -148,6 +148,25 @@ which means a mistake at step 3 is recoverable — right up until it isn't.
 
 The repo contains a `render.yaml` blueprint.
 
+> **How this deployment is actually wired, which is not the simple case.**
+> `nimbleclerk.com` is built from a **mirror** of this repository rather than
+> from this repository. The commits are the same, so the commit marker on
+> `/healthz` still matches what CI expects (§46) — but **a push here does not
+> deploy.** The mirror has to be synced, and until it is, the live deployment
+> runs the last commit the mirror received.
+>
+> Two consequences for anybody operating this:
+>
+> - **A push run's live smoke will skip**, with a warning and a green tick,
+>   whenever the mirror is behind. That is the gate working; the `deployed
+>   build` line in the smoke output is what says which commit is actually up.
+> - **`LIVE_URL` belongs on the repo that runs the workflow**, not on the
+>   mirror. It is a GitHub Actions variable and Render never reads it. Setting
+>   it on the mirror changes nothing about the audit.
+>
+> `CLAUDE.md` §65 has the measurements. The steps below describe the ordinary
+> one-repo setup, which is what a fresh deployment should do.
+
 1. Push this repository to GitHub.
 2. In the [Render dashboard](https://dashboard.render.com): **New → Blueprint**, pick the repo. Render reads `render.yaml` and creates the web service on the **free** plan (`SESSION_SECRET` is generated automatically).
 3. Set the remaining environment variables when prompted (or later under *Environment*):

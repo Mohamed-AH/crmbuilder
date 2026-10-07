@@ -135,6 +135,9 @@ never change, because everything cross-references them.
 | Why Stripe cannot collect for an Indian seller, and what an MoR sidesteps | §64 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §1 |
 | What an MoR protects you from, and the half it does not | §64 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §3 |
 | Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
+| **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
+| **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
+| What the daily live run does NOT catch | §65 · §46 |
 
 ---
 
@@ -183,11 +186,11 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 ## 2. Current status
 
 **All green:** 506 Node tests + 134 Playwright tests, and the smoke audit at
-**49 passing locally** (54 live, **predicted not observed** — the
-same checks either way, with five of them informational on a local file-store
-HTTP deployment and real assertions against a live one (§46), and this session
-can reach neither `*.onrender.com` nor `nimbleclerk.com` to see it, §8). The
-local figure is observed; the live one is arithmetic until CI prints it. **On Windows some Node tests skip
+**49 passing locally and 54 live** — the same checks either way, with five of
+them informational on a local file-store HTTP deployment and real assertions
+against a live one (§46). **Both figures are observed**: §63 predicted 54 and
+CI printed exactly that on 2026-10-07, which is what retires the hedge that
+stood here (this session can reach neither host, §8). **On Windows some Node tests skip
 themselves** and say why — §4's SIGTERM note is one, and `resilience.test.mjs`
 skips whichever of its cases cannot be made to fail on the platform in hand
 (§55). A named platform limit, not a failure; the count is whatever the run
@@ -5176,6 +5179,15 @@ can happen every day is §17's no-op-that-reports-success, which this file is
 emphatic about: the backstop is that the daily run cannot skip, so a deploy
 that never lands is red within 24 hours rather than never.
 
+> **The backstop is weaker than that sentence, and §65 measured it.** The
+> daily run cannot *skip*, but it only **fails** when the undeployed commit
+> moved something the smoke asserts on. Two commits sat undeployed on
+> 2026-10-07 and the scheduled run passed **54/54**, because both were docs,
+> the workflow and `tests/smoke.mjs` — nothing served. So the honest claim is:
+> a never-landed deploy **that changes a served asset** is red within 24
+> hours. One that does not is invisible to both runs, and the thing that
+> catches it is the `deployed build` line nobody is obliged to read.
+
 ### The commit marker, and why absence is not a placeholder
 
 `/healthz` now carries `commit`, from `APP_COMMIT` or Render's own
@@ -9035,3 +9047,103 @@ run instead of reading the route count. §27's user-facing documents needed
 nothing — no capability changed, and the twelve files whose text goes false
 when we *do* charge are already enumerated in the checklist's §2.1 rather than
 edited now.
+
+
+---
+
+## 65. Render deploys from a MIRROR, and nothing here said so
+
+Asked a one-line question — *"where is the variable `LIVE_URL`, on Render or
+GitHub?"* — and answering it properly turned up the deployment topology, which
+this file had never recorded and which `docs/LAUNCH-CHECKLIST.md` §1.0b had
+stated backwards in bold.
+
+**Render builds from a mirror of this repository, not from this one.** The
+commits are the same — it is a mirror, confirmed by the owner — so the SHAs
+match and §46's commit gate is sound. What is *not* true is that a push here
+deploys.
+
+### The answer to the question, and the rule behind it
+
+**`LIVE_URL` is a GitHub Actions repository variable, and it has to live on the
+repo that RUNS the workflow** — `Mohamed-AH/crmbuilder`. `${{ vars.LIVE_URL }}`
+is resolved at job time in the repository the workflow file is in. Render never
+sees it; it configures nothing about the running app. Setting it on the
+mirror does nothing for the audit unless the mirror carries its own copy of
+`test.yml`, which is then a *second* audit with its own answer.
+
+That is §40's rule with a second axis: the ping was on the wrong *URL*, and
+this is the same class of failure on the wrong **repository**. A variable set
+in a settings UI is invisible to every grep in here, and now there are two
+settings UIs it could be invisible in.
+
+### What the logs proved, each line measured rather than inferred
+
+| | Evidence |
+|---|---|
+| the variable is still the old host | push run's env block: `BASE_URL: https://crmbuilder-v1.onrender.com/` — trailing slash intact, so step 7 was never done on *this* repo |
+| a push here does **not** deploy | `2cf6277` pushed 12:48, `94424a4` 13:41; at 14:11 the deployment reported `9625987` |
+| §46's gate works | 22 polls of `Live deployment is running 9625987c11f9, waiting for 94424a4758a7…`, then the named warning |
+| the skip fired for real, green | the push run's *Smoke test the live deployment* step: **skipped**, job success |
+| the live figure is 54 | the scheduled run: `54 passed · 0 warnings · 0 failed` |
+
+**The skip is §46 working exactly as designed and it is still the thing to
+watch.** Seven minutes of CI burned per push, the live smoke not run, and a
+green tick. That is tolerable while the mirror lags by minutes and intolerable
+if it lags by days, because the only signal is a warning on a passing job.
+
+### Two corrections this produces
+
+- **§1.0b's *"pushing it IS deploying it"* is struck through.** §46 inferred it
+  from one observation — the live smoke watching production catch up to a
+  pushed commit — and "the mirror had just been synced" explains that equally
+  well. The weaker explanation was taken as established, which is this file's
+  standing failure shape applied to its own reasoning rather than to code.
+  **The ordering constraint survives and improves**: the mirror sync is a
+  separate action, so the swap lands when the operator chooses rather than
+  when CI finishes.
+- **§46's backstop claim is narrowed.** *"The daily run cannot skip, so a
+  deploy that never lands is red within 24 hours"* — it cannot skip, but it
+  only **fails** when the undeployed commit moved a served asset. Both
+  undeployed commits here were docs, the workflow and `tests/smoke.mjs`, so
+  the scheduled run passed 54/54 over a two-commit-stale deployment. The
+  `deployed build` line is what carries the truth, and §46 made it INFO
+  deliberately — correct, and it means nobody is obliged to read it.
+
+### What a mirror makes safe, and the one thing it does not
+
+Safe: the SHAs are shared, so the gate's prefix comparison (§46) matches when
+the mirror is current and reports *behind* when it is not. That is the right
+answer in both states and needs no change.
+
+**Not safe, and worth stating before it happens:** if the mirror is ever
+rebuilt by squashing, rebasing or filtering, `github.sha` can never match what
+`/healthz` reports and **every push run skips the live smoke, green, for
+ever.** That is the silent-permanent-skip failure §46 wrote two separate guards
+against — the omitted-vs-placeholder decision and the prefix comparison —
+reached from a third direction neither anticipated. The fix, if it happens,
+is to stop comparing git SHAs and compare a stamp both sides can produce:
+`APP_COMMIT` set explicitly on Render to something CI also computes. Not built,
+because a mirror with shared history does not need it.
+
+### Blast radius
+
+Documentation only. No code, no served file, no route, no wire change —
+`CACHE_VERSION` stays `crmbuilder-v57` and smoke stays 49 local / 54 live,
+checked rather than assumed (§41's rule for a docs-only change).
+
+`DEPLOYMENT.md` gains the mirror in §3, because *"Push this repository to
+GitHub"* followed by *"pick the repo"* describes a one-repo setup and that is
+the step where somebody would otherwise wire Render to the wrong one.
+§27's user-facing documents need nothing and `docs/API.md` needs nothing — no
+capability and no contract moved.
+
+### Still open, on the operator's side
+
+1. **Delete `LIVE_URL`** on `Mohamed-AH/crmbuilder`
+   (*Settings → Secrets and variables → Actions → Variables*). The committed
+   fallback is already `https://nimbleclerk.com`, so deleting leaves one place
+   naming the host rather than two.
+2. **Sync the mirror** so the deployment catches up and push runs stop
+   skipping. Nothing user-visible is missing in the meantime — the two
+   undeployed commits touch no served file.

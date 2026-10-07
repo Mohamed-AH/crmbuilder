@@ -46,18 +46,25 @@
 > authentication cutover** and it has been taken — see §1.3, which was wrong
 > about what a stale one does and now is not.
 >
-> **Two are still open, and one of them was ticked prematurely:**
+> **Step 9 is confirmed done** — the UptimeRobot monitor is on
+> `https://nimbleclerk.com/health`, checked every 14 minutes, which is the path
+> §40 exists for: a monitor on `/healthz` is green, warm, and runs neither the
+> alert rules nor the digest.
+>
+> **What is still open:**
 >
 > | Step | State |
 > |---|---|
-> | **7 — the `LIVE_URL` repo variable** | **open.** It was recorded done and was not: it still held `https://crmbuilder-v1.onrender.com/`, so the live smoke audited the old host and, because of the trailing slash, could not even tell which build. Delete it. `CLAUDE.md` §63 |
-> | **9 — the UptimeRobot monitor** | moved, but **confirm the path is `/health`** and not `/healthz`. §40 is the whole reason this step says so: a monitor on `/healthz` is green, warm, and runs neither the alert rules nor the digest |
+> | **7 — the `LIVE_URL` repo variable** | **open, and ticked prematurely TWICE.** First it was recorded done while still holding `https://crmbuilder-v1.onrender.com/` with a trailing slash (`CLAUDE.md` §63). Then it was set — **on the mirror Render builds from**, which runs no workflow and reads no such variable (§65). It belongs on `Mohamed-AH/crmbuilder`, and deleting it is the action |
+> | **7b — sync the mirror** | **open.** A push here does not deploy (§1.0b's correction). While the mirror lags, every push run skips the live smoke with a green tick |
 > | **10 — the old host and the consent screen** | open |
 >
-> **"Done" was the thing to check, not the thing to record.** Step 7 was marked
-> complete on the strength of having been *actioned*; what the CI log then said
-> is that a repository variable set in the settings UI is invisible to every
-> grep in here, which is §40's rule in its original words.
+> **"Done" was the thing to check, not the thing to record** — and step 7 is
+> the standing example, having now been ticked prematurely twice for two
+> different reasons. The first time, a repository variable set in a settings UI
+> is invisible to every grep in here (§40's rule in its original words). The
+> second time, **there are two settings UIs**, and the value went into the one
+> that cannot read it.
 >
 > **The deployment had no users when this ran**, which made §1.1's four silent
 > failures *zero* rather than already-paid and removed the ordering constraint
@@ -181,9 +188,29 @@ Covered by a test that asserts the *stored* code rather than the redirect, per
 
 `render.yaml` carries `autoDeploy: true`, and §46 records the live smoke
 watching production catch up to a commit pushed to the working branch — so
-**production deploys from the branch, within minutes of a push.** The swap is
-therefore not a change that can sit in the repository waiting for the switch:
-pushing it *is* deploying it, to the host people are still using.
+~~**production deploys from the branch, within minutes of a push.**~~ The swap
+is therefore not a change that can sit in the repository waiting for the
+switch: pushing it *is* deploying it, to the host people are still using.
+
+> **That bolded claim is WRONG, and the correction matters more than the
+> claim did.** **Render deploys from a MIRROR of this repository, not from
+> this one** (`CLAUDE.md` §65). So a push here deploys nothing until the
+> mirror is synced — measured, not argued: `2cf6277` was pushed at 12:48 and
+> `94424a4` at 13:41, and at 14:11 the live deployment still reported
+> `9625987`.
+>
+> **The ordering constraint below survives, and for a better reason.** It is
+> no longer *"pushing is deploying, so this must be last"* — it is that the
+> mirror sync is a **separate action you take**, so the swap lands when you
+> choose rather than when CI finishes. That is strictly safer than what this
+> section assumed, and the step is still last because the two should not be
+> separated by hours of forgetting.
+>
+> §46 inferred the automatic version from one observation — the live smoke
+> watching production catch up to a pushed commit. The mirror having been
+> synced at that moment explains it equally well, and the weaker explanation
+> was taken as established. Left struck through rather than deleted, because
+> the inference is the reusable part.
 
 What that would do to the **old** origin, which is the thing to be clear about:
 
@@ -458,9 +485,10 @@ Not a footnote. Someone with the PWA installed has no other way to find out.
 Rewritten against the two decisions in the banner, and with the ordering
 corrections above folded in. **Nothing in this repository may name
 `nimbleclerk.com` until step 6**, and that is a requirement rather than
-tidiness: `autoDeploy: true` means a push deploys to the host people are still
-using, so a repo that points at the new domain early points the *live* service
-at a parked one.
+tidiness: a commit here reaches the host people are still using as soon as the
+**mirror** is synced (§1.0b's correction — it is not automatic, but it is one
+action away), so a repo that points at the new domain early points the *live*
+service at a parked one.
 
 The split is worth stating once, because it is what makes this a two-person
 job: **steps 0–5 and 7–9 are in services outside this repository** and only you
@@ -710,6 +738,18 @@ can do them. Steps 6 and 10 are commits.
    slash**, which made the §46 wait loop smoke the wrong build. The workflow now
    strips trailing slashes and refuses to smoke a `/healthz` that is not JSON —
    but a variable nobody deletes is still a variable nobody can see.
+   **And a third thing, which is why this step was still open after being
+   actioned** (`CLAUDE.md` §65): it was set on the **mirror** Render builds
+   from. `LIVE_URL` is a GitHub Actions variable read by `test.yml`, so it has
+   to be on **the repo that runs the workflow** — `Mohamed-AH/crmbuilder` — and
+   Render never reads it at all. Two repositories means two settings UIs a
+   stale value can hide in.
+7b. **Sync the mirror** so the deployment is not left behind the branch CI is
+    auditing. A push here does not deploy (§1.0b's correction), and while the
+    mirror lags, every push run burns its wait budget and **skips the live
+    smoke with a green tick**. Nothing is broken while the undeployed commits
+    touch no served file — but that is a property of those commits, not a
+    guarantee.
 8. **Update `BACKUP_URL` in `Mohamed-AH/crmback` the same day.** §17: a job
    with bad configuration reports success while producing nothing, so this one
    fails silently and you find out when you need the backup.
