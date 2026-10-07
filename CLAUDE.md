@@ -123,6 +123,7 @@ never change, because everything cross-references them.
 | **A critical advisory that does not apply** — and what would arm it | §62 · §30 · §61 |
 | `trust proxy` is a hop count, and why a CDN changes that | §62 · §30 |
 | **Moving to the new domain** — where it stands, what lands when | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.6 · §1.0b |
+| The DNS pre-flight, the mail records that must survive, and the `www` 301 nobody owns | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0c · §1.6 step 2 |
 | Why the `/`→`/app` swap cannot be pushed before the switch | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · §46 |
 
 ---

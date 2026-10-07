@@ -28,6 +28,13 @@
 > is pointed at Render yet, and §1.6 steps 0–3 are the live frontier. Nothing
 > in this repository names the new host yet, by design — see §1.6's note on why
 > that is a sequencing requirement rather than an omission.
+>
+> **The DNS pre-flight is done and clears the way (§1.0c).** No CAA record, so
+> nothing refuses Let's Encrypt; nameservers are Namecheap's own, so the
+> records are editable where you expect and an apex `ALIAS` is available — the
+> one fact that could have forced §1.0 to be re-decided. It also found **live
+> mail forwarding on the domain**, which the DNS step must not take out, and
+> **one unimplemented decision**: nothing anywhere 301s `www` to the apex.
 
 Two launches that are not yet done, each of which touches code, configuration
 we do not control, legal text and a dozen documents. They are written together
@@ -164,6 +171,51 @@ precedent: a lever beats a redeploy at a moment that matters) and **rejected**:
 `manifest.webmanifest` and `sw.js` are static files, so an env-driven swap means
 templating both, which is a new class of bug introduced to manage a single
 discrete event. The event is the right unit here.
+
+## 1.0c What the domain's DNS says today, measured — and the record that must survive
+
+Run before step 1, because two of the three classic failures in steps 1–2 are
+answerable in advance and both would otherwise bite halfway through: a **CAA
+record** that refuses Let's Encrypt, so Render's certificate never issues; and
+**nameservers that are not where you think**, so the records you edit are not
+the records being served.
+
+**`dig`, `nslookup` and `host` are none of them installed in this container** —
+the first attempt at this returned "(dig unavailable)" six times and
+established nothing. Node's resolver is always present:
+
+```sh
+node -e "const d=require('dns').promises;(async()=>{for(const t of ['NS','CAA','TXT','MX','A'])
+  try{console.log(t,JSON.stringify(await d.resolve('nimbleclerk.com',t)))}catch(e){console.log(t,'ERR',e.code)}
+  console.log('CNAME www',JSON.stringify(await d.resolve('www.nimbleclerk.com','CNAME')))})()"
+```
+
+| | Answer, 2026-10-07 | What it means |
+|---|---|---|
+| **NS** | `dns1` / `dns2.registrar-servers.com` | Namecheap BasicDNS. The records are editable in the Namecheap dashboard, and BasicDNS does `ALIAS` — so **§1.0's apex decision stands and step 2 has no blocker.** That was the one fact that would have forced reconsidering it |
+| **CAA** | `ENODATA` — none | Nothing refuses Let's Encrypt, so step 1's certificate has no obstacle. Worth knowing the failure mode anyway: adding a CAA later that omits Let's Encrypt stops the **renewal**, months after anyone connects the two |
+| **A** (apex) | `192.64.119.158` | Namecheap parking. One of the two records that change |
+| **CNAME** `www` | `parkingpage.namecheap.com` | The other. Parking, and it has to go |
+| **MX** | `eforward1`–`eforward5.registrar-servers.com` | **Email forwarding is live on this domain.** See below |
+| **TXT** | a Namecheap `v=spf1` forwarding record, **and** a `google-site-verification=` token | Both load-bearing. See below |
+
+**The MX and TXT records must survive step 2, and nothing in the product would
+tell you if they did not.** Pointing a domain at a host is two records — the
+apex `A`/`ALIAS` and the `www` `CNAME` — and the tempting move is to clear out
+"the old parking records" as a set. The MX quintet and the SPF `TXT` are in
+that set and are not parking: they are mail forwarding for the domain, so
+taking them out stops mail at `nimbleclerk.com` arriving anywhere. There is no
+check in this repository that can see it, and the first symptom is a reply that
+never came.
+
+**Leave the `google-site-verification` token alone too**, whatever else
+happens. It may already be step 0's proof of ownership — I cannot tell from
+outside whose token it is, so confirm it in Search Console rather than assuming
+either way — and deleting a verification token un-verifies the domain, which is
+exactly the step §1.0 says can take a day and blocks the consent screen.
+
+So step 2 is **two records changed and nothing deleted but the two parking
+records themselves.**
 
 ## 1.1 The four things that break silently, and they are the whole risk
 
@@ -343,13 +395,85 @@ can do them. Steps 6 and 10 are commits.
 0. Start Google's **domain verification** for `nimbleclerk.com` (§1.0). The
    only step that waits on somebody else; it blocks nothing, so it goes first
    whatever else slips.
-1. **Render → custom domain**: add `nimbleclerk.com` *and* `www`, and let the
-   certificate issue. Render gives you the DNS targets here; you are not
-   switching anything yet.
-2. **Namecheap → DNS**: point the apex at Render's target and `www` at Render
-   too — the `www` parking record is what is there now and has to go. If
-   Namecheap will not do an apex ALIAS, that is the one fact that would force
-   reconsidering §1.0; say so rather than working around it.
+0b. **The DNS pre-flight (§1.0c).** Two minutes, and it is what says step 1 has
+   no obstacle. Already run: no CAA, nameservers at Namecheap, apex ALIAS
+   available.
+
+1. **Render → the deployment's custom domains.** Both hosts, and read the
+   targets off that screen rather than from here.
+
+   1. Add **`nimbleclerk.com`** and **`www.nimbleclerk.com`** as two separate
+      entries on the *same* service — the one `render.yaml` names. Both, even
+      though only the apex is canonical: `www` has to resolve and present a
+      valid certificate *in order to* 301, and a redirect from a host with no
+      certificate is a browser warning rather than a redirect.
+   2. Render shows a **DNS target per entry**, and they are not the same shape.
+      The `www` entry gets a hostname to `CNAME` at. The apex entry gets either
+      an IP address to `A`, or an instruction to point an `ALIAS`/`ANAME` at
+      the service hostname. **Copy both out of that screen**; this document
+      deliberately does not state Render's apex IP, because it changes and a
+      stale one here is a day of looking in the wrong place.
+   3. **Expect both to show as unverified, and expect no certificate yet.**
+      Render proves ownership by resolving the name to itself, so nothing can
+      issue until step 2 has moved the records. A pending state here is the
+      normal state, not a fault — which is worth knowing before step 2 rather
+      than after, because the obvious reading is that step 1 failed.
+   4. Leave this screen open. Step 2 is entered from it.
+
+2. **Namecheap → the domain's host records.** **Two records changed, two
+   deleted, and nothing else touched** — §1.0c is the measured list of what is
+   there and why most of it must stay.
+
+   1. Make sure you are editing the records for the nameservers that are
+      actually serving the domain. §1.0c confirmed the `registrar-servers.com`
+      pair, so that is Namecheap's own DNS and this is the right place.
+   2. **Remove** the apex `A` record pointing at `192.64.119.158` and the
+      `www` `CNAME` pointing at `parkingpage.namecheap.com`. Those two are the
+      parking, and they are the only two things to remove.
+   3. **Add** the apex record from step 1.2 — an `ALIAS`/`ANAME` to Render's
+      service hostname if offered (preferred: it survives Render changing its
+      IP), otherwise the `A` record to the address Render gave.
+   4. **Add** `www` as a `CNAME` to the hostname Render gave for that entry.
+   5. **Leave the five `MX` records and both `TXT` records exactly as they
+      are.** They are mail forwarding and a Google verification token, not
+      leftovers — §1.0c. This is the one irreversible-feeling mistake available
+      in this step, and nothing in the product would report it.
+   6. Set the TTL low (300s if offered) while cutting over, so a mistake is
+      minutes to undo rather than hours.
+   7. Then **go back to step 1's screen and wait for the certificate.** Minutes
+      to an hour. Verify with
+      `node -e "require('dns').promises.resolve('nimbleclerk.com','A').then(console.log)"`
+      first — a certificate cannot issue before that answers Render.
+
+   **What is true between here and step 6b, so it does not read as a failure:**
+   `nimbleclerk.com` now serves the app, `/` is still the app rather than the
+   landing page, and **signing in from the new host lands you back on the old
+   one** — because the `redirect_uri` is built from `APP_URL`, which has not
+   moved yet (§1.3). Expected, and exactly what steps 3 and 6b close. Do not
+   announce the address until step 5.
+
+   > **The `www` 301 has no implementer, and §1.0 decided it without assigning
+   > one.** Both entries point at the same service, so after this step Render
+   > serves the app on **both** hosts and nothing redirects — which is §1.1's
+   > first row exactly: two origins, two IndexedDB stores, two session cookies,
+   > and a user who reaches each on different days has two empty workspaces.
+   >
+   > Two places it can live, and **check Render first**, because a redirect at
+   > the edge never reaches the app and so cannot be broken by a deploy: if the
+   > custom-domain screen offers a redirect-to-another-domain option for the
+   > `www` entry, use it and nothing in this repository changes. I cannot
+   > confirm from here whether it does (§8), which is why this is "check"
+   > rather than "do".
+   >
+   > Otherwise it is four lines in `server.js`, and it belongs in **step 6's
+   > commit** rather than here — `app.use` early, `301` to
+   > `` `https://nimbleclerk.com${req.originalUrl}` `` when
+   > `req.headers.host` starts `www.`. **Reading `req.headers.host` is safe for
+   > this and only this**: the destination is a hardcoded constant and the
+   > header only decides *whether* to redirect, so a forged one can at worst
+   > send its own sender to the real host. That is not a contradiction of
+   > §1.3's rule against `req.headers.host` — there the header would have
+   > *become* the URL handed to somebody else.
 3. **Google Cloud Console**: add
    `https://nimbleclerk.com/auth/google/callback` to the authorised redirect
    URIs, and the `www` form too. **Add, do not replace** — both hosts listed at
@@ -369,6 +493,9 @@ can do them. Steps 6 and 10 are commits.
      57 E2E navigations, the smoke test;
    - **the invite/beta link fix and the `/` forward** (§1.0b) — without it
      every invite link is silently dead;
+   - **the `www` → apex 301**, unless Render is doing it at the edge (step 2's
+     note) — without it §1.0's canonical-host decision is unimplemented and
+     §1.1's two-origin failure is live;
    - `og:image` absolute in `welcome.html`;
    - the workflow fallback, and the live URLs in `CLAUDE.md` /
      `DEPLOYMENT.md` / `docs/BETA.md` / the smoke example.
@@ -434,7 +561,15 @@ Then, by hand, because none of it is greppable:
   a stale `APP_URL` *and* a missing `/` forward both fail.
 - **Mint a beta code and open its link**, same reason, different capture path.
 - The non-canonical host redirects to the canonical one (§1.0), including on a
-  deep link such as `/guide`.
+  deep link such as `/guide`:
+  `curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' https://www.nimbleclerk.com/guide`
+  — expect `301 https://nimbleclerk.com/guide`. A `200` means the redirect has
+  no implementer and §1.1's two-origin failure is live (step 2's note).
+- **Send one mail to an address at `nimbleclerk.com` and confirm it arrives.**
+  §1.0c: forwarding is live on this domain and the DNS edit is the one chance
+  to break it. Nothing in the product can see this, and the first symptom is a
+  reply that never came. `node -e "require('dns').promises.resolve('nimbleclerk.com','MX').then(console.log)"`
+  checks the records survived; only a real message checks the forwarding does.
 - `https://nimbleclerk.com/privacy` and `/terms` render (the consent-screen
   URLs).
 - The **deployed build** line in the smoke output names the commit you pushed
