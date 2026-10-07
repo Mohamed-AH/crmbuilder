@@ -5,7 +5,9 @@ before changing code; it records decisions and traps that are not obvious from
 the source, and it is the safe restart point after a context compaction.
 
 **Branch:** `claude/pwa-modular-crm-builder-xcwgzv` — all work goes here.
-**Live:** https://crmbuilder-v1.onrender.com
+**Live:** https://nimbleclerk.com — the app itself is at `/app`; `/` is the
+landing page (§63). `crmbuilder-v1.onrender.com` is the same deployment and
+still answers.
 **Other docs:** [`docs/README.md`](docs/README.md) is the map. This file is the
 engineering half and is kept current; `docs/archive/` is frozen on purpose.
 
@@ -125,6 +127,9 @@ never change, because everything cross-references them.
 | **Moving to the new domain** — where it stands, what lands when | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.6 · §1.0b |
 | The DNS pre-flight, the mail records that must survive, and the `www` 301 nobody owns | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0c · §1.6 step 2 |
 | Why the `/`→`/app` swap cannot be pushed before the switch | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · §46 |
+| **The app is at `/app`** — what moved, and the sign-in that landed on a splash | §63 · §58 |
+| Only one URL may become the cached shell, and why a list could not say so | §63 · §47 |
+| A state cookie is per-origin, so a stale `APP_URL` breaks sign-in rather than misrouting it | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.3 · §63 |
 
 ---
 
@@ -172,12 +177,12 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 504 Node tests + 133 Playwright tests, and the smoke audit at
-**47 passing locally / 52 against production** — the same checks either way,
-with five of them informational on a local file-store HTTP deployment and real
-assertions against a live one (§46). The local figure is observed; the live one
-is the same run plus that fixed five, and this session cannot reach the
-deployment to see it (§8). **On Windows some Node tests skip
+**All green:** 506 Node tests + 134 Playwright tests, and the smoke audit at
+**49 passing locally** (54 live, **predicted not observed** — the
+same checks either way, with five of them informational on a local file-store
+HTTP deployment and real assertions against a live one (§46), and this session
+can reach neither `*.onrender.com` nor `nimbleclerk.com` to see it, §8). The
+local figure is observed; the live one is arithmetic until CI prints it. **On Windows some Node tests skip
 themselves** and say why — §4's SIGTERM note is one, and `resilience.test.mjs`
 skips whichever of its cases cannot be made to fail on the platform in hand
 (§55). A named platform limit, not a failure; the count is whatever the run
@@ -189,7 +194,7 @@ npm test                # everything
 npm run test:api        # spawns its own server on a random port
 npm run test:e2e        # Playwright boots its own server
 npm run test:smoke      # deployment audit, localhost
-BASE_URL=https://crmbuilder-v1.onrender.com npm run test:smoke   # audit live
+BASE_URL=https://nimbleclerk.com npm run test:smoke   # audit live
 ```
 
 CI (`.github/workflows/test.yml`) runs everything on push and smoke-tests the
@@ -267,7 +272,7 @@ to render *and still navigate*.
 `DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v56`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v57`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -5802,9 +5807,11 @@ the far end is anything at all. §27's own sentence explains it: *the HTML ones
 are the easiest to forget because nothing greps them by habit.*
 
 Fixed to `/docs/manual.html`. The sibling *"Open the demo"* button was an
-absolute `https://crmbuilder-v1.onrender.com` and is now `/` — a page served
+absolute `https://crmbuilder-v1.onrender.com` and became `/` — a page served
 from the deployment does not need to name it, and an absolute host there is one
-more thing to get wrong on a domain move.
+more thing to get wrong on a domain move. (It is **`/app`** now, since §63
+moved the app off the root; the reasoning above is why it is relative either
+way, and that is what has not changed.)
 
 **The guard covers the class, not the instance.** Five tests, one per public
 page: no link may match a build-tool or scratch host, and every internal link
@@ -8593,3 +8600,156 @@ says nothing about the flag that caused it.
 
 Full run, because `req.ip` is on every request (§9): Node **504**, Playwright
 **133**, smoke **47** locally, `npm audit --omit=dev` **0**.
+
+
+---
+
+## 63. The app moved to `/app`, and sign-in landed on a splash
+
+The cutover commit of [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md)
+§1.0b, taken the day `nimbleclerk.com` went live. `/` serves `welcome.html`
+(§58); the application is at `/app`.
+
+**Done now because the deployment has no users**, which is stronger than
+§1.0b's argument rather than a restatement of it. That section reasons that
+the origin change pays §1.1's four costs anyway — stranded installed apps,
+caches on an origin we no longer serve, everybody signed out — so restructuring
+paths at the same moment is free. With nobody on the deployment those four
+costs are **zero rather than already-paid**: there is no announcement to
+coordinate with, and §1.6's ordering constraint between steps 5 and 6
+evaporates.
+
+### The one nobody planned for: every exit from OAuth went to `/`
+
+`server.js` had six `res.redirect('/…')` in the Google callback — one success
+and five `?auth_error=` branches. The success now dropped the user on the
+**landing page**: cookie set, signed in, and a splash on screen saying nothing
+had happened. The five errors went to a page that **loads no app JS**, so
+`js/app.js`'s `auth_error` reader never ran and the explanation was never
+shown.
+
+Both are silent, which is this file's standing shape — and the second is the
+worse half, because the error branches exist precisely to turn a refusal into
+something a person can act on (§16, §20, §30).
+
+**Not in §1.0b's file list, and not in any of the four documents that discuss
+the swap.** The list was built from where `/` is *written* — the manifest, the
+service worker, the tests. These are places `/` is *returned*, and nothing
+greps for that.
+
+**What caught it was an E2E journey that names nothing about redirects**:
+*signing out hides the workspace, and signing back in restores it*. Its
+artifact showed the anonymous state — "No modules yet", "Sign in to sync" —
+after a sign-in that had succeeded on the server. §54 records that same test
+failing intermittently, which is exactly the reading that would have dismissed
+this; the artifact is what distinguished them, per §9's *read the trace first*.
+
+**And the four assertions that should have caught it were already written.**
+`tests/oauth.test.mjs` asserts the `Location` on all six branches — and they
+passed, because the server still said `/` and the tests still expected `/`.
+One of them even carried the right sentence: *"a good sign-in lands back on
+the app"*. The comment was correct and the value underneath it had stopped
+being the app. That is §46's trap in a new place: a line that still reads
+correctly while what it describes has moved. Updating those four is the
+regression guard, which is why none was added.
+
+### Only `/app` may become the cached shell, and that is a path gate not a list
+
+`sw.js`'s navigation branch answers from the cached shell and writes back what
+it fetched. §47 closed the poisoning by checking the **content type** —
+"`response.ok` alone is not *this is the app*". **That check cannot help
+here**, because `welcome.html` is `text/html` exactly like the application. So
+after the swap, any stray navigation would have been served the app shell and
+then written over it with the splash.
+
+```js
+if (url.pathname !== '/app') return;
+```
+
+A path gate rather than a seventh entry in `STANDALONE_PAGES`. §47's own lesson
+is that a list only ever covers the paths somebody thought of — which is how
+`/docs/manual.html` survived twenty-one cache versions and `/healthz`
+thirty-three. The lists stay, for subresources and non-navigation requests; the
+gate is what closes the class.
+
+**The server was changed to match, which is the half that makes the gate
+true.** `app.get('*')` used to answer the shell for any path naming no file —
+a leftover from before hash routing, since no client route has ever needed a
+server path. It answers `welcome.html` now, so a mistyped URL says what the
+site is **and** there is exactly one URL in the deployment that returns the
+app. Two tests pin it from both ends: *`/` is the landing page, not the app*
+and *an unknown path serves the landing page, never the shell*.
+
+### The invite forward, and what it is tested on
+
+`${APP_URL}/?invite=…` was the link shape for the app's whole life, and
+`welcome.html` loads no app JS — so `captureInvite()` never runs on it, the
+code is not stored, not stripped, and the colleague gets a landing page and no
+team. Nothing errors. §1.0b had this, and it was live: an invite minted twenty
+minutes before this commit carried the root form.
+
+Two halves. Links are **minted** at `/app` now (`APP_BASE`, one constant beside
+`APP_URL`, so the four sites that build one cannot drift), and **`/` forwards**
+`?invite=` and `?beta=` with a 302 that preserves the value — so every link
+already sent keeps working. A redirect in `server.js` rather than script in the
+page, because giving `welcome.html` JS would undo the reason it is a standalone
+page (§58).
+
+**Asserted on what is STORED, not on the redirect**, per §54: a 302 is the
+mechanism, and a build where the forward fires and the capture does not would
+pass a redirect assertion. The E2E reads `crmb:pendingInvite` out of
+localStorage and requires the address bar to be clean afterwards. Checked
+against the broken state — remove the forward and it fails on the URL, with
+`http://…/?invite=legacy-root-invite` in the diff; the smoke check fails
+`HTTP 200, expected 302`, which is the silent version named.
+
+### Traps
+
+- **`/app/` would 404 the entire application.** `index.html` references every
+  asset **relatively** — `js/app.js`, `css/style.css`, `manifest.webmanifest` —
+  which resolve against `/` only while the path carries no trailing slash. At
+  `/app/` they all become `/app/…`. `app.get('/app/*')` 301s to `/app`, and
+  `register('sw.js')` was made **absolute** so the one subresource that fails
+  *silently* cannot depend on that redirect having happened.
+- **An exact-string pass over the tests missed one navigation**, and it was the
+  §3 invariant test: `goto('/', { waitUntil: 'commit' })` does not match
+  `goto('/')`. 110 navigations were rewritten and the 111th failed the full
+  run — correctly, on a landing page where it wanted the app. Match on the
+  prefix, or grep for what is left afterwards; `grep -c "goto('/')"` returning
+  0 proved nothing about the form with arguments.
+- **The `new URL(url).pathname + search` journeys needed no edit at all** and
+  are the better test for it: twelve E2E team journeys take the invite URL
+  **from the server**, so they exercise whatever shape it now mints rather than
+  a copy of it.
+- **`manifest.webmanifest`'s `start_url` and `scope` were `"./"`**, which §1.2
+  correctly recorded as needing nothing for a *domain* change. They are `/app`
+  now, which is a different change to the same file — relative was right for
+  the host and wrong for the path.
+
+### Blast radius
+
+`js/app.js`, `sw.js` and `manifest.webmanifest` are all in `APP_SHELL`, so
+`CACHE_VERSION` → **`crmbuilder-v57`**. No new served file, and the smoke count
+moves **47 → 49** because two checks replaced one: the catch-all assertion
+inverted, and the invite forward and the landing-page identity are new.
+
+**Full run, and it was not optional** — the swap touches the router, the
+service worker, the manifest and 111 test navigations, which is §9's
+blast-radius rule several times over. Node **504 → 506**, Playwright
+**133 → 134**, smoke **49** locally.
+
+**The live figure is 54 and is predicted, not observed.** This session can
+reach neither host (§8), so CI's run against `nimbleclerk.com` is what will
+print it — §46's rule that the two numbers are different and both real.
+
+### Docs walked (§27)
+
+| | Needed |
+|---|---|
+| `guide.html`, `docs/product-tour.html` | the links whose **text promises the app** — *open the app*, *Open CRM Builder*, *Open the demo* — now point at `/app` |
+| `privacy.html`, `terms.html`, `guide.html` | *"← CRM Builder"* and *"Back to CRM Builder"* stay on `/`, deliberately: a reader sent a legal URL wants the front door, and it carries two routes onward. A link whose text names the product is not a link that promises the app |
+| `welcome.html` | its own call to action, and `og:url` / `og:image` made **absolute** — §1.2's deferred item, whose stated condition was the host being settled. It is now the one file outside the documents naming `nimbleclerk.com` |
+| `CLAUDE.md`, `DEPLOYMENT.md`, `docs/BETA.md` | the live URL, the smoke example, and `BACKUP_URL` — which §17 records as failing *silently* when stale |
+| `.github/workflows/test.yml` | the `LIVE_URL` fallback, ×2 |
+| `README.md`, `USER-GUIDE.md`, `manual.html`, `ONBOARDING.md`, `DEMO-SCRIPT.md`, `BETA.md`'s tester note | **nothing** — checked. None of them names a URL for the app; they say "open the app" and describe what is in it. Padding them to look thorough is its own inaccuracy (§40, §41) |
+| `docs/API.md` | **a line, and no route.** §46's trap again: the count is unchanged and the file reads correctly, while `/` moved from the shell to the landing page, `/app` appeared, and six `Location` headers out of the OAuth callback changed value |

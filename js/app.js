@@ -6377,7 +6377,7 @@
 
     if ('serviceWorker' in navigator) {
       try {
-        await navigator.serviceWorker.register('sw.js');
+        await navigator.serviceWorker.register('/sw.js');
       } catch (err) {
         console.warn('Service worker registration failed:', err);
       }

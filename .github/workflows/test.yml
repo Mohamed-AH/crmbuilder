@@ -165,7 +165,7 @@ jobs:
         id: deployed
         if: github.event_name == 'push'
         env:
-          BASE_URL: ${{ inputs.live_url || vars.LIVE_URL || 'https://crmbuilder-v1.onrender.com' }}
+          BASE_URL: ${{ inputs.live_url || vars.LIVE_URL || 'https://nimbleclerk.com' }}
           WANT: ${{ github.sha }}
           # Render's free tier redeploys in a couple of minutes, plus a cold
           # start. Generous, because the cost of waiting is a CI minute and the
@@ -227,7 +227,7 @@ jobs:
           # Defaults to the production deployment. Override per-run via the
           # workflow_dispatch input, or permanently with a repository variable
           # named LIVE_URL (Settings → Secrets and variables → Actions → Variables).
-          BASE_URL: ${{ inputs.live_url || vars.LIVE_URL || 'https://crmbuilder-v1.onrender.com' }}
+          BASE_URL: ${{ inputs.live_url || vars.LIVE_URL || 'https://nimbleclerk.com' }}
         run: |
           echo "Smoke testing $BASE_URL"
           node tests/smoke.mjs

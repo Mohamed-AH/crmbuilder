@@ -7,7 +7,7 @@
 > and every section here points at the relevant one rather than restating it —
 > one fact, one home (`CLAUDE.md` §27).
 
-55 routes over six boundaries. All JSON unless noted. All authenticated routes
+58 routes over six boundaries (§5b added three at the domain move). All JSON unless noted. All authenticated routes
 take the session cookie; there is no bearer token anywhere except
 `/api/admin/export`, which is deliberately different (see §5).
 
@@ -89,7 +89,7 @@ limit multiplies by the instance count.
 
 ```
 GET  /auth/google              → 302 to Google
-GET  /auth/google/callback     → 302 back to the app, session set
+GET  /auth/google/callback     → 302 to /app (or /app?auth_error=…), session set
 POST /auth/dev                 { email, name? }  dev only
 POST /auth/logout              → clears the session
 GET  /api/me                   → identity + deployment config
@@ -98,6 +98,12 @@ GET  /api/me                   → identity + deployment config
 `/api/me` is the only one the client calls on every boot, and it answers whether
 authenticated or not — the app must paint before it resolves (`CLAUDE.md` §3),
 so nothing may block on it.
+
+**Every exit from the callback targets `/app`, not `/`** — one success and five
+`?auth_error=` branches. `/` is the landing page and loads no app JS, so a
+success landing there shows a splash to somebody who has just signed in, and an
+`auth_error` is handed to a page with nothing to read it. Both are silent.
+`CLAUDE.md` §63.
 
 ```jsonc
 {
@@ -558,6 +564,27 @@ version 2 onward, and a GitHub build artifact is downloadable by anyone with
 repo read access.
 
 ---
+
+## 5b. Where the pages are
+
+```
+GET  /                          the landing page (welcome.html)
+GET  /?invite=… | /?beta=…      → 302 /app?… — links minted before the move
+GET  /app                       the application shell
+GET  /app/*                     → 301 /app
+GET  /privacy /terms /guide     standalone pages, no app JS
+GET  /docs/manual.html
+GET  /docs/product-tour.html
+GET  <anything else>            the landing page — NOT the shell
+```
+
+**`/app` is the only URL that returns the application**, and that is a
+contract rather than a layout: `sw.js`'s navigation branch gates on the path,
+so a second shell URL would be a second thing able to become the cached shell
+(`CLAUDE.md` §47, §63). An extensioned or dot-segment path still 404s (§28).
+
+Invite and beta links are **minted** at `/app?invite=…`; the root form is
+forwarded so links already sent keep working. `CLAUDE.md` §63.
 
 ## 6. Public and self-service
 

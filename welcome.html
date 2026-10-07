@@ -9,16 +9,17 @@
 <meta name="theme-color" content="#0c111d" media="(prefers-color-scheme: dark)">
 
 <!--
-  Link previews. These are ROOT-RELATIVE, which most scrapers resolve against
-  the page URL and some do not — the spec wants absolute. They are deliberately
-  not absolute today because hardcoding the host is the thing
-  docs/LAUNCH-CHECKLIST.md §1.2 exists to stop; the move to nimbleclerk.com is
-  where they become absolute, and that file carries the item.
+  Link previews. ABSOLUTE as of the move to nimbleclerk.com, which is the
+  condition the earlier root-relative version named: hardcoding a host is what
+  docs/LAUNCH-CHECKLIST.md §1.2 exists to stop, and the host is now settled.
+  This is the ONE file outside the documents that names it; §1.7's grep is what
+  keeps that true.
 -->
 <meta property="og:type" content="website">
 <meta property="og:title" content="CRM Builder — a CRM shaped like your business">
 <meta property="og:description" content="Pick the modules that match your work, add the fields you actually use, and keep working when the connection doesn't.">
-<meta property="og:image" content="/icons/icon-512.png">
+<meta property="og:url" content="https://nimbleclerk.com/">
+<meta property="og:image" content="https://nimbleclerk.com/icons/icon-512.png">
 <meta name="twitter:card" content="summary">
 
 <link rel="icon" href="/icons/icon-192.png">
@@ -442,7 +443,7 @@ footer { background: var(--paper-sunk); padding: 26px 0 40px; }
 
 <section class="splash">
   <div class="wrap topbar">
-    <a class="mark" href="/welcome">
+    <a class="mark" href="/">
       <svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true">
         <rect x="1" y="1" width="24" height="24" rx="7" fill="var(--accent)"/>
         <rect x="6.5" y="7" width="6" height="6" rx="2" fill="#fff" opacity="0.95"/>
@@ -472,7 +473,7 @@ footer { background: var(--paper-sunk); padding: 26px 0 40px; }
       </p>
 
       <div class="actions">
-        <a class="btn btn-primary" href="/">
+        <a class="btn btn-primary" href="/app">
           Open the app
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
         </a>
@@ -671,7 +672,7 @@ footer { background: var(--paper-sunk); padding: 26px 0 40px; }
   <div class="wrap foot-row">
     <span>CRM Builder &mdash; a modular CRM for small businesses.</span>
     <nav>
-      <a href="/">Open the app</a>
+      <a href="/app">Open the app</a>
       <a href="/privacy">Privacy</a>
       <a href="/terms">Terms</a>
     </nav>

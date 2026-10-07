@@ -40,6 +40,19 @@
 > **The `www` → apex 301 has a home now: Render's edge**, which is better than
 > the middleware §1.0 would otherwise have needed. §1.7's `curl` is what
 > confirms it, because a badge is not a 301.
+>
+> **Steps 3, 4, 6, 6b and 7 are done too**, so the only part of Part 1 still
+> outstanding is the configuration that lives elsewhere: `BACKUP_URL` in
+> `Mohamed-AH/crmback` (step 8), the UptimeRobot monitor (step 9) and the old
+> host's moved-notice plus the consent-screen URLs (step 10). **`APP_URL` is
+> the authentication cutover** and it has been taken — see §1.3, which was
+> wrong about what a stale one does and now is not.
+>
+> **The deployment had no users when this ran**, which made §1.1's four silent
+> failures *zero* rather than already-paid and removed the ordering constraint
+> between announcing (step 5) and the cutover commit (step 6). `CLAUDE.md` §63
+> records what the swap actually cost: one unplanned finding, in the OAuth
+> callback's six redirect targets.
 
 Two launches that are not yet done, each of which touches code, configuration
 we do not control, legal text and a dozen documents. They are written together
@@ -684,21 +697,29 @@ can do them. Steps 6 and 10 are commits.
 ## 1.7 Verification
 
 ```sh
-BASE_URL=https://nimbleclerk.com npm run test:smoke   # expect 52 passed
+BASE_URL=https://nimbleclerk.com npm run test:smoke   # expect 54 passed
 
-# The old host by NAME. Expect exactly two survivors, both deliberate:
-#   CLAUDE.md §58's record of what product-tour.html used to carry
-#   this file's own §1.2 row, which quotes the fallback it tells you to change
+# The old host by NAME. Survivors are deliberate; THIS FILE is not one of them
+# any more, so exclude it — §1.0c, §1.3 and §1.6 all quote the old host
+# because the procedure is about moving off it.
 grep -rn "crmbuilder-v1\.onrender\.com" \
   --include="*.md" --include="*.html" --include="*.yml" --include="*.mjs" . \
-  | grep -v docs/archive
+  | grep -v docs/archive | grep -v LAUNCH-CHECKLIST
 ```
+
+**Expect exactly two, both in `CLAUDE.md`:** §58's record of what
+`product-tour.html` used to carry, and the line at the top saying the old host
+is the same deployment and still answers. §29 freezes records rather than
+editing them; the live-URL *claim* moved, its history did not.
 
 **Two corrections to what that used to say**, both found by running it:
 
-- **`expect 51 passed` was stale.** §61 put the live count at **52** —
-  `js/boot-theme.js` (§60) added one asset check. §46's two-number rule: 47
-  local, 52 live, and the five-check gap is fixed.
+- **The count has gone stale twice, which is the point rather than the
+  correction.** It read 50, then 52, and is **54** after §63 (49 local; the
+  five-check gap is fixed, §46). It is a number in a second place, in the
+  document whose own thesis is that those go stale — so treat the figure here
+  as the last one somebody *observed*, and §2 of `CLAUDE.md` as where it is
+  maintained.
 - **`grep "onrender\.com"` → `expect: nothing` cannot ever pass**, so it was a
   check that would have been read as a failure and waved through. Two reasons,
   and neither is something to fix:

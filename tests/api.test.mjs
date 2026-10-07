@@ -335,10 +335,54 @@ describe('health and public surface', () => {
     assert.ok(json.error);
   });
 
-  test('unknown page routes serve the SPA shell', async () => {
-    const { status, text } = await req('/deep/link');
-    assert.equal(status, 200);
-    assert.match(text, /id="app"/);
+  /*
+   * The app moved to /app and `/` became the landing page at the domain move
+   * (docs/LAUNCH-CHECKLIST.md §1.0b). Three assertions, because they fail
+   * differently and a fix for one is not a fix for another.
+   */
+  test('the app is at /app, and nothing else serves the shell', async () => {
+    const app = await req('/app');
+    assert.equal(app.status, 200);
+    assert.match(app.text, /id="app"/);
+
+    // `/` is the splash. Serving the shell here is the pre-move behaviour.
+    const root = await req('/');
+    assert.equal(root.status, 200);
+    assert.doesNotMatch(root.text, /id="app"/);
+
+    /*
+     * And an unknown path answers the landing page rather than the shell. It
+     * used to answer the shell, which was a leftover from before hash routing;
+     * now it would be a SECOND URL that sw.js could cache as the application,
+     * which is §47's poisoning with a different body.
+     */
+    const stray = await req('/deep/link');
+    assert.equal(stray.status, 200);
+    assert.doesNotMatch(stray.text, /id="app"/);
+  });
+
+  /*
+   * An invite or beta link already in somebody's inbox carries its code on the
+   * ROOT, and welcome.html loads no app JS — so without the forward the code
+   * is silently never captured and the colleague gets a landing page and no
+   * team. The §36 shape: nothing errors.
+   */
+  test('a code on `/` is forwarded to the app, so links already sent still work', async () => {
+    for (const [name, value] of [['invite', 'abc-123'], ['beta', 'xyz-789']]) {
+      const { status, headers } = await req(`/?${name}=${value}`);
+      assert.equal(status, 302, `${name} was not forwarded`);
+      const loc = headers.get('location');
+      assert.ok(loc.startsWith('/app?'), `${name} forwarded to ${loc}`);
+      assert.match(loc, new RegExp(`${name}=${value}`));
+    }
+  });
+
+  // /app/ would resolve index.html's RELATIVE asset references against /app/,
+  // 404ing every script including the service worker registration.
+  test('a path under /app redirects to /app rather than 404ing its own assets', async () => {
+    const { status, headers } = await req('/app/anything');
+    assert.equal(status, 301);
+    assert.equal(headers.get('location'), '/app');
   });
 
   /*

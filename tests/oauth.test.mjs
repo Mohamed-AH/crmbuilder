@@ -146,7 +146,12 @@ describe('Google sign-in callback', () => {
     const { cookie, state } = await srv.begin();
 
     const out = await srv.callback({ state, cookie });
-    assert.equal(out.location, '/', 'a good sign-in lands back on the app');
+    // `/app`, not `/`: the root is the landing page since the domain move and
+    // loads no app JS, so a sign-in that lands there is silently a no-op on
+    // screen. The ASSERTION was already here and already said "the app" — only
+    // the URL moved, which is why this line is the regression guard rather than
+    // something new. docs/LAUNCH-CHECKLIST.md §1.0b.
+    assert.equal(out.location, '/app', 'a good sign-in lands back on the app');
     assert.ok(out.session, 'and carries a session cookie');
 
     const me = await srv.req('/api/me', { cookies: out.setCookie });
@@ -167,7 +172,7 @@ describe('Google sign-in callback', () => {
     const { cookie, state } = await srv.begin();
 
     const out = await srv.callback({ state, cookie });
-    assert.equal(out.location, '/?auth_error=unverified', 'refused, and told why');
+    assert.equal(out.location, '/app?auth_error=unverified', 'refused, and told why');
     assert.equal(out.session, null, 'no session is issued');
 
     // And nothing was written. A redirect that still created the account would
@@ -206,7 +211,7 @@ describe('Google sign-in callback', () => {
     const { cookie } = await srv.begin();
 
     const out = await srv.callback({ state: 'not-the-state-we-issued', cookie });
-    assert.equal(out.location, '/?auth_error=state');
+    assert.equal(out.location, '/app?auth_error=state');
     assert.equal(out.session, null);
     assert.match(srv.log(), /oauth_state/, 'and it is logged, so a burst is visible');
   });
@@ -219,7 +224,7 @@ describe('Google sign-in callback', () => {
     // The nonce is right but the browser presents no cookie — the shape a
     // cross-site forgery of the callback actually takes.
     const out = await srv.callback({ state, cookie: null });
-    assert.equal(out.location, '/?auth_error=state');
+    assert.equal(out.location, '/app?auth_error=state');
     assert.equal(out.session, null);
   });
 

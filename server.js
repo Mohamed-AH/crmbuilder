@@ -26,6 +26,18 @@ const fs = require('fs');
 
 const PORT = process.env.PORT || 8321;
 const APP_URL = (process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+
+/*
+ * The app lives at /app; `/` is the landing page (welcome.html).
+ *
+ * Every link we MINT points here, and `/` forwards ?invite= and ?beta= so
+ * links already sent out keep working — see the route at the foot of this
+ * file. docs/LAUNCH-CHECKLIST.md §1.0b: the swap is silent when it breaks,
+ * because welcome.html loads no app JS, so captureInvite() never sees a code
+ * that lands on it. Nothing errors; the colleague simply gets a landing page
+ * and no team.
+ */
+const APP_BASE = `${APP_URL}/app`;
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
@@ -2851,12 +2863,21 @@ app.get('/auth/google', (req, res) => {
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
 });
 
+/*
+ * Every exit from here goes to `/app`, not `/`.
+ *
+ * `/` is the landing page since the domain move, and it loads no app JS — so
+ * a successful sign-in used to drop people on a splash with no sign that
+ * anything had happened, and every `?auth_error=` was handed to a page with
+ * nothing to read it. Both are silent: the cookie is set, the error is real,
+ * and the screen says neither.
+ */
 app.get('/auth/google/callback', async (req, res) => {
   try {
     const { code, state } = req.query;
     if (!code || !state || state !== req.cookies.crmb_oauth_state) {
       authFailure('oauth_state', { reason: !state ? 'missing' : 'mismatch' }, req);
-      return res.redirect('/?auth_error=state');
+      return res.redirect('/app?auth_error=state');
     }
     res.clearCookie('crmb_oauth_state');
     const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
@@ -2895,7 +2916,7 @@ app.get('/auth/google/callback', async (req, res) => {
      */
     if (info.verified_email === false || info.email_verified === false) {
       authFailure('oauth_unverified_email', { email: info.email }, req);
-      return res.redirect('/?auth_error=unverified');
+      return res.redirect('/app?auth_error=unverified');
     }
     if (info.verified_email === undefined && info.email_verified === undefined) {
       console.warn(
@@ -2912,24 +2933,24 @@ app.get('/auth/google/callback', async (req, res) => {
     if (!gate.ok) {
       authFailure('signup_refused', { email: info.email, reason: gate.reason }, req);
       offerToAsk(res, info.email, info.name);
-      return res.redirect(`/?auth_error=${gate.reason}`);
+      return res.redirect(`/app?auth_error=${gate.reason}`);
     }
     clearAskCookie(res);
 
     const user = await upsertUser({ email: info.email, name: info.name, picture: info.picture, provider: 'google' });
     if (user.disabled) {
       authFailure('disabled_account', { email: info.email }, req);
-      return res.redirect('/?auth_error=disabled');
+      return res.redirect('/app?auth_error=disabled');
     }
     // Only now, with an account that actually exists. A use burnt on a failed
     // token exchange is a tester who cannot get in and a code that says it was
     // redeemed.
     if (gate.consume) await gate.consume();
     setSession(res, user);
-    res.redirect('/');
+    res.redirect('/app');
   } catch (err) {
     console.error('OAuth callback error:', err.message);
-    res.redirect('/?auth_error=oauth');
+    res.redirect('/app?auth_error=oauth');
   }
 });
 
@@ -3373,7 +3394,7 @@ app.post('/api/org/invites', requireAuth, requireOrgAdmin, async (req, res) => {
     invite: publicInvite(invite, 'valid'),
     // Built from APP_URL, not from a request header: a Host header is
     // attacker-controlled, and this link is about to be emailed to someone.
-    url: `${APP_URL}/?invite=${invite.code}`,
+    url: `${APP_BASE}?invite=${invite.code}`,
   });
 });
 
@@ -4780,7 +4801,7 @@ function digestText(name, due) {
   // Counts, never record names — a webhook destination is not necessarily as
   // private as the workspace, and the message's job is to get somebody to open
   // the CRM rather than to reproduce it in a chat channel.
-  return { head, lines, tail: APP_URL };
+  return { head, lines, tail: APP_BASE };
 }
 
 /*
@@ -5390,7 +5411,7 @@ app.post('/api/admin/beta-codes', requireAuth, requirePlatformAdmin, async (req,
     revokedAt: null,
   };
   await store.createBetaCode(entry);
-  res.json({ code: publicBetaCode(entry), url: `${APP_URL}/?beta=${entry.code}` });
+  res.json({ code: publicBetaCode(entry), url: `${APP_BASE}?beta=${entry.code}` });
 });
 
 app.delete('/api/admin/beta-codes/:code', requireAuth, requirePlatformAdmin, async (req, res) => {
@@ -5580,7 +5601,7 @@ app.post('/api/admin/access-requests/:email/decide', requireAuth, requirePlatfor
     // A convenience for operators who want to reply by hand, not the mechanism:
     // the approval already stands without anybody sending anything.
     message: decision === 'approved'
-      ? `You're in — open ${APP_URL} and sign in with Google using ${email}.`
+      ? `You're in — open ${APP_BASE} and sign in with Google using ${email}.`
       : null,
   });
 });
@@ -5898,6 +5919,49 @@ for (const name of PUBLIC_DOCS) {
   app.get(`/docs/${name}`, sendPublicFile(path.join('docs', name)));
 }
 
+/*
+ * `/` is the landing page; the application is at `/app`.
+ *
+ * docs/LAUNCH-CHECKLIST.md §1.0b: done at the domain move because §1.1's
+ * costs — stranded installed apps, caches on an origin we no longer serve,
+ * everybody signed out — are paid by the origin change whether or not the
+ * paths move, so restructuring them at that moment is free and at any other
+ * moment is not.
+ */
+app.get('/', (req, res) => {
+  /*
+   * An invite or beta link already in somebody's inbox carries its code on the
+   * ROOT (`/?invite=…`), because that is where this app has always lived.
+   * `welcome.html` loads no app JS (§58), so `captureInvite()` and
+   * `captureBetaCode()` never run on it — the code is not stored, not
+   * stripped, and the person who clicked gets a landing page and no team.
+   * Nothing errors, so nobody finds out.
+   *
+   * Forwarded rather than handled in the page, because giving welcome.html a
+   * script to do it with would undo the reason it is a standalone page.
+   */
+  const invite = req.query.invite ? String(req.query.invite) : '';
+  const beta = req.query.beta ? String(req.query.beta) : '';
+  if (invite || beta) {
+    const params = new URLSearchParams();
+    if (invite) params.set('invite', invite);
+    if (beta) params.set('beta', beta);
+    return res.redirect(302, `/app?${params}`);
+  }
+  return sendPublicFile('welcome.html')(req, res);
+});
+
+app.get('/app', sendPublicFile('index.html'));
+
+/*
+ * `index.html` references its assets RELATIVELY — `js/app.js`, `css/style.css`,
+ * `manifest.webmanifest` — so they resolve against `/` only while the path
+ * carries no trailing slash. At `/app/` every one of them would resolve to
+ * `/app/…` and 404, including `js/app.js`'s own `register('sw.js')`. Routing
+ * here is hash-based, so no sub-path under /app is ever needed.
+ */
+app.get('/app/*', (req, res) => res.redirect(301, '/app'));
+
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/') || req.path.startsWith('/auth/')) {
     return res.status(404).json({ error: 'Not found' });
@@ -5916,7 +5980,17 @@ app.get('*', (req, res) => {
     || req.path.split('/').some((seg) => seg.length > 1 && seg.startsWith('.'));
   if (namesAFile) return res.status(404).type('txt').send('Not found');
 
-  res.sendFile(path.join(__dirname, 'index.html'));
+  /*
+   * The LANDING page, not the app — changed with the /app swap.
+   *
+   * It used to answer the shell, which was a leftover from before hash
+   * routing: no client route has ever needed a server path. Answering the
+   * landing page means a mistyped URL says what the site is, and — the half
+   * that matters — **only `/app` ever returns the shell**, which is what
+   * `sw.js`'s navigation branch now gates on. A second URL serving the app is
+   * a second thing that can become the cached shell (§47).
+   */
+  res.sendFile(path.join(__dirname, 'welcome.html'));
 });
 
 /*

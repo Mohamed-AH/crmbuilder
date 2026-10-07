@@ -4,10 +4,13 @@
  * API/auth requests are network-only (never cached).
  * Bump CACHE_VERSION whenever any precached asset changes.
  */
-const CACHE_VERSION = 'crmbuilder-v56';
+const CACHE_VERSION = 'crmbuilder-v57';
 const APP_SHELL = [
-  './',
-  './index.html',
+  // The app is at /app; `/` is the landing page and is NOT ours (see the
+  // navigation branch below). Absolute, because a relative entry would be
+  // resolved against the worker's own location and `/app` is the only URL
+  // that answers with the shell.
+  '/app',
   './manifest.webmanifest',
   './css/style.css',
   './fonts/inter-var-latin.woff2',
@@ -70,7 +73,7 @@ self.addEventListener('fetch', (event) => {
    * not the app belongs here, which is why the entries are listed beside the
    * server's own PUBLIC_ROOT_FILES / PUBLIC_DOCS rather than added ad hoc.
    */
-  const STANDALONE_PAGES = ['/privacy', '/terms', '/guide', '/welcome', '/docs/manual', '/docs/product-tour'];
+  const STANDALONE_PAGES = ['/', '/privacy', '/terms', '/guide', '/welcome', '/docs/manual', '/docs/product-tour'];
   /*
    * …and the files those pages load. The early return below matches a
    * NAVIGATION, so a subresource never reached it: /legal.css fell through to
@@ -130,8 +133,19 @@ self.addEventListener('fetch', (event) => {
   // a returning visitor stared at nothing while the server woke up; the shell
   // is self-contained, so there is nothing to wait for.
   if (request.mode === 'navigate') {
+    /*
+     * ONLY /app is the app, and this is a path gate rather than another list.
+     *
+     * The lists above close the paths somebody remembered; this closes the
+     * class. `/` now serves the landing page and the catch-all serves it too,
+     * so without this a navigation to any stray path would be answered from
+     * the cached shell AND written back over it — and the content-type check
+     * below cannot help, because welcome.html is text/html just like the app.
+     * That is §47's poisoning with a new body.
+     */
+    if (url.pathname !== '/app') return;
     event.respondWith(
-      caches.match('./index.html').then((cached) => {
+      caches.match('/app').then((cached) => {
         const fresh = fetch(request).then((response) => {
           /*
            * `response.ok` alone is not "this is the app". Any same-origin
@@ -148,11 +162,11 @@ self.addEventListener('fetch', (event) => {
           const isShell = (response.headers.get('content-type') || '').includes('text/html');
           if (response.ok && isShell) {
             const copy = response.clone();
-            caches.open(CACHE_VERSION).then((cache) => cache.put('./index.html', copy));
+            caches.open(CACHE_VERSION).then((cache) => cache.put('/app', copy));
           }
           return response;
         });
-        return cached || fresh.catch(() => caches.match('./index.html'));
+        return cached || fresh.catch(() => caches.match('/app'));
       })
     );
     return;

@@ -84,7 +84,10 @@ await check('server responds to /healthz', async () => {
 });
 
 await check('app shell loads', async () => {
-  const { res, err } = await get('/');
+  // /app, not /. The landing page took `/` at the domain move
+  // (docs/LAUNCH-CHECKLIST.md §1.0b); this is the one URL that answers with
+  // the shell, which is also what sw.js's navigation branch gates on.
+  const { res, err } = await get('/app');
   if (err) throw new Error(err.message);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const html = await res.text();
@@ -94,13 +97,43 @@ await check('app shell loads', async () => {
   return `${(html.length / 1024).toFixed(1)}kb`;
 });
 
-await check('SPA deep link falls back to the shell', async () => {
+await check('`/` is the landing page, not the app', async () => {
+  const { res, err } = await get('/');
+  if (err) throw new Error(err.message);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const html = await res.text();
+  if (html.includes('id="app"')) throw new Error('/ served the app shell');
+  if (!html.includes('A CRM shaped like')) throw new Error('/ is not welcome.html');
+  return true;
+});
+
+await check('an unknown path serves the landing page, never the shell', async () => {
+  // It used to answer the shell — a leftover from before hash routing, and now
+  // a second URL that sw.js could cache AS the app. Only /app may do that.
   const { res, err } = await get('/some/deep/link');
   if (err) throw new Error(err.message);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const html = await res.text();
-  if (!html.includes('id="app"')) throw new Error('did not serve the shell');
+  if (html.includes('id="app"')) throw new Error('served the shell');
   return true;
+});
+
+await check('an invite link on `/` still reaches the app', async () => {
+  /*
+   * The §36 shape: welcome.html loads no app JS, so a code landing on `/` is
+   * never captured and the colleague gets a landing page and no team —
+   * silently. Links already sent out carry the root form, so the forward is
+   * what keeps them alive. Asserted on the Location, because this check cannot
+   * see what the browser then stores (the E2E does that).
+   */
+  const { res, err } = await get('/?invite=smoke-probe');   // get() is already redirect: 'manual'
+  if (err) throw new Error(err.message);
+  const loc = res.headers.get('location') || '';
+  if (res.status !== 302) throw new Error(`HTTP ${res.status}, expected 302`);
+  if (!loc.startsWith('/app?') || !loc.includes('invite=smoke-probe')) {
+    throw new Error(`forwarded to ${loc || '(nowhere)'}`);
+  }
+  return loc;
 });
 
 // ---------------------------------------------------------------- assets
@@ -199,7 +232,7 @@ for (const [path, what] of MUST_NOT_SERVE) {
  * legal pages are served by a different branch of the allow-list (§28) and it
  * would be easy to harden one and not the other.
  */
-for (const path of ['/', '/privacy']) {
+for (const path of ['/app', '/privacy']) {
   await check(`security headers on ${path}`, async () => {
     const { res, err } = await get(path);
     if (err) throw new Error(err.message);

@@ -20,8 +20,8 @@ isolation boundary differs.
 | Onboarding a client | they sign up | you provision, ~30 min |
 | `DEPLOYMENT_MODE` | `pooled` | `dedicated` |
 
-**Start pooled.** It is the default, it is what
-`crmbuilder-v1.onrender.com` runs, and the tenant isolation it relies on is
+**Start pooled.** It is the default, it is what the `crmbuilder-v1` service
+(now serving `nimbleclerk.com`) runs, and the tenant isolation it relies on is
 covered by eight tests in `tests/api.test.mjs` that assert the attack — an
 owner in org B reaching for org A's accounts, workspaces and stats — rather
 than the happy path.

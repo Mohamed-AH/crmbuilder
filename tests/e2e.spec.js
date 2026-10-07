@@ -54,7 +54,7 @@ const TEMPLATE_COUNT = (() => {
 // --- helpers ---------------------------------------------------------------
 
 async function onboard(page, { name = 'Test Co', currency = 'USD', templates = null } = {}) {
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('.template-card').first()).toBeVisible();
   await page.fill('#onboard-name', name);
   await page.selectOption('#onboard-currency', currency);
@@ -90,7 +90,7 @@ async function onboard(page, { name = 'Test Co', currency = 'USD', templates = n
  * files' worth of scrolling away from where it reads as available.
  */
 async function inviteLink(page) {
-  await page.goto('/#/settings');
+  await page.goto('/app#/settings');
   await page.click('#invite-btn');
   const field = page.locator('#invite-url');
   await expect(field).toBeVisible({ timeout: 20000 });
@@ -213,7 +213,7 @@ test.afterEach(async ({ page }, testInfo) => {
 
 test.describe('boot', () => {
   test('renders the onboarding screen with real icons and fonts', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await expect(page.locator('.template-card')).toHaveCount(TEMPLATE_COUNT);
     // Every template tile draws a real Lucide SVG, not an emoji fallback — and
     // this is also what catches an icon name templates.js invented. The card
@@ -235,7 +235,7 @@ test.describe('boot', () => {
     });
 
     const started = Date.now();
-    await page.goto('/', { waitUntil: 'commit' });
+    await page.goto('/app', { waitUntil: 'commit' });
     await expect(page.locator('.template-card').first()).toBeVisible({ timeout: 5000 });
     const paintedMs = Date.now() - started;
 
@@ -252,7 +252,7 @@ test.describe('boot', () => {
     await page.addInitScript(() => {
       indexedDB.open = () => { throw new Error('storage blocked'); };
     });
-    await page.goto('/');
+    await page.goto('/app');
     await expect(page.locator('.template-card').first()).toBeVisible({ timeout: 10000 });
     // And navigation still works, which is what "unresponsive" really meant.
     await page.click('a[href="#/settings"]');
@@ -265,7 +265,7 @@ test.describe('boot', () => {
       // Never fires success, error or blocked — the case with no timeout hung.
       indexedDB.open = () => ({ onsuccess: null, onerror: null, onblocked: null, onupgradeneeded: null });
     });
-    await page.goto('/');
+    await page.goto('/app');
     await expect(page.locator('.template-card').first()).toBeVisible({ timeout: 10000 });
     await page.click('a[href="#/settings"]');
     await expect(page.locator('h1')).toHaveText('Settings');
@@ -273,7 +273,7 @@ test.describe('boot', () => {
 
   test('works with no server at all (static hosting)', async ({ page }) => {
     await page.route('**/api/**', (route) => route.abort());
-    await page.goto('/');
+    await page.goto('/app');
     await onboardWithoutServer(page);
     async function onboardWithoutServer(p) {
       await expect(p.locator('.template-card').first()).toBeVisible();
@@ -464,7 +464,7 @@ test.describe('removing a field', () => {
 
     // Gone from the record, and — the part that matters — gone from the file
     // the user hands to somebody else.
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     const [download] = await Promise.all([page.waitForEvent('download'), page.click('#export-btn')]);
     const dump = require('node:fs').readFileSync(await download.path(), 'utf8');
     expect(dump).toContain('Dana');
@@ -480,7 +480,7 @@ test.describe('removing a field', () => {
     // The column is gone from the table either way.
     await expect(page.locator('th:has-text("Private note")')).toHaveCount(0);
     // But the value is still there, which is exactly what they were told.
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     const [download] = await Promise.all([page.waitForEvent('download'), page.click('#export-btn')]);
     expect(require('node:fs').readFileSync(await download.path(), 'utf8')).toContain('Sensitive note');
   });
@@ -687,7 +687,7 @@ test.describe('module builder', () => {
      * the samples carry `_demo` and go — and the label has to name what it is
      * about to take (§33), which here is two records and no modules.
      */
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     const remove = page.locator('#remove-demo-btn');
     await expect(remove).toContainText('2 records');
     await expect(remove).not.toContainText('module');
@@ -1342,7 +1342,7 @@ test.describe('CSV', () => {
 
 test.describe('demo data', () => {
   test('fills every module and makes the dashboard look alive', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await expect(page.locator('#onboard-demo')).toBeVisible();
     await page.click('#onboard-demo');
 
@@ -1371,7 +1371,7 @@ test.describe('demo data', () => {
    * would be the trap §34 already records for three other counts.
    */
   test('the due-date filter narrows a module to what needs attention', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await expect(page.locator('#onboard-demo')).toBeVisible();
     await page.click('#onboard-demo');
     await expect(page.locator('#workspace-name')).toHaveText('Lumen Studio', { timeout: 20000 });
@@ -1437,7 +1437,7 @@ test.describe('demo data', () => {
 
 test.describe('guided tour', () => {
   test('runs all six steps, loading demo data on the way', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await startTour(page);
     await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
 
@@ -1483,7 +1483,7 @@ test.describe('guided tour', () => {
   });
 
   test('sets up each screen it describes, and never stalls', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await startTour(page);
     await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
 
@@ -1517,7 +1517,7 @@ test.describe('guided tour', () => {
     // The reported failure: without demo data the tour ran anyway, leaving
     // steps 2-4 describing screens that were never opened.
     await page.route('**/js/demo-data.js', (route) => route.abort());
-    await page.goto('/');
+    await page.goto('/app');
     await page.click('#onboard-tour');
     await expect(page.locator('.toast').last()).toContainText('Sample data could not be loaded');
     await expect(page.locator('[data-consent]')).toHaveCount(0, { timeout: 5000 });
@@ -1525,7 +1525,7 @@ test.describe('guided tour', () => {
   });
 
   test('can be skipped, and does not trap the page', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await startTour(page);
     await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
     await page.click('[data-tour-skip]');
@@ -1537,7 +1537,7 @@ test.describe('guided tour', () => {
   });
 
   test('Escape closes it', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await startTour(page);
     await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
     await page.keyboard.press('Escape');
@@ -1561,7 +1561,7 @@ test.describe('accounts and sync', () => {
     // A brand new browser profile signing in as the same person.
     const fresh = await browser.newContext();
     const page2 = await fresh.newPage();
-    await page2.goto('/');
+    await page2.goto('/app');
     await signIn(page2, email);
     await expect(page2.locator('#workspace-name')).toHaveText('Sync Co', { timeout: 20000 });
     await expect(page2.locator('#nav-modules .nav-link').first()).toBeVisible();
@@ -1626,7 +1626,7 @@ test.describe('accounts and sync', () => {
     // The colleague, on the same workspace, with the record already in hand.
     const second = await browser.newContext();
     const page2 = await second.newPage();
-    await page2.goto('/');
+    await page2.goto('/app');
     await signIn(page2, email);
     // The record has to be on the server before the colleague can have it —
     // asserted here so a slow first push fails as itself rather than as a
@@ -1679,7 +1679,7 @@ test.describe('accounts and sync', () => {
 
     const second = await browser.newContext();
     const page2 = await second.newPage();
-    await page2.goto('/');
+    await page2.goto('/app');
     await signIn(page2, email);
     await expect(page2.locator('#nav-modules .nav-link:has-text("Contacts")')).toBeVisible({ timeout: 20000 });
 
@@ -1730,7 +1730,7 @@ test.describe('accounts and sync', () => {
     // A second device that has the record, then goes quiet.
     const second = await browser.newContext();
     const page2 = await second.newPage();
-    await page2.goto('/');
+    await page2.goto('/app');
     await signIn(page2, email);
     await page2.click('#nav-modules .nav-link:has-text("Contacts")');
     await expect(page2.locator('tr:has-text("Doomed Contact")')).toBeVisible({ timeout: 25000 });
@@ -1777,12 +1777,12 @@ test.describe('accounts and sync', () => {
     await page.click('#record-save');
     await expect(page.locator('tr:has-text("Kept Across Sign Out")')).toBeVisible();
 
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await page.click('#signout-btn');
     await expect(page.locator('#signin-btn')).toBeVisible();
 
     // Back to a blank slate — not the previous session's records.
-    await page.goto('/#/');
+    await page.goto('/app#/');
     await expect(page.locator('.template-card').first()).toBeVisible({ timeout: 15000 });
     await expect(page.locator('tr:has-text("Kept Across Sign Out")')).toHaveCount(0);
 
@@ -1821,7 +1821,7 @@ test.describe('accounts and sync', () => {
     await context.setOffline(false);
 
     // B signs in on the same machine, without A ever signing out.
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await page.click('#signout-btn');
     await expect(page.locator('#signin-btn')).toBeVisible();
     await signIn(page, b);
@@ -1843,7 +1843,7 @@ test.describe('accounts and sync', () => {
 
     // A comes back to the same machine. Their pending edit is still theirs and
     // syncs with no special recovery step.
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await page.click('#signout-btn');
     await expect(page.locator('#signin-btn')).toBeVisible();
     await signIn(page, a);
@@ -1861,7 +1861,7 @@ test.describe('accounts and sync', () => {
  */
 test.describe('sample data', () => {
   test('the tour asks before seeding anything', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await page.click('#onboard-tour');
     // Nothing is written until the question is answered.
     await expect(page.locator('[data-consent="yes"]')).toBeVisible();
@@ -1874,7 +1874,7 @@ test.describe('sample data', () => {
   });
 
   test('signing in after the tour starts fresh by default', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await startTour(page);
     await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
     await page.click('[data-tour-skip]');
@@ -1893,7 +1893,7 @@ test.describe('sample data', () => {
   });
 
   test('the demo can be kept on purpose, and removed later', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await startTour(page);
     await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
     await page.click('[data-tour-skip]');
@@ -1906,7 +1906,7 @@ test.describe('sample data', () => {
     }).toPass({ timeout: 25000 });
 
     // One click, from any device, for as long as any sample row survives.
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
 
     /*
      * The button must name what its number counts.
@@ -1943,7 +1943,7 @@ test.describe('sample data', () => {
   });
 
   test('removing samples keeps work the user added to a sample module', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await startTour(page);
     await expect(page.locator('.tour-pop')).toBeVisible({ timeout: 30000 });
     await page.click('[data-tour-skip]');
@@ -1955,7 +1955,7 @@ test.describe('sample data', () => {
     await page.click('#record-save');
     await expect(page.locator('tr:has-text("My Own Contact")')).toBeVisible();
 
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     page.once('dialog', (d) => d.accept());
     await page.click('#remove-demo-btn');
 
@@ -1980,7 +1980,7 @@ test.describe('sample data', () => {
     const custom = DEMO.customModule;
     test.skip(!custom, 'the dataset carries no custom modules');
 
-    await page.goto('/');
+    await page.goto('/app');
     await page.click('#onboard-demo');
     await expect(page.locator(`#nav-modules .nav-link:has-text("${custom.name}")`)).toBeVisible({ timeout: 25000 });
 
@@ -1992,7 +1992,7 @@ test.describe('sample data', () => {
     await expect(page.locator('.kanban-card:has-text("Mine, not a sample"), tr:has-text("Mine, not a sample")').first())
       .toBeVisible({ timeout: 15000 });
 
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     page.once('dialog', (d) => d.accept());
     await page.click('#remove-demo-btn');
 
@@ -2013,7 +2013,7 @@ test.describe('sample data', () => {
     const relation = custom && custom.fields.find((f) => f.type === 'relation');
     test.skip(!relation, 'the dataset carries no relations');
 
-    await page.goto('/');
+    await page.goto('/app');
     await page.click('#onboard-demo');
     await expect(page.locator(`#nav-modules .nav-link:has-text("${custom.name}")`)).toBeVisible({ timeout: 25000 });
     await page.click(`#nav-modules .nav-link:has-text("${custom.name}")`);
@@ -2391,7 +2391,7 @@ test.describe('team workspaces', () => {
      * deliberately in the second group — reading the workspace and taking a
      * copy IS the job for an auditor or an investor.
      */
-    await mate.goto('/#/');
+    await mate.goto('/app#/');
     await expect(mate.locator('.stat-card').first()).toBeVisible({ timeout: 20000 });
     expect(await mate.locator('#dash-add-module').count(), 'dashboard offers Add module').toBe(0);
     expect(await mate.locator('[data-quick-add]').count(), 'dashboard offers quick add').toBe(0);
@@ -2407,7 +2407,7 @@ test.describe('team workspaces', () => {
     await expect(mate.locator('#export-csv-btn'), 'export must stay — it is the job').toBeVisible();
     await expect(mate.locator('#record-search'), 'search must stay').toBeVisible();
 
-    await mate.goto('/#/settings');
+    await mate.goto('/app#/settings');
     await expect(mate.locator('.page-head .subtitle')).toBeVisible({ timeout: 20000 });
     expect(await mate.locator('#set-name').count(), 'settings offers an editable name').toBe(0);
     expect(await mate.locator('#set-currency').count(), 'settings offers an editable currency').toBe(0);
@@ -2599,7 +2599,7 @@ test.describe('team workspaces', () => {
     // navigated: the page is already on #/settings, so goto would be a
     // same-document hash change and would show the team as it was before the
     // colleague joined.
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await page.reload();
     await expect(page.locator('[data-act="remove"]')).toBeVisible({ timeout: 25000 });
     page.once('dialog', (d) => d.accept());
@@ -2612,7 +2612,7 @@ test.describe('team workspaces', () => {
     await mate.reload();
     await expect(mate.locator('tr:has-text("Team Only Contact")')).toHaveCount(0, { timeout: 25000 });
     await expect(mate.locator('#nav-modules .nav-link')).toHaveCount(0, { timeout: 25000 });
-    await mate.goto('/#/');
+    await mate.goto('/app#/');
     await expect(mate.locator('.template-card').first()).toBeVisible({ timeout: 25000 });
 
     // Their account still exists — removal is not deletion.
@@ -2620,7 +2620,7 @@ test.describe('team workspaces', () => {
     expect(me.authenticated, 'being removed from a team must not delete the account').toBe(true);
 
     // And the team is unchanged.
-    await page.goto('/#/');
+    await page.goto('/app#/');
     await page.click('#nav-modules .nav-link:has-text("Contacts")');
     await expect(page.locator('tr:has-text("Team Only Contact")')).toBeVisible();
     await second.close();
@@ -2648,7 +2648,7 @@ test.describe('team workspaces', () => {
     await expect(mate.locator('#nav-modules .nav-link:has-text("Contacts")')).toBeVisible({ timeout: 25000 });
 
     // A member leaving needs no permission from anyone.
-    await mate.goto('/#/settings');
+    await mate.goto('/app#/settings');
     mate.once('dialog', (d) => d.accept());
     await mate.click('#leave-team-btn');
     await expect(mate.locator('.toast').last()).toContainText('left the team', { timeout: 25000 });
@@ -2683,7 +2683,7 @@ test.describe('team workspaces', () => {
  */
 test.describe('beta access', () => {
   test('a refused signup is explained, not just failed', async ({ page }) => {
-    await page.goto('/?auth_error=beta');
+    await page.goto('/app?auth_error=beta');
     await expect(page.locator('.modal')).toBeVisible({ timeout: 15000 });
     await expect(page.locator('.modal')).toContainText('private beta');
     await expect(page.locator('.modal')).toContainText('without an account');
@@ -2702,12 +2702,12 @@ test.describe('beta access', () => {
   });
 
   test('paused signups say so rather than blaming the visitor', async ({ page }) => {
-    await page.goto('/?auth_error=closed');
+    await page.goto('/app?auth_error=closed');
     await expect(page.locator('.modal')).toContainText('paused', { timeout: 15000 });
   });
 
   test('a beta code is taken out of the address bar on arrival', async ({ page }) => {
-    await page.goto('/?beta=some-code-from-an-invite');
+    await page.goto('/app?beta=some-code-from-an-invite');
     await expect(page.locator('.template-card').first()).toBeVisible();
     // A code that creates accounts is a credential; it does not belong in
     // history or a screenshot once the page has it.
@@ -2728,8 +2728,31 @@ test.describe('beta access', () => {
    * for somebody else. What is asserted here is the wording, because the
    * wording was the whole defect.
    */
+  /*
+   * Links that were sent out BEFORE the app moved to /app carry their code on
+   * the root, and `welcome.html` loads no app JS — so `captureInvite()` never
+   * runs on it and the code is silently lost. docs/LAUNCH-CHECKLIST.md §1.0b.
+   *
+   * Asserted on what is STORED, not on the redirect. A 302 is the mechanism,
+   * and §54 is the lesson: asserting the symptom passes on a build where the
+   * forward fires and the capture does not.
+   */
+  test('a code on the old root link still reaches the app and is captured', async ({ page }) => {
+    await page.goto('/?invite=legacy-root-invite');
+    await expect(page).toHaveURL(/\/app($|[?#])/);
+    expect(await page.evaluate(() => localStorage.getItem('crmb:pendingInvite')))
+      .toBe('legacy-root-invite');
+    // …and stripped from the address bar, as it is on the /app form (§13).
+    expect(new URL(page.url()).search).not.toContain('invite=');
+
+    await page.goto('/?beta=legacy-root-beta');
+    await expect(page).toHaveURL(/\/app($|[?#])/);
+    expect(await page.evaluate(() => localStorage.getItem('crmb:betaCode')))
+      .toBe('legacy-root-beta');
+  });
+
   test('an invited tester is offered an account, not asked if they already have one', async ({ page }) => {
-    await page.goto('/?beta=e2e-welcome-code');
+    await page.goto('/app?beta=e2e-welcome-code');
 
     // The code leaves the address bar; something has to say it was understood.
     await expect(page.locator('.toast').last()).toContainText('Beta invite applied');
@@ -2767,7 +2790,7 @@ test.describe('beta access', () => {
    * they already had one. The suite runs in `open` mode (playwright.config.js).
    */
   test('open signups offer an account to a visitor with no invite', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     const cta = page.locator('#onboard-signin');
     await expect(cta).toBeVisible({ timeout: 15000 });
     await expect(cta).toContainText('Create your account');
@@ -2792,7 +2815,7 @@ test.describe('beta access', () => {
       body.signupMode = 'code';
       await route.fulfill({ response: res, json: body });
     });
-    await page.goto('/');
+    await page.goto('/app');
     const cta = page.locator('#onboard-signin');
     await expect(cta).toBeVisible({ timeout: 15000 });
     await expect(cta).toContainText('Already have an account');
@@ -2827,7 +2850,7 @@ test.describe('beta access', () => {
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, status: 'received' }) });
     });
 
-    await page.goto('/');
+    await page.goto('/app');
     await page.locator('#onboard-signin').waitFor({ timeout: 15000 });
     await page.locator('#onboard-signin').click();
     await page.fill('#dev-email', 'turned-away@example.com');
@@ -2860,7 +2883,7 @@ test.describe('beta access', () => {
       contentType: 'application/json',
       body: JSON.stringify({ error: 'That beta code is not valid. Ask for a fresh one.', reason: 'pending' }),
     }));
-    await page.goto('/');
+    await page.goto('/app');
     await page.locator('#onboard-signin').waitFor({ timeout: 15000 });
     await page.locator('#onboard-signin').click();
     await page.fill('#dev-email', 'already-asked@example.com');
@@ -2894,7 +2917,7 @@ test.describe('terms acceptance', () => {
 
   test('a new account agrees once, and is not asked again', async ({ page }) => {
     const email = uniqueEmail('terms-first');
-    await page.goto('/');
+    await page.goto('/app');
     await rawSignIn(page, email);
 
     // First sight of it: not "we changed something", which would be a lie to
@@ -2946,7 +2969,7 @@ test.describe('terms acceptance', () => {
    */
   test('a changed version asks again, and says it has changed', async ({ page }) => {
     const email = uniqueEmail('terms-bump');
-    await page.goto('/');
+    await page.goto('/app');
     await rawSignIn(page, email);
     await page.click('#terms-ok');
     await expect(page.locator('#terms-ok')).toHaveCount(0);
@@ -3000,7 +3023,7 @@ test.describe('terms acceptance', () => {
       delete body.termsVersion;
       await route.fulfill({ response: res, json: body });
     });
-    await page.goto('/');
+    await page.goto('/app');
     await rawSignIn(page, email);
 
     // Wait for the server's answer to have actually landed — otherwise "no
@@ -3025,7 +3048,7 @@ test.describe('terms acceptance', () => {
    */
   test('declining signs out and records nothing', async ({ page }) => {
     const email = uniqueEmail('terms-decline');
-    await page.goto('/');
+    await page.goto('/app');
     await rawSignIn(page, email);
     await expect(page.locator('#terms-out')).toBeVisible({ timeout: 20000 });
     await page.click('#terms-out');
@@ -3057,9 +3080,9 @@ test.describe('admin', () => {
    * test that runs after this one.
    */
   test('signups can be paused and reopened without a redeploy', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await signIn(page, 'e2e-admin@example.com');
-    await page.goto('/#/admin');
+    await page.goto('/app#/admin');
     // Two mode-switch rows exist now — signups and org creation — so this one
     // is addressed by the buttons it owns.
     await expect(page.locator('.mode-switch:has([data-mode])')).toBeVisible({ timeout: 20000 });
@@ -3113,7 +3136,7 @@ test.describe('admin', () => {
     // The operator pauses them, from a separate session.
     const opCtx = await browser.newContext();
     const op = await opCtx.newPage();
-    await op.goto('/');
+    await op.goto('/app');
     await signIn(op, 'e2e-admin@example.com');
     const pause = await op.request.post(`/api/admin/orgs/${orgId}/suspend`, {
       data: { suspend: true, reason: 'Paused for a storage review' },
@@ -3195,9 +3218,9 @@ test.describe('admin', () => {
   });
 
   test('a test alert says whether alerts can reach anybody at all', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await signIn(page, 'e2e-admin@example.com');
-    await page.goto('/#/admin');
+    await page.goto('/app#/admin');
     await page.locator('#test-alert-btn').waitFor({ timeout: 20000 });
     await page.click('#test-alert-btn');
     // No webhook is configured in this suite, and saying so is the point:
@@ -3206,9 +3229,9 @@ test.describe('admin', () => {
   });
 
   test('the deployment card shows the three meters and who is heaviest', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await signIn(page, 'e2e-admin@example.com');
-    await page.goto('/#/admin');
+    await page.goto('/app#/admin');
     await expect(page.locator('.meter-grid')).toBeVisible({ timeout: 20000 });
 
     const meters = page.locator('.meter');
@@ -3235,7 +3258,7 @@ test.describe('admin', () => {
     // A tenant that deletes most of what it created.
     const ctx = await browser.newContext();
     const tenant = await ctx.newPage();
-    await tenant.goto('/');
+    await tenant.goto('/app');
     await signIn(tenant, uniqueEmail('reclaim'));
     const now = Date.now();
     const rows = [...Array(12)].map((_, i) => ({
@@ -3250,7 +3273,7 @@ test.describe('admin', () => {
     });
     await ctx.close();
 
-    await page.goto('/');
+    await page.goto('/app');
     await signIn(page, 'e2e-admin@example.com');
 
     /*
@@ -3265,7 +3288,7 @@ test.describe('admin', () => {
     const scarred = view.orgs.find((o) => o.deadBytes > 0 && o.deadBytes / o.bytes >= 0.1);
     expect(scarred, 'ten stub tombstones against two live rows should be a visible share').toBeTruthy();
 
-    await page.goto('/#/admin');
+    await page.goto('/app#/admin');
     await expect(page.locator('h2:has-text("Organisations")')).toBeVisible({ timeout: 20000 });
     const row = page.locator('.card:has(h2:has-text("Organisations")) tbody tr', { hasText: scarred.name });
     await expect(row).toContainText('reclaimable');
@@ -3276,7 +3299,7 @@ test.describe('admin', () => {
   test('shows metrics and manages accounts', async ({ page, browser }) => {
     // ADMIN_EMAILS in playwright.config.js guarantees this address is an admin
     // regardless of which test created the first account.
-    await page.goto('/');
+    await page.goto('/app');
     await signIn(page, 'e2e-admin@example.com');
     await expect(page.locator('#nav-admin')).toBeVisible();
 
@@ -3292,7 +3315,7 @@ test.describe('admin', () => {
     const victimEmail = uniqueEmail('victim');
     const other = await browser.newContext();
     const page2 = await other.newPage();
-    await page2.goto('/');
+    await page2.goto('/app');
     await signIn(page2, victimEmail);
     // A solo signup owns an org of one, so no Admin link is offered — and if
     // they call the API directly they see only their own org, never ours.
@@ -3320,12 +3343,12 @@ test.describe('admin', () => {
     const aEmail = uniqueEmail('tenant-a');
     const bEmail = uniqueEmail('tenant-b');
 
-    await page.goto('/');
+    await page.goto('/app');
     await signIn(page, aEmail);
 
     const second = await browser.newContext();
     const pageB = await second.newPage();
-    await pageB.goto('/');
+    await pageB.goto('/app');
     await signIn(pageB, bEmail);
 
     // B's admin surface must contain B and nobody else.
@@ -3345,24 +3368,24 @@ test.describe('admin', () => {
     const ownerEmail = uniqueEmail('team-owner');
     const memberEmail = uniqueEmail('team-member');
 
-    await page.goto('/');
+    await page.goto('/app');
     await signIn(page, ownerEmail);
 
     const ctx = await browser.newContext();
     const memberPage = await ctx.newPage();
-    await memberPage.goto('/');
+    await memberPage.goto('/app');
     await signIn(memberPage, memberEmail);
     const memberId = (await (await memberPage.request.get('/api/me')).json()).user.id;
 
     // Demote them via the platform admin, who can reach across orgs.
     const admin = await browser.newContext();
     const adminPage = await admin.newPage();
-    await adminPage.goto('/');
+    await adminPage.goto('/app');
     await signIn(adminPage, 'e2e-admin@example.com');
     const res = await adminPage.request.patch(`/api/admin/users/${memberId}`, { data: { role: 'member' } });
     expect(res.status()).toBe(200);
 
-    await memberPage.goto('/#/admin');
+    await memberPage.goto('/app#/admin');
     await expect(memberPage.locator('.empty-hint')).toContainText('administrators only');
 
     await ctx.close();
@@ -3406,7 +3429,7 @@ test.describe('settings', () => {
     // found nothing.
     await expect(page.locator('.kanban-card:has-text("Warehouse fit-out")')).toBeVisible();
 
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await page.fill('#dsar-q', 'ferreira');
     await page.click('#dsar-go');
 
@@ -3462,7 +3485,7 @@ test.describe('settings', () => {
     await expect(page.locator('tr:has-text("Should Not Survive")')).toBeVisible();
     await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
 
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     // The scope the account's rows live in, read BEFORE it is destroyed —
     // `Scope.dbName` is what names the IndexedDB database, and after the
     // deletion there is nothing left to ask.
@@ -3536,7 +3559,7 @@ test.describe('settings', () => {
       await DB.put('records', { ...old, updatedAt: at.getTime() });
     });
 
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await page.selectOption('#stale-window', '24');
     await page.click('#stale-go');
 
@@ -3686,7 +3709,7 @@ test.describe('settings', () => {
       await DB.put('records', { ...old, updatedAt: at.getTime() });
     });
 
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await expect(page.locator('#stale-mode')).toBeVisible({ timeout: 20000 });
 
     // --- retention: what nobody has CHANGED -------------------------------
@@ -3795,7 +3818,7 @@ test.describe('settings', () => {
 
   test('a data request refuses a one-letter query and says why', async ({ page }) => {
     await onboard(page, { name: 'Request Co' });
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await page.fill('#dsar-q', 'a');
     await page.click('#dsar-go');
     await expect(page.locator('#dsar-results')).toContainText('at least 2 characters');
@@ -3812,7 +3835,7 @@ test.describe('settings', () => {
 
   test('changing currency reformats money everywhere', async ({ page }) => {
     await onboard(page, { currency: 'USD' });
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await page.selectOption('#set-currency', 'JPY');
     await page.click('#save-workspace');
     await page.click('[data-currency="yes"]');
@@ -3830,7 +3853,7 @@ test.describe('settings', () => {
    */
   test('switching currency says it relabels rather than converts, and can be refused', async ({ page }) => {
     await onboard(page, { currency: 'USD' });
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await page.selectOption('#set-currency', 'EUR');
     await page.click('#save-workspace');
 
@@ -3849,7 +3872,7 @@ test.describe('settings', () => {
 
   test('a workspace with no amounts is not asked about currency at all', async ({ page }) => {
     await onboard(page, { currency: 'USD', templates: ['Contacts'] });
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await page.selectOption('#set-currency', 'GBP');
     await page.click('#save-workspace');
     // Nothing is stored in a currency field, so there is no misreading to
@@ -3860,7 +3883,7 @@ test.describe('settings', () => {
 
   test('exports and re-imports a JSON backup', async ({ page }) => {
     await onboard(page, { name: 'Backup Co' });
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     const [download] = await Promise.all([page.waitForEvent('download'), page.click('#export-btn')]);
     const path = await download.path();
 
@@ -3891,7 +3914,7 @@ test.describe('settings', () => {
     await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
 
     // The backup captures both modules.
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     const [download] = await Promise.all([page.waitForEvent('download'), page.click('#export-btn')]);
     const backup = await download.path();
 
@@ -3908,7 +3931,7 @@ test.describe('settings', () => {
     // A colleague, on the same workspace, adds something after the backup.
     const second = await browser.newContext();
     const page2 = await second.newPage();
-    await page2.goto('/');
+    await page2.goto('/app');
     await signIn(page2, email);
     await page2.click('#nav-modules .nav-link:has-text("Contacts")');
     await page2.click('#add-record-btn');
@@ -3931,7 +3954,7 @@ test.describe('settings', () => {
     await page.click('#nav-modules .nav-link:has-text("Contacts")');
     await expect(page.locator('tr:has-text("Added after the backup")')).toBeVisible({ timeout: 20000 });
 
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await page.setInputFiles('#import-file', backup);
     await page.click('#restore-merge');
 
@@ -3970,7 +3993,7 @@ test.describe('settings', () => {
    */
   test('a replace restore says how many rows it will delete, and then does', async ({ page }) => {
     await onboard(page, { name: 'Replace Co', templates: ['Contacts'] });
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     const [download] = await Promise.all([page.waitForEvent('download'), page.click('#export-btn')]);
     const backup = await download.path();
 
@@ -3980,7 +4003,7 @@ test.describe('settings', () => {
     await page.click('#record-save');
     await expect(page.locator('tr:has-text("Added after the backup")')).toBeVisible();
 
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await page.setInputFiles('#import-file', backup);
     let warning = '';
     page.once('dialog', (d) => { warning = d.message(); d.accept(); });
@@ -3995,7 +4018,7 @@ test.describe('settings', () => {
 
   test('rejects a file that is not a CRM Builder backup', async ({ page }) => {
     await onboard(page);
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await page.setInputFiles('#import-file', {
       name: 'nope.json',
       mimeType: 'application/json',
@@ -4028,7 +4051,7 @@ test.describe('pages that are not the app', () => {
     ['/docs/product-tour.html', 'Build Your Own CRM'],
   ]) {
     test(`${path} renders itself with the service worker installed, and does not poison the shell`, async ({ page }) => {
-      await page.goto('/');
+      await page.goto('/app');
       // skipWaiting + clients.claim means the worker controls this client
       // immediately, which is what makes the bug reachable on a FIRST visit
       // rather than only on a return one.
@@ -4041,7 +4064,7 @@ test.describe('pages that are not the app', () => {
 
       // The worse half: the navigation handler caches what it fetched AS the
       // shell, so without the fix the app is this page from here on.
-      await page.goto('/');
+      await page.goto('/app');
       await expect(page.locator('#app')).toBeVisible();
     });
   }
@@ -4061,7 +4084,7 @@ test.describe('pages that are not the app', () => {
    * recurring failure shape. Nothing on screen would have said so.
    */
   test('the files those pages load are not cached either', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
 
     for (const path of ['/guide', '/privacy', '/terms', '/docs/manual.html']) {
@@ -4096,7 +4119,7 @@ test.describe('pages that are not the app', () => {
    * app in is exactly who hits this.
    */
   test('opening the health endpoints shows them, and does not replace the app', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
 
     await page.goto('/healthz');
@@ -4106,7 +4129,7 @@ test.describe('pages that are not the app', () => {
     // The load AFTER the poisoning is the one that shows it. A second load
     // would re-fetch the real shell and heal it, which is how a sweep that
     // ends on an ordinary route hides this entirely.
-    await page.goto('/');
+    await page.goto('/app');
     await expect(page.locator('#app')).toBeVisible();
   });
 
@@ -4154,11 +4177,11 @@ test.describe('pages that are not the app', () => {
   }
 
   test('a navigation that is not HTML never becomes the cached shell', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
 
     await page.goto('/manifest.webmanifest');
-    await page.goto('/');
+    await page.goto('/app');
     await expect(page.locator('#app')).toBeVisible();
     await expect(page.locator('body')).not.toContainText('"start_url"');
   });
@@ -4214,7 +4237,7 @@ for (const osTheme of ['light', 'dark']) {
     test.use({ colorScheme: osTheme });
 
     test(`every choice wins over the OS, and survives a reload`, async ({ page }) => {
-      await page.goto('/');
+      await page.goto('/app');
       await page.waitForFunction(() => typeof THEME !== 'undefined');
 
       for (const [choice, wantDark] of [
@@ -4252,7 +4275,7 @@ for (const osTheme of ['light', 'dark']) {
     test('the standalone pages obey the same choice', async ({ page }) => {
       const pages = ['/privacy', '/terms', '/guide', '/welcome', '/docs/manual.html', '/docs/product-tour.html'];
       for (const [choice, wantDark] of [['dark', true], ['light', false]]) {
-        await page.goto('/');
+        await page.goto('/app');
         await page.waitForFunction(() => typeof THEME !== 'undefined');
         await page.evaluate((c) => THEME.set(c), choice);
         for (const path of pages) {
@@ -4269,7 +4292,7 @@ test.describe('the primary button is readable in dark', () => {
   test.use({ colorScheme: 'dark' });
 
   test('white on a light accent was 3.14:1, under AA', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     const btn = page.locator('.btn-primary').first();
     await expect(btn).toBeVisible();
     const ratio = await btn.evaluate((el) => {
@@ -4534,7 +4557,7 @@ test.describe('workspace notifications', () => {
     await onboard(page, { name: 'Hooked Ltd', templates: ['Contacts'] });
     await signIn(page, uniqueEmail('hook-owner'));
 
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     const field = page.locator('#hook-url');
     await expect(field).toBeVisible({ timeout: 20000 });
     await field.fill(HOOK);
@@ -4573,7 +4596,7 @@ test.describe('workspace notifications', () => {
     await onboard(page, { name: 'Telegram Ltd', templates: ['Contacts'] });
     await signIn(page, uniqueEmail('tg-owner'));
 
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await expect(page.locator('#hook-url')).toBeVisible({ timeout: 20000 });
 
     /*
@@ -4631,7 +4654,7 @@ test.describe('workspace notifications', () => {
     await onboard(page, { name: 'Quiet Bot Ltd', templates: ['Contacts'] });
     await signIn(page, uniqueEmail('tg-quiet'));
 
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await expect(page.locator('#hook-url')).toBeVisible({ timeout: 20000 });
     await page.click('.tg-summary');
 
@@ -4674,7 +4697,7 @@ test.describe('workspace notifications', () => {
       await route.fulfill({ response: res, json: body });
     });
 
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await expect(page.locator('.note-restore')).toBeVisible({ timeout: 20000 });
     await expect(page.locator('.note-restore')).toContainText(/re-entering/i);
 
@@ -4694,7 +4717,7 @@ test.describe('workspace notifications', () => {
     await signIn(page, uniqueEmail('hook-boss'));
     await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 20000 });
 
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await page.click('#invite-btn');
     await expect(page.locator('#invite-url')).toBeVisible({ timeout: 20000 });
     const url = await page.locator('#invite-url').inputValue();
@@ -4710,7 +4733,7 @@ test.describe('workspace notifications', () => {
     // A reload rather than a goto: the colleague is already on #/settings by
     // the end of the join, and navigating to the same hash is a same-document
     // change that does not re-render (§15).
-    await mate.goto('/#/settings');
+    await mate.goto('/app#/settings');
     await mate.reload();
     await expect(mate.locator('.card-head h2', { hasText: 'Account & sync' })).toBeVisible({ timeout: 25000 });
 
@@ -4732,7 +4755,7 @@ test.describe('workspace notifications', () => {
     // The owner's own screen, for the contrast. Re-rendered rather than
     // assumed: this page has been sitting on Settings since it copied the
     // invite link, and its markup predates the colleague existing.
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await page.reload();
     await expect(page.locator('#set-timezone')).toBeVisible({ timeout: 25000 });
 
@@ -4742,7 +4765,7 @@ test.describe('workspace notifications', () => {
   test('a time zone chosen by the owner survives a reload', async ({ page }) => {
     await onboard(page, { name: 'Zoned Ltd', templates: ['Contacts'] });
     await signIn(page, uniqueEmail('zone-owner'));
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await expect(page.locator('#set-timezone')).toBeVisible({ timeout: 20000 });
 
     // A real IANA name from the browser's own list, so this cannot pass on a
@@ -4790,7 +4813,7 @@ test.describe('reminder parity', () => {
   test.use({ timezoneId: 'America/New_York' });
 
   test('the reminder count is the number the due-date filter shows', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/app');
     await expect(page.locator('#onboard-demo')).toBeVisible();
     await page.click('#onboard-demo');
     await expect(page.locator('#workspace-name')).toHaveText('Lumen Studio', { timeout: 20000 });
@@ -4801,7 +4824,7 @@ test.describe('reminder parity', () => {
     await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 25000 });
 
     const browserZone = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
-    await page.goto('/#/settings');
+    await page.goto('/app#/settings');
     await expect(page.locator('#set-timezone')).toBeVisible({ timeout: 20000 });
     /*
      * The picker must offer the browser its OWN zone, and that is not free:
@@ -4864,7 +4887,7 @@ test.describe('reminder parity', () => {
  * dial a capture server (§39).
  */
 test('an owner can see exactly what the daily digest would say, before switching it on', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#onboard-demo')).toBeVisible();
   await page.click('#onboard-demo');
   await expect(page.locator('#workspace-name')).toHaveText('Lumen Studio', { timeout: 20000 });
@@ -4873,7 +4896,7 @@ test('an owner can see exactly what the daily digest would say, before switching
   await signIn(page, uniqueEmail('digest-owner'), { claim: 'all' });
   await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 25000 });
 
-  await page.goto('/#/settings');
+  await page.goto('/app#/settings');
   await expect(page.locator('#remind-enabled')).toBeVisible({ timeout: 20000 });
 
   // Off by default. Nobody's team channel gets a message because they
@@ -4936,14 +4959,14 @@ test('an owner can see exactly what the daily digest would say, before switching
  * waiting and 00:00 must not.
  */
 test('the digest says what it is waiting for, rather than nothing at all', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/app');
   await expect(page.locator('#onboard-demo')).toBeVisible();
   await page.click('#onboard-demo');
   await expect(page.locator('#workspace-name')).toHaveText('Lumen Studio', { timeout: 20000 });
   await signIn(page, uniqueEmail('waiting-owner'), { claim: 'all' });
   await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 25000 });
 
-  await page.goto('/#/settings');
+  await page.goto('/app#/settings');
   await expect(page.locator('#remind-enabled')).toBeVisible({ timeout: 20000 });
   const card = page.locator('.card:has(#remind-enabled)');
 
@@ -5036,7 +5059,7 @@ test('a renewals register is counted by the digest, on the date it expires', asy
   await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 25000 });
 
   const browserZone = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
-  await page.goto('/#/settings');
+  await page.goto('/app#/settings');
   await expect(page.locator('#set-timezone')).toBeVisible({ timeout: 20000 });
   await page.selectOption('#set-timezone', browserZone);
   await page.click('#save-workspace');
@@ -5086,7 +5109,7 @@ test('a renewals register is counted by the digest, on the date it expires', asy
    * answers before the feature is switched on, deliberately, so that nobody
    * has to enable a thing in order to find out what it would say (§39).
    */
-  await page.goto('/#/settings');
+  await page.goto('/app#/settings');
   await expect(page.locator('#remind-days')).toBeVisible({ timeout: 20000 });
   await page.selectOption('#remind-days', '30');
   await page.click('#remind-save');

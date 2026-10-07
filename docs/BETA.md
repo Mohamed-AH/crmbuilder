@@ -188,7 +188,7 @@ Its secrets:
 
 | Secret | Required? | What it is |
 |---|---|---|
-| `BACKUP_URL` | yes | the deployment, e.g. `https://crmbuilder-v1.onrender.com` |
+| `BACKUP_URL` | yes | the deployment, e.g. `https://nimbleclerk.com`. **Change it at a domain move** — §17: a job with bad configuration reports success while producing nothing |
 | `BACKUP_TOKEN` | yes | the same value as `BACKUP_TOKEN` on the service |
 | `BACKUP_PASSPHRASE` | **yes** | what the artifact is encrypted with — see *Decrypting a backup* |
 | `HEALTHCHECK_URL` | strongly recommended | the dead-man's switch, below |
