@@ -130,6 +130,7 @@ never change, because everything cross-references them.
 | **The app is at `/app`** — what moved, and the sign-in that landed on a splash | §63 · §58 |
 | Only one URL may become the cached shell, and why a list could not say so | §63 · §47 |
 | A state cookie is per-origin, so a stale `APP_URL` breaks sign-in rather than misrouting it | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.3 · §63 |
+| **A trailing slash made the live-smoke wait a no-op** — and a repo variable outlived the default it overrides | §63 · §46 · §40 |
 
 ---
 
@@ -8753,3 +8754,143 @@ print it — §46's rule that the two numbers are different and both real.
 | `.github/workflows/test.yml` | the `LIVE_URL` fallback, ×2 |
 | `README.md`, `USER-GUIDE.md`, `manual.html`, `ONBOARDING.md`, `DEMO-SCRIPT.md`, `BETA.md`'s tester note | **nothing** — checked. None of them names a URL for the app; they say "open the app" and describe what is in it. Padding them to look thorough is its own inaccuracy (§40, §41) |
 | `docs/API.md` | **a line, and no route.** §46's trap again: the count is unchanged and the file reads correctly, while `/` moved from the shell to the landing page, `/app` appeared, and six `Location` headers out of the OAuth callback changed value |
+
+### The live smoke then failed on its own override, two faults deep
+
+The cutover's CI run came back `51 passed · 0 warnings · 3 failed` — the three
+checks this commit *added*:
+
+```
+✗ `/` is the landing page, not the app — / served the app shell
+✗ an unknown path serves the landing page, never the shell — served the shell
+✗ an invite link on `/` still reaches the app — HTTP 200, expected 302
+```
+
+Nothing was wrong with the cutover. **The smoke was auditing the old host**,
+which is §46's exact failure arrived at from a new direction — and the job log
+proves both faults in its own first six lines.
+
+**Fault 1: a `LIVE_URL` repository variable outlives the fallback it was meant
+to override.** The commit moved the committed default to `nimbleclerk.com`, and
+the step reads `inputs.live_url || vars.LIVE_URL || '…'` — so a repo variable
+still set to `https://crmbuilder-v1.onrender.com/` wins, silently, for ever.
+Changing a default in the repository cannot dislodge a variable set in the
+settings UI, which is §40's rule in its original words: *a mechanism that hangs
+off a URL configured somewhere else has a failure mode no test in this
+repository can see.*
+
+**Fault 2 is the one worth keeping: that variable has a TRAILING SLASH, and it
+turned the §46 wait loop into a no-op.**
+
+```
+BASE_URL: https://crmbuilder-v1.onrender.com/     <- from the log's env block
+…
+The deployment does not report a commit — smoke testing it as-is.
+…
+· deployed build  68ab0c49854c                    <- read by the smoke, four lines later
+```
+
+`"$BASE_URL/healthz"` becomes `…onrender.com//healthz`. **Measured against the
+real server rather than reasoned about**, which is what makes it certain:
+`curl` does not collapse a double slash in a path (that needs `--path-as-is` to
+*prevent*, and only for `/./` and `/../`), Express does not match `//healthz`
+against `/healthz`, and the catch-all answers **200 with 32 KB of HTML**. So
+`curl -sf` succeeded, `JSON.parse` threw, the `catch {}` swallowed it, and the
+loop concluded the deployment *does not report a commit* → `state=unknown` →
+smoke the wrong build.
+
+**The two readings of that line are opposite and it could not tell them
+apart.** §46 chose to omit `commit` rather than send a placeholder precisely so
+that *behind* and *does not say* stayed distinguishable — and a malformed URL
+manufactures the second one. The empty `catch {}` is where the information
+died.
+
+`tests/smoke.mjs` normalises its own base, which is why **its** `/healthz` read
+worked and printed the live commit four lines after the wait had given up on
+it. Two consumers of one variable, one of them tolerant, and the tolerant one
+is the one whose output you read.
+
+### What changed, and the first draft inverted the feature
+
+Trailing slashes are stripped, and the parse answers **three** things instead of
+two: the commit, `""` for valid JSON carrying no `commit`, and a `!notjson`
+sentinel for a body that is not JSON at all. The sentinel skips loudly and
+names `LIVE_URL`, because a push run that cannot establish which build is live
+must not audit it.
+
+**My first draft raised the sentinel on an empty body, which breaks the wait
+entirely.** `curl -sf` drops any non-2xx, so a deployment mid-restart answers
+with *nothing* — the ordinary case the loop exists to sit through. Parsing `""`
+throws, so the sentinel would have fired on the **first poll of every push**,
+abandoning the wait and reverting §46 to the behaviour it was written to
+replace. Found by reading the edit back, before running it. **No body is not a
+malformed body**, and the parse is now inside `if [ -n "$body" ]`.
+
+**Abandoned on the first non-JSON answer rather than retried**, deliberately:
+Render serves 502/503 while restarting, which `curl -sf` already drops, so a
+200 carrying HTML is a configuration fault and waiting cannot fix one.
+
+### Verified by extracting the loop from the YAML, per §46's own standard
+
+*"A copy that drifts from the workflow proves nothing about the workflow"* — so
+the step's `run:` block is pulled out of `.github/workflows/test.yml` by its
+indentation and driven as a script, against **the real `server.js`** with
+`APP_COMMIT` set, on a port outside every test block.
+
+| `BASE_URL` | Want | Outcome |
+|---|---|---|
+| `http://…:8250/` | the live commit | `current` — **the failing run, now correct** |
+| `http://…:8250` | the live commit | `current` |
+| `http://…:8250///` | the live commit | `current` |
+| `http://…:8250` | an unrelated commit | `stale`, "still running … after 25s" |
+| `http://…:8250/nope` (so `/healthz` is HTML) | — | `stale`, warning names `LIVE_URL` |
+| a port with nothing listening | — | waits, then `stale`, "did not answer" |
+
+The last two are the pair that must not be collapsed, and the last one is what
+the first draft broke.
+
+**And the pre-fix loop was extracted the same way and driven against the same
+server**, which is what makes this a §9 check rather than a plausible story:
+
+| Pre-fix loop | Result |
+|---|---|
+| trailing slash | `The deployment does not report a commit — smoke testing it as-is.` → `state=unknown` — **the log's line, verbatim** |
+| no trailing slash | `state=current` |
+
+So the trailing slash is the whole cause, and nothing else about the loop was
+wrong.
+
+**Trap while doing it:** `git stash push -q .github/workflows/test.yml` to
+extract the old loop, in an `&&` chain that then failed on an unexported
+variable — so the pop never ran and the fixed file was sitting in a stash. §28
+records the same shape with `pkill` killing the shell that mentioned
+`server.js`. A stash in a compound command needs its pop checked, not assumed.
+
+**The fix is in the repository; the variable is not.** Deleting the `LIVE_URL`
+repository variable is what makes the committed `https://nimbleclerk.com`
+fallback take effect, and it is step 7 of
+[`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.6. The normalisation
+is what stops the *next* trailing slash being silent, wherever it is typed.
+
+### And the second consumer of that variable had the one-slash version
+
+`tests/smoke.mjs` did `.replace(/\/$/, '')` — **one** trailing slash. That is
+what made it tolerant of the variable that defeated the wait loop, and it is
+the same bug one character short: `https://host//` leaves a double slash on
+every path.
+
+Driven rather than reasoned about, with a double-slash base against the real
+server: **47 passed, 2 failed.** Not a clean break — most checks pass, because
+the catch-all answers 200 with the landing page and several assertions are
+satisfied by that, while `storage backend` and the two `docs/` pages fail. So
+the report reads *"Deployment is NOT healthy"* with two plausible-looking
+failures, and the actual fault is in the URL. §36's shape again, in the one
+tool whose job is to tell you whether the deployment is fine.
+
+`/\/+$/` now, with the reason in the file. Checked both ways: multi-slash
+passes 49/49 after the fix and fails before it.
+
+**Two consumers of one variable, each tolerant to a different degree, is the
+general trap.** The wait loop tolerated nothing and reported absence; the smoke
+tolerated one slash and reported ill health. Neither reported a bad URL, which
+is what it was.

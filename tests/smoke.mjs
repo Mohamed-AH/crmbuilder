@@ -10,7 +10,14 @@
  * a production deployment should be. Exits non-zero if anything FAILs, so it
  * doubles as a CI gate. WARNs are judgement calls, not failures.
  */
-const BASE = (process.env.BASE_URL || 'http://localhost:8321').replace(/\/$/, '');
+// `/+$`, not `/$`. Stripping ONE trailing slash is what this did, and a
+// LIVE_URL of `https://host//` would have left a double slash on every path —
+// which falls to the catch-all and answers 200 with the landing page, so the
+// assertions would pass or fail for reasons unrelated to the deployment. The
+// one-slash version of exactly that bug cost a CI run in CLAUDE.md §63; this is
+// the second consumer of the same variable and it should not need a third
+// lesson.
+const BASE = (process.env.BASE_URL || 'http://localhost:8321').replace(/\/+$/, '');
 // A sleeping free-tier instance can take most of a minute to answer the first
 // request; everything after that should be quick.
 const FIRST_TIMEOUT = Number(process.env.SMOKE_FIRST_TIMEOUT || 90000);

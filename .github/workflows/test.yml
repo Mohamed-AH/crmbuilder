@@ -173,15 +173,53 @@ jobs:
           BUDGET_SECONDS: 420
         run: |
           set -uo pipefail
+          # STRIP TRAILING SLASHES, and this is not tidiness — it is the bug
+          # that made the whole loop a no-op on the one run it mattered.
+          #
+          # A LIVE_URL repo variable of `https://host/` makes "$BASE_URL/healthz"
+          # into `https://host//healthz`, which matches no route and falls to
+          # the catch-all — so curl -sf saw 200 and HTML, JSON.parse threw, and
+          # the branch below concluded "does not report a commit" and smoke
+          # tested an older build. tests/smoke.mjs normalises its own base,
+          # which is why ITS /healthz read worked and printed the live commit
+          # four lines after this loop had given up on it. §46's whole point is
+          # that absence and behind are different answers; a malformed URL
+          # manufactures absence.
+          while [ "${BASE_URL%/}" != "$BASE_URL" ]; do BASE_URL="${BASE_URL%/}"; done
           deadline=$(( $(date +%s) + BUDGET_SECONDS ))
           reported=""
           answered=""
           while [ "$(date +%s)" -lt "$deadline" ]; do
             body=$(curl -sf --max-time 90 "$BASE_URL/healthz" || true)
-            [ -n "$body" ] && answered=yes
-            reported=$(printf '%s' "$body" | node -e \
-              'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(JSON.parse(s).commit||"")}catch{}})')
-            # No commit reported at all: this deployment predates the field, or
+            # NO BODY IS NOT A MALFORMED BODY. curl -sf gives up on any non-2xx,
+            # so a deployment mid-restart answers with nothing at all — which is
+            # the ordinary case this loop exists to wait out. Parsing "" would
+            # raise the sentinel below and abandon the wait on the first poll,
+            # which is the whole feature inverted.
+            if [ -n "$body" ]; then
+              answered=yes
+              # Three answers, not two: the commit, "" for JSON that carries no
+              # commit field, and the sentinel for a body that is not JSON at
+              # all. Collapsing the last two is what let a wrong URL pass as a
+              # deployment predating the field.
+              reported=$(printf '%s' "$body" | node -e \
+                'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{try{process.stdout.write(JSON.parse(s).commit||"")}catch{process.stdout.write("!notjson")}})')
+            else
+              reported=""
+            fi
+            # Not JSON, on a 2xx: /healthz is not what answered, so BASE_URL is
+            # wrong or the routing is broken. Do NOT smoke on that — a push run
+            # cannot tell which build it would be auditing. Abandoned on the
+            # first such answer rather than retried: Render serves 502/503 while
+            # restarting, which curl -sf drops above, so a 200 carrying HTML is
+            # a configuration fault and waiting cannot fix one. The scheduled
+            # run has no wait step, so it still fails loudly — the backstop.
+            if [ "$reported" = "!notjson" ]; then
+              echo "state=stale" >> "$GITHUB_OUTPUT"
+              echo "::warning::$BASE_URL/healthz answered with something that is not JSON, so which commit is live could not be established. Check the LIVE_URL repository variable. Skipping the live smoke; the daily scheduled run will fail loudly."
+              exit 0
+            fi
+            # No commit FIELD, on valid JSON: this deployment predates it, or
             # runs somewhere that does not set it. We cannot gate on something
             # it does not say, so behave exactly as before.
             if [ -z "$reported" ] && [ -n "$body" ]; then

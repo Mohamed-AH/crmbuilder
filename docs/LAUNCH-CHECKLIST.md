@@ -22,12 +22,13 @@
 > | canonical host | **apex `nimbleclerk.com`**; `www` 301s to it | §1.0 |
 > | the landing page | **swap at the switch** — `/` serves `welcome.html`, the app moves to `/app` | §1.0b |
 >
-> **Where it actually stands**, established rather than recalled: the domain is
-> registered at Namecheap and **parked** — the apex answers Namecheap
-> infrastructure and `www` resolves to `parkingpage.namecheap.com`. So nothing
-> is pointed at Render yet, and §1.6 steps 0–3 are the live frontier. Nothing
-> in this repository names the new host yet, by design — see §1.6's note on why
-> that is a sequencing requirement rather than an omission.
+> **Where it actually stands.** `nimbleclerk.com` and `www.nimbleclerk.com` both
+> serve the app over HTTPS, the app is at `/app`, and sign-in completes on the
+> new host. The paragraph that stood here described the domain as **parked**,
+> which was established rather than recalled and was true the morning it was
+> written — it is left recorded in §1.6's step-by-step rather than kept at the
+> top, because the pre-flight that cleared it is the part worth re-reading
+> (§1.0c), not the state it found.
 >
 > **Steps 1 and 2 are done.** Both hosts are on Render and verified, the apex
 > `ALIAS` and the `www` `CNAME` are live on both nameservers, and the mail
@@ -41,12 +42,22 @@
 > the middleware §1.0 would otherwise have needed. §1.7's `curl` is what
 > confirms it, because a badge is not a 301.
 >
-> **Steps 3, 4, 6, 6b and 7 are done too**, so the only part of Part 1 still
-> outstanding is the configuration that lives elsewhere: `BACKUP_URL` in
-> `Mohamed-AH/crmback` (step 8), the UptimeRobot monitor (step 9) and the old
-> host's moved-notice plus the consent-screen URLs (step 10). **`APP_URL` is
-> the authentication cutover** and it has been taken — see §1.3, which was
-> wrong about what a stale one does and now is not.
+> **Steps 3, 4, 6, 6b, 8 and 9 are done too.** **`APP_URL` is the
+> authentication cutover** and it has been taken — see §1.3, which was wrong
+> about what a stale one does and now is not.
+>
+> **Two are still open, and one of them was ticked prematurely:**
+>
+> | Step | State |
+> |---|---|
+> | **7 — the `LIVE_URL` repo variable** | **open.** It was recorded done and was not: it still held `https://crmbuilder-v1.onrender.com/`, so the live smoke audited the old host and, because of the trailing slash, could not even tell which build. Delete it. `CLAUDE.md` §63 |
+> | **9 — the UptimeRobot monitor** | moved, but **confirm the path is `/health`** and not `/healthz`. §40 is the whole reason this step says so: a monitor on `/healthz` is green, warm, and runs neither the alert rules nor the digest |
+> | **10 — the old host and the consent screen** | open |
+>
+> **"Done" was the thing to check, not the thing to record.** Step 7 was marked
+> complete on the strength of having been *actioned*; what the CI log then said
+> is that a repository variable set in the settings UI is invisible to every
+> grep in here, which is §40's rule in its original words.
 >
 > **The deployment had no users when this ran**, which made §1.1's four silent
 > failures *zero* rather than already-paid and removed the ordering constraint
@@ -278,6 +289,17 @@ Re-run that grep at the end; the count is the check.
 > |---|---|---|
 > | answers 200 with HTML (no `commit` field) | `unknown` — *"does not report a commit — smoke testing it as-is"* | the smoke **runs** against a parking page and fails every asset check: red on every push |
 > | does not answer at all | `stale` | push runs **skip and pass** — §17's no-op reporting success — and the daily run fails |
+>
+> **The first row then happened for a different reason, and the analysis above
+> is why it was recognised in minutes.** On the cutover commit the live smoke
+> reported three failures against the *old* host: a `LIVE_URL` variable with a
+> **trailing slash** made `$BASE_URL/healthz` a double slash, which falls to
+> the catch-all and answers 200 with HTML — exactly this row, with no parking
+> page anywhere near it. `CLAUDE.md` §63 has the measurement. **The workflow no
+> longer has this state**: a 200 that is not JSON now gives `stale` plus a
+> warning naming `LIVE_URL`, rather than `unknown`, so it can never again smoke
+> a build it could not identify. Trailing slashes are stripped too, which is
+> what stops the next one being silent — wherever it is typed.
 >
 > Which one it is could not be established from here: the egress proxy refuses
 > the new host too (§8), so this is stated as "either way" rather than resolved.
@@ -678,9 +700,16 @@ can do them. Steps 6 and 10 are commits.
 6b. **Set `APP_URL` on Render to `https://nimbleclerk.com`** — same window, and
     only after step 3 registered the new redirect URI. §1.3: this is the one
     that takes sign-in down rather than degrading something.
-7. Set the `LIVE_URL` repo variable to `https://nimbleclerk.com` — **this
-   window, not before** (§1.2's correction). It is the reversible half: delete
-   the variable and CI falls back to the committed value.
+7. **DELETE the `LIVE_URL` repo variable.** It read
+   `https://crmbuilder-v1.onrender.com/` and the committed fallback is already
+   `https://nimbleclerk.com`, so deleting it is the whole action — setting it to
+   the new host would work and leaves a second place to keep in step.
+   **Two things learned here the hard way** (`CLAUDE.md` §63): changing the
+   default in the repository **cannot** dislodge a variable set in the settings
+   UI, so a stale one wins silently for ever; and that one had a **trailing
+   slash**, which made the §46 wait loop smoke the wrong build. The workflow now
+   strips trailing slashes and refuses to smoke a `/healthz` that is not JSON —
+   but a variable nobody deletes is still a variable nobody can see.
 8. **Update `BACKUP_URL` in `Mohamed-AH/crmback` the same day.** §17: a job
    with bad configuration reports success while producing nothing, so this one
    fails silently and you find out when you need the backup.
