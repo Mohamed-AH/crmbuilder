@@ -120,6 +120,10 @@ never change, because everything cross-references them.
 | A `Map` that is load-bearing, and the entry it would silently drop | §61 · §54 · §30 |
 | The router wrap and the argument shape it skipped | §61 · §55 |
 | **Why the CI audit gate stays at `high`** | §61 · §25 · §30 |
+| **A critical advisory that does not apply** — and what would arm it | §62 · §30 · §61 |
+| `trust proxy` is a hop count, and why a CDN changes that | §62 · §30 |
+| **Moving to the new domain** — where it stands, what lands when | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.6 · §1.0b |
+| Why the `/`→`/app` swap cannot be pushed before the switch | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · §46 |
 
 ---
 
@@ -8521,3 +8525,70 @@ sees 403. §27's six user-facing documents need nothing, and that is checked
 rather than skipped: no capability changed, and `DEPLOYMENT.md`'s environment
 matrix gains the note that a webhook or healthcheck URL carrying credentials is
 refused, because that is the one thing an operator could hit.
+
+
+---
+
+## 62. A critical advisory that does not apply here, and the domain move that would make it
+
+Picked up while setting up for the domain move
+([`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) Part 1), a month after
+§61 left `npm audit --omit=dev` at zero: **`proxy-addr` 2.0.7, critical — *IP
+spoofing via IPv4-mapped IPv6 trust subnet*.**
+
+The first read is alarming and would have been wrong. `proxy-addr` is what
+turns `X-Forwarded-For` into `req.ip` under `trust proxy`, and **`req.ip` is the
+rate limiter's bucket key** (§30 Phase 4, §61 R2) — so a spoofable one means
+`/api/access-request`'s flood guard, the OAuth callback's bound and the mail-send
+limit are all bypassable. That is the write-up I was about to produce.
+
+**It is a FALSE finding for this configuration, and the source says so.** Read
+out of the installed `express/lib/utils.js` rather than recalled:
+
+```js
+exports.compileTrust = function(val) {
+  if (typeof val === 'function') return val;
+  if (val === true)              return function(){ return true };
+  if (typeof val === 'number')   return function(a, i){ return i < val };   // ← us
+  if (typeof val === 'string')   val = val.split(',').map(…)
+  return proxyaddr.compile(val || []);                                      // ← the bug
+}
+```
+
+`server.js` sets `app.set('trust proxy', 1)` — a **hop count**, the only such
+call in the file. So Express builds an index comparison, never parses an
+address, and **`proxyaddr.compile()` is not on this path at all**. The advisory
+is about that function's subnet handling. §30's category, and its standing
+warning applies in the usual direction: a reader working from the advisory
+rather than the source would report a bypassed rate limiter that was never
+reachable.
+
+### Patched anyway, and the reason is the move rather than the advisory
+
+2.0.7 → 2.0.8, **lockfile only** — `package.json` needed nothing, because
+express's range already allowed it. Three merits, and the third is the one that
+matters:
+
+- **The CI gate is at `high`**, so a critical fails the build (§61 R5). Leaving
+  it means a red tick on every push and a reader re-deriving the analysis above.
+- §61 R5's rule: patch on merits, not because a gate demanded it. One lockfile
+  line against a critical in the `req.ip` path is not a trade worth thinking
+  about.
+- **It stops being false the moment anything goes in front of the deployment.**
+  Putting Cloudflare or any CDN in front of `nimbleclerk.com` means `trust
+  proxy` has to describe *more than one hop* — and a **subnet** is exactly what
+  somebody reaches for there (`'trust proxy', '10.0.0.0/8'`, or Cloudflare's
+  published ranges). That lands on `proxyaddr.compile()` and makes this live.
+  So a configuration change nobody would connect to a dependency advisory is
+  what arms it, during the one week somebody is changing the deployment's front
+  end. §38's `::ffff:0:0/96` is the same bug class in this repository's own
+  code, which is the other reason not to leave it.
+
+**`npm audit fix --omit=dev` prunes devDependencies**, which is how
+`@playwright/test` vanished mid-session and `npx playwright` started resolving
+to the global install and failing on its own module paths. `npm install`
+restores it. Worth recording because the symptom names Playwright internals and
+says nothing about the flag that caused it.
+
+Full run, because `req.ip` is on every request (§9): Node **504**, Playwright
+**133**, smoke **47** locally, `npm audit --omit=dev` **0**.

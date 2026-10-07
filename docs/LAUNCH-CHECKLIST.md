@@ -4,17 +4,30 @@
 > §29 defines as the tier that is maintained — not `docs/archive/`, which is
 > frozen. If you change something this file names, change this file.
 >
-> **The domain is decided: `nimbleclerk.com`.** Nothing else here is. No price
-> is set, no date is fixed, and this document does not argue for either. It is
-> the reference to open **when** those decisions are made — a list of what would
-> have to change, so that nothing is remembered late. Where a choice is
-> unavoidable it is written as a question with the prior reasoning attached
-> (§2.4), never as an answer.
+> **The domain is decided: `nimbleclerk.com`.** No price is set, no date is
+> fixed, and this document does not argue for either. It is the reference to
+> open **when** those decisions are made — a list of what would have to change,
+> so that nothing is remembered late. Where a choice is unavoidable it is
+> written as a question with the prior reasoning attached (§2.4), never as an
+> answer.
 >
-> **A chosen name is not a move.** Everything in Part 1 is still outstanding;
-> what changed is that `<new-domain>` now has a value, so the strings below can
-> be written out rather than left as placeholders — and §1.1's four silent
-> failures are unaffected by knowing the name.
+> **A chosen name is not a move.** Part 1 is in progress rather than
+> outstanding; §1.1's four silent failures are unaffected by knowing the name.
+>
+> **Part 1's two gating decisions are now taken** (§1.0, §1.0b), so the steps
+> below are written for them rather than offering both ways:
+>
+> | Decision | Taken | Where |
+> |---|---|---|
+> | canonical host | **apex `nimbleclerk.com`**; `www` 301s to it | §1.0 |
+> | the landing page | **swap at the switch** — `/` serves `welcome.html`, the app moves to `/app` | §1.0b |
+>
+> **Where it actually stands**, established rather than recalled: the domain is
+> registered at Namecheap and **parked** — the apex answers Namecheap
+> infrastructure and `www` resolves to `parkingpage.namecheap.com`. So nothing
+> is pointed at Render yet, and §1.6 steps 0–3 are the live frontier. Nothing
+> in this repository names the new host yet, by design — see §1.6's note on why
+> that is a sequencing requirement rather than an omission.
 
 Two launches that are not yet done, each of which touches code, configuration
 we do not control, legal text and a dozen documents. They are written together
@@ -61,9 +74,15 @@ else.
 `welcome.html` is served at `/welcome` and is written to be the front door.
 It is not `/` yet **on purpose**: making it so today means changing
 `manifest.webmanifest`'s `start_url` and `scope`, moving the app to `/app`,
-rewriting 104 E2E navigations and the smoke test, and — the part that cannot be
+rewriting the E2E navigations and the smoke test, and — the part that cannot be
 undone — leaving every installed PWA launching into a page that is no longer
 the app until its owner reinstalls.
+
+**The navigation count was wrong: it is 57, not 104.** Measured —
+`grep -c "goto('/')" tests/e2e.spec.js` is 57 against 132 `goto(` calls in
+total, so the original figure was most likely the latter misread. Recorded
+because this is a maintained document (§29) and because the number is what the
+sizing rests on: the swap is about half the mechanical work it was costed at.
 
 **§1.1 is why the move is the cheap moment to do it.** All four of those silent
 failures happen anyway when the origin changes: the installed apps are stranded
@@ -88,6 +107,30 @@ So, at the switch:
 **Decide before you announce**, because the announcement names the URL people
 will type.
 
+### This commit cannot be pushed early, and that is a hard constraint
+
+`render.yaml` carries `autoDeploy: true`, and §46 records the live smoke
+watching production catch up to a commit pushed to the working branch — so
+**production deploys from the branch, within minutes of a push.** The swap is
+therefore not a change that can sit in the repository waiting for the switch:
+pushing it *is* deploying it, to the host people are still using.
+
+What that would do to the **old** origin, which is the thing to be clear about:
+
+- an installed PWA has `start_url: "./"` cached from install, resolving to `/` —
+  which would now be the splash. One tap to `/app` and they are back, so it is
+  degraded rather than dead;
+- **but `/` would be in `STANDALONE_PAGES`, which is network-only** (§19, §47).
+  So an installed app launching offline gets nothing at all, on the one origin
+  whose users have not been told anything yet.
+
+So it is the **last** commit, pushed when DNS has moved — not step 8's doc
+tranche but its own, after it. A flag defaulting off was considered (§16's
+precedent: a lever beats a redeploy at a moment that matters) and **rejected**:
+`manifest.webmanifest` and `sw.js` are static files, so an env-driven swap means
+templating both, which is a new class of bug introduced to manage a single
+discrete event. The event is the right unit here.
+
 ## 1.1 The four things that break silently, and they are the whole risk
 
 Everything in §1.2 onward is a string to change and will announce itself if
@@ -111,7 +154,31 @@ Re-run that grep at the end; the count is the check.
 
 | File | What is there | Action |
 |---|---|---|
-| `.github/workflows/test.yml` ×2 (lines ~153, ~215) | `vars.LIVE_URL \|\| 'https://crmbuilder-v1.onrender.com'` — the built-in default | **Set the `LIVE_URL` repo variable first**, then change the fallback. Doing it in that order means CI is never pointed at a dead host. §46: `LIVE_URL` *overrides*, it does not *enable* |
+| `.github/workflows/test.yml` ×2 (lines 168, 230) | `vars.LIVE_URL \|\| 'https://crmbuilder-v1.onrender.com'` — the built-in default | Set the `LIVE_URL` repo variable **at the switch, not before** (corrected — see below), then change the fallback once it is proven. §46: `LIVE_URL` *overrides*, it does not *enable* |
+
+> **§1.6 step 1 was wrong, and it would have turned CI red for days.** It read
+> *"set the `LIVE_URL` repo variable first → before editing the workflow
+> fallback"*, which is correct as far as it goes — the variable is the
+> reversible half, so it should move before the commit does. But it is listed
+> **before step 5 (switch DNS)**, and pointing it at a parked domain is the
+> problem it was trying to avoid, arrived at from the other side.
+>
+> Read out of the workflow rather than guessed. The live job curls
+> `$BASE_URL/healthz` and branches on what comes back, so a parked host lands in
+> one of two states and **both are bad**:
+>
+> | The parking page | `state` | Result |
+> |---|---|---|
+> | answers 200 with HTML (no `commit` field) | `unknown` — *"does not report a commit — smoke testing it as-is"* | the smoke **runs** against a parking page and fails every asset check: red on every push |
+> | does not answer at all | `stale` | push runs **skip and pass** — §17's no-op reporting success — and the daily run fails |
+>
+> Which one it is could not be established from here: the egress proxy refuses
+> the new host too (§8), so this is stated as "either way" rather than resolved.
+> It does not need resolving — neither outcome is one to run for days.
+>
+> So: **the variable moves on cutover day**, in the same window as DNS. Until
+> then CI keeps auditing the host that is actually serving, which is the whole
+> point of the live job.
 | `render.yaml`, `render.dedicated.yaml` | `name:` only — **no host is pinned** | Nothing. Verified, so it is not left as an open question |
 | `manifest.webmanifest` | `start_url` and `scope` are `"./"`, icons relative | Nothing. Verified — a domain move does not touch it |
 | `sw.js` | no absolute URLs; `STANDALONE_PAGES` / `STANDALONE_ASSETS` are paths | Nothing |
@@ -141,20 +208,32 @@ Open each of these and look. Do not infer them from this table.
 | Private repo `Mohamed-AH/crmback` | the `BACKUP_URL` secret | **The nightly backup silently stops** otherwise. §17: a job with bad configuration can report success while producing nothing |
 | DNS | old host must keep resolving | See §1.5 |
 
-## 1.4 The legal text is domain-scoped, and this is easy to miss
+## 1.4 The legal text is domain-scoped — **done**, and it was two files
 
-`terms.html` line 7: *"applies to the free beta **at this address**"*.
+~~`terms.html` line 7~~ — **line 25, and `privacy.html` line 21 carries the
+identical sentence.** This section named one file and there were two, which is
+§27's drift inside the document written to prevent it: the clause was found by
+grepping for it rather than by going to the line this said it was on.
 
-That sentence makes the terms specific to the current host, so the move to
-`nimbleclerk.com` either changes it or leaves a contract pointing somewhere the
-product no longer is.
-Two options and they are not equivalent:
+That sentence made the terms specific to the current host, so the move to
+`nimbleclerk.com` would either change it or leave a contract pointing somewhere
+the product no longer is. Two options, not equivalent:
 
-- **Preferred: drop "at this address"** and let the terms be about the service.
-  A version bump is then *not* required for the move alone — but read §1.6.
+- **Preferred, and taken: drop "at this address"** and let the terms be about
+  the service, which is true on either host.
 - Keep it and update the address, which **is** a text change to a versioned
-  document, which re-prompts every user (§41). Doing that for a hostname is a
-  poor use of the one mechanism you have for getting people to read something.
+  document and re-prompts every user (§41). Doing that for a hostname is a poor
+  use of the one mechanism you have for getting people to read something.
+
+**No version bump, and the reason is mechanical rather than a judgement call.**
+§41 ties `TERMS_VERSION` to this line's **date**, and the two are in step —
+`server.js` holds `2026-09-09` against *"Last updated 9 September 2026"*.
+Only the clause after the `·` moved, so the date and the constant still agree
+and nobody is re-prompted. Removing a scope phrase changes no obligation.
+
+**Safe to ship before the switch**, which is why it is not in step 6: the new
+sentence is true on the old host too, so it carries no sequencing risk and is
+one fewer thing competing for attention on cutover day.
 
 `privacy.html` names Render, Atlas, Google, GitHub and Telegram and closes with
 *"That is the complete list."* A domain move adds no processor — **but §40's
@@ -183,32 +262,95 @@ Not a footnote. Someone with the PWA installed has no other way to find out.
 
 ## 1.6 Sequence
 
-Order matters at three points and the reasons are given; the rest is
-preference.
+Rewritten against the two decisions in the banner, and with the ordering
+corrections above folded in. **Nothing in this repository may name
+`nimbleclerk.com` until step 6**, and that is a requirement rather than
+tidiness: `autoDeploy: true` means a push deploys to the host people are still
+using, so a repo that points at the new domain early points the *live* service
+at a parked one.
 
-0. Start Google's **domain verification** for `nimbleclerk.com` (§1.0) — it is
-   the only step here that waits on somebody else, and it blocks nothing.
-1. Set the `LIVE_URL` repo variable to `https://nimbleclerk.com` → **before**
-   editing the workflow fallback.
-2. Add the new redirect URI in Google → **before** the domain switch, so
-   sign-in works the moment DNS moves.
-3. Provision the domain and certificate on Render, and decide apex vs `www`
-   (§1.0) before anything is announced — the announcement names one of them.
-4. Announce the date. Ask everyone to confirm *Synced* (§1.1).
-5. Switch DNS. Update `BACKUP_URL` in the private repo **the same day**.
-6. Move the UptimeRobot monitor, on `/health`.
-7. Repoint the old host at the moved-notice page.
-8. Update docs and the workflow fallback; re-run the grep.
-9. Update the Google consent screen URLs; re-submit if required.
-10. Verification, below.
+The split is worth stating once, because it is what makes this a two-person
+job: **steps 0–5 and 7–9 are in services outside this repository** and only you
+can do them. Steps 6 and 10 are commits.
+
+### Before the switch — nothing user-visible changes
+
+0. Start Google's **domain verification** for `nimbleclerk.com` (§1.0). The
+   only step that waits on somebody else; it blocks nothing, so it goes first
+   whatever else slips.
+1. **Render → custom domain**: add `nimbleclerk.com` *and* `www`, and let the
+   certificate issue. Render gives you the DNS targets here; you are not
+   switching anything yet.
+2. **Namecheap → DNS**: point the apex at Render's target and `www` at Render
+   too — the `www` parking record is what is there now and has to go. If
+   Namecheap will not do an apex ALIAS, that is the one fact that would force
+   reconsidering §1.0; say so rather than working around it.
+3. **Google Cloud Console**: add
+   `https://nimbleclerk.com/auth/google/callback` to the authorised redirect
+   URIs, and the `www` form too. **Add, do not replace** — both hosts listed at
+   once is what makes the switch non-breaking in either direction.
+4. Confirm the legal pages still answer on the **old** host (§1.5 item 4) —
+   Google's consent screen is still pointing at them.
+5. **Announce the date.** Ask everyone to open the app and confirm the status
+   chip reads *Synced* (§1.1 row 1 — unsynced rows are stranded on the old
+   origin, and §31 is how quietly that happens). Say that everyone will be
+   signed out, or it reads as data loss.
+
+### The switch
+
+6. **The cutover commit**, which is the `/` → `/app` swap plus every string
+   that names the host: the workflow fallback, `og:image` absolute, the live
+   URLs in `CLAUDE.md` / `DEPLOYMENT.md` / `docs/BETA.md`, the smoke example.
+   One commit, pushed when DNS has propagated — see §1.0b on why it cannot go
+   earlier.
+7. Set the `LIVE_URL` repo variable to `https://nimbleclerk.com` — **this
+   window, not before** (§1.2's correction). It is the reversible half: delete
+   the variable and CI falls back to the committed value.
+8. **Update `BACKUP_URL` in `Mohamed-AH/crmback` the same day.** §17: a job
+   with bad configuration reports success while producing nothing, so this one
+   fails silently and you find out when you need the backup.
+9. **Move the UptimeRobot monitor** — and confirm it is on `/health`, not
+   `/healthz`. §40 in full: only `/health` runs the alert rules and the digest,
+   and a monitor on `/healthz` is green, warm and silent.
+10. Repoint the old host at the moved-notice page (§1.5), and update the Google
+    consent-screen privacy/terms URLs.
+
+### After
+
+11. Verification, below. The parts that matter are the ones no grep can reach.
 
 ## 1.7 Verification
 
 ```sh
-BASE_URL=https://nimbleclerk.com npm run test:smoke   # expect 51 passed
-grep -rn "onrender\.com" --include="*.md" --include="*.html" --include="*.yml" . \
-  | grep -v docs/archive                              # expect: nothing
+BASE_URL=https://nimbleclerk.com npm run test:smoke   # expect 52 passed
+
+# The old host by NAME. Expect exactly two survivors, both deliberate:
+#   CLAUDE.md §58's record of what product-tour.html used to carry
+#   this file's own §1.2 row, which quotes the fallback it tells you to change
+grep -rn "crmbuilder-v1\.onrender\.com" \
+  --include="*.md" --include="*.html" --include="*.yml" --include="*.mjs" . \
+  | grep -v docs/archive
 ```
+
+**Two corrections to what that used to say**, both found by running it:
+
+- **`expect 51 passed` was stale.** §61 put the live count at **52** —
+  `js/boot-theme.js` (§60) added one asset check. §46's two-number rule: 47
+  local, 52 live, and the five-check gap is fixed.
+- **`grep "onrender\.com"` → `expect: nothing` cannot ever pass**, so it was a
+  check that would have been read as a failure and waved through. Two reasons,
+  and neither is something to fix:
+  - **four files carry `your-app.onrender.com` as a generic placeholder** —
+    `README.md`, `tests/smoke.mjs`, `docs/BETA.md` and
+    `.claude/skills/verify/SKILL.md`, all in a *"audit any deployment"*
+    command where substitute-your-own-host is the correct thing to write.
+    `DEPLOYMENT.md` uses `<your-app>.onrender.com` throughout for the same
+    reason, and it is **Render** deployment instructions, so Render examples
+    belong there whatever this deployment runs on.
+  - **`CLAUDE.md` is a record**, and §29 freezes records rather than editing
+    them. Its live-URL lines move; its history does not.
+
+  Hence the narrower grep above, which names the host rather than the platform.
 
 Then, by hand, because none of it is greppable:
 
