@@ -5146,45 +5146,52 @@ test('a renewals register is counted by the digest, on the date it expires', asy
  * with the unit in the column label and a Number type underneath, which is the
  * shape §66's §2 says has to come first.
  */
-test.describe('calculated fields', () => {
-  // Three number columns and a Sum over them, through the builder a user
-  // actually touches rather than by writing a module into IndexedDB.
-  async function buildDowntimeModule(page) {
-    await onboard(page, { templates: ['Contacts'] });
-    await page.click('#add-module-btn');
-    await page.click('.template-line[data-blank]');
-    await page.fill('#b-name', 'Daily digest');
+/*
+ * Three number columns and a Sum over them, through the builder a user
+ * actually touches rather than by writing a module into IndexedDB.
+ *
+ * At file scope because the column-summary describe (§67) needs the same
+ * module: a function declared inside a describe callback is scoped to it,
+ * which is a ReferenceError a long way from where it reads as available —
+ * the same reason `inviteLink` above was hoisted.
+ */
+async function buildDowntimeModule(page) {
+  await onboard(page, { templates: ['Contacts'] });
+  await page.click('#add-module-btn');
+  await page.click('.template-line[data-blank]');
+  await page.fill('#b-name', 'Daily digest');
 
-    // The default row is the module's Name field; three number columns after it.
-    const cols = ['Down time L1 (hours)', 'Down time L2 (hours)', 'Down time L3 (hours)'];
-    for (const label of cols) {
-      await page.click('#b-add-field');
-      const row = page.locator('.builder-field').last();
-      await row.locator('.bf-label').fill(label);
-      await row.locator('.bf-type').selectOption('number');
-      await row.locator('.bf-list').check();
-    }
-
+  // The default row is the module's Name field; three number columns after it.
+  const cols = ['Down time L1 (hours)', 'Down time L2 (hours)', 'Down time L3 (hours)'];
+  for (const label of cols) {
     await page.click('#b-add-field');
-    const calc = page.locator('.builder-field').last();
-    await calc.locator('.bf-label').fill('Total down time (hours)');
-    await calc.locator('.bf-type').selectOption('formula');
-
-    // The picker is rebuilt from the DRAFT, so the three columns added moments
-    // ago are offered. Without the key-on-label-input step they would not be:
-    // a key is normally minted at save, and a checkbox needs one to carry.
-    await expect(calc.locator('.bf-input')).toHaveCount(3);
-    await calc.locator('.bf-op').selectOption('sum');
-    for (let i = 0; i < 3; i += 1) await calc.locator('.bf-input').nth(i).check();
-
-    // Shown by default, unlike an ordinary new field — a calculated column
-    // nobody can see is pointless.
-    await expect(calc.locator('.bf-list')).toBeChecked();
-
-    await page.click('#b-save');
-    await expect(page.locator('.page-head h1')).toContainText('Daily digest', { timeout: 20000 });
+    const row = page.locator('.builder-field').last();
+    await row.locator('.bf-label').fill(label);
+    await row.locator('.bf-type').selectOption('number');
+    await row.locator('.bf-list').check();
   }
 
+  await page.click('#b-add-field');
+  const calc = page.locator('.builder-field').last();
+  await calc.locator('.bf-label').fill('Total down time (hours)');
+  await calc.locator('.bf-type').selectOption('formula');
+
+  // The picker is rebuilt from the DRAFT, so the three columns added moments
+  // ago are offered. Without the key-on-label-input step they would not be:
+  // a key is normally minted at save, and a checkbox needs one to carry.
+  await expect(calc.locator('.bf-input')).toHaveCount(3);
+  await calc.locator('.bf-op').selectOption('sum');
+  for (let i = 0; i < 3; i += 1) await calc.locator('.bf-input').nth(i).check();
+
+  // Shown by default, unlike an ordinary new field — a calculated column
+  // nobody can see is pointless.
+  await expect(calc.locator('.bf-list')).toBeChecked();
+
+  await page.click('#b-save');
+  await expect(page.locator('.page-head h1')).toContainText('Daily digest', { timeout: 20000 });
+}
+
+test.describe('calculated fields', () => {
   test('a calculated column sums its inputs, skips blanks, and stores nothing', async ({ page }) => {
     await buildDowntimeModule(page);
 
@@ -5305,5 +5312,246 @@ test.describe('calculated fields', () => {
     await second.locator('.bf-type').selectOption('formula');
     const offered = await second.locator('.bf-input').evaluateAll((els) => els.map((e) => e.value));
     expect(offered).not.toContain('total_down_time_hours');
+  });
+});
+
+/*
+ * The summary row (CLAUDE.md §67) — a total DOWN a column, as against §66's
+ * formula ACROSS a record's own fields. A different question, a different
+ * list of operations, and the choice lives on the view's own schema rather
+ * than on any record.
+ */
+test.describe('column summaries', () => {
+  async function twoShifts(page) {
+    await buildDowntimeModule(page);
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Monday');
+    await page.fill('#f-down_time_l1_hours', '2');
+    await page.fill('#f-down_time_l2_hours', '0');
+    await page.fill('#f-down_time_l3_hours', '1');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Monday")')).toBeVisible();
+
+    // The second shift leaves L2 blank, which is what makes "a blank is
+    // absent, never zero" measurable from outside.
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Tuesday');
+    await page.fill('#f-down_time_l1_hours', '4');
+    await page.fill('#f-down_time_l3_hours', '1');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Tuesday")')).toBeVisible();
+  }
+
+  /*
+   * Auto-retrying, and that is not a style choice. Changing a column's
+   * aggregate writes the module, reloads it and re-renders the body — all
+   * async, and the `change` handler is not awaited — so a plain
+   * `allInnerTexts()` samples the PREVIOUS render and the assertion passes or
+   * fails on timing rather than on behaviour (§4). Two mutations that cannot
+   * touch this test failed it before this was fixed.
+   */
+  const totals = (page) => expect(page.locator('tfoot .summary-value'));
+
+  test('a module with nothing to total grows no summary row', async ({ page }) => {
+    // Absent rather than present and empty — §36 rule 1. Contacts is text,
+    // email, phone and a company name, so there is nothing to add up.
+    await onboard(page, { templates: ['Contacts'] });
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(page.locator('.records-table tbody tr').first()).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('tfoot')).toHaveCount(0);
+    await expect(page.locator('.summary-pick')).toHaveCount(0);
+  });
+
+  test('a column total covers the rows on screen, and says so when a filter narrows them', async ({ page }) => {
+    await twoShifts(page);
+
+    /*
+     * Sum by default on every numeric column, including the calculated one —
+     * Airtable's default, and what makes the footer useful without anybody
+     * configuring it. The name column gets no summary at all.
+     */
+    await expect(page.locator('tfoot .summary-pick')).toHaveCount(4);
+    await totals(page).toHaveText(['6', '0', '2', '8']);
+
+    // Silent on an unfiltered table: the count badge in the page head already
+    // says how many rows there are, and a line that is always present teaches
+    // the eye to skip the cell (§33).
+    await expect(page.locator('.summary-foot-note')).toHaveCount(0);
+
+    /*
+     * The half that needs saying. The footer reads whatever `visibleRecords`
+     * handed the table, so a search narrows it — and a total over one of two
+     * rows is correct and reads as wrong unless the screen admits it.
+     */
+    await page.fill('#record-search', 'Monday');
+    await expect(page.locator('.records-table tbody tr')).toHaveCount(1);
+    await totals(page).toHaveText(['2', '0', '1', '3']);
+    await expect(page.locator('.summary-foot-note')).toContainText('1 filtered row');
+
+    await page.fill('#record-search', '');
+    await expect(page.locator('.records-table tbody tr')).toHaveCount(2);
+    await totals(page).toHaveText(['6', '0', '2', '8']);
+    await expect(page.locator('.summary-foot-note')).toHaveCount(0);
+  });
+
+  test('the choice is a team setting on the module, and only an average admits its coverage', async ({ page }) => {
+    await twoShifts(page);
+
+    /*
+     * Average is the one aggregate a blank row can move: a blank contributes
+     * nothing to a sum and cannot shift a minimum or a maximum, so only this
+     * one carries the "·1/2". Showing it on all four would put a suffix on
+     * every numeric column of every table with one gap in it.
+     */
+    await page.locator('.summary-pick[data-agg-key="down_time_l2_hours"]').selectOption('avg');
+    await expect(page.locator('tfoot .calc-part')).toHaveText('·1/2');
+    // The suffix rides inside the value, so it is asserted against the column
+    // it qualifies rather than on its own — an average of 0 over one of two
+    // rows is the same "0" a blank-as-zero bug would print.
+    await totals(page).toHaveText(['6', '0 ·1/2', '2', '8']);
+
+    await page.locator('.summary-pick[data-agg-key="down_time_l1_hours"]').selectOption('count');
+    await totals(page).toHaveText(['2', '0 ·1/2', '2', '8']);
+    await expect(page.locator('tfoot .calc-part')).toHaveCount(1);
+
+    // "None" turns the column off, which is a different silence from a column
+    // that is on and empty.
+    await page.locator('.summary-pick[data-agg-key="down_time_l3_hours"]').selectOption('none');
+    await expect(page.locator('tfoot .summary-value')).toHaveCount(3);
+    await expect(page.locator('tfoot .summary-pick')).toHaveCount(4);
+
+    /*
+     * It survives a reload because it is on the MODULE, not in this device's
+     * view state — which is what makes a team agree what a column means. And
+     * no record holds a total: the same never-store rule as §66, for the same
+     * reason, so there is nothing to go stale and nothing to repair.
+     */
+    await page.reload();
+    await expect(page.locator('tfoot .summary-pick')).toHaveCount(4, { timeout: 20000 });
+    await totals(page).toHaveText(['2', '0 ·1/2', '8']);
+
+    const stored = await page.evaluate(async () => {
+      const mods = await DB.getAll('modules');
+      const mod = mods.find((m) => m.name === 'Daily digest');
+      const rows = await DB.recordsByModule(mod.id);
+      return {
+        aggregates: Object.fromEntries(mod.fields.map((f) => [f.key, f.aggregate])),
+        untouchedHasKey: mod.fields.some((f) => f.key === 'total_down_time_hours' && 'aggregate' in f),
+        rowKeys: [...new Set(rows.flatMap((r) => Object.keys(r.data)))].sort(),
+      };
+    });
+    expect(stored.aggregates.down_time_l1_hours).toBe('count');
+    expect(stored.aggregates.down_time_l2_hours).toBe('avg');
+    expect(stored.aggregates.down_time_l3_hours).toBe('none');
+    // A column nobody has touched carries no key at all, so the overwhelming
+    // majority of fields cost nothing — the same rule §26 applies to fieldsAt.
+    expect(stored.untouchedHasKey).toBe(false);
+    expect(stored.rowKeys).not.toContain('aggregate');
+  });
+
+  test('a currency column totals as money, and counting its rows does not', async ({ page }) => {
+    /*
+     * Both halves are plausible-looking wrong answers rather than errors: a
+     * sum of money printed as a bare number loses the one thing that made it
+     * a pipeline figure, and "Filled: $2" claims two pounds where it means
+     * two deals. The same rule `Calc.resultType` applies to a formula's own
+     * count, in the one place a unit test cannot see it — the formatting.
+     */
+    await onboard(page, { templates: ['Deals'] });
+    await page.click('#nav-modules .nav-link:has-text("Deals")');
+    await expect(page.locator('.page-head h1')).toContainText('Deals', { timeout: 20000 });
+    // Deals opens as a board, which has no footer — the summary row is a
+    // property of the table.
+    await expect(page.locator('tfoot')).toHaveCount(0);
+    await page.click('.seg-btn[data-view="table"]');
+
+    // The two samples the template ships, 2400 + 800.
+    await expect(page.locator('tfoot .summary-value')).toHaveText('$3,200', { timeout: 20000 });
+
+    /*
+     * And the DUE-DATE filter, which is the other half of `visibleRecords` and
+     * the half a search box cannot reach. The downtime module carries no date
+     * column, so without a dated deal here the second branch of "is a filter
+     * narrowing this" would be a shipped path no test had ever driven (§60).
+     */
+    const d = new Date();
+    d.setDate(d.getDate() + 3);
+    const soon = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    await page.click('#add-record-btn');
+    await page.fill('#f-title', 'Closing this week');
+    await page.fill('#f-value', '500');
+    await page.fill('#f-closeDate', soon);
+    await page.click('#record-save');
+    await expect(page.locator('tfoot .summary-value')).toHaveText('$3,700');
+
+    await page.locator('#due-filter').selectOption('7');
+    await expect(page.locator('.records-table tbody tr')).toHaveCount(1);
+    await expect(page.locator('tfoot .summary-value')).toHaveText('$500');
+    await expect(page.locator('.summary-foot-note')).toContainText('1 filtered row');
+
+    // A tally of deals is not an amount of money. "Filled: $1" claims one
+    // pound where it means one deal — a plausible-looking wrong answer rather
+    // than an error, which is the shape that survives review.
+    await page.locator('.summary-pick[data-agg-key="value"]').selectOption('count');
+    await expect(page.locator('tfoot .summary-value')).toHaveText('1');
+    await page.locator('#due-filter').selectOption('');
+    await expect(page.locator('tfoot .summary-value')).toHaveText('3');
+    await expect(page.locator('.summary-foot-note')).toHaveCount(0);
+  });
+
+  test('a view-only account reads the totals and cannot change what they mean', async ({ page, browser }) => {
+    const ownerEmail = uniqueEmail('summary-owner');
+    await twoShifts(page);
+    await signIn(page, ownerEmail);
+    await page.goto('/app#/settings');
+    await expect(page.locator('.sync-status')).toHaveAttribute('data-status', 'synced', { timeout: 25000 });
+    const url = await inviteLink(page);
+
+    const second = await browser.newContext();
+    const mate = await second.newPage();
+    await mate.goto(new URL(url).pathname + new URL(url).search);
+    const mateEmail = uniqueEmail('summary-mate');
+    await signIn(mate, mateEmail, { claim: 'none' });
+    await expect(mate.locator('[data-join]').first()).toBeVisible({ timeout: 25000 });
+    await mate.click('[data-join="fresh"]');
+    await expect(mate.locator('#nav-modules .nav-link:has-text("Daily digest")')).toBeVisible({ timeout: 25000 });
+
+    const members = await (await page.request.get('/api/org/members')).json();
+    const target = members.members.find((m) => m.email === mateEmail);
+    expect((await page.request.patch(`/api/org/members/${target.id}`, { data: { role: 'viewer' } })).ok()).toBeTruthy();
+    await mate.reload();
+    await mate.click('#nav-modules .nav-link:has-text("Daily digest")');
+
+    /*
+     * The totals are reading, so they stay — and they render as a VALUE with
+     * the operation named in plain text, never as a dropdown that refuses
+     * (§36 rule 2: a disabled control still looks like a control that failed).
+     */
+    await expect(mate.locator('tfoot .summary-value').first()).toBeVisible({ timeout: 20000 });
+    await expect(mate.locator('tfoot .summary-value')).toHaveText(['6', '0', '2', '8']);
+    await expect(mate.locator('tfoot .summary-op').first()).toHaveText('Sum');
+    expect(await mate.locator('.summary-pick').count(), 'a viewer was offered the column menu').toBe(0);
+
+    /*
+     * And the server refuses it, which is the half the absent dropdown cannot
+     * guarantee — the viewer who matters is the one who does not use the
+     * buttons. A column summary is part of the module document, so this lands
+     * in the same `applyPush` seam `canEditSchema` already governs (§14).
+     */
+    const out = await mate.evaluate(async () => {
+      const mods = await DB.getAll('modules');
+      const mod = mods.find((m) => m.name === 'Daily digest');
+      mod.fields = mod.fields.map((f) => (f.key === 'down_time_l1_hours' ? { ...f, aggregate: 'none' } : f));
+      await DB.put('modules', { ...mod, updatedAt: Date.now() });
+      Scope.set('dirty', '1');
+      return Cloud.sync();
+    });
+    expect(out, 'the sync should have reported a refusal').toBeTruthy();
+
+    const after = await (await page.request.get('/api/data')).json();
+    const mod = after.modules.find((m) => m.name === 'Daily digest');
+    const l1 = mod.fields.find((f) => f.key === 'down_time_l1_hours');
+    expect(l1.aggregate, 'a viewer changed what a column totals for the whole team').toBeUndefined();
+    await second.close();
   });
 });

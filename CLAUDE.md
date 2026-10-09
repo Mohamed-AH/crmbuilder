@@ -86,10 +86,14 @@ never change, because everything cross-references them.
 | **Own domain / pricing** — everything a launch has to change | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) · §48 |
 | **Sweeping for what is live and unnoticed** — how, and what it found | §48 |
 | **Chaser, renewal tracker, dormancy report** — the spec, before any code | [`docs/CHASER-AND-TRACKERS.md`](docs/CHASER-AND-TRACKERS.md) |
-| **Sums, averages, calculated columns** — the spec, before any code | [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) · §66 |
+| **Sums, averages, calculated columns** — the spec, before any code | [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) · §66 · §67 |
 | **Calculated fields** — what was built, and the picker rebuilt from the draft | §66 |
 | A derived value stored nowhere, and the `compareBy` signature that paid for it | §66 · §22 · §31 |
 | A refusal that named a key instead of a label | §66 · §53 |
+| **A total under a column** — what it covers, and the line that says so | §67 · §33 · §37 |
+| An aggregate choice that belongs to the team, not the device | §67 · §60 · §14 |
+| A suffix shown on one operation out of five, and why not all five | §67 · §33 · §66 |
+| A test two unrelated mutations could fail | §67 · §9 · §4 |
 | Why a formula box is a code-execution sink here | [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) §3 · §3 invariants · §30 |
 | A derived value that must never be stored, and Salesforce's repair button | [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) §3 · §22 · §31 |
 | One date field per module — what a second one costs | §49 · §50 · [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) §5 |
@@ -193,15 +197,17 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**535 Node tests pass. Playwright is 136 of 137**, and the one failure is
-named rather than rounded off: *signing out hides the workspace* fails about 1
-run in 3, fails identically with the latest change stashed, and is the test
-§54 already records as intermittent — see §66 for what was established about it
-and the artifact to start from. Smoke is at **50 passing locally**; **55 live
-is predicted, not observed** (§8 — this session reaches neither host, and CI is
-what prints the real figure, per §46's rule that the two numbers differ and
-both are real). The same checks run either way, with five informational on a
-local file-store HTTP deployment and real assertions against a live one. **On Windows some Node tests skip
+**550 Node tests pass, and Playwright ran 142 of 142 green** — both observed
+in this session, not carried forward. The green Playwright run does **not**
+retire §66's finding: *signing out hides the workspace* fails about 1 run in 3
+and simply did not fire here, so a single clean run is evidence of the suite
+being sound and not of that test being fixed. §54 records it as intermittent,
+§66 records what was established about it and the artifact to start from.
+Smoke is at **50 passing locally**; **55 live is predicted, not observed**
+(§8 — this session reaches neither host, and CI is what prints the real figure,
+per §46's rule that the two numbers differ and both are real). The same checks
+run either way, with five informational on a local file-store HTTP deployment
+and real assertions against a live one. **On Windows some Node tests skip
 themselves** and say why — §4's SIGTERM note is one, and `resilience.test.mjs`
 skips whichever of its cases cannot be made to fail on the platform in hand
 (§55). A named platform limit, not a failure; the count is whatever the run
@@ -217,7 +223,10 @@ BASE_URL=https://nimbleclerk.com npm run test:smoke   # audit live
 ```
 
 CI (`.github/workflows/test.yml`) runs everything on push and smoke-tests the
-live URL (defaults to crmbuilder-v1; override with the `LIVE_URL` repo variable).
+live URL — the committed default is `https://nimbleclerk.com`, and a `LIVE_URL`
+**repository variable overrides it**, which §63 records as a live fault rather
+than a footnote: one left set to the old host outlives any default changed
+here, and its trailing slash is what turned §46's wait loop into a no-op.
 
 ### Shipped
 - Modules/fields/records, table + kanban views, type-aware column sorting
@@ -292,7 +301,7 @@ to render *and still navigate*.
 globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v58`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v59`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -368,6 +377,14 @@ must not be `waitForSelector`ed.
 
 **Killing the dev server:** `pkill -f "[s]erver\.js"` in a **separate** Bash
 call. A compound command mentioning `server.js` matches itself.
+
+**And never while a test run is in flight.** That pattern matches the
+`node server.js` children `api.test.mjs`, `signup.test.mjs` and six other
+files spawn, so killing "the dev server" kills the suite's servers too — and
+the symptom is not an error: the run **hangs**, because the tests are waiting
+on sockets that will never answer, with no output to say why. It cost eight
+minutes of staring at an empty log here. Kill by recorded PID, or check
+`ps` first.
 
 **Restarting a test server on the same port is not reliable.** `expireInvite()`
 in `api.test.mjs` stops the server, edits `store.json` and starts it again;
@@ -9342,4 +9359,210 @@ A user can do something new, so this was a real walk.
 | `docs/DEMO-SCRIPT.md` | thirty seconds inside *Build a module live*, because almost everybody in the room totals something by hand |
 | `docs/BETA.md` tester note | what to try to break, plus the no-formula-box limit in the rough-edge list |
 | `docs/API.md` | **nothing** — checked, not skipped. `operation` and `inputs` are ordinary `doc` contents the server never inspects, exactly like `options` on a dropdown. §54 earned a section because `doc.chases` is merged specially; this is not |
+| `privacy.html`, `terms.html` | nothing — no new data, no new recipient |
+
+
+---
+
+## 67. A total under a column, and a test two unrelated mutations could fail
+
+Part C of [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md), and the third of its
+three categories to be answered: §66 was arithmetic **across** one record's
+fields, this is a total **down** a column of the rows on screen. A `<tfoot>`
+under every `number`, `currency` and `formula` column, defaulting to **Sum**,
+with the operation chosen per column from a menu in the cell.
+
+Most of the spec held. What follows is what building it added, and the two
+places the plan was wrong.
+
+### Not the operation list minus two
+
+The obvious implementation is `Calc.operations()` without `diff` and `ratio`,
+and it is wrong twice over:
+
+- **`count` means something else here.** For a formula it is *how many of the
+  chosen fields have a value*; down a column it is *how many rows do*. Same
+  word, different denominator, and the suffix below depends on which.
+- **The coverage note cannot survive the move.** §66 shows `·2/3` whenever a
+  blank was skipped, which is right for a formula because any of the five
+  operations is one cell wide. Down a column only **average** can be moved by a
+  blank — a blank contributes nothing to a sum and cannot shift a minimum or a
+  maximum — so showing it on all four puts a suffix on every numeric column of
+  every table with one gap in it. That is §33's silent-below-10% rule broken at
+  scale, and the cell it teaches you to skip is the one the 50% case needs.
+
+So `AGGREGATES` is its own list carrying a `coverage` flag, and it is
+**declarative rather than a branch in the renderer**: the alternative was
+`if (agg.key === 'avg')` in the cell builder, which is the same fact written
+where nobody looking at the list would find it. A unit test asserts the flag is
+true on exactly one of the six.
+
+`reduceNumbers` is shared with §66's `value()`, because the two lists overlap on
+four operations and the rule that overlaps is *a blank is absent, never zero* —
+which is precisely the thing that would end up fixed in one copy and not the
+other (§29). **Proven shared rather than asserted**: one edit to that function
+fails three tests, two of them §66's and one §67's, so a second copy really
+would have let the two features diverge on the one rule they both rest on.
+
+### It totals what is on screen, and says so only when that differs
+
+It reads whatever `visibleRecords()` handed the table, so the search box and the
+due-date filter apply for free — that is the one line of the spec that bought
+the most.
+
+**The note is derived from the filter STATE, not from a second read of the
+store**, and that was a deliberate narrowing. Naming the denominator —
+*"4 of 12 rows"* — needs the unfiltered count, which means either changing
+`visibleRecords`' return shape (five call sites; §66 already paid that bill for
+`compareBy`) or stashing a figure on the view state that can go stale. And it
+would put **two adjacent numbers in the footer to fix a problem about two
+adjacent numbers**. *"Totals over 4 filtered rows, not every shift"* does the
+whole job with one.
+
+**Silent on an unfiltered table**, because the count badge in the page head
+already says how many rows there are, and a line that is always present is
+furniture. Same discipline as §66's suffix, one feature over.
+
+**Its own spanning row, not the first cell.** On a phone the table stacks into
+cards and every cell is prefixed by its column name from `data-label`, so a note
+in the first cell reads *"SHIFT over 4 filtered rows"* — labelled as a value of
+a column it has nothing to do with. A spanning row needs
+`::before { display: none }`, because `attr(data-label)` on a **missing**
+attribute is the empty string rather than nothing, so the pseudo-element still
+reserves its 40% and indents the note.
+
+### Why the choice is on the module and not on the device
+
+§60 put the theme in `localStorage` and wrote down why a preference must never
+go in `settings`. This goes the other way for the opposite reason: a total is
+not a preference, it is **what a column means**. Two people reading the same
+table and getting a sum and an average from it is worse than either, so it
+lives on the field, syncs with the module, and is therefore **owner-only** —
+exactly the rule `applyPush` already enforces on module writes (§14), which is
+why a non-owner gets the figure with the operation named in plain text rather
+than a dropdown whose effect would be reverted a second later (§36 rule 2).
+
+No server change, no wire change: `aggregate` is ordinary `doc` content the
+server never inspects, like `options` on a dropdown.
+
+**A column nobody has touched carries no key at all**, so the overwhelming
+majority of fields cost nothing — §26's rule for `fieldsAt`, asserted, because
+"costs nothing" is the kind of claim that quietly stops holding.
+
+### The plan's re-render instruction was over-specified
+
+§9 of the spec says to run a full `renderModule` rather than
+`renderModuleBodyOnly`, on the grounds that §37's count-badge reasoning would
+apply if the footer ever moved into the page head. It has not, and more to the
+point **an aggregate change moves no row**, so the badge cannot go stale — which
+is the condition that rule attaches to. Body-only, and the handler re-resolves
+the module by id afterwards because `loadModules()` replaces the array and the
+captured object is stale from that line onward (§3's rule for `openRecord`).
+
+### Traps
+
+- **`count` must not inherit a currency.** A tally of two deals rendered
+  `$2` — a plausible-looking wrong answer rather than an error, which is this
+  file's standing failure shape. The same rule `Calc.resultType` applies to a
+  formula's own count, in the one place a unit test cannot see it: the
+  formatting. It needed a module with a currency column to be observable at
+  all, so it has a test of its own on Deals.
+- **"None" is a third silence.** A column switched off and a column that is on
+  and empty both end at `null`; one em dash for both is the state that reads as
+  breakage on a table that is fine. `summarise` returns `off` against `nodata`,
+  and a non-owner's cell for an off column is **empty rather than "None —"** —
+  a reading of a choice they cannot make.
+- **A stored `aggregate` is coerced twice.** The change handler checks
+  `sel.value` against the list before writing, and `columnAggregate` falls back
+  to the default on read — because the value arrives in a restored backup and a
+  hand-written push exactly like a record value does (§3), and a footer cell
+  that silently vanished for one column would read as the feature being broken.
+- **The field key goes through `find`, never into a selector or a template.**
+  §30 Phase 3 found ids reaching HTML attributes, and this is a second
+  client-chosen key on the same surface.
+- **Measured, not judged** (§4's cascade trap, which has now cost time five
+  times). Driven at 1440/900/390/320: no horizontal page overflow at any of
+  them, empty footer cells correctly hidden once stacked, and the desktop
+  `.records-table tfoot td` rule is **more specific than the media query's
+  `.records-table td`**, so its padding and top border had to be undone inside
+  the query or every stacked summary cell carried a rule across it.
+- **Contrast measured rather than inherited.** The footer labels mirror the
+  table header's style, and the header uses `--text-faint`, which §60 measured
+  at **2.58:1** and left deliberately. Copying it would have put the word that
+  makes the number mean anything under AA. `--text-soft`: **6.98:1** light,
+  **6.45** dark, with the values at 16.11 and 14.02.
+
+### The verification found a defect in its own test
+
+Five mutations, each failing the test that names it:
+
+| Mutation | Fails |
+|---|---|
+| the filtered note is dropped | *a column total covers the rows on screen, and says so when a filter narrows them* |
+| only the search half of "is a filter narrowing this" | *a currency column totals as money…*, which is the only test with a date column |
+| the choice is kept in view state instead of on the module | *the choice is a team setting on the module…* |
+| the dropdown is rendered for everybody | *a view-only account reads the totals and cannot change what they mean* |
+| the "nothing to total" guard is removed | *a module with nothing to total grows no summary row* |
+| a tally is formatted as money | *a currency column totals as money, and counting its rows does not* |
+| a blank row counted as zero | **five** of `tests/calc.test.mjs`'s summary tests |
+| `coverage: true` on sum, or a `none` default, or a stored value trusted as sent | one `columnAggregate` test each |
+| `off` collapsed into `nodata` | *"none" is off, and says so rather than reporting no data* |
+
+**The due-filter branch was a shipped path no test had driven**, which the
+plan's own mutation table named and my first pass missed: the downtime module
+has no date column, so `st.due !== null` was unreachable from any of the four
+journeys. The Deals test carries a dated deal now, which is also where the
+money-versus-tally rule is observable — §60's finding, in a condition one
+character wide.
+
+**Two of those also failed a test their mutation cannot touch**, and that is
+the finding. `expect(await totals(page)).toEqual(…)` does not auto-retry, so it
+sampled the render *before* the change handler's
+`DB.put` → `loadModules` → `renderModuleBodyOnly` landed — §4's async
+re-render race, which the spec's own §9 predicted and I then walked into. A
+test that fails for a reason unrelated to the mutation is not verification; it
+is noise that would have been read as "this mutation breaks something else".
+Converted to `await expect(locator).toHaveText([...])`, which retries, and the
+baseline then ran 5/5 twice and each mutation failed only its own test.
+
+**The viewer journey asserts the server, not the buttons.** An absent dropdown
+tests the client's manners; the viewer who matters is the one who pushes the
+module change through `Cloud.sync()` directly. That lands in the same
+`applyPush` seam `canEditSchema` governs, and the assertion is that the owner's
+value is still `undefined` on the server afterwards.
+
+### Blast radius
+
+`js/app.js`, `js/calc.js` and `css/style.css` are all in `APP_SHELL`, so
+`CACHE_VERSION` → **`crmbuilder-v59`**. No new served file, so the smoke count
+stays **50 local / 55 live** — and running it is what proves that (§9).
+
+`buildDowntimeModule` was hoisted from inside §66's describe to file scope so
+both features' journeys can use it: a function declared inside a describe
+callback is scoped to it, which is the same reason `inviteLink` was hoisted.
+
+Counts: Node **535 → 550** (550 pass, 0 fail), Playwright **137 → 142** (142
+pass — the §66 intermittent did not fire, which is not the same as it being
+fixed), smoke **50** locally, measured by running it rather than reasoned
+about.
+
+**A trap hit while measuring, now in §4**: `pkill -f "[s]erver\.js"` to stop
+the smoke server also killed the `server.js` children eight test files spawn,
+and the symptom was not an error — the suite **hung**, silently, waiting on
+sockets that would never answer.
+
+### Docs walked (§27)
+
+A user can do something new, so this was a real walk.
+
+| | Needed |
+|---|---|
+| `README.md` | its own feature bullet, and `js/calc.js`'s line, which described one of the two things it now does |
+| `guide.html` | a paragraph in the week-shaped section, with the owner-only limit in the same breath as the capability |
+| `USER-GUIDE.md`, `docs/manual.html` | a *Totals under a column* section in §4 beside the board's column totals — not in the field-types section, because this is not a field |
+| `docs/product-tour.html` | a paragraph on the existing calculated-columns tile rather than a tile of its own: it is the same question asked the other way round, and a second tile would read as a second feature |
+| `docs/ONBOARDING.md` | *point at the footer* appended to the existing totalling-by-hand step, because the type check has to come first either way |
+| `docs/DEMO-SCRIPT.md` | the thirty seconds after the calculated column, where searching and watching the totals follow is the part that lands |
+| `docs/BETA.md` tester note | what to try to break, including the colleague-with-no-menu case |
+| `docs/API.md` | **nothing** — checked, not skipped. No route moved and no wire shape moved; `aggregate` is `doc` content the server never reads, exactly like `options`. §54 earned a section because `doc.chases` merges by union; this does not |
 | `privacy.html`, `terms.html` | nothing — no new data, no new recipient |

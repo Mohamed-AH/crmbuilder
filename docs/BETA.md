@@ -1037,6 +1037,14 @@ try removing a column it depends on (the save should refuse and name both). It
 only reads Number and Currency — a column holding `2 hours` has to become a
 Number with the unit in its heading first.
 
+**Under the table, every number, currency and calculated column is totalled**,
+and the small menu in each footer cell switches it to average, minimum, maximum,
+how many rows are filled, or off. Worth trying to break: search for something
+and check the totals follow and say how many rows they covered; set a column to
+Average with some rows blank (only an average shows the `·4/6`, because a blank
+cannot move a sum); and if you are on a team, check a colleague who is not an
+owner sees the figures with no menu.
+
 **If anything you rely on expires** — insurance, a trade licence, a safety
 certificate, a vehicle inspection — there is a **Renewals** template (Add
 module → from a template). It is an ordinary module with an expiry date on it,

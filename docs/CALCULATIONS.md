@@ -5,19 +5,27 @@
 > If you build a part of this, move it out of here and write it up as a
 > numbered section in `CLAUDE.md`, the same as everything else.
 >
-> **Part A is built — `CLAUDE.md` §66.** Parts C and C+ are not, and category
-> B (rollups) is still named rather than costed. This was the spec agreed
-> before any code, written so the decisions are recorded with their reasoning
-> rather than reconstructed from a diff; it is kept accurate as each part lands
-> rather than frozen, because this is `docs/` and not `docs/archive/`.
+> **Part A is built — `CLAUDE.md` §66. Part C is built — §67.** Part C+ is
+> not, and category B (rollups) is still named rather than costed. This was the
+> spec agreed before any code, written so the decisions are recorded with their
+> reasoning rather than reconstructed from a diff; it is kept accurate as each
+> part lands rather than frozen, because this is `docs/` and not
+> `docs/archive/`.
 >
-> **Three things the plan got wrong, all recorded in §66 rather than edited
-> away here:** the caller list named the kanban card (which renders one
-> currency field, not the column list) and omitted `compareBy` (which is a
+> **Three things the plan got wrong about Part A, all recorded in §66 rather
+> than edited away here:** the caller list named the kanban card (which renders
+> one currency field, not the column list) and omitted `compareBy` (which is a
 > caller, and whose signature had to change); the builder picker as specified
 > could not work on a new module, because a checkbox needs a field key and
 > `slug()` runs at save; and the removal prompt was not needed, because a
 > refusal is strictly better when nothing is destroyed on either branch.
+>
+> **And two about Part C, recorded in §67:** the aggregate list is not the
+> operation list minus two — `count` means a different thing down a column, and
+> only *average* can carry a coverage note without becoming noise; and §9's
+> instruction to re-render the whole module view was over-specified, because an
+> aggregate change moves no row and so cannot stale the count badge that rule
+> exists for.
 >
 > Where a choice was taken the alternatives are kept beside it — a decision
 > without its rejected options is a decision nobody can safely reverse. Nine
@@ -236,6 +244,9 @@ is its own kind of inaccuracy, and so is an unexplained gap).
 
 ## 4. Part C — column totals
 
+> **Built — `CLAUDE.md` §67.** Everything below is the spec as agreed and held,
+> except the two items the banner names. Read §67 for what building it added.
+
 A footer row on the table, under every `number`, `currency` and `formula`
 column.
 
@@ -431,7 +442,7 @@ is worthless*:
 |---|---|
 | blanks counted as zero | *an average ignores blank values rather than dragging the result down* |
 | the result stored in `record.data` | *a calculated column adds no key to any record* |
-| the total read from `DB.recordsByModule` instead of `visibleRecords` | *a column total respects the due-date filter, and says that it did* |
+| the total read from `DB.recordsByModule` instead of `visibleRecords` | *a column total respects the due-date filter, and says that it did* — and this row is the one that caught a real gap: the downtime module has no date column, so the due-filter branch had no test at all until a dated deal was added (§67) |
 | a text field offered in the field picker | *only numeric fields can be summed* |
 | formula-on-formula permitted | *a calculated field cannot reference another one* |
 | a zero divisor allowed through | *a ratio with a zero divisor renders an em dash* |

@@ -568,6 +568,35 @@ a.stat-card:hover, .stat-card-add:hover { border-color: var(--border-strong); bo
 .sort-on.desc { transform: rotate(180deg); }
 .th-num .sort-hint, .th-num .sort-on { margin-left: 2px; }
 
+/* The summary row (§67) — a total down a column of the rows on screen.
+   Tinted and ruled off, so it reads as a footer rather than as one more row
+   somebody could click into. `--text-soft` for the labels, not
+   `--text-faint`: §60 measured that one under AA in both themes, and the
+   operation name is what makes the number mean anything. */
+.records-table tfoot td {
+  padding: 9px 16px; border-top: 1px solid var(--border);
+  background: var(--surface-2); white-space: nowrap;
+}
+.summary-pick {
+  font: inherit; font-size: 11.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-soft);
+  background: transparent; border: 1px solid transparent; border-radius: 6px;
+  padding: 1px 2px; cursor: pointer; max-width: 8em;
+}
+.summary-pick:hover { border-color: var(--border); color: var(--text); }
+.summary-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.summary-op {
+  font-size: 11.5px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--text-soft);
+}
+.summary-value { margin-left: 8px; font-weight: 600; font-variant-numeric: tabular-nums; }
+/* Only present while a filter is narrowing the table, so it never competes
+   with the count badge in the page head on an ordinary screen. */
+.summary-foot-note td {
+  border-top: none; padding-top: 0;
+  text-align: left; font-size: 11.5px; color: var(--text-soft); white-space: normal;
+}
+
 /* CSV import column mapping */
 .map-table { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
 .map-row {
@@ -874,6 +903,21 @@ body.modal-open { overflow: hidden; }
     letter-spacing: 0.05em; padding-top: 2px;
   }
   .th-num, .td-num { text-align: left; }
+  /* The table stacks into cards here and `thead` is hidden, so each summary
+     is labelled by the same `data-label::before` the body cells use. A
+     non-numeric column contributes an empty cell, which would otherwise show
+     its column name with nothing beside it. */
+  .records-table tfoot tr { display: block; padding: 10px 14px 0; background: var(--surface-2); }
+  .records-table tfoot tr.summary-foot-note { padding: 4px 14px 10px; }
+  /* The desktop rule above is more specific than this media query's generic
+     `.records-table td`, so its padding and rule have to be undone here or
+     every stacked summary cell carries a top border. */
+  .records-table tfoot td { padding: 3px 0; border-top: none; background: transparent; }
+  .records-table tfoot td:empty { display: none; }
+  /* `attr(data-label)` on a missing attribute is the empty string, so the
+     pseudo-element would still reserve its 40% column and indent the note. */
+  .summary-foot-note td { display: block; }
+  .summary-foot-note td::before { display: none; }
 }
 
 /* ------------------------------------------------------------ guided tour */

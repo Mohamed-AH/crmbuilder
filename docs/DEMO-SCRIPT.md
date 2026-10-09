@@ -83,6 +83,13 @@ exactly that by hand.
 Say the limit while it is on screen: no formula box, so a total and an average
 are a tick list and `(a − b) ÷ c` is not possible.
 
+**Then add a second record and look at the footer.** Every number column is
+already totalled, and the menu under each one switches it to an average. Type
+something into the search box: the totals follow, and a line underneath says how
+many rows they covered. The point to land is that it is *their* number, not a
+report somebody has to build — and that it is stored on the module, so their
+colleagues see the same one.
+
 Save. Add one record. Switch to board view.
 
 > "Ninety seconds, no code, no admin console, no consultant. And it's a

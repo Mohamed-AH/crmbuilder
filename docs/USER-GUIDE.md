@@ -109,6 +109,31 @@ Proposal to Won updates its Stage, immediately and permanently.
 If your module has a money field, each board column shows its **count and
 total** — so a Deals board doubles as a pipeline value report.
 
+### Totals under a column
+
+Under the table, every **Number**, **Currency** and **Calculated** column
+carries a total. It starts as a **Sum**, and the small menu in each footer cell
+changes it to **Average**, **Minimum**, **Maximum**, **Filled** (how many rows
+have a value in that column) or **None**. A column with nothing to add up —
+text, dates, dropdowns — simply has no total.
+
+Three things worth knowing:
+
+- **It totals what you can see.** Search for something, or narrow the due-date
+  filter, and the totals follow — with a line underneath saying how many rows
+  they cover, so a figure over part of the module cannot be mistaken for the
+  whole of it.
+- **An empty cell is skipped, not counted as zero**, exactly as in a calculated
+  column. Only an **Average** can be moved by that, so only an average shows
+  the small `·4/6` telling you how many rows it divided by.
+- **The choice is shared with your team.** It is part of the module rather than
+  a setting on your own device, so everybody reads the same number from the
+  same rule. Only an owner can change it; everyone else sees the total with the
+  operation named beside it.
+
+A CSV export carries the rows, not the totals — spreadsheets have their own
+`SUM`, and a total row inside the data is something you then have to delete.
+
 ---
 
 ## 5. Building and changing modules

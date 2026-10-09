@@ -205,6 +205,110 @@ describe('Calc.describe', () => {
   });
 });
 
+describe('Calc.summarise — down a column (§67)', () => {
+  test('sum adds the visible rows', () => {
+    const r = Calc.summarise([2, 0, 1], 'sum');
+    assert.equal(r.value, 3);
+    assert.equal(r.used, 3);
+    assert.equal(r.total, 3);
+  });
+
+  test('average divides by the rows that HAVE a value, not by the rows shown', () => {
+    // The same rule as a formula, and the one the whole design turns on:
+    // reading a blank row as zero drags a column average down by however many
+    // rows nobody filled in, and reads perfectly plausibly.
+    const r = Calc.summarise([3, '', 3], 'avg');
+    assert.equal(r.value, 3, 'blank treated as zero would give 2');
+    assert.equal(r.used, 2);
+    assert.equal(r.total, 3);
+  });
+
+  test('minimum and maximum skip blanks rather than seeing them as zero', () => {
+    assert.equal(Calc.summarise([5, null, 2], 'min').value, 2, 'a blank read as 0 would answer 0');
+    assert.equal(Calc.summarise([5, undefined, 2], 'max').value, 5);
+  });
+
+  test('filled counts the rows carrying a value, and 0 IS an answer', () => {
+    assert.equal(Calc.summarise([2, '', 0], 'count').value, 2);
+    const empty = Calc.summarise(['', '', ''], 'count');
+    assert.equal(empty.value, 0, 'an empty column has had nothing filled; that is not a silence');
+    assert.equal(empty.reason, null);
+  });
+
+  test('a column with no values at all has NO sum, rather than 0', () => {
+    const r = Calc.summarise(['', null, undefined], 'sum');
+    assert.equal(r.value, null);
+    assert.equal(r.reason, 'nodata');
+  });
+
+  test('a non-numeric stored value is absent, not NaN', () => {
+    // Reachable from a CSV import and a restored backup (§3).
+    const r = Calc.summarise([4, 'n/a', 2], 'sum');
+    assert.equal(r.value, 6);
+    assert.equal(r.used, 2);
+  });
+
+  test('"none" is off, and says so rather than reporting no data', () => {
+    // Two different silences: an owner turned the column off, versus a column
+    // that is on and has nothing in it. One em dash for both is the state
+    // that reads as breakage on a table that is fine.
+    const r = Calc.summarise([1, 2], 'none');
+    assert.equal(r.value, null);
+    assert.equal(r.reason, 'off');
+  });
+
+  test('an unknown aggregate says so', () => {
+    assert.equal(Calc.summarise([1, 2], 'nonsense').reason, 'noaggregate');
+  });
+
+  test('an overflow is caught by the same central guard', () => {
+    const r = Calc.summarise([1e308, 1e308], 'sum');
+    assert.equal(r.value, null);
+    assert.equal(r.reason, 'overflow');
+  });
+
+  test('ordered pairs are NOT offered down a column', () => {
+    // `a − b` is two FIELDS of one record. Down a column it has no meaning,
+    // so it is absent from the list rather than present and wrong.
+    const keys = Calc.aggregates().map((a) => a.key);
+    assert.ok(!keys.includes('diff'));
+    assert.ok(!keys.includes('ratio'));
+  });
+});
+
+describe('Calc.columnAggregate — one home for the default', () => {
+  test('an unset column defaults to Sum', () => {
+    assert.equal(Calc.columnAggregate({ key: 'l1', type: 'number' }).key, 'sum');
+  });
+
+  test('a stored choice wins', () => {
+    assert.equal(Calc.columnAggregate({ key: 'l1', aggregate: 'avg' }).key, 'avg');
+    assert.equal(Calc.columnAggregate({ key: 'l1', aggregate: 'none' }).key, 'none');
+  });
+
+  test('a nonsense stored value falls back to the default rather than vanishing', () => {
+    // It arrives from a restored backup or a hand-written push, so it has to
+    // land somewhere; a footer cell that silently disappeared would read as
+    // the feature being broken for that one column.
+    assert.equal(Calc.columnAggregate({ aggregate: 'sabotage' }).key, 'sum');
+    assert.equal(Calc.columnAggregate({ aggregate: { $ne: null } }).key, 'sum');
+    assert.equal(Calc.columnAggregate(null).key, 'sum');
+  });
+
+  test('only AVERAGE carries a coverage note', () => {
+    const byKey = Object.fromEntries(Calc.aggregates().map((a) => [a.key, a]));
+    assert.equal(byKey.avg.coverage, true);
+    for (const k of ['sum', 'min', 'max', 'count', 'none']) {
+      assert.equal(byKey[k].coverage, false, `${k} would put a suffix on every column with a gap`);
+    }
+  });
+
+  test('aggregates() hands out copies, so a caller cannot mutate the list', () => {
+    Calc.aggregates()[0].label = 'TAMPERED';
+    assert.equal(Calc.aggregates()[0].label, 'Sum');
+  });
+});
+
 describe('the operation list', () => {
   test('every key on Calc is callable', () => {
     // A stale or partial evaluation of the file fails here rather than

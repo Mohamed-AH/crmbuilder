@@ -548,6 +548,93 @@
     return Calc.value(mod, field, record).value;
   }
 
+  /*
+   * ------------------------------------------------------------------
+   * The summary row (§67) — a total DOWN a column of visible rows.
+   *
+   * Airtable's summary bar, and the shape is theirs rather than invented:
+   * numeric columns default to Sum, non-numeric are left blank, and the menu
+   * depends on the column. Arriving at the same design independently and then
+   * finding it is the standard is a reason to stop designing.
+   *
+   * It reads whatever `visibleRecords` handed the table, so the search box and
+   * the due-date filter apply for free — and it has to SAY so when one of them
+   * is narrowing, because a total over four of twelve rows is correct and
+   * reads as wrong (§33).
+   *
+   * The choice lives on the field and syncs with the module, so a team agrees
+   * what a column means rather than each device deciding. That makes it a
+   * schema write and therefore owner-only — exactly the rule `applyPush`
+   * enforces on the server (§14), which is why a non-owner gets the value with
+   * no control rather than a control whose effect would be reverted a moment
+   * later.
+   */
+  function summaryCellHTML(mod, field, records, mayEdit) {
+    const agg = Calc.columnAggregate(field);
+    const r = Calc.summarise(records.map((rec) => cellValue(mod, field, rec)), agg.key);
+    // A tally is not money, the same rule Calc.resultType applies to a
+    // formula's own count — "Filled: $3" would be nonsense.
+    const type = agg.key === 'count' ? 'number'
+      : (Calc.isFormula(field) ? Calc.resultType(mod, field) : field.type);
+    const shown = agg.key === 'none' ? ''
+      : (r.value === null ? '<span class="muted">—</span>' : fmtValue({ type }, r.value));
+    // Only Average, and js/calc.js carries why: a blank cannot move a sum, a
+    // minimum or a maximum, so a suffix there would appear on every numeric
+    // column of every table with one gap in it.
+    const coverage = agg.coverage && r.value !== null && r.used !== r.total
+      ? `<span class="calc-part" title="${esc(`${r.used} of ${r.total} rows have a value in ${field.label}`)}"> ·${r.used}/${r.total}</span>`
+      : '';
+    const value = shown ? `<span class="summary-value">${shown}${coverage}</span>` : '';
+
+    if (!mayEdit) {
+      // Nothing at all when the column is switched off: "None —" is a reading
+      // of a choice the reader cannot make, which is noise rather than
+      // information (§36 rule 1).
+      return agg.key === 'none' ? '' : `<span class="summary-op">${esc(agg.label)}</span>${value}`;
+    }
+    return `<select class="summary-pick" data-agg-key="${esc(field.key)}"
+        aria-label="${esc(`What the ${field.label} column totals`)}"
+        title="${esc(`What the ${field.label} column totals. Everyone on the team sees the same choice.`)}">
+        ${Calc.aggregates().map((a) => `<option value="${a.key}" ${a.key === agg.key ? 'selected' : ''}>${esc(a.label)}</option>`).join('')}
+      </select>${value}`;
+  }
+
+  function summaryRowHTML(mod, cols, records) {
+    // Absent entirely when there is nothing to total, rather than an empty
+    // strip under the table (§36 rule 1).
+    if (!cols.some((f) => numericCol(mod, f))) return '';
+    const st = state(mod.id);
+    const mayEdit = canEditSchema();
+    /*
+     * Said only when a filter is narrowing, which is the same discipline the
+     * formula cell's "·2/3" uses: on an unfiltered table this line would
+     * restate the count badge in the page head on every screen, and a number
+     * that is always there teaches the eye to skip the cell (§33).
+     *
+     * Derived from the filter STATE rather than from a second read of the
+     * store, so there is no unfiltered denominator to go stale — and naming
+     * one would put two adjacent numbers in the footer to fix a problem about
+     * two adjacent numbers.
+     */
+    const narrowed = st.q.trim().length > 0 || st.due !== null;
+    const cells = cols.map((f) => {
+      const num = numericCol(mod, f);
+      const inner = num ? summaryCellHTML(mod, f, records, mayEdit) : '';
+      return `<td data-label="${esc(f.label)}" class="${num ? 'td-num' : ''}">${inner}</td>`;
+    });
+    /*
+     * Its own spanning row rather than tucked into the first cell. On a phone
+     * the table stacks into cards and every cell is prefixed by its column
+     * name from `data-label`, so a note living in the first cell would read
+     * "SHIFT over 4 filtered rows" — labelled as a value of a column it has
+     * nothing to do with.
+     */
+    const note = narrowed
+      ? `<tr class="summary-foot-note"><td colspan="${cols.length}">Totals over ${records.length} filtered ${records.length === 1 ? 'row' : 'rows'}, not every ${esc(singular(mod.name).toLowerCase())}.</td></tr>`
+      : '';
+    return `<tfoot class="summary-row"><tr>${cells.join('')}</tr>${note}</tfoot>`;
+  }
+
   async function primeRelationCache(mod, records) {
     const relFields = mod.fields.filter((f) => f.type === 'relation' && f.relatedModule);
     for (const f of relFields) {
@@ -2037,6 +2124,7 @@
                 ${cols.map((f) => `<td data-label="${esc(f.label)}" class="${numericCol(mod, f) ? 'td-num' : ''}">${cellHTML(mod, f, r)}</td>`).join('')}
               </tr>`).join('')}
           </tbody>
+          ${summaryRowHTML(mod, cols, records)}
         </table>
       </div>`;
   }
@@ -2087,6 +2175,39 @@
       th.addEventListener('click', apply);
       th.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); apply(); }
+      });
+    });
+
+    // The summary row's per-column choice (§67). Rendered only for an owner,
+    // so this finds nothing for anybody else — and the bind is guarded the
+    // same way, because an unguarded one on a conditional control takes the
+    // whole screen down rather than just the control (§36).
+    $$('#module-body [data-agg-key]').forEach((sel) => {
+      sel.addEventListener('change', async () => {
+        /*
+         * Re-resolved by id, never trusted from the closure: a rendered table
+         * can outlive the module definition it was drawn from (§3's rule for
+         * openRecord), and `loadModules()` below replaces the array outright,
+         * so the captured object is stale from the next line onward.
+         *
+         * The key goes through `find`, never into a selector or a template —
+         * §30 Phase 3 found ids reaching HTML attributes, and a field key
+         * arrives in a restored backup exactly like a record value does.
+         */
+        const live = getModule(mod.id);
+        const field = live && live.fields.find((f) => f.key === sel.dataset.aggKey);
+        if (!field) { toast('That column is no longer there'); return; }
+        // Coerced against the list rather than stored as sent, so a value the
+        // dropdown could not have produced cannot reach the module document.
+        field.aggregate = Calc.aggregate(sel.value) ? sel.value : Calc.columnAggregate(field).key;
+        // Per-record sync selects on this. A module whose fields changed
+        // without it would look unchanged for ever and never leave the device.
+        live.updatedAt = Date.now();
+        await DB.put('modules', live);
+        await loadModules();
+        await persist();
+        const fresh = getModule(mod.id);
+        if (fresh) renderModuleBodyOnly(fresh);
       });
     });
 

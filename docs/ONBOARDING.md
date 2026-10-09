@@ -185,6 +185,15 @@ the heading: `Down time (hours)` as a Number holding `2`. Do that conversion
 with them rather than mentioning it, because a text column that *looks* numeric
 is not something they will spot.
 
+Once the types are right, **point at the footer**: every number and currency
+column already carries a total, and the little menu under each one switches it
+between sum, average, minimum, maximum and how many rows are filled. That is
+usually the second spreadsheet gone. Say the two things that matter in the same
+breath — it totals the rows on screen, so a search narrows it and the footer
+says how many it covered; and the choice belongs to the module, so everybody on
+the team reads the same number and only an owner can change what a column
+means.
+
 **Say the two limits in the same breath**: there is no formula box, so
 `(a − b) ÷ c` is not possible, and a blank is skipped rather than counted as
 zero — which is right for an average and worth saying out loud, because it is

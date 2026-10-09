@@ -582,6 +582,31 @@
         If your module has a money field, each board column shows its <strong>count and
         total</strong> — so a Deals board doubles as a pipeline value report.
       </p>
+
+      <h3>Totals under a column</h3>
+      <p>Under the table, every <strong>Number</strong>, <strong>Currency</strong> and
+        <strong>Calculated</strong> column carries a total. It starts as a <strong>Sum</strong>,
+        and the small menu in each footer cell changes it to Average, Minimum, Maximum,
+        <strong>Filled</strong> (how many rows have a value in that column) or None. A column
+        with nothing to add up — text, dates, dropdowns — simply has no total.</p>
+      <p>It <strong>totals what you can see</strong>: search for something, or narrow the
+        due-date filter, and the totals follow — with a line underneath saying how many rows
+        they cover, so a figure over part of the module cannot be mistaken for the whole of
+        it.</p>
+      <p>An <strong>empty cell is skipped, not counted as zero</strong>, exactly as in a
+        calculated column. Only an Average can be moved by that, so only an average shows the
+        small <code>·4/6</code> telling you how many rows it divided by.</p>
+      <p>The <strong>choice is shared with your team</strong> — it is part of the module rather
+        than a setting on your own device, so everybody reads the same number from the same
+        rule. Only an owner can change it; everyone else sees the total with the operation
+        named beside it.</p>
+
+      <div class="note tip">
+        <span class="note-label">Tip</span>
+        <p>A CSV export carries the rows, not the totals. Spreadsheets have their own
+          <code>SUM</code>, and a total row sitting inside the data is something you then
+          have to delete.</p>
+      </div>
     </section>
 
     <!-- 5 -->
