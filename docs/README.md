@@ -40,6 +40,7 @@ is why status is declared, not inferred.
 | **take payment** | [PAYMENTS.md](PAYMENTS.md) — the rail, the price, the chargeback plan, and the India tax position. Research, nothing scheduled. It is the *commercial* half; the checklist's Part 2 is what charging **breaks** |
 | **decide what to build next** | [ROADMAP.md](ROADMAP.md) — dark mode, accessibility, a security re-audit, integrations and localization, each costed against what is already here |
 | **build the chaser or the trackers** | [CHASER-AND-TRACKERS.md](CHASER-AND-TRACKERS.md) — the spec agreed before any code, and the five decisions behind it |
+| **build sums, averages or calculated columns** | [CALCULATIONS.md](CALCULATIONS.md) — three features the industry keeps apart, nine decisions, and why a formula box is a code-execution sink here |
 
 ---
 
@@ -57,6 +58,7 @@ is why status is declared, not inferred.
 | [PAYMENTS.md](PAYMENTS.md) | operator | How money reaches an Indian bank account from a UK customer, what a chargeback costs and who bears it, and what to charge. Two decisions taken (per-workspace tiers, GBP); the rest are questions. Nothing scheduled. Live, not frozen. |
 | [ROADMAP.md](ROADMAP.md) | developers | Five candidate items sized against the real code, with what already exists measured rather than recalled. Nothing scheduled. Live, not frozen. |
 | [CHASER-AND-TRACKERS.md](CHASER-AND-TRACKERS.md) | developers | Overdue chaser, renewal tracker, dormancy report — the spec, and the options rejected. Parts 1 and 2 built; part 3's mailto: half built, BYOK send not. |
+| [CALCULATIONS.md](CALCULATIONS.md) | developers | Calculated fields, column totals and period grouping — the three categories every CRM keeps separate, measured against Salesforce, HubSpot, Airtable and Notion. Nine decisions taken; rollups named and not costed. Nothing built. Live, not frozen. |
 | [API.md](API.md) | developers | The HTTP contract and the rules behind it. Carries the route count; nothing else should. |
 | [../DEPLOYMENT.md](../DEPLOYMENT.md) | operator | Render + Atlas + OAuth, the env matrix, backups, what the deployment publishes. |
 | [../CLAUDE.md](../CLAUDE.md) | developers | **The densest document here.** Architecture, invariants, and every trap that has cost time. |

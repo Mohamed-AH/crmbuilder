@@ -86,6 +86,10 @@ never change, because everything cross-references them.
 | **Own domain / pricing** — everything a launch has to change | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) · §48 |
 | **Sweeping for what is live and unnoticed** — how, and what it found | §48 |
 | **Chaser, renewal tracker, dormancy report** — the spec, before any code | [`docs/CHASER-AND-TRACKERS.md`](docs/CHASER-AND-TRACKERS.md) |
+| **Sums, averages, calculated columns** — the spec, before any code | [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) |
+| Why a formula box is a code-execution sink here | [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) §3 · §3 invariants · §30 |
+| A derived value that must never be stored, and Salesforce's repair button | [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) §3 · §22 · §31 |
+| One date field per module — what a second one costs | §49 · §50 · [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) §5 |
 | **Tracking what expires** — the template, and the one date field | §49 · §37 · §39 |
 | **Dormancy vs retention** — two questions, two clocks | §50 · §44 |
 | **Chasing an overdue record** — the draft, and the two escapes | §51 |
