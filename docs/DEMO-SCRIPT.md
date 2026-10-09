@@ -90,6 +90,13 @@ many rows they covered. The point to land is that it is *their* number, not a
 report somebody has to build — and that it is stored on the module, so their
 colleagues see the same one.
 
+**Then add a date column and group by week.** Two records in one week and one
+in the next is enough: the table gathers into periods, each with its own
+totals, and the overall total stays underneath. This is the moment the room
+recognises the spreadsheet somebody on their team rebuilds every Monday. Say
+the limit while it is up: it is how *you* are looking at the table, not a saved
+report, so it resets when you reload.
+
 Save. Add one record. Switch to board view.
 
 > "Ninety seconds, no code, no admin console, no consultant. And it's a

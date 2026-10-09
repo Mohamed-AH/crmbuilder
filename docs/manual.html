@@ -607,6 +607,32 @@
           <code>SUM</code>, and a total row sitting inside the data is something you then
           have to delete.</p>
       </div>
+
+      <h3>Grouping by week or by month</h3>
+      <p>If a module has a <strong>date</strong> column, a <strong>Group by</strong> control
+        sits above the table: Week or Month. The rows are gathered into periods, each period
+        gets a heading saying how many rows are in it, and <strong>each period gets its own
+        totals</strong> using the same choices you made in the footer. The footer underneath
+        still shows the overall total. That turns a log into a report without a separate
+        screen.</p>
+      <p>It <strong>says which column it used</strong> — with one date column the control
+        reads <em>Group by Month on Shift date</em>, and with more than one you pick. A report
+        aged on a date you cannot see is indistinguishable from a wrong one.</p>
+      <p><strong>Newest period first</strong>, so the current week or month is at the top
+        rather than at the end of a year of history. A week runs from whichever day your
+        region starts weeks on — Monday in most of the world, Sunday in the US — and the
+        heading names the actual dates, so you can see which you got.</p>
+      <p>Rows with that date empty get <strong>their own group at the bottom</strong>, named
+        after the column. They are not dropped and not folded into a period, so the group
+        totals always add up to the footer.</p>
+
+      <div class="note tip">
+        <span class="note-label">Tip</span>
+        <p>Grouping is <em>yours</em>, not the team's: it is how you are looking at the table
+          right now, like the search box, so it is not shared with colleagues and it resets
+          when you reload. The totals choice in the footer is the opposite — that one is
+          shared, because it decides what a column means.</p>
+      </div>
     </section>
 
     <!-- 5 -->

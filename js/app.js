@@ -276,6 +276,10 @@
         view: mod && mod.defaultView === 'kanban' && kanbanField(mod) ? 'kanban' : 'table',
         sort: null, // { key, dir: 'asc'|'desc' }; null = most recently edited
         due: null, // days ahead for the date filter; null = show every row
+        // { by: 'week'|'month', key } — null = flat. Deliberately view state
+        // and never synced: grouping is what THIS reader is looking at, where
+        // §67's aggregate is what a column means to the whole team (§68).
+        group: null,
       });
     }
     return viewState.get(moduleId);
@@ -569,22 +573,37 @@
    * no control rather than a control whose effect would be reverted a moment
    * later.
    */
-  function summaryCellHTML(mod, field, records, mayEdit) {
+  /*
+   * The figure alone — the formatted value plus its coverage suffix, or '' when
+   * the column is switched off.
+   *
+   * Extracted so the footer cell and a GROUP's own summary row (§68) share one
+   * computation rather than two that could diverge (§29). The group row wants
+   * the number and nothing else: the operation is already named once in the
+   * footer, and repeating "Sum" on twelve monthly rows × four columns is the
+   * noise §33 is about.
+   */
+  function summaryFigure(mod, field, records) {
     const agg = Calc.columnAggregate(field);
+    if (agg.key === 'none') return '';
     const r = Calc.summarise(records.map((rec) => cellValue(mod, field, rec)), agg.key);
     // A tally is not money, the same rule Calc.resultType applies to a
     // formula's own count — "Filled: $3" would be nonsense.
     const type = agg.key === 'count' ? 'number'
       : (Calc.isFormula(field) ? Calc.resultType(mod, field) : field.type);
-    const shown = agg.key === 'none' ? ''
-      : (r.value === null ? '<span class="muted">—</span>' : fmtValue({ type }, r.value));
+    const shown = r.value === null ? '<span class="muted">—</span>' : fmtValue({ type }, r.value);
     // Only Average, and js/calc.js carries why: a blank cannot move a sum, a
     // minimum or a maximum, so a suffix there would appear on every numeric
     // column of every table with one gap in it.
     const coverage = agg.coverage && r.value !== null && r.used !== r.total
       ? `<span class="calc-part" title="${esc(`${r.used} of ${r.total} rows have a value in ${field.label}`)}"> ·${r.used}/${r.total}</span>`
       : '';
-    const value = shown ? `<span class="summary-value">${shown}${coverage}</span>` : '';
+    return `<span class="summary-value">${shown}${coverage}</span>`;
+  }
+
+  function summaryCellHTML(mod, field, records, mayEdit) {
+    const agg = Calc.columnAggregate(field);
+    const value = summaryFigure(mod, field, records);
 
     if (!mayEdit) {
       // Nothing at all when the column is switched off: "None —" is a reading
@@ -633,6 +652,156 @@
       ? `<tr class="summary-foot-note"><td colspan="${cols.length}">Totals over ${records.length} filtered ${records.length === 1 ? 'row' : 'rows'}, not every ${esc(singular(mod.name).toLowerCase())}.</td></tr>`
       : '';
     return `<tfoot class="summary-row"><tr>${cells.join('')}</tr>${note}</tfoot>`;
+  }
+
+  /*
+   * ------------------------------------------------------------------
+   * Grouping by week or month (§68) — Part C+ of docs/CALCULATIONS.md.
+   *
+   * Grouping plus the same footer, which is what made it cheap: a group's
+   * summary row is `summaryFigure` over that group's rows, with the column's
+   * own aggregate, and the <tfoot> underneath stays the overall total. That
+   * is Airtable's shape — a summary per group plus an overall one — and it is
+   * why there is no separate report screen.
+   *
+   * It is VIEW STATE, never synced, and that is the opposite call from §67's
+   * aggregate on purpose. An aggregate decides what a column MEANS, so two
+   * people reading a sum and an average off one table is worse than either;
+   * grouping decides what I am LOOKING AT right now, like the search box and
+   * the due filter beside it. So no module write, no owner-only gate, and
+   * every role can do it.
+   */
+  function dateFields(mod) {
+    return mod.fields.filter((f) => f.type === 'date');
+  }
+
+  // A day coordinate as a LOCAL Date, for formatting only. `new Date(coord)`
+  // is UTC midnight, so a local getter reads the day BEFORE anywhere west of
+  // Greenwich — §50's `fmtWhen` trap, in the one place a group says a date out
+  // loud. Round-tripped through the ISO string exactly as `fmtDate` does.
+  function localDay(coord) {
+    return new Date(`${DateRules.dayISO(coord)}T00:00:00`);
+  }
+
+  /*
+   * A period, in the reader's own locale: "October 2026", and for a week the
+   * whole RANGE — "4 Oct – 10 Oct 2026" in en-GB, "Oct 4 – Oct 10, 2026" in
+   * en-US, because both ends go through `toLocaleDateString`.
+   *
+   * Naming the range rather than a week number is what lets the
+   * first-day-of-week convention be read off the screen instead of set by a
+   * fourth control: somebody who expects Monday-start and sees a Sunday date
+   * knows immediately which they got. The year rides on the END of the range,
+   * so a week crossing December reads "28 Dec – 3 Jan 2027" and is
+   * unambiguous about the 28th.
+   */
+  function groupLabel(start, by) {
+    const a = localDay(start);
+    if (by === 'month') return a.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    const b = localDay(DateRules.addDays(start, 6));
+    return `${a.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} – ${b.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}`;
+  }
+
+  function recordRowHTML(mod, cols, r) {
+    return `<tr data-record="${esc(r.id)}" tabindex="0">
+      ${cols.map((f) => `<td data-label="${esc(f.label)}" class="${numericCol(mod, f) ? 'td-num' : ''}">${cellHTML(mod, f, r)}</td>`).join('')}
+    </tr>`;
+  }
+
+  /*
+   * `null` when nothing is grouping — the caller falls back to plain rows, and
+   * the field is re-resolved here rather than trusted from the view state
+   * because a module's columns can change under a state object that outlives
+   * them (§3's rule for `openRecord`).
+   */
+  function groupedRowsHTML(mod, cols, records) {
+    const g = state(mod.id).group;
+    const field = g && (g.by === 'week' || g.by === 'month')
+      && mod.fields.find((f) => f.key === g.key && f.type === 'date');
+    if (!field) return null;
+
+    const firstDay = DateRules.firstDayOfWeek();
+    const UNDATED = 'undated';
+    const buckets = new Map();
+    records.forEach((r) => {
+      const start = DateRules.groupStartDay(r.data[field.key], g.by, firstDay);
+      const k = start === null ? UNDATED : start;
+      if (!buckets.has(k)) buckets.set(k, []);
+      buckets.get(k).push(r);
+    });
+
+    /*
+     * Newest period first, and this DEPARTS from §5's mock, which shows
+     * ascending. On a module that has been running a year, ascending buries
+     * this week under fifty-one scrolls of history — and the app's own default
+     * row order is already most-recently-edited first, so ascending would also
+     * have been inconsistent with every other list here. Recorded rather than
+     * done quietly.
+     *
+     * The undated group goes LAST whichever way the rest runs: it is not a
+     * period, so it has no place in the sequence.
+     */
+    const keys = [...buckets.keys()].filter((k) => k !== UNDATED).sort((a, b) => b - a);
+    if (buckets.has(UNDATED)) keys.push(UNDATED);
+
+    return keys.map((k) => {
+      const rows = buckets.get(k);
+      const label = k === UNDATED ? `No ${field.label.toLowerCase()}` : groupLabel(k, g.by);
+      const figures = cols.map((f) => (numericCol(mod, f) ? summaryFigure(mod, f, rows) : ''));
+      /*
+       * Skipped entirely when every column is switched off, rather than an
+       * empty strip between every group — §36's rule 1, and the same test
+       * `summaryRowHTML` applies to the footer.
+       */
+      const sum = figures.some((h) => h)
+        ? `<tr class="group-sum">${cols.map((f, i) => `<td data-label="${esc(f.label)}" class="${numericCol(mod, f) ? 'td-num' : ''}">${figures[i]}</td>`).join('')}</tr>`
+        : '';
+      /*
+       * A `<td colspan>`, not a `<th scope="rowgroup">`. The semantics would be
+       * better, and `.records-table th` carries sticky positioning, uppercase,
+       * letter-spacing and a faint colour that would all need undoing — seven
+       * declarations of override, which is §4's cascade trap volunteering.
+       * Table semantics belong in the roadmap's axe-core pass, with a tool
+       * measuring rather than me guessing.
+       */
+      return `
+        <tr class="group-head"><td colspan="${cols.length}">${esc(label)}<span class="group-count"> ${rows.length} ${rows.length === 1 ? 'row' : 'rows'}</span></td></tr>
+        ${rows.map((r) => recordRowHTML(mod, cols, r)).join('')}
+        ${sum}`;
+    }).join('');
+  }
+
+  function groupBarHTML(mod) {
+    // Absent when there is no date column to group on, rather than a control
+    // whose only option explains why it cannot work (§36 rule 1).
+    const dates = dateFields(mod);
+    if (!dates.length) return '';
+    const g = state(mod.id).group;
+    const on = g && dates.find((f) => f.key === g.key);
+    /*
+     * The field is NAMED whenever grouping is on — §50's rule, because a
+     * report aged on a column the reader cannot see is indistinguishable from
+     * a wrong one. It is a select only when there are two or more date columns
+     * to choose between; with one, a dropdown holding a single option is a
+     * question with one answer, which §45 calls noise.
+     */
+    const onHTML = !g ? ''
+      : (dates.length > 1
+        ? `<label class="group-label" for="group-field">on</label>
+           <select class="input group-select" id="group-field" aria-label="Which date column to group by">
+             ${dates.map((f) => `<option value="${esc(f.key)}" ${on && on.key === f.key ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}
+           </select>`
+        : `<span class="group-label">on ${esc(dates[0].label)}</span>`);
+    return `
+      <div class="group-bar">
+        <label class="group-label" for="group-by">Group by</label>
+        <select class="input group-select" id="group-by" aria-label="Group rows into periods">
+          <option value="" ${!g ? 'selected' : ''}>Nothing</option>
+          <option value="week" ${g && g.by === 'week' ? 'selected' : ''}>Week</option>
+          <option value="month" ${g && g.by === 'month' ? 'selected' : ''}>Month</option>
+        </select>
+        ${onHTML}
+      </div>`;
   }
 
   async function primeRelationCache(mod, records) {
@@ -2101,7 +2270,9 @@
     const st = state(mod.id);
     if (!records.length) {
       const searching = st.q.trim().length > 0;
-      return `<div class="card"><p class="empty-hint">${searching
+      // The group bar stays, because a search that happens to match nothing
+      // must not take the control the reader was using away with the rows.
+      return `${groupBarHTML(mod)}<div class="card"><p class="empty-hint">${searching
         ? `No ${esc(mod.name.toLowerCase())} match “${esc(st.q)}”.`
         : `Nothing here yet. Hit <strong>Add</strong> to create your first ${esc(singular(mod.name).toLowerCase())}, or import a CSV.`}</p></div>`;
     }
@@ -2109,7 +2280,15 @@
       if (!st.sort || st.sort.key !== f.key) return `<span class="sort-hint">${icon('chevron-up', 13)}</span>`;
       return `<span class="sort-on ${st.sort.dir}">${icon('chevron-up', 13)}</span>`;
     };
+    /*
+     * Grouping arranges rows; it never selects them. So `visibleRecords`' own
+     * sort stays the order WITHIN each group, and the count badge in the page
+     * head cannot go stale — which is why changing it re-renders the body
+     * alone and not the whole view (§37's rule; §67 reached the same answer).
+     */
+    const grouped = groupedRowsHTML(mod, cols, records);
     return `
+      ${groupBarHTML(mod)}
       <div class="card table-wrap">
         <table class="records-table">
           <thead><tr>${cols.map((f) => `
@@ -2119,10 +2298,7 @@
                 tabindex="0" role="button"
                 title="${Calc.isFormula(f) ? esc(Calc.describe(mod, f)) : `Sort by ${esc(f.label)}`}">${esc(f.label)}${sortIcon(f)}</th>`).join('')}</tr></thead>
           <tbody>
-            ${records.map((r) => `
-              <tr data-record="${esc(r.id)}" tabindex="0">
-                ${cols.map((f) => `<td data-label="${esc(f.label)}" class="${numericCol(mod, f) ? 'td-num' : ''}">${cellHTML(mod, f, r)}</td>`).join('')}
-              </tr>`).join('')}
+            ${grouped === null ? records.map((r) => recordRowHTML(mod, cols, r)).join('') : grouped}
           </tbody>
           ${summaryRowHTML(mod, cols, records)}
         </table>
@@ -2177,6 +2353,49 @@
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); apply(); }
       });
     });
+
+    /*
+     * Grouping (§68). Guarded binds, because both controls are conditional —
+     * the bar is absent on a module with no date column, and the field select
+     * only exists when there are two or more to choose between.
+     *
+     * No module write and no role gate: this is view state, so every role can
+     * group and nothing leaves the device.
+     */
+    const groupBy = $('#group-by');
+    if (groupBy) {
+      groupBy.addEventListener('change', () => {
+        const st = state(mod.id);
+        const dates = dateFields(mod);
+        if (!groupBy.value) st.group = null;
+        else {
+          /*
+           * Preselected from `watchedDateField` — the convention the due
+           * filter and the digest already share (§37) — and kept once chosen,
+           * so switching week ↔ month does not silently move the column back.
+           * The screen names whichever field this landed on, which is what
+           * makes a preselection honest here (§45) rather than §50's guess.
+           */
+          const keep = st.group && dates.find((f) => f.key === st.group.key);
+          const pick = keep || DateRules.watchedDateField(mod) || dates[0];
+          if (!pick) return;
+          st.group = { by: groupBy.value, key: pick.key };
+        }
+        renderModuleBodyOnly(mod);
+      });
+    }
+    const groupField = $('#group-field');
+    if (groupField) {
+      groupField.addEventListener('change', () => {
+        const st = state(mod.id);
+        // Looked up by key, never interpolated into a selector — §30 Phase 3,
+        // and the third client-chosen key on this surface after §67's.
+        const f = dateFields(mod).find((x) => x.key === groupField.value);
+        if (!f || !st.group) return;
+        st.group = { by: st.group.by, key: f.key };
+        renderModuleBodyOnly(mod);
+      });
+    }
 
     // The summary row's per-column choice (§67). Rendered only for an owner,
     // so this finds nothing for anybody else — and the bind is guarded the

@@ -86,7 +86,7 @@ never change, because everything cross-references them.
 | **Own domain / pricing** — everything a launch has to change | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) · §48 |
 | **Sweeping for what is live and unnoticed** — how, and what it found | §48 |
 | **Chaser, renewal tracker, dormancy report** — the spec, before any code | [`docs/CHASER-AND-TRACKERS.md`](docs/CHASER-AND-TRACKERS.md) |
-| **Sums, averages, calculated columns** — the spec, before any code | [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) · §66 · §67 |
+| **Sums, averages, calculated columns** — the spec, before any code | [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) · §66 · §67 · §68 |
 | **Calculated fields** — what was built, and the picker rebuilt from the draft | §66 |
 | A derived value stored nowhere, and the `compareBy` signature that paid for it | §66 · §22 · §31 |
 | A refusal that named a key instead of a label | §66 · §53 |
@@ -94,6 +94,10 @@ never change, because everything cross-references them.
 | An aggregate choice that belongs to the team, not the device | §67 · §60 · §14 |
 | A suffix shown on one operation out of five, and why not all five | §67 · §33 · §66 |
 | A test two unrelated mutations could fail | §67 · §9 · §4 |
+| **Grouping a table by week or month** — what it groups, and what it does not store | §68 · §67 · §37 |
+| Which day a week starts on, read from the runtime rather than a table | §68 · §42 · §29 |
+| A period boundary that cannot overflow a month | §68 · §44 |
+| A timezone pin that makes a label assertion mean something | §68 · §55 · §50 |
 | Why a formula box is a code-execution sink here | [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) §3 · §3 invariants · §30 |
 | A derived value that must never be stored, and Salesforce's repair button | [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) §3 · §22 · §31 |
 | One date field per module — what a second one costs | §49 · §50 · [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) §5 |
@@ -179,8 +183,9 @@ js/boot-theme.js      light/dark/system, applied before first paint — first in
 js/scope.js           whose data is this — storage scopes (see §11)
 js/db.js              IndexedDB wrapper, one database per scope
 js/csv.js             RFC 4180 CSV reader/writer
-js/date-rules.js      calendar-day arithmetic for the due filter (§37) and the
-                      retention window (§44) — also required by server.js (§39)
+js/date-rules.js      calendar-day arithmetic: the due filter (§37), retention
+                      windows (§44), CSV date import (§45) and week/month
+                      period boundaries (§68) — also required by server.js (§39)
 js/dsar.js            finds every place one person appears (see §43)
 js/calc.js            calculated fields — pure arithmetic, no evaluator (§66)
 js/templates.js       prebuilt module templates
@@ -197,7 +202,7 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**550 Node tests pass, and Playwright ran 142 of 142 green** — both observed
+**570 Node tests pass, and Playwright ran 146 of 146 green** — both observed
 in this session, not carried forward. The green Playwright run does **not**
 retire §66's finding: *signing out hides the workspace* fails about 1 run in 3
 and simply did not fire here, so a single clean run is evidence of the suite
@@ -301,7 +306,7 @@ to render *and still navigate*.
 globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v59`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v60`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -9566,3 +9571,215 @@ A user can do something new, so this was a real walk.
 | `docs/BETA.md` tester note | what to try to break, including the colleague-with-no-menu case |
 | `docs/API.md` | **nothing** — checked, not skipped. No route moved and no wire shape moved; `aggregate` is `doc` content the server never reads, exactly like `options`. §54 earned a section because `doc.chases` merges by union; this does not |
 | `privacy.html`, `terms.html` | nothing — no new data, no new recipient |
+
+
+---
+
+## 68. Grouping by period, and a label assertion that only means something from New York
+
+Part C+ of [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md), and the last of its
+three categories: §66 totals **across** a record's own fields, §67 **down** a
+column of visible rows, this one down a column **per period**. Any module with
+a date column gains a **Group by** control — Week or Month — and the rows
+gather into periods, each carrying its own totals with the overall total still
+underneath.
+
+**It was cheap because §67 built the expensive half.** A group's summary row is
+`summaryFigure` over that group's rows with the column's own aggregate, which
+is what the spec meant by *"grouping plus the same footer rather than a
+separate summary screen"*. The whole feature is bucketing plus two selects.
+
+### The arithmetic has no clock in it, which retires §5's own warning
+
+§5 flagged §44's `setMonth(m - n)` overflow — 31 August minus six months
+landing on 2 March — and said week and month boundaries would need unit tests
+across timezones because of it.
+
+**The overflow cannot happen here**, and not because it was clamped. Every
+function takes and returns a **day coordinate**, the UTC-midnight number
+`parseDay` already produces, so `monthStartDay` *truncates to the 1st* and
+`weekStartDay` subtracts whole days. Nothing steps a month at all. A
+`monthsAgo`-shaped implementation would have needed the clamp; this shape
+removes the question. Recorded because the honest finding is "the warning does
+not apply", not "the trap was dodged".
+
+**The timezone tests still earn their place, and the mutation proves it.**
+Swapping `getUTCDay()`/`getUTCMonth()` for the local getters fails
+`TZ=Pacific/Midway` and `TZ=America/New_York` and **passes all 71 in-process
+tests**, because this container is UTC. So the child-process probe is the only
+thing that can see it — §37's signature exactly, correct for whoever wrote it
+in London and wrong for the Americas.
+
+### Which day a week starts on, and why that is not a fourth control
+
+Monday in most of the world, Sunday in the US, and the answer changes which
+group a row lands in — so it is a real number, not a cosmetic choice.
+
+`firstDayOfWeek()` reads it from **`Intl.Locale`'s own week info**, with ISO
+8601's Monday as the fallback where the runtime does not carry it. Not a
+locale → first-day table: that is the second source §29 is about, and §42
+declined a locale → currency table for exactly this reason.
+
+**And the label is what makes a derived answer honest.** The week heading names
+the whole range — *"5 Oct – 11 Oct 2026"* — rather than a week number, so
+somebody who expects Monday and sees a Sunday date knows immediately which
+convention they got. Measured in two locales rather than reasoned about: the
+same record renders `Oct 11 – Oct 17, 2026` under en-US and `12 Oct – 18 Oct
+2026` under en-GB. That is §37's rule — *name the field you watched* — applied
+to a convention instead of a field, and it is what buys the right to derive
+rather than ask (§45's bar).
+
+### View state, which is the opposite of §67's call and has to be
+
+§67 put the aggregate **on the module**, synced and owner-only, because *a
+total is what a column means* and two people reading a sum and an average off
+one table is worse than either.
+
+Grouping goes the other way, for the complementary reason: it is **what this
+reader is looking at right now**, like the search box and the due filter either
+side of it. So it lives in `viewState`, syncs nowhere, needs no owner gate, and
+every role can do it. Those two decisions look inconsistent side by side and
+are the same rule applied honestly to two different things — which is why both
+are written down rather than one being inferred from the other.
+
+The consequence is stated rather than discovered: **grouping resets on
+reload**, and the user docs say so in the same breath as the capability.
+
+### It arranges rows; it never selects them
+
+That one sentence settles three design questions at once:
+
+- **`renderModuleBodyOnly`, not `renderModule`** — the count badge in the page
+  head cannot go stale, which is the condition §37's rule attaches to. §67
+  reached the same answer from the same test.
+- **`visibleRecords`' own sort stays the order WITHIN each group**, so a column
+  sort still works while grouped rather than being overridden.
+- **The footer stays the overall total.** Asserted, because a footer that
+  silently became the last group's total is a plausible-looking wrong number —
+  this file's standing failure shape.
+
+**Newest period first, which departs from §5's mock.** Ascending buries the
+current week under a year of history, and the app's own default row order is
+already most-recently-edited first, so the mock would also have been
+inconsistent with every other list here. The test asserts the *order*, not the
+set, so the departure cannot be undone silently.
+
+**Rows with that date empty get their own group, last, named after the
+column.** Dropping them would make the group totals not add up to the footer;
+folding them into a period would date a row nobody dated. §44's rule for rows
+with no clock, and §34's kanban precedent for the "No ⟨field⟩" column.
+
+### The field is named, and that is two separate rules meeting
+
+§50 established that a report aged on a column the reader cannot see is
+indistinguishable from a wrong one, and §49 established why `watchedDateField`
+cannot be the answer: it returns **exactly one** date field per module, so a
+module with two gets the same one handed to the filter, the digest and this.
+
+So the field is **preselected** from `watchedDateField` and **named on screen**
+— and it becomes a `<select>` only when there are two or more date columns to
+choose between. With one, a dropdown holding a single option is a question with
+one answer, which §45 calls noise. Both shapes name the field, which is the
+property that matters.
+
+### Traps
+
+- **A day coordinate formatted with a local getter reads the day before.**
+  `localDay()` round-trips through the ISO string exactly as `fmtDate` does,
+  and it is the only place a coordinate is allowed to become a date again.
+  §50's `fmtWhen` trap, in the one place a group says a date out loud.
+- **The E2E pins `timezoneId: 'America/New_York'` and that pin is the test.**
+  In a UTC container the mutation above is **invisible** — the label reads 5
+  Oct either way — so an unpinned assertion would have been vacuous exactly as
+  §55 records for the workspace zone. The locale pin is load-bearing for the
+  same class of reason: without it the Monday/Sunday assertions pass or fail on
+  the container's own locale.
+- **`<td colspan>`, not `<th scope="rowgroup">`.** The semantics would be
+  better and `.records-table th` carries sticky positioning, uppercase,
+  letter-spacing and a faint colour that would all need undoing — seven
+  declarations of override, which is §4's cascade trap volunteering. Table
+  semantics belong in the roadmap's axe-core pass, measured rather than
+  guessed.
+- **§37's `.input { width: 100% }` trap, third feature running.** A bare
+  `.group-select { width: auto }` loses and the select fills the row.
+  `.group-bar .group-select`, and measured at 1440/900/390/320: 98px on the
+  desktop, no horizontal page overflow at any width, and the bar 30px tall.
+- **The group header's tint is 1.10:1 against the rows** — §59's finding, where
+  a fill that low is invisible while the text on it stays perfectly legible. No
+  border token reaches WCAG's 3.0 for non-text either (`--border-strong` is
+  **1.47** on white), so it takes §59's own answer: a 3px `--accent` left edge,
+  measuring **4.57** light and **5.70** dark. Left padding drops 16 → 13, and
+  the group label was then measured to land at the same x as the row text.
+- **The group summary's bottom rule went 2px → 1px** once the next group had an
+  accent edge: two adjacent rules read as one thick one, which is why §59
+  removed a border rather than adding one.
+- **`.summary-value` now matches group rows AND the footer.** Scope every
+  assertion — `tfoot .summary-value` against `.group-sum .summary-value` — or a
+  footer test passes on a group's figure.
+- **A group header must not open a record.** It carries no `data-record`, so
+  the existing handler ignores it; `cursor` and `:hover` are reset so it does
+  not *look* clickable either. Asserted, because the hover state is the half a
+  reader notices.
+
+### Verification
+
+Eight app mutations and one arithmetic mutation, each failing the test that
+names it:
+
+| Mutation | Fails |
+|---|---|
+| groups ascending (the mock's order) | *weeks group newest first…* — **only that one**, which is what shows the order is asserted rather than the set |
+| undated rows dropped rather than grouped | **both** grouping journeys |
+| the label formatted with a local getter | **both** — and only because of the New York pin |
+| group summaries dropped, footer only | **both** |
+| the footer totals a group instead of everything | **both** |
+| grouping written to the module | *grouping is this reader's view…*, which survives a reload |
+| the field select shown with one date column | *months name the column they aged on…* |
+| the bar rendered with no date column | *a module with nothing to group by has no grouping control* |
+| local getters in `weekStartDay` / `monthStartDay` | two of the five timezone probes, and **none** of the 71 in-process tests |
+
+Four of the eight fail **both** grouping journeys rather than one, because both
+assert group structure and both labels — written down because I predicted one
+apiece and the run said otherwise, which is §49's lesson about reasoning about
+a mutation instead of running it.
+
+**One test's expectation was written from intent rather than from the probe.**
+The search assertion wanted two rows and got three: the undated record was
+named *"Undated"*, which contains the letter the search was for. The probe had
+already printed `3 filtered rows` and I read past it. Renamed, with the reason
+in the fixture — a test whose fixture collides with its own query is not a
+finding about the product.
+
+### Blast radius
+
+`js/app.js`, `js/date-rules.js` and `css/style.css` are all in `APP_SHELL`, so
+`CACHE_VERSION` → **`crmbuilder-v60`**. No new served file, so the smoke count
+stays **50 local / 55 live** — and running it is what proves that (§9).
+
+**`server.js` requires `js/date-rules.js`** (§39), so all six additions have a
+second consumer no browser test covers. They are pure, the server calls none of
+them, and the shared-surface test covers the export list either way — including
+its rule that **every key on `DateRules` must be callable**, which is why
+`dayOrders()` is a function and these are too (§45).
+
+Counts: Node **550 → 570** (570 pass, 0 fail), Playwright **142 → 146** (146
+pass; §66's intermittent did not fire, which is still not the same as it being
+fixed), smoke **50** locally — measured by running each of them, and the smoke
+server stopped by recorded PID rather than `pkill`, per the trap §67 added
+to §4.
+
+### Docs walked (§27)
+
+A user can do something new, so this was a real walk.
+
+| | Needed |
+|---|---|
+| `README.md` | its own feature bullet, and `js/date-rules.js`'s line, which named two of the four things it now does |
+| `guide.html` | a paragraph in the week-shaped section, with the resets-on-reload limit in the same breath as the capability |
+| `USER-GUIDE.md`, `docs/manual.html` | a *Grouping by week or by month* section in §4 beside §67's totals, because it is the same table rather than a new screen |
+| `docs/product-tour.html` | a paragraph on the existing calculated-columns tile — a third tile for the third face of one question would read as three features |
+| `docs/ONBOARDING.md` | *ask what period they report on*, after the type check and the footer, because it is the step that replaces a weekly spreadsheet |
+| `docs/DEMO-SCRIPT.md` | the thirty seconds after the footer, where the room recognises the Monday spreadsheet |
+| `docs/BETA.md` tester note | what to try to break, including that the group totals must add up to the footer |
+| `docs/API.md` | **nothing** — checked, not skipped. No route, no wire shape, and nothing is stored at all: grouping is view state, so there is not even a `doc` key for a caller to see |
+| `privacy.html`, `terms.html` | nothing — no new data, no new recipient, and nothing leaves the device |

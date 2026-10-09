@@ -1045,6 +1045,15 @@ Average with some rows blank (only an average shows the `·4/6`, because a blank
 cannot move a sum); and if you are on a team, check a colleague who is not an
 owner sees the figures with no menu.
 
+**If a module has a date column, try Group by** (above the table) on Week and
+on Month. Each period should carry its own totals with the overall total still
+underneath, newest period first, and rows with that date empty should get their
+own group at the bottom rather than disappearing — the group totals are meant
+to add up to the footer. Two things worth trying to break: search while grouped
+(the groups should narrow and the footer should say how many rows it covered),
+and reload (grouping is per-device, so it should reset — unlike the totals
+choice, which is shared with your team).
+
 **If anything you rely on expires** — insurance, a trade licence, a safety
 certificate, a vehicle inspection — there is a **Renewals** template (Add
 module → from a template). It is an ordinary module with an expiry date on it,

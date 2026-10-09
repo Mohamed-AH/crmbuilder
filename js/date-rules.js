@@ -252,6 +252,94 @@ const DateRules = (() => {
 
   /*
    * ---------------------------------------------------------------------
+   * Grouping a table by week or by month (CLAUDE.md §68).
+   *
+   * Every function here takes and returns a DAY COORDINATE — the UTC-midnight
+   * number `parseDay` produces — so there is no clock time in any of them and
+   * nothing a timezone or a daylight-saving boundary can move. The
+   * five-timezone child-process suite is what proves that rather than asserts
+   * it.
+   *
+   * And that is why docs/CALCULATIONS.md §5's warning does NOT apply here.
+   * It flagged §44's `setMonth(m - n)` overflow — 31 August minus six months
+   * landing on 2 March — but nothing in this block steps a month at all.
+   * `monthStartDay` truncates to the 1st, which cannot overflow, and a week
+   * is subtraction in whole days. A `monthsAgo`-shaped implementation would
+   * have needed the clamp; this shape removes the question.
+   * ---------------------------------------------------------------------
+   */
+
+  function addDays(day, n) {
+    if (!Number.isFinite(day)) return null;
+    return day + Number(n) * DAY_MS;
+  }
+
+  // The inverse of `parseDay`, so a coordinate can be handed back to anything
+  // that formats an ISO day. The round trip is asserted, because this is the
+  // one place a coordinate is allowed to become a string again.
+  function dayISO(day) {
+    if (!Number.isFinite(day)) return '';
+    const d = new Date(day);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+  }
+
+  /*
+   * Which weekday a week starts on, 1 = Monday … 7 = Sunday (the CLDR
+   * numbering `Intl` uses).
+   *
+   * Read from the RUNTIME, never from a table. A locale → first-day map is the
+   * second source §29 is about, and §42 declined a locale → currency table for
+   * exactly that reason. `getWeekInfo` is not everywhere yet, so the fallback
+   * is ISO 8601's Monday — and the group label names the date range either
+   * way, so a reader can see which convention they got without a control to
+   * set it.
+   */
+  function firstDayOfWeek() {
+    try {
+      const tag = new Intl.DateTimeFormat().resolvedOptions().locale;
+      const loc = new Intl.Locale(tag);
+      const info = typeof loc.getWeekInfo === 'function' ? loc.getWeekInfo() : loc.weekInfo;
+      const first = info && Number(info.firstDay);
+      if (Number.isInteger(first) && first >= 1 && first <= 7) return first;
+    } catch { /* no runtime week info — ISO 8601 below */ }
+    return 1;
+  }
+
+  function weekStartDay(day, firstDay) {
+    if (!Number.isFinite(day)) return null;
+    // 7 (Sunday) folds to 0, which is what getUTCDay() calls Sunday.
+    const first = (Number(firstDay) || 1) % 7;
+    const dow = new Date(day).getUTCDay();
+    return day - (((dow - first) + 7) % 7) * DAY_MS;
+  }
+
+  function monthStartDay(day) {
+    if (!Number.isFinite(day)) return null;
+    const d = new Date(day);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+  }
+
+  /*
+   * The one entry point the renderer calls: a stored value plus a period,
+   * answered as the coordinate of the period it falls in.
+   *
+   * `null` for a value that is not a calendar day — which the caller renders
+   * as its own named group rather than dropping, because a row with no date
+   * is a row somebody has not dated and that is worth seeing (§44's rule for
+   * rows with no clock). An unrecognised `by` is also null; the caller gates
+   * on it, so this never silently sweeps a whole table into that group.
+   */
+  function groupStartDay(value, by, firstDay) {
+    const day = parseDay(value);
+    if (day === null) return null;
+    if (by === 'week') return weekStartDay(day, firstDay);
+    if (by === 'month') return monthStartDay(day);
+    return null;
+  }
+
+  /*
+   * ---------------------------------------------------------------------
    * Importing a day out of a spreadsheet.
    *
    * `03/04/2026` is 3 April to most of the world and 4 March to the United
@@ -380,6 +468,7 @@ const DateRules = (() => {
   return {
     parseDay, daysUntil, isDueWithin, watchedDateField, today, resolveZone, zoneParts, dayKey,
     monthsAgo, monthsAgoDay, parseImportedDay, scanDayOrder, dayOrders,
+    addDays, dayISO, firstDayOfWeek, weekStartDay, monthStartDay, groupStartDay,
   };
 })();
 

@@ -5,12 +5,12 @@
 > If you build a part of this, move it out of here and write it up as a
 > numbered section in `CLAUDE.md`, the same as everything else.
 >
-> **Part A is built — `CLAUDE.md` §66. Part C is built — §67.** Part C+ is
-> not, and category B (rollups) is still named rather than costed. This was the
-> spec agreed before any code, written so the decisions are recorded with their
-> reasoning rather than reconstructed from a diff; it is kept accurate as each
-> part lands rather than frozen, because this is `docs/` and not
-> `docs/archive/`.
+> **Parts A, C and C+ are all built — `CLAUDE.md` §66, §67, §68.** Category B
+> (rollups) is the only one left, and is still named rather than costed. This
+> was the spec agreed before any code, written so the decisions are recorded
+> with their reasoning rather than reconstructed from a diff; it is kept
+> accurate as each part lands rather than frozen, because this is `docs/` and
+> not `docs/archive/`.
 >
 > **Three things the plan got wrong about Part A, all recorded in §66 rather
 > than edited away here:** the caller list named the kanban card (which renders
@@ -26,6 +26,13 @@
 > instruction to re-render the whole module view was over-specified, because an
 > aggregate change moves no row and so cannot stale the count badge that rule
 > exists for.
+>
+> **And two about Part C+, recorded in §68:** §5's own warning about §44's
+> `setMonth` overflow does not apply, because a period boundary on a day
+> coordinate never steps a month at all — the shape removes the question rather
+> than clamping it; and the mock's ascending group order was wrong for a module
+> that has been running a year, so the built version puts the newest period
+> first.
 >
 > Where a choice was taken the alternatives are kept beside it — a decision
 > without its rejected options is a decision nobody can safely reverse. Nine
@@ -283,6 +290,10 @@ designing.
 
 ## 5. Part C+ — by week or by month
 
+> **Built — `CLAUDE.md` §68.** Everything below is the spec as agreed and held,
+> except the two items the banner names. Read §68 for what building it added —
+> including the one question §5 did not ask: which day a week starts on.
+
 Held until A and C are in use, and built as **grouping plus the same footer**
 rather than as a separate summary screen — which is again Airtable's shape.
 
@@ -326,6 +337,7 @@ db"*. Precisely:
 | a column's **aggregate choice** | **yes** | same field entry | yes | yes |
 | a calculated field's **result** | **no, by design** | derived at render | — | **yes** — resolved at export time |
 | a column **total** | **no** | derived at render | — | no |
+| the **grouping** a reader has chosen | **no** | view state, per device | — | no |
 
 Nothing new reaches the wire. `doc` is opaque to the server, so a module
 carrying a new field type needs no server change, no migration and no

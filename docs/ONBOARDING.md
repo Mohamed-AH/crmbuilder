@@ -194,6 +194,14 @@ says how many it covered; and the choice belongs to the module, so everybody on
 the team reads the same number and only an owner can change what a column
 means.
 
+**Then ask what period they report on.** Almost every small business talks in a
+week, a month or a quarter, and if the module has a date column **Group by**
+turns that same table into that report — periods newest first, each with its
+own totals under it. This is the step that replaces a spreadsheet somebody
+rebuilds every Monday, so do it on their real data rather than describing it.
+One limit, said while it is on screen: grouping is per-person and resets on
+reload, so it is a way of looking rather than a saved report.
+
 **Say the two limits in the same breath**: there is no formula box, so
 `(a − b) ÷ c` is not possible, and a blank is skipped rather than counted as
 zero — which is right for an average and worth saying out loud, because it is

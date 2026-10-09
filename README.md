@@ -7,6 +7,7 @@ A **modular CRM builder for small businesses** — an installable, offline-first
 - **Modular by design** — start from prebuilt module templates or create custom modules with your own name, Lucide icon, and color.
 - **Custom fields** — text, long text, number, currency, date, dropdown, checkbox, email, phone, link, *link-to-module* relations, and *calculated* columns. Mark fields required or shown in list view; reorder anytime.
 - **Columns that work themselves out** — a calculated field sums, averages or compares other number columns in the same record: a total downtime across three production lines, a margin, a difference. Read-only, resolved fresh on every render and stored nowhere, so it cannot drift from the figures it is made of, and it reaches the CSV export. A blank is skipped rather than counted as zero, and the column says `·2/3` when it was. There is no formula box — an operation plus a tick list, deliberately: a module definition arrives in a restored backup like any other data, so an expression evaluator would be a code-execution sink.
+- **Group a table by week or month** — any module with a date column can gather its rows into periods, each with its own totals beside the overall ones. It names the date column it used, puts the newest period first, gives rows with no date their own group so the parts still add up to the whole, and takes the week's first day from your locale rather than assuming one. Grouping is per-device view state, not a shared setting — unlike the totals choice, which is.
 - **A total under every numeric column** — sum by default, or average, minimum, maximum, or how many rows are filled, chosen per column. It totals the rows on screen, so a search or the due-date filter narrows it and the footer says how many rows it covered. The choice is stored on the module and shared with the team rather than kept per device, which makes it owner-only to change; everyone else reads the figure with the operation named beside it.
 - **Two views per module** — a dense, searchable table and a drag-and-drop **kanban board** for any module with a dropdown field (deal stages, lead status, …) with per-column counts and currency totals.
 - **Dashboard** — record counts, total tracked value, recent activity, quick add.
@@ -125,7 +126,8 @@ js/boot-theme.js      light/dark/system, applied before the first paint — firs
 js/db.js              promise-based IndexedDB wrapper
 js/cloud.js           account + sync layer (server ⇄ local fallback)
 js/csv.js             RFC 4180 CSV reader/writer
-js/date-rules.js      calendar-day arithmetic — the due filter, the digest, CSV date import
+js/date-rules.js      calendar-day arithmetic: the due filter, retention windows,
+                      CSV date import, and week/month grouping
 js/dsar.js            finds every place one person appears, for a data request
 js/calc.js            calculated fields and column totals — the arithmetic, nothing else
 js/manual-toc.js      contents menu for docs/manual.html — a file, not inline, because of CSP

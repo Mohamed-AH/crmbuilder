@@ -134,6 +134,36 @@ Three things worth knowing:
 A CSV export carries the rows, not the totals — spreadsheets have their own
 `SUM`, and a total row inside the data is something you then have to delete.
 
+### Grouping by week or by month
+
+If a module has a **date** column, a **Group by** control sits above the table:
+**Week** or **Month**. The rows are gathered into periods, each period gets a
+heading saying how many rows are in it, and **each period gets its own totals**
+using the same choices you made in the footer. The footer underneath still
+shows the overall total.
+
+That turns a log into a report without a separate screen. A week of production
+downtime, a month of invoices, a quarter of expenses — same table, same
+columns, grouped.
+
+Worth knowing:
+
+- **It says which column it used.** With one date column the control reads
+  *Group by Month on Shift date*; with more than one you pick. A report aged on
+  a date you cannot see is indistinguishable from a wrong one.
+- **Newest period first**, so the current week or month is at the top rather
+  than at the end of a year of history.
+- **A week runs from whichever day your region starts weeks on** — Monday in
+  most of the world, Sunday in the US. The heading names the actual dates
+  (*5 Oct – 11 Oct 2026*), so you can see which you got.
+- **Rows with that date empty get their own group at the bottom**, named after
+  the column. They are not dropped and not folded into a period, so the group
+  totals always add up to the footer.
+- **Grouping is yours, not the team's.** It is how you are looking at the table
+  right now — like the search box — so it is not shared with colleagues and it
+  resets when you reload. The *totals* choice in the footer is the opposite:
+  that one is shared, because it decides what a column means.
+
 ---
 
 ## 5. Building and changing modules

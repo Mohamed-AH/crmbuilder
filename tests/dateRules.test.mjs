@@ -163,6 +163,172 @@ describe('the same day means the same thing everywhere', () => {
 });
 
 /*
+ * Week and month boundaries, the same five timezones, real child processes.
+ *
+ * docs/CALCULATIONS.md §5 asks for this by name — "week and month boundaries
+ * get unit tests across timezones, not eyeballing" — and the point is the
+ * INVARIANCE rather than the values. These functions take day coordinates, so
+ * a correct implementation cannot vary by zone; an implementation that
+ * reached for a local getter anywhere would differ between +14 and -11, which
+ * on any instant are on different calendar days.
+ */
+describe('a week and a month mean the same thing everywhere', () => {
+  const probe = `
+    const src = require('fs').readFileSync(${JSON.stringify(fileURLToPath(SRC_URL))}, 'utf8');
+    const DateRules = new Function(src + '; return DateRules;')();
+    const iso = DateRules.dayISO;
+    const day = DateRules.parseDay;
+    console.log(JSON.stringify({
+      friMon: iso(DateRules.weekStartDay(day('2026-10-09'), 1)),
+      friSun: iso(DateRules.weekStartDay(day('2026-10-09'), 7)),
+      acrossYear: iso(DateRules.weekStartDay(day('2027-01-01'), 1)),
+      aug31: iso(DateRules.monthStartDay(day('2026-08-31'))),
+      leap: iso(DateRules.monthStartDay(day('2024-02-29'))),
+      viaGroup: iso(DateRules.groupStartDay('2026-10-09', 'week', 1)),
+      weekEnd: iso(DateRules.addDays(DateRules.weekStartDay(day('2026-10-09'), 1), 6)),
+    }));
+  `;
+
+  const want = {
+    friMon: '2026-10-05',
+    friSun: '2026-10-04',
+    acrossYear: '2026-12-28',
+    aug31: '2026-08-01',
+    leap: '2024-02-01',
+    viaGroup: '2026-10-05',
+    weekEnd: '2026-10-11',
+  };
+
+  for (const tz of ['UTC', 'Pacific/Kiritimati', 'Pacific/Midway', 'America/New_York', 'Asia/Kolkata']) {
+    test(`TZ=${tz}`, () => {
+      const out = execFileSync(process.execPath, ['-e', probe], {
+        env: { ...process.env, TZ: tz },
+        encoding: 'utf8',
+      });
+      assert.deepEqual(JSON.parse(out), want, `a period boundary drifted in ${tz}`);
+    });
+  }
+});
+
+/*
+ * Grouping a table by week or by month (§68).
+ *
+ * The split is §50's: the arithmetic is unit-tested and the wiring is
+ * E2E-tested. A week boundary off by one day is invisible at E2E scale — a
+ * group is still a group, with plausible totals in it — and arithmetic here.
+ */
+describe('DateRules week and month boundaries', () => {
+  const d = (iso) => DateRules.parseDay(iso);
+
+  test('a week starts on the first day of the week, counting backwards', () => {
+    // 2026-10-09 is a Friday. Monday-start gives the 5th; Sunday-start the 4th.
+    assert.equal(DateRules.weekStartDay(d('2026-10-09'), 1), d('2026-10-05'));
+    assert.equal(DateRules.weekStartDay(d('2026-10-09'), 7), d('2026-10-04'));
+  });
+
+  test('a day that IS the first day of its week is its own start', () => {
+    assert.equal(DateRules.weekStartDay(d('2026-10-05'), 1), d('2026-10-05'));
+    assert.equal(DateRules.weekStartDay(d('2026-10-04'), 7), d('2026-10-04'));
+  });
+
+  test('a week start reaches back across a month and a year boundary', () => {
+    // Thursday 1 October 2026 → Monday 28 September.
+    assert.equal(DateRules.weekStartDay(d('2026-10-01'), 1), d('2026-09-28'));
+    // Friday 1 January 2027 → Monday 28 December 2026.
+    assert.equal(DateRules.weekStartDay(d('2027-01-01'), 1), d('2026-12-28'));
+  });
+
+  test('every day of one week lands on the same start', () => {
+    const starts = new Set();
+    for (let i = 5; i <= 11; i += 1) starts.add(DateRules.weekStartDay(d(`2026-10-${String(i).padStart(2, '0')}`), 1));
+    assert.equal(starts.size, 1, 'a seven-day span produced more than one week start');
+    assert.equal([...starts][0], d('2026-10-05'));
+    // And the eighth day does not.
+    assert.equal(DateRules.weekStartDay(d('2026-10-12'), 1), d('2026-10-12'));
+  });
+
+  test('a month start truncates to the 1st and never overflows', () => {
+    // docs/CALCULATIONS.md §5 warned about §44's setMonth overflow. Nothing
+    // here steps a month, so 31 August stays in August rather than landing in
+    // March — the shape removes the question rather than clamping it.
+    assert.equal(DateRules.monthStartDay(d('2026-08-31')), d('2026-08-01'));
+    assert.equal(DateRules.monthStartDay(d('2026-02-01')), d('2026-02-01'));
+    assert.equal(DateRules.monthStartDay(d('2024-02-29')), d('2024-02-01'));
+    assert.equal(DateRules.monthStartDay(d('2026-12-31')), d('2026-12-01'));
+  });
+
+  test('an invalid first day falls back to Monday rather than to NaN', () => {
+    for (const bad of [0, undefined, null, 'Tuesday', {}]) {
+      assert.equal(DateRules.weekStartDay(d('2026-10-09'), bad), d('2026-10-05'), `firstDay=${JSON.stringify(bad)}`);
+    }
+  });
+
+  test('a non-coordinate is null, never NaN', () => {
+    for (const bad of [null, undefined, NaN, '2026-10-09', {}]) {
+      assert.equal(DateRules.weekStartDay(bad, 1), null);
+      assert.equal(DateRules.monthStartDay(bad), null);
+      assert.equal(DateRules.addDays(bad, 1), null);
+    }
+  });
+});
+
+describe('DateRules.groupStartDay — the one call the renderer makes', () => {
+  test('answers the period a stored day falls in', () => {
+    assert.equal(DateRules.groupStartDay('2026-10-09', 'week', 1), DateRules.parseDay('2026-10-05'));
+    assert.equal(DateRules.groupStartDay('2026-10-09', 'month', 1), DateRules.parseDay('2026-10-01'));
+  });
+
+  test('a blank or unreadable value is null, so it can be its OWN group', () => {
+    // Dropping it would make the group totals not add up to the footer, and
+    // folding it into a period would date a row nobody dated (§44).
+    for (const bad of ['', null, undefined, 'soon', '09/10/2026', '2026-02-30']) {
+      assert.equal(DateRules.groupStartDay(bad, 'month', 1), null, JSON.stringify(bad));
+    }
+  });
+
+  test('an unrecognised period is null — the caller gates on it', () => {
+    // If the caller ever stopped gating, every row would land in the undated
+    // group rather than quietly in a wrong one, which is the safer failure.
+    assert.equal(DateRules.groupStartDay('2026-10-09', 'fortnight', 1), null);
+    assert.equal(DateRules.groupStartDay('2026-10-09', '', 1), null);
+  });
+});
+
+describe('DateRules.dayISO — the inverse of parseDay', () => {
+  test('round-trips every coordinate it is given', () => {
+    for (const iso of ['2026-01-01', '2026-02-29', '2026-10-09', '2026-12-31', '2024-02-29']) {
+      const back = DateRules.dayISO(DateRules.parseDay(iso));
+      // 2026 is not a leap year, so parseDay refuses 2026-02-29 and the
+      // coordinate is null — which must come back as '' rather than as a date.
+      if (DateRules.parseDay(iso) === null) assert.equal(back, '');
+      else assert.equal(back, iso);
+    }
+  });
+
+  test('pads a single-digit month and day', () => {
+    assert.equal(DateRules.dayISO(DateRules.parseDay('2026-03-07')), '2026-03-07');
+  });
+
+  test('a non-coordinate is the empty string, never "NaN-NaN-NaN"', () => {
+    for (const bad of [null, undefined, NaN, 'x', {}]) assert.equal(DateRules.dayISO(bad), '');
+  });
+});
+
+describe('DateRules.firstDayOfWeek', () => {
+  test('is always a CLDR weekday number', () => {
+    const n = DateRules.firstDayOfWeek();
+    assert.ok(Number.isInteger(n) && n >= 1 && n <= 7, `got ${n}`);
+  });
+
+  test('never throws, whatever the runtime offers', () => {
+    // The guarantee rather than the value: Intl.Locale#getWeekInfo is not
+    // everywhere, and a throw here would take a table view down (§39's rule
+    // for resolveZone, same reason).
+    assert.doesNotThrow(() => DateRules.firstDayOfWeek());
+  });
+});
+
+/*
  * One file, three consumers — and the export that makes it so.
  *
  * The alternatives were duplicating this arithmetic into lib/ (a second source

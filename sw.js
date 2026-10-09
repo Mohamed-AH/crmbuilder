@@ -4,7 +4,7 @@
  * API/auth requests are network-only (never cached).
  * Bump CACHE_VERSION whenever any precached asset changes.
  */
-const CACHE_VERSION = 'crmbuilder-v59';
+const CACHE_VERSION = 'crmbuilder-v60';
 const APP_SHELL = [
   // The app is at /app; `/` is the landing page and is NOT ours (see the
   // navigation branch below). Absolute, because a relative entry would be

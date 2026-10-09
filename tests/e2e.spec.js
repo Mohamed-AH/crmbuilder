@@ -5555,3 +5555,202 @@ test.describe('column summaries', () => {
     await second.close();
   });
 });
+
+/*
+ * Grouping a table by week or month (CLAUDE.md §68) — Part C+ of
+ * docs/CALCULATIONS.md, and the third thing §66's `js/calc.js` is asked for:
+ * §66 totals ACROSS a record's fields, §67 DOWN a column, this one down a
+ * column PER PERIOD.
+ *
+ * Two pins, and both are load-bearing rather than tidiness:
+ *
+ *   locale     — the first day of the week comes from the runtime, so en-GB
+ *                means Monday-start and the labels are checkable. Without it
+ *                these assertions would pass or fail on the container's own
+ *                locale, which is en-US and starts weeks on Sunday.
+ *   timezoneId — a day coordinate is UTC midnight, so formatting one with a
+ *                local getter renders the day BEFORE anywhere west of
+ *                Greenwich (§50's trap). In a UTC container that mutation is
+ *                invisible; from New York the label would read 4 Oct where it
+ *                must read 5. §55's vacuity lesson, applied before the fact.
+ */
+test.describe('grouping by week and month', () => {
+  test.use({ locale: 'en-GB', timezoneId: 'America/New_York' });
+
+  // Through the builder, like everything else here. The downtime module has no
+  // date column at all — docs/CALCULATIONS.md §5 says so — so this part cannot
+  // do anything until one exists.
+  async function addDateColumn(page, label) {
+    await page.click('#edit-module-btn');
+    await page.click('#b-add-field');
+    const row = page.locator('.builder-field').last();
+    await row.locator('.bf-label').fill(label);
+    await row.locator('.bf-type').selectOption('date');
+    await row.locator('.bf-list').check();
+    await page.click('#b-save');
+    // The bar appearing IS the "absent until there is something to group by"
+    // assertion, from the other side.
+    await expect(page.locator('#group-by')).toBeVisible({ timeout: 20000 });
+  }
+
+  async function shiftLog(page) {
+    await buildDowntimeModule(page);
+    await addDateColumn(page, 'Shift date');
+    // 5 Oct 2026 is a Monday, so en-GB weeks are 5–11 and 12–18.
+    const rows = [
+      ['Mon A', '2026-10-05', '2', '0', '1'],
+      ['Wed A', '2026-10-07', '4', '', '1'],
+      ['Tue B', '2026-10-13', '3', '3', '3'],
+      // Named with no "a" in it on purpose: the search below is for "A", and
+      // "Undated" matched it — three rows where the assertion wanted two.
+      ['No entry', '', '9', '9', '9'],
+    ];
+    for (const [name, date, l1, l2, l3] of rows) {
+      await page.click('#add-record-btn');
+      await page.waitForSelector('#f-name');
+      await page.fill('#f-name', name);
+      if (date) await page.fill('#f-shift_date', date);
+      await page.fill('#f-down_time_l1_hours', l1);
+      if (l2) await page.fill('#f-down_time_l2_hours', l2);
+      await page.fill('#f-down_time_l3_hours', l3);
+      await page.click('#record-save');
+      await expect(page.locator(`tr:has-text("${name}")`)).toBeVisible();
+    }
+  }
+
+  test('a module with nothing to group by has no grouping control', async ({ page }) => {
+    // Absent rather than present and inert — §36 rule 1, and the same shape
+    // §67 pins for the summary row.
+    await onboard(page, { templates: ['Contacts'] });
+    await page.click('#nav-modules .nav-link:has-text("Contacts")');
+    await expect(page.locator('.records-table tbody tr').first()).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('.group-bar')).toHaveCount(0);
+    await expect(page.locator('#group-by')).toHaveCount(0);
+  });
+
+  test('weeks group newest first, each with its own total, under one overall total', async ({ page }) => {
+    await shiftLog(page);
+    await page.locator('#group-by').selectOption('week');
+
+    /*
+     * NEWEST FIRST, which departs from §5's mock and is the point of asserting
+     * the order rather than the set: ascending buries the current period under
+     * a year of history, and every other list in this app is already
+     * most-recent-first.
+     *
+     * The labels also carry two separate facts. "5 Oct" proves the Monday
+     * start (a Sunday-start week containing the 5th would be labelled from the
+     * 4th), and it proves the day coordinate was not formatted with a local
+     * getter — from New York that would read "4 Oct".
+     */
+    await expect(page.locator('.group-head')).toHaveText([
+      /12 Oct – 18 Oct 2026\s+1 row/,
+      /5 Oct – 11 Oct 2026\s+2 rows/,
+      /No shift date\s+1 row/,
+    ]);
+
+    // Each group totals its own rows, with the column's own aggregate (§67).
+    const sums = page.locator('.group-sum');
+    await expect(sums.nth(0).locator('.summary-value')).toHaveText(['3', '3', '3', '9']);
+    await expect(sums.nth(1).locator('.summary-value')).toHaveText(['6', '0', '2', '8']);
+    await expect(sums.nth(2).locator('.summary-value')).toHaveText(['9', '9', '9', '27']);
+
+    /*
+     * And the footer stays the OVERALL total, which is what makes this
+     * "grouping plus the same footer" rather than a report screen: 2+4+3+9 and
+     * the formula column summing to 3+5+9+27.
+     */
+    await expect(page.locator('tfoot .summary-value')).toHaveText(['18', '12', '14', '44']);
+
+    // Grouping arranges rows; it never selects them, so the count badge in the
+    // page head is untouched by it.
+    await expect(page.locator('.count-badge')).toHaveText('4');
+
+    // A group header is not a record, so clicking one must not open anything.
+    await page.locator('.group-head').first().click();
+    await page.waitForTimeout(300);
+    await expect(page.locator('#record-form, .record-read')).toHaveCount(0);
+  });
+
+  test('months name the column they aged on, and a search narrows the groups', async ({ page }) => {
+    await shiftLog(page);
+    await page.locator('#group-by').selectOption('month');
+
+    // One date column, so the field is NAMED rather than offered as a dropdown
+    // holding a single option — §50's rule and §45's, together.
+    await expect(page.locator('.group-bar')).toContainText('on Shift date');
+    await expect(page.locator('#group-field')).toHaveCount(0);
+    await expect(page.locator('.group-head')).toHaveText([
+      /October 2026\s+3 rows/,
+      /No shift date\s+1 row/,
+    ]);
+
+    // The groups read `visibleRecords`, so the search box applies for free —
+    // and the footer still says how many rows its own totals covered (§67).
+    await page.fill('#record-search', 'A');
+    await expect(page.locator('.records-table tbody tr[data-record]')).toHaveCount(2);
+    await expect(page.locator('.group-head')).toHaveText([/October 2026\s+2 rows/]);
+    await expect(page.locator('.group-sum').first().locator('.summary-value')).toHaveText(['6', '0', '2', '8']);
+    await expect(page.locator('.summary-foot-note')).toContainText('2 filtered rows');
+
+    await page.fill('#record-search', '');
+    await expect(page.locator('.group-head')).toHaveCount(2);
+
+    /*
+     * A SECOND date column turns the naming into a choice. §49 records that a
+     * second date field breaks the daily digest, which is exactly why grouping
+     * cannot reuse `watchedDateField`'s single answer and has to ask.
+     */
+    await page.click('#edit-module-btn');
+    await page.click('#b-add-field');
+    const extra = page.locator('.builder-field').last();
+    await extra.locator('.bf-label').fill('Reported on');
+    await extra.locator('.bf-type').selectOption('date');
+    await page.click('#b-save');
+    await expect(page.locator('#group-by')).toBeVisible({ timeout: 20000 });
+    await page.locator('#group-by').selectOption('month');
+    await expect(page.locator('#group-field')).toBeVisible();
+    await expect(page.locator('#group-field option')).toHaveText(['Shift date', 'Reported on']);
+
+    // Switching column re-groups: nobody filled Reported on, so every row is
+    // undated on it — which is a named group rather than an empty table.
+    await page.locator('#group-field').selectOption('reported_on');
+    await expect(page.locator('.group-head')).toHaveText([/No reported on\s+4 rows/]);
+  });
+
+  test('grouping is this reader\'s view, so nothing about it is written down', async ({ page }) => {
+    await shiftLog(page);
+    await page.locator('#group-by').selectOption('month');
+    await expect(page.locator('.group-head').first()).toBeVisible();
+
+    /*
+     * The opposite call from §67's aggregate, deliberately: an aggregate
+     * decides what a column MEANS and so belongs to the team, while grouping
+     * is what this person is looking at right now — like the search box and
+     * the due filter, which are view state too.
+     *
+     * A reload is the mechanism test. If this were on the module it would
+     * survive one, and it would also have needed an owner-only gate; because
+     * nothing is written there is nothing for a role to refuse, which is why
+     * no viewer journey is added here. Asserting that a select exists for a
+     * viewer would cost a multi-context run and prove less than this does.
+     */
+    await page.reload();
+    await expect(page.locator('#group-by')).toBeVisible({ timeout: 20000 });
+    await expect(page.locator('.group-head')).toHaveCount(0);
+    await expect(page.locator('#group-by')).toHaveValue('');
+
+    const stored = await page.evaluate(async () => {
+      const mods = await DB.getAll('modules');
+      const mod = mods.find((m) => m.name === 'Daily digest');
+      return {
+        modKeys: Object.keys(mod).filter((k) => /group/i.test(k)),
+        fieldKeys: [...new Set(mod.fields.flatMap((f) => Object.keys(f)))].filter((k) => /group/i.test(k)),
+        rowKeys: [...new Set((await DB.recordsByModule(mod.id)).flatMap((r) => Object.keys(r.data)))].filter((k) => /group/i.test(k)),
+      };
+    });
+    expect(stored.modKeys).toEqual([]);
+    expect(stored.fieldKeys).toEqual([]);
+    expect(stored.rowKeys).toEqual([]);
+  });
+});
