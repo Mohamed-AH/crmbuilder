@@ -287,6 +287,18 @@ svg.lucide { vertical-align: -2px; flex-shrink: 0; }
    detail view is where somebody goes to read all of it. */
 .read-note { margin: 0; white-space: pre-wrap; }
 
+/* Calculated fields (§66). `.read-sub` and `.calc-readout`'s hint say what a
+   figure is made of — a derived number the reader cannot trace is one they
+   have to take on trust, which is why §37's filter names its date field too.
+   `.calc-part` is the "·2/3" that appears ONLY when a blank was skipped. */
+.read-sub { display: block; font-size: 12px; color: var(--text-soft); margin-top: 2px; }
+.calc-readout {
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface-2); font-size: 14px; color: var(--text);
+}
+.calc-readout .settings-hint { display: block; margin: 3px 0 0; }
+.calc-part { font-size: 12px; color: var(--text-soft); }
+
 /* A qualifier under a table figure — "50% reclaimable" beneath a byte count.
    Its own class rather than an inline style: the CSP keeps 'unsafe-inline' on
    style-src only for genuinely dynamic values like a meter width (§30). */
@@ -753,7 +765,22 @@ body.modal-open { overflow: hidden; }
 .builder-field .bf-type { flex: 0 0 150px; } /* fits "Link to module" untruncated */
 .bf-actions { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 8px; }
 /* flex-basis:100% puts these on their own line, below everything above. */
-.builder-field .bf-options, .builder-field .bf-related { flex: 1 1 100%; margin-left: 24px; }
+.builder-field .bf-options, .builder-field .bf-related,
+.builder-field .bf-op { flex: 1 1 100%; margin-left: 24px; }
+
+/* Calculated fields (§66). The picker wraps, unlike .bf-options which is one
+   control — a module with six number columns needs two rows of checkboxes and
+   a non-wrapping flex row would crush each label to a few characters, which is
+   §4's layout trap and §50 hit it in .dsar-search. */
+.builder-field .bf-inputs {
+  flex: 1 1 100%; margin-left: 24px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+}
+.bf-inputs-label { font-size: 12px; color: var(--text-soft); }
+.bf-input-line {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--text); cursor: pointer; white-space: nowrap;
+}
 .drag-dots { color: var(--text-faint); display: inline-flex; }
 .bf-flag {
   display: inline-flex; align-items: center; gap: 4px;

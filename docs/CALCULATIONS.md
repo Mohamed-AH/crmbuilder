@@ -5,12 +5,24 @@
 > If you build a part of this, move it out of here and write it up as a
 > numbered section in `CLAUDE.md`, the same as everything else.
 >
-> **Nothing here is built.** This is the spec agreed before any code, written
-> so the decisions are recorded with their reasoning rather than reconstructed
-> from a diff. Where a choice was taken the alternatives are kept beside it —
-> a decision without its rejected options is a decision nobody can safely
-> reverse. Eight decisions are taken; the ninth and largest (rollups) is
-> deliberately left open and named, not costed.
+> **Part A is built — `CLAUDE.md` §66.** Parts C and C+ are not, and category
+> B (rollups) is still named rather than costed. This was the spec agreed
+> before any code, written so the decisions are recorded with their reasoning
+> rather than reconstructed from a diff; it is kept accurate as each part lands
+> rather than frozen, because this is `docs/` and not `docs/archive/`.
+>
+> **Three things the plan got wrong, all recorded in §66 rather than edited
+> away here:** the caller list named the kanban card (which renders one
+> currency field, not the column list) and omitted `compareBy` (which is a
+> caller, and whose signature had to change); the builder picker as specified
+> could not work on a new module, because a checkbox needs a field key and
+> `slug()` runs at save; and the removal prompt was not needed, because a
+> refusal is strictly better when nothing is destroyed on either branch.
+>
+> Where a choice was taken the alternatives are kept beside it — a decision
+> without its rejected options is a decision nobody can safely reverse. Nine
+> decisions are taken (§8); rollups, the largest, are deliberately left open
+> and named rather than costed.
 >
 > Internal: not served (`CLAUDE.md` §28), which is what lets it be blunt about
 > what is unfinished.

@@ -5,7 +5,8 @@ A **modular CRM builder for small businesses** — an installable, offline-first
 ## Features
 
 - **Modular by design** — start from prebuilt module templates or create custom modules with your own name, Lucide icon, and color.
-- **Custom fields** — text, long text, number, currency, date, dropdown, checkbox, email, phone, link, and *link-to-module* relations. Mark fields required or shown in list view; reorder anytime.
+- **Custom fields** — text, long text, number, currency, date, dropdown, checkbox, email, phone, link, *link-to-module* relations, and *calculated* columns. Mark fields required or shown in list view; reorder anytime.
+- **Columns that work themselves out** — a calculated field sums, averages or compares other number columns in the same record: a total downtime across three production lines, a margin, a difference. Read-only, resolved fresh on every render and stored nowhere, so it cannot drift from the figures it is made of, and it reaches the CSV export. A blank is skipped rather than counted as zero, and the column says `·2/3` when it was. There is no formula box — an operation plus a tick list, deliberately: a module definition arrives in a restored backup like any other data, so an expression evaluator would be a code-execution sink.
 - **Two views per module** — a dense, searchable table and a drag-and-drop **kanban board** for any module with a dropdown field (deal stages, lead status, …) with per-column counts and currency totals.
 - **Dashboard** — record counts, total tracked value, recent activity, quick add.
 - **Accounts & sync (OAuth)** — sign in with Google and your workspace syncs to MongoDB; use it from any device. Signed out or offline, everything is saved on-device (IndexedDB + a localStorage backup copy) and syncs when you're back. Each account gets its own local store, so a shared computer never mixes two people's data — including edits that hadn't reached the server yet.
@@ -125,6 +126,7 @@ js/cloud.js           account + sync layer (server ⇄ local fallback)
 js/csv.js             RFC 4180 CSV reader/writer
 js/date-rules.js      calendar-day arithmetic — the due filter, the digest, CSV date import
 js/dsar.js            finds every place one person appears, for a data request
+js/calc.js            calculated fields — arithmetic across one record's own columns
 js/manual-toc.js      contents menu for docs/manual.html — a file, not inline, because of CSP
 js/templates.js       prebuilt module templates
 js/scope.js           storage scopes — which account local data belongs to

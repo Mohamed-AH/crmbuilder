@@ -1028,6 +1028,15 @@ details attached, so you do not have to describe what browser you are on. Small
 irritations are as useful as crashes — those are the things that never get
 reported and never get fixed.
 
+**If you want a column totalled**, add a field of type **Calculated**, pick an
+operation and tick the Number or Currency columns it should use. It is
+read-only, it recomputes every time it is shown, and it reaches the CSV export.
+Two things to try to break: give it a column that is empty on some rows (it
+skips the blank and marks the cell `·2/3` rather than counting it as zero), and
+try removing a column it depends on (the save should refuse and name both). It
+only reads Number and Currency — a column holding `2 hours` has to become a
+Number with the unit in its heading first.
+
 **If anything you rely on expires** — insurance, a trade licence, a safety
 certificate, a vehicle inspection — there is a **Renewals** template (Add
 module → from a template). It is an ordinary module with an expiry date on it,
@@ -1098,6 +1107,9 @@ beta* button — we work through those by hand.
   says *how many* rather than *which*, and a day with nothing due sends nothing
   at all. Only an owner can set it, and the URL is never shown back to you
   after you save it — treat it like a password.
+- **A calculated column has no formula box.** You pick an operation and tick
+  columns, so a total and an average are easy and `(a − b) ÷ c` is not
+  possible. One calculated column also cannot use another.
 - The guided tour needs sample data, and offers to load it. Settings → Remove
   sample data takes it back out and keeps anything you added.
 

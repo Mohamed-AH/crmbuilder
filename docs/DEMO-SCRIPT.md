@@ -73,6 +73,16 @@ Equipment, Bookings, Livestock, Kilns — whatever they say, build it:
 - Add a **dropdown** with their real statuses
 - Add a **Link to module** field pointing at Contacts
 
+**If they named something with more than one number in it** — downtime per
+line, hours per crew, quantity across sites — add two number fields and then a
+**Calculated** one: pick *Sum*, tick both. Save, add a record, and the total
+fills itself in. It is the strongest thirty seconds available here, because
+almost everybody in the room has a spreadsheet open beside their CRM doing
+exactly that by hand.
+
+Say the limit while it is on screen: no formula box, so a total and an average
+are a tick list and `(a − b) ÷ c` is not possible.
+
 Save. Add one record. Switch to board view.
 
 > "Ninety seconds, no code, no admin console, no consultant. And it's a

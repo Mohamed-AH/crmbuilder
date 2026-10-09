@@ -86,7 +86,10 @@ never change, because everything cross-references them.
 | **Own domain / pricing** — everything a launch has to change | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) · §48 |
 | **Sweeping for what is live and unnoticed** — how, and what it found | §48 |
 | **Chaser, renewal tracker, dormancy report** — the spec, before any code | [`docs/CHASER-AND-TRACKERS.md`](docs/CHASER-AND-TRACKERS.md) |
-| **Sums, averages, calculated columns** — the spec, before any code | [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) |
+| **Sums, averages, calculated columns** — the spec, before any code | [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) · §66 |
+| **Calculated fields** — what was built, and the picker rebuilt from the draft | §66 |
+| A derived value stored nowhere, and the `compareBy` signature that paid for it | §66 · §22 · §31 |
+| A refusal that named a key instead of a label | §66 · §53 |
 | Why a formula box is a code-execution sink here | [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) §3 · §3 invariants · §30 |
 | A derived value that must never be stored, and Salesforce's repair button | [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) §3 · §22 · §31 |
 | One date field per module — what a second one costs | §49 · §50 · [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md) §5 |
@@ -175,6 +178,7 @@ js/csv.js             RFC 4180 CSV reader/writer
 js/date-rules.js      calendar-day arithmetic for the due filter (§37) and the
                       retention window (§44) — also required by server.js (§39)
 js/dsar.js            finds every place one person appears (see §43)
+js/calc.js            calculated fields — pure arithmetic, no evaluator (§66)
 js/templates.js       prebuilt module templates
 js/demo-data.js       fictional business (generated — see §6)
 js/tour.js            guided walkthrough engine (no dependencies)
@@ -189,12 +193,15 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**All green:** 506 Node tests + 134 Playwright tests, and the smoke audit at
-**49 passing locally and 54 live** — the same checks either way, with five of
-them informational on a local file-store HTTP deployment and real assertions
-against a live one (§46). **Both figures are observed**: §63 predicted 54 and
-CI printed exactly that on 2026-10-07, which is what retires the hedge that
-stood here (this session can reach neither host, §8). **On Windows some Node tests skip
+**535 Node tests pass. Playwright is 136 of 137**, and the one failure is
+named rather than rounded off: *signing out hides the workspace* fails about 1
+run in 3, fails identically with the latest change stashed, and is the test
+§54 already records as intermittent — see §66 for what was established about it
+and the artifact to start from. Smoke is at **50 passing locally**; **55 live
+is predicted, not observed** (§8 — this session reaches neither host, and CI is
+what prints the real figure, per §46's rule that the two numbers differ and
+both are real). The same checks run either way, with five informational on a
+local file-store HTTP deployment and real assertions against a live one. **On Windows some Node tests skip
 themselves** and say why — §4's SIGTERM note is one, and `resilience.test.mjs`
 skips whichever of its cases cannot be made to fail on the platform in hand
 (§55). A named platform limit, not a failure; the count is whatever the run
@@ -281,10 +288,11 @@ to render *and still navigate*.
 **Every `Cloud` API call carries an `AbortSignal.timeout`.** Nothing may hang.
 
 **Script order in `index.html` matters.** `js/app.js` last; it references
-`DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud` as globals.
+`DEMO_DATA`, `Tour`, `CSV`, `LUCIDE`, `TEMPLATES`, `DB`, `Cloud`, `Calc` as
+globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v57`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v58`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -9151,3 +9159,187 @@ capability and no contract moved.
 2. **Sync the mirror** so the deployment catches up and push runs stop
    skipping. Nothing user-visible is missing in the meantime — the two
    undeployed commits touch no served file.
+
+---
+
+## 66. Calculated fields, and a picker that had to be rebuilt from the draft
+
+Part 1 of [`docs/CALCULATIONS.md`](docs/CALCULATIONS.md), built after the
+reporter fixed their columns per that document's §2. `js/calc.js` is the
+arithmetic; the wiring is in `js/app.js`.
+
+**Nine of the plan's decisions held unchanged.** What follows is what building
+it added, and the three places the plan was wrong or silent.
+
+### The plan said four callers. There are three, and one is `compareBy`.
+
+Resolving a derived value means every reader has to compute rather than read
+`record.data[key]`. The plan listed the table cell, the kanban card, the record
+read view and the exporter.
+
+- **The kanban card is not one.** It renders the record name and *one* currency
+  field found by `fields.find(f => f.type === 'currency')` — not the column
+  list — so a formula is simply never reached there. Nothing to wire, and a
+  calculated total is therefore **not** available on a board card. Left alone
+  deliberately: making it one is a decision about what a card shows, not a
+  consequence of this.
+- **`compareBy` is**, and the plan named it as a trap rather than a caller. It
+  took `(field, dir)` and read `a.data[field.key]` directly, so it now takes
+  the **module** too — the signature change is the visible cost of the
+  never-store decision, exactly as predicted, just in a function the caller
+  list omitted.
+
+`cellHTML` / `cellValue` are the one pair every reader goes through, so a new
+reader cannot forget the branch.
+
+### The builder picker could not have worked as specified
+
+The plan's UI is an operation dropdown plus a checklist of eligible fields.
+Built literally, **it offers nothing on a new module**: a checkbox needs a
+field *key* to carry, and `slug()` runs at **save** (`js/app.js`'s builder,
+§4's rename rule). So an owner building three number columns and a total in one
+sitting would get an empty picker and no explanation.
+
+Two changes, and the second is the one worth remembering:
+
+- **A draft row gets its key as soon as it has a label**, via an `input`
+  listener. The save already prefers an existing `data-key` over a fresh slug,
+  so this changes nothing about renaming — a relabelled field keeps its key,
+  which is what saved fields have always done.
+- **The picker is rebuilt from the DOM on every change**, not rendered once.
+  Which means the ticks cannot live in the checkboxes, because a rebuild
+  destroys them: they live in `data-inputs` on the container, and the save
+  reads that. A checklist that forgets itself when you rename a column is the
+  kind of thing that reads as a broken screen.
+
+### The removal prompt was not needed, and the refusal is better
+
+The plan said to follow `askAboutRemovedFields` (§22) and ask before writing
+when a formula's input is being removed. **No prompt was built**, and the
+reasoning is the one §22 itself turns on: that prompt exists because *data is
+about to be destroyed*. Here nothing is destroyed on either branch — the
+question is only which of two wrong screens you get. So the save is **refused**,
+naming the formula and the column, with the builder still open and Cancel in
+reach. One rule, no second modal, and neither silent answer (drop the input and
+move every total; keep it and show a column of em dashes) is reachable.
+
+**And the refusal named the wrong thing on its first run.** It looked the label
+up in the *surviving* field set — and a field being removed is by definition
+absent from it, so the toast said `down_time_l2_hours` rather than *Down time
+L2 (hours)*. Correct refusal, naming something nobody can see. The label is
+read from the module as it was. **Found by the E2E, not by reading**: the
+status, the behaviour and the test's own intent were all right, and only the
+assertion on the *wording* caught it — §53's finding, in a new place.
+
+### The form readout had to recalculate, and that is not polish
+
+The readout renders from the stored row. Without a live recalculation a Total
+sits on the old figure while somebody edits the three columns it sums — a
+number that is correct, adjacent to the inputs that contradict it, and reads as
+broken. §33's adjacent-and-wrong figure, arriving in a form.
+
+One delegated listener, and it reads the form through **`readFormData`** — a
+function extracted from the submit handler for this, so the live figure and the
+figure Save will store cannot disagree. Two readers of one form is the second
+copy §29 is about, and the drift would have shown up as a total that was right
+while you typed and wrong once you saved.
+
+**The readout is found by `dataset`, never by building `#f-${key}`.** A key
+normally comes from `slug()`, but a restored backup carries whatever the file
+held (§3) — interpolating one into a selector is §30 Phase 3's finding wearing
+a new hat.
+
+### What makes "nothing is stored" structural rather than careful
+
+The calculated input carries **no `name`**. The submit handler reads
+`form.elements[f.key]` and returns early when there is no control, so a formula
+contributes nothing to `data` **without a branch anybody could forget**. The
+E2E asserts the stored shape directly — `keysHoldingTheResult` is 0 — and the
+mutation that writes it back fails there rather than on anything visual.
+
+`askAboutRemovedFields` needed no change for the same reason: it filters to
+fields with `n > 0` stored values, and a formula has none, so removing one
+raises no prompt. Checked rather than assumed.
+
+### A consequence that is not fixed, and is pre-existing
+
+**Converting a Number column to a Calculated one leaves its old values as
+ghost data** — §22's shape, since a type change has never purged anything. They
+are invisible (the cell now shows the computed figure) and no longer exported
+under that key, but they are still in the stored document. Not fixed here
+because it is a property of every type change rather than of this one, and
+fixing it for one type would be the inconsistency.
+
+### Traps
+
+- **§27's invented-class trap, caught by grepping rather than by rendering.**
+  `--surface-sunk` and `--radius-sm` are not tokens in this stylesheet; the
+  only hits for either were my own two lines. `--surface-2` and `--radius` are
+  the real ones. An invented token is not even an unstyled box — it is
+  `background: ;`, which renders as transparent and looks deliberate.
+- **`.bf-inputs` wraps and `.bf-options` does not**, and that difference is
+  load-bearing: a module with six number columns needs two rows of checkboxes,
+  and a non-wrapping flex row crushes each label to a few characters. §4's
+  layout trap, which §50 hit in `.dsar-search`.
+- **The `·2/3` suffix is shown only when a blank was skipped.** On every row it
+  is noise that teaches the eye to skip the cell — §33's silent-below-10% rule
+  — and the case it exists for is the one where a blank-as-zero bug and correct
+  behaviour produce the *same figure*, so the suffix is the only thing that
+  tells them apart. The E2E asserts both its presence and its absence.
+- **A mixed set of inputs gives a plain number, not a currency**, because the
+  sum of £5 and 3 is not £8. A count and a ratio never inherit a currency
+  either.
+- **`diff` and `ratio` need BOTH halves.** `a − blank` is not `a`, it is
+  unknown; reading the blank as zero turns a missing figure into a confident
+  one. Unit-tested in both directions, because the wrong answer is a plausible
+  number rather than an error.
+
+### Verification
+
+Nine mutations, each failing the test that names it (§9) and **no other**:
+
+| Mutation | Fails |
+|---|---|
+| blanks counted as zero | 7 unit tests, including *an average ignores blank values rather than dragging the result down* |
+| drop the divide-by-zero refusal | *a zero divisor is an em dash, never Infinity* |
+| compute over what is left when an input was removed | *an input whose field was removed refuses*, and its retyped sibling |
+| let a formula reference a formula | *a formula may not reference another formula…* |
+| store the result on the record | *…and stores nothing*, on `keysHoldingTheResult` |
+| exporter reads `r.data[f.key]` | the same test, on the CSV body |
+| drop the live recalculation | *…recalculates as you type*, with `2 ·1/3` where 7 was wanted |
+| offer formulas as CSV import targets | *refuses the three things that would break it* |
+| drop the broken-input refusal at save | the same test, on the toast |
+
+Counts: Node **506 → 535**, Playwright **134 → 137**, smoke **49 → 50**
+locally — and that last number moving is what proves `js/calc.js` is actually
+served (§9). `CACHE_VERSION` → **`crmbuilder-v58`**, and §3's four places all
+agree: `index.html`, `sw.js` `APP_SHELL`, `tests/smoke.mjs` `ASSETS`.
+
+**One pre-existing failure on the full run**, and it is not from this work:
+*signing out hides the workspace, and signing back in restores it*. Established
+rather than assumed — **it fails identically with this change stashed**, and it
+is **1 in 3 in isolation** (3 runs: pass, fail, pass). §54 recorded it as
+"passing in isolation" at 8.1s; that is now disproven and the passing runs here
+are 8.3s, so the figure was right and the conclusion drawn from it was not. A
+direct probe of the same journey — onboard, sign in, sign out, navigate — paints
+onboarding correctly every time, so the mechanism is a race rather than a broken
+path. Not chased inside this commit (§30's rule about not muddling two things);
+the artifact to start from is the page snapshot showing **Settings still
+rendered after `goto('/app#/')`**, which is what §3's "a view that throws leaves
+the previous screen up" looks like from outside.
+
+### Docs walked (§27)
+
+A user can do something new, so this was a real walk.
+
+| | Needed |
+|---|---|
+| `README.md` | `js/calc.js` in the file map, the field-type list, and its own feature bullet |
+| `guide.html` | a paragraph in the week-shaped section — a capability and its limit in one breath |
+| `USER-GUIDE.md`, `docs/manual.html` | a row in the field-type table and a *Columns that work something out for you* section, with the text-versus-number fix as a Careful note |
+| `docs/product-tour.html` | its own tile, and **"Eleven field types" → "Twelve"** — a count in a second place, caught by grepping for it rather than by remembering |
+| `docs/ONBOARDING.md` | a week-1 step: watch for the spreadsheet beside the CRM, and check the column types *with* them rather than mentioning it |
+| `docs/DEMO-SCRIPT.md` | thirty seconds inside *Build a module live*, because almost everybody in the room totals something by hand |
+| `docs/BETA.md` tester note | what to try to break, plus the no-formula-box limit in the rough-edge list |
+| `docs/API.md` | **nothing** — checked, not skipped. `operation` and `inputs` are ordinary `doc` contents the server never inspects, exactly like `options` on a dropdown. §54 earned a section because `doc.chases` is merged specially; this is not |
+| `privacy.html`, `terms.html` | nothing — no new data, no new recipient |

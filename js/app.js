@@ -50,6 +50,11 @@
     ['phone', 'Phone'],
     ['url', 'Link'],
     ['relation', 'Link to module'],
+    // Calculated last, because it is the one type that reads other fields
+    // rather than holding anything of its own. js/calc.js carries the rules;
+    // docs/CALCULATIONS.md carries the reasoning, including why the operation
+    // is picked from a list rather than typed as a formula.
+    ['formula', 'Calculated'],
   ];
 
   /*
@@ -278,18 +283,23 @@
 
   // Sort values by what the field means, not by how it renders: currency and
   // numbers numerically, dates chronologically, blanks always last.
-  function compareBy(field, dir) {
+  //
+  // `mod` is here for the one field type with no stored value: a calculated
+  // column has to be resolved per row before it can be compared, which is why
+  // this takes the module rather than just the field.
+  function compareBy(mod, field, dir) {
     const sign = dir === 'desc' ? -1 : 1;
+    const type = Calc.isFormula(field) ? Calc.resultType(mod, field) : field.type;
     return (a, b) => {
-      const av = a.data[field.key];
-      const bv = b.data[field.key];
+      const av = cellValue(mod, field, a);
+      const bv = cellValue(mod, field, b);
       const aEmpty = av === undefined || av === null || av === '';
       const bEmpty = bv === undefined || bv === null || bv === '';
       if (aEmpty && bEmpty) return 0;
       if (aEmpty) return 1;
       if (bEmpty) return -1;
 
-      switch (field.type) {
+      switch (type) {
         case 'number':
         case 'currency':
           return sign * (Number(av) - Number(bv));
@@ -333,11 +343,11 @@
       records = records.filter((r) => DateRules.isDueWithin(r.data[watched.key], st.due));
     }
     const sortField = st.sort && mod.fields.find((f) => f.key === st.sort.key);
-    if (sortField) records.sort(compareBy(sortField, st.sort.dir));
+    if (sortField) records.sort(compareBy(mod, sortField, st.sort.dir));
     // Soonest first while the date filter is on, so the overdue rows — which
     // this filter deliberately keeps (js/date-rules.js) — sit at the top where
     // they are the reason to have looked.
-    else if (watched) records.sort(compareBy(watched, 'asc'));
+    else if (watched) records.sort(compareBy(mod, watched, 'asc'));
     else records.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     return records;
   }
@@ -476,6 +486,66 @@
       }
       default: return esc(value);
     }
+  }
+
+  /*
+   * ------------------------------------------------------------------
+   * Calculated fields: the four places a derived value has to be resolved.
+   *
+   * A formula has NO stored value (js/calc.js explains why), so every reader
+   * has to compute rather than reach for `record.data[field.key]` — the table
+   * cell, the kanban card, the record read view, the CSV exporter and
+   * `compareBy`. That is the one place the never-store decision costs
+   * something, and it is cheaper than the stale-number repair path storing
+   * would buy.
+   */
+  function formulaHTML(mod, field, record) {
+    const r = Calc.value(mod, field, record);
+    if (r.value === null) {
+      // Four different silences, told apart. A removed input is a schema
+      // problem the owner can fix; an empty row is not, and rendering both as
+      // a bare em dash is the state that reads as breakage on a row that is
+      // fine (§36).
+      const why = r.missing.length
+        ? `This calculation uses a field that no longer exists: ${r.missing.join(', ')}`
+        : r.reason === 'divzero' ? 'Cannot divide by zero'
+          : r.reason === 'noinputs' ? 'No fields have been chosen for this calculation'
+            : r.reason === 'overflow' ? 'The result is too large to show'
+              : `Nothing to calculate yet — ${Calc.describe(mod, field)}`;
+      return `<span class="muted" title="${esc(why)}">—</span>`;
+    }
+    // A synthetic field, because `fmtValue` keys on the type alone and the
+    // workspace currency lives there rather than in js/calc.js.
+    const shown = fmtValue({ type: Calc.resultType(mod, field) }, r.value);
+    // "over 2 of 3" whenever a blank was skipped. Without it an average reads
+    // as covering every column it names, which is the misreading the
+    // blank-is-absent rule exists to prevent — and saying it only when it
+    // differs keeps it off every ordinary row (§33's silent-below-10% rule).
+    if (r.used === r.total) return shown;
+    return `${shown}<span class="calc-part" title="${esc(`${r.used} of ${r.total} fields have a value`)}"> ·${r.used}/${r.total}</span>`;
+  }
+
+  // Right-aligned on what the column HOLDS, which for a calculated one is
+  // what comes out rather than the word "formula".
+  function numericCol(mod, field) {
+    const type = Calc.isFormula(field) ? Calc.resultType(mod, field) : field.type;
+    return type === 'number' || type === 'currency';
+  }
+
+  // The cell, for anything. One function so a new reader cannot forget the
+  // formula branch — which is how a stored-value assumption would creep back.
+  function cellHTML(mod, field, record) {
+    return Calc.isFormula(field)
+      ? formulaHTML(mod, field, record)
+      : fmtValue(field, record.data[field.key]);
+  }
+
+  // The raw value, for the exporter and the sort. `null` rather than '' when
+  // there is no answer, so an export shows an empty cell and the sort puts it
+  // last with every other blank.
+  function cellValue(mod, field, record) {
+    if (!Calc.isFormula(field)) return record.data[field.key];
+    return Calc.value(mod, field, record).value;
   }
 
   async function primeRelationCache(mod, records) {
@@ -1956,15 +2026,15 @@
       <div class="card table-wrap">
         <table class="records-table">
           <thead><tr>${cols.map((f) => `
-            <th class="th-sortable ${['currency', 'number'].includes(f.type) ? 'th-num' : ''} ${st.sort && st.sort.key === f.key ? 'th-sorted' : ''}"
+            <th class="th-sortable ${numericCol(mod, f) ? 'th-num' : ''} ${st.sort && st.sort.key === f.key ? 'th-sorted' : ''}"
                 data-sort-key="${esc(f.key)}"
                 aria-sort="${st.sort && st.sort.key === f.key ? (st.sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}"
                 tabindex="0" role="button"
-                title="Sort by ${esc(f.label)}">${esc(f.label)}${sortIcon(f)}</th>`).join('')}</tr></thead>
+                title="${Calc.isFormula(f) ? esc(Calc.describe(mod, f)) : `Sort by ${esc(f.label)}`}">${esc(f.label)}${sortIcon(f)}</th>`).join('')}</tr></thead>
           <tbody>
             ${records.map((r) => `
               <tr data-record="${esc(r.id)}" tabindex="0">
-                ${cols.map((f) => `<td data-label="${esc(f.label)}" class="${['currency', 'number'].includes(f.type) ? 'td-num' : ''}">${fmtValue(f, r.data[f.key])}</td>`).join('')}
+                ${cols.map((f) => `<td data-label="${esc(f.label)}" class="${numericCol(mod, f) ? 'td-num' : ''}">${cellHTML(mod, f, r)}</td>`).join('')}
               </tr>`).join('')}
           </tbody>
         </table>
@@ -2087,7 +2157,11 @@
     const rows = [fields.map((f) => f.label)];
     records.forEach((r) => {
       rows.push(fields.map((f) => {
-        const v = r.data[f.key];
+        // Calculated columns are resolved at export time. They hold no stored
+        // value, so reading `r.data[f.key]` would silently ship an empty
+        // column — and an export that omits a column the screen shows is the
+        // kind of gap nobody notices until a spreadsheet is wrong.
+        const v = cellValue(mod, f, r);
         if (v === undefined || v === null) return '';
         if (f.type === 'checkbox') return v ? 'yes' : 'no';
         if (f.type === 'relation') return relationNameCache.get(v) || '';
@@ -2173,8 +2247,19 @@
     const headers = rows[0];
     const dataRows = rows.slice(1);
     const used = new Set();
+    /*
+     * Calculated fields are not import destinations, and they are filtered out
+     * here rather than refused later.
+     *
+     * They hold no stored value (js/calc.js), so a column mapped onto one
+     * would be read, coerced and then silently dropped by the writer — an
+     * import that reports success and loses a column. Offering it at all is
+     * the affordance §36's rule 1 exists to remove, and `guessFieldFor` would
+     * happily match one on a header called "Total".
+     */
+    const importable = mod.fields.filter((f) => !Calc.isFormula(f));
     const guesses = headers.map((h) => {
-      const key = guessFieldFor(h, mod.fields, used);
+      const key = guessFieldFor(h, importable, used);
       if (key) used.add(key);
       return key;
     });
@@ -2199,7 +2284,7 @@
               <span class="map-sample muted">${esc((dataRows.find((r) => (r[i] || '').trim())?.[i] || '—').slice(0, 40))}</span>
               <select class="input map-select" data-col="${i}">
                 <option value="">— skip this column —</option>
-                ${mod.fields.map((f) => `<option value="${esc(f.key)}" ${guesses[i] === f.key ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}
+                ${importable.map((f) => `<option value="${esc(f.key)}" ${guesses[i] === f.key ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}
                 <option value="__new__">+ Create new field "${esc(h || `column ${i + 1}`)}"</option>
               </select>
             </div>`).join('')}
@@ -2403,11 +2488,50 @@
     });
   }
 
+  /*
+   * What the open form currently says, as a `data` object.
+   *
+   * Extracted so the submit handler and the live recalculation of calculated
+   * fields read it through one function. Two readers of one form is exactly
+   * the second copy §29 is about: they would drift, and the drift would show
+   * up as a total that was right while you typed and wrong once you saved.
+   *
+   * A field with no control contributes nothing — which is what keeps a
+   * calculated field out of stored data without a branch here (it carries no
+   * `name`, so `form.elements[key]` is undefined).
+   */
+  function readFormData(mod, form) {
+    const out = {};
+    mod.fields.forEach((f) => {
+      const input = form.elements[f.key];
+      if (!input) return;
+      if (f.type === 'checkbox') out[f.key] = input.checked;
+      else if (f.type === 'number' || f.type === 'currency') out[f.key] = input.value === '' ? '' : Number(input.value);
+      else out[f.key] = input.value;
+    });
+    return out;
+  }
+
   // ---------------------------------------------------------------- record form
-  async function fieldInputHTML(mod, field, value) {
+  async function fieldInputHTML(mod, field, value, record) {
     const id = `f-${field.key}`;
     const req = field.required ? 'required' : '';
     const v = value ?? '';
+    /*
+     * A calculated field is read-only in every product that has one, and here
+     * that has to hold in three places or the rule is only manners: the form
+     * renders a value rather than a disabled input (§36's rule 2 — a greyed
+     * box still looks like a box that failed), the CSV import screen does not
+     * offer it as a destination, and nothing writes a value for it.
+     *
+     * It carries NO `name`, which is what makes the last of those structural:
+     * the submit handler reads `form.elements[f.key]` and returns early when
+     * there is no control, so a formula contributes nothing to `data` without
+     * a branch anybody could forget to add.
+     */
+    if (Calc.isFormula(field)) {
+      return `<div class="calc-readout" id="${esc(id)}" data-calc="${esc(field.key)}">${formulaHTML(mod, field, record || { data: {} })}<span class="settings-hint">${esc(Calc.describe(mod, field))}</span></div>`;
+    }
     switch (field.type) {
       case 'textarea':
         return `<textarea class="input" id="${esc(id)}" name="${esc(field.key)}" rows="4" ${req}>${esc(v)}</textarea>`;
@@ -2461,9 +2585,17 @@
    * rather than a tick, because there is no label beside it here to give a
    * bare tick its meaning.
    */
-  function fieldReadHTML(field, value) {
+  function fieldReadHTML(mod, field, value, record) {
     let body;
-    if (field.type === 'checkbox') {
+    if (Calc.isFormula(field)) {
+      // A calculated field is read-only everywhere, so the read view and the
+      // form agree here rather than being two renderings of one rule. The
+      // description goes with it: on a detail screen there is room to say
+      // what the number is made of, and a bare figure somebody cannot trace
+      // is one they have to take on trust (§37's named date field).
+      body = `${formulaHTML(mod, field, record)}
+        <span class="read-sub">${esc(Calc.describe(mod, field))}</span>`;
+    } else if (field.type === 'checkbox') {
       // Before the empty check: an unticked box is "No", not "not filled in".
       body = value ? 'Yes' : 'No';
     } else if (value === undefined || value === null || value === '') {
@@ -2805,12 +2937,15 @@
       // warm before the values are formatted — an unwarmed one falls back to
       // "(linked record)", which reads as breakage on a row that is fine.
       await primeRelationCache(mod, record ? [record] : []);
-      fieldsHTML = mod.fields.map((f) => fieldReadHTML(f, data[f.key])).join('');
+      // `{ data }` rather than `record`: the same object the form reads, so a
+      // calculated field resolves identically whether or not a stored record
+      // exists behind it.
+      fieldsHTML = mod.fields.map((f) => fieldReadHTML(mod, f, data[f.key], { data })).join('');
     } else {
       fieldsHTML = (await Promise.all(mod.fields.map(async (f) => `
         <div class="form-row">
           ${f.type !== 'checkbox' ? `<label for="f-${esc(f.key)}">${esc(f.label)}${f.required ? ' <span class="req">*</span>' : ''}</label>` : ''}
-          ${await fieldInputHTML(mod, f, data[f.key])}
+          ${await fieldInputHTML(mod, f, data[f.key], { data })}
         </div>`))).join('');
     }
 
@@ -2836,20 +2971,48 @@
       </div>`);
 
     $$('[data-close]', modal).forEach((b) => b.addEventListener('click', closeModal));
+
+    /*
+     * Calculated fields recalculate as you type, and that is not polish.
+     *
+     * The readout is rendered from the stored row, so without this a Total
+     * sits on the old figure while somebody edits the three columns it sums —
+     * a number that is correct, adjacent to the inputs that contradict it,
+     * and reads as broken. §33's adjacent-and-wrong figure, in a form.
+     *
+     * One delegated listener rather than one per input, and it reads the form
+     * through `readFormData` so it cannot disagree with what Save will store.
+     */
+    const liveForm = $('#record-form', modal);
+    const calcFields = mod.fields.filter((f) => Calc.isFormula(f));
+    if (liveForm && calcFields.length) {
+      const byKey = new Map(calcFields.map((f) => [f.key, f]));
+      const recalc = () => {
+        const live = { data: readFormData(mod, liveForm) };
+        // Found by dataset rather than by building `#f-${key}`: a field key
+        // normally comes from `slug()` but a restored backup carries whatever
+        // the file held (§3), and interpolating one into a selector is the
+        // §30 Phase 3 finding in a new place.
+        $$('.calc-readout', liveForm).forEach((box) => {
+          const f = byKey.get(box.dataset.calc);
+          if (!f) return;
+          box.innerHTML = `${formulaHTML(mod, f, live)}<span class="settings-hint">${esc(Calc.describe(mod, f))}</span>`;
+        });
+      };
+      liveForm.addEventListener('input', recalc);
+      // `change`, not only `input`: a <select> and a checkbox do not fire
+      // `input` in every browser, and a dropdown can legitimately be one of a
+      // formula's inputs via a currency field beside it.
+      liveForm.addEventListener('change', recalc);
+    }
+
     const chaseBtn = $('#record-chase', modal);
     if (chaseBtn) chaseBtn.addEventListener('click', () => openChasePreview(mod, record, overdue, chaseTarget));
     const saveBtn = $('#record-save', modal);
     if (saveBtn) saveBtn.addEventListener('click', async () => {
       const form = $('#record-form', modal);
       if (!form.reportValidity()) return;
-      const newData = {};
-      mod.fields.forEach((f) => {
-        const input = form.elements[f.key];
-        if (!input) return;
-        if (f.type === 'checkbox') newData[f.key] = input.checked;
-        else if (f.type === 'number' || f.type === 'currency') newData[f.key] = input.value === '' ? '' : Number(input.value);
-        else newData[f.key] = input.value;
-      });
+      const newData = readFormData(mod, form);
       const now = Date.now();
       const toSave = isNew
         ? { id: uid(), moduleId: mod.id, data: newData, createdAt: now, updatedAt: now }
@@ -2893,7 +3056,58 @@
         <select class="input bf-related ${f.type === 'relation' ? '' : 'hidden'}">
           ${modules.map((m) => `<option value="${esc(m.id)}" ${f.relatedModule === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
         </select>
+        <select class="input bf-op ${f.type === 'formula' ? '' : 'hidden'}">
+          ${Calc.operations().map((o) => `<option value="${esc(o.key)}" ${f.operation === o.key ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
+        </select>
+        <div class="bf-inputs ${f.type === 'formula' ? '' : 'hidden'}" data-inputs="${esc((f.inputs || []).join(','))}"></div>
       </div>`;
+  }
+
+  /*
+   * ------------------------------------------------------------------
+   * The calculated-field pickers, rebuilt from the draft rather than rendered
+   * once.
+   *
+   * An owner builds the number columns and the calculation that sums them in
+   * one sitting, so a checklist painted at open time would not offer the
+   * fields they just added. This reads the CURRENT rows out of the DOM every
+   * time anything in the builder changes, and preserves which keys were
+   * ticked across the rebuild.
+   *
+   * The ticks live in `data-inputs` on the container rather than only in the
+   * checkboxes, because a rebuild destroys the checkboxes and the save reads
+   * whatever is on screen at the time.
+   */
+  function draftFields(fieldsBox) {
+    return $$('.builder-field', fieldsBox).map((row) => ({
+      row,
+      key: $('.bf-label', row).dataset.key || '',
+      label: $('.bf-label', row).value.trim(),
+      type: $('.bf-type', row).value,
+    }));
+  }
+
+  function refreshFormulaPickers(fieldsBox) {
+    const draft = draftFields(fieldsBox);
+    draft.forEach((self) => {
+      const box = $('.bf-inputs', self.row);
+      if (!box || self.type !== 'formula') return;
+      const chosen = new Set((box.dataset.inputs || '').split(',').filter(Boolean));
+      // Same rule as `Calc.eligibleInputs`, over the unsaved draft: number and
+      // currency, never itself, and never another calculated field — which is
+      // what makes a cycle impossible rather than detected.
+      const options = draft.filter((d) => d.key && d.key !== self.key
+        && (d.type === 'number' || d.type === 'currency'));
+      box.innerHTML = options.length
+        ? `<span class="bf-inputs-label">Add up</span>${options.map((d) => `
+            <label class="bf-input-line">
+              <input type="checkbox" class="bf-input" value="${esc(d.key)}" ${chosen.has(d.key) ? 'checked' : ''}>
+              ${esc(d.label || d.key)}
+            </label>`).join('')}`
+        // Not an empty box: a picker with nothing in it reads as broken rather
+        // than as "there is nothing here to add up yet" (§36, §49).
+        : '<span class="bf-inputs-label">Add a Number or Currency field above, then choose it here</span>';
+    });
   }
 
   /*
@@ -3223,12 +3437,57 @@
     });
 
     const fieldsBox = $('#builder-fields', modal);
+
+    /*
+     * A new row gets its key as soon as it has a label, rather than at save.
+     *
+     * Without this a calculated field could only reference columns from a
+     * PREVIOUS editing session: the picker needs a key to tick, and the save
+     * is where `slug()` normally runs. Assigning it here is what makes
+     * "add three number columns and a total" work in one sitting.
+     *
+     * The save already prefers an existing `data-key` over a fresh slug, so a
+     * later rename keeps the key — which is the behaviour saved fields have
+     * had all along (§4), rather than a new rule.
+     */
+    const assignDraftKey = (row) => {
+      const label = $('.bf-label', row);
+      const text = label.value.trim();
+      if (!text || label.dataset.key) return;
+      const taken = new Set(draftFields(fieldsBox).map((d) => d.key).filter(Boolean));
+      label.dataset.key = slug(text, taken);
+    };
+
+    fieldsBox.addEventListener('input', (e) => {
+      if (!e.target.classList.contains('bf-label')) return;
+      assignDraftKey(e.target.closest('.builder-field'));
+      refreshFormulaPickers(fieldsBox);
+    });
+
     fieldsBox.addEventListener('change', (e) => {
+      // Remember a tick before anything is rebuilt under it: the pickers are
+      // regenerated on every change, so the checkboxes themselves are not
+      // where the answer can live.
+      if (e.target.classList.contains('bf-input')) {
+        const box = e.target.closest('.bf-inputs');
+        const keys = $$('.bf-input', box).filter((c) => c.checked).map((c) => c.value);
+        box.dataset.inputs = keys.join(',');
+        return;
+      }
       if (!e.target.classList.contains('bf-type')) return;
       const row = e.target.closest('.builder-field');
       $('.bf-options', row).classList.toggle('hidden', e.target.value !== 'select');
       $('.bf-related', row).classList.toggle('hidden', e.target.value !== 'relation');
+      $('.bf-op', row).classList.toggle('hidden', e.target.value !== 'formula');
+      $('.bf-inputs', row).classList.toggle('hidden', e.target.value !== 'formula');
+      // A calculated column nobody can see is pointless, so it defaults to
+      // shown — unlike an ordinary new field, which defaults to hidden (§22
+      // records a test that passed on a column that was never there).
+      if (e.target.value === 'formula') $('.bf-list', row).checked = true;
+      assignDraftKey(row);
+      refreshFormulaPickers(fieldsBox);
     });
+
     fieldsBox.addEventListener('click', (e) => {
       const row = e.target.closest('.builder-field');
       if (!row) return;
@@ -3238,6 +3497,7 @@
           return;
         }
         row.remove();
+        refreshFormulaPickers(fieldsBox);
       } else if (e.target.closest('.bf-up') && row.previousElementSibling) {
         row.parentNode.insertBefore(row, row.previousElementSibling);
       }
@@ -3245,7 +3505,9 @@
     const addFieldBtn = $('#b-add-field', modal);
     if (addFieldBtn) addFieldBtn.addEventListener('click', () => {
       fieldsBox.insertAdjacentHTML('beforeend', builderFieldRowHTML({ type: 'text' }, Date.now()));
+      refreshFormulaPickers(fieldsBox);
     });
+    refreshFormulaPickers(fieldsBox);
 
     const saveBtn = $('#b-save', modal);
     if (saveBtn) saveBtn.addEventListener('click', async () => {
@@ -3276,11 +3538,58 @@
         if (type === 'relation') {
           field.relatedModule = $('.bf-related', row).value;
         }
+        if (type === 'formula') {
+          field.operation = $('.bf-op', row).value;
+          field.inputs = ($('.bf-inputs', row).dataset.inputs || '').split(',').filter(Boolean);
+        }
         return field;
       }).filter(Boolean);
       if (!fields.length) {
         toast('Add at least one field');
         return;
+      }
+
+      /*
+       * Calculated fields are validated against the fields that will SURVIVE
+       * this save, and the save is refused rather than repaired.
+       *
+       * Removing a column a total depends on is a real thing to want, and the
+       * two silent answers are both worse than a refusal: dropping the input
+       * turns a three-column Sum into a two-column Sum and changes every
+       * figure on screen, and keeping it leaves a column of em dashes whose
+       * cause is one modal away. Refusing names both halves while the owner is
+       * still in the builder with the cancel button in reach — §22's rule
+       * (decide before the module is written) reached without a second prompt,
+       * since nothing is destroyed on either branch.
+       */
+      const surviving = new Map(fields.map((f) => [f.key, f]));
+      for (const f of fields) {
+        if (!Calc.isFormula(f)) continue;
+        const op = Calc.operation(f.operation);
+        if (!op) { toast(`Choose what "${f.label}" should calculate`); return; }
+        const broken = f.inputs.filter((k) => !Calc.isEligible(surviving.get(k)));
+        if (broken.length) {
+          /*
+           * Named by LABEL, and the label has to be looked up on the module as
+           * it was — a field being removed is by definition absent from the
+           * surviving set, so reading it from there produced the key
+           * (`down_time_l2_hours`) instead of the column heading the owner is
+           * looking at. Caught by the E2E rather than by reading: the refusal
+           * was correct and the sentence named something nobody can see.
+           */
+          const before = new Map((mod ? mod.fields : []).map((x) => [x.key, x]));
+          const names = broken.map((k) => (surviving.get(k) || before.get(k) || {}).label || k);
+          toast(`"${f.label}" uses ${names.join(', ')}, which this change removes. Update the calculation first.`);
+          return;
+        }
+        if (f.inputs.length < op.min) {
+          toast(`"${f.label}" needs ${op.min === 1 ? 'at least one field' : `at least ${op.min} fields`} to ${op.label.toLowerCase()}`);
+          return;
+        }
+        if (op.max && f.inputs.length > op.max) {
+          toast(`"${op.label}" takes exactly ${op.max} fields — "${f.label}" has ${f.inputs.length}`);
+          return;
+        }
       }
       // Decided before the module is written, so cancelling here leaves the
       // schema exactly as it was rather than half-applied.

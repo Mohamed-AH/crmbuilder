@@ -5132,3 +5132,178 @@ test('a renewals register is counted by the digest, on the date it expires', asy
   expect(renewals.upcoming, 'the policy expiring in 10 days is inside 30').toBe(1);
   expect(renewals.total, 'the card expiring in 200 days is outside 30').toBe(2);
 });
+
+/*
+ * Calculated fields, built through the real builder (CLAUDE.md §66).
+ *
+ * The arithmetic is unit-tested in tests/calc.test.mjs — a blanks-versus-zero
+ * bug is invisible at this scale and obvious at that one. What these two
+ * journeys cover is the wiring the unit tests cannot see: that the operation
+ * and the inputs reach `module.fields`, that the column resolves per row, that
+ * NOTHING is stored, and that the three read-only surfaces actually refuse.
+ *
+ * The module is the one that prompted the work: production downtime per line,
+ * with the unit in the column label and a Number type underneath, which is the
+ * shape §66's §2 says has to come first.
+ */
+test.describe('calculated fields', () => {
+  // Three number columns and a Sum over them, through the builder a user
+  // actually touches rather than by writing a module into IndexedDB.
+  async function buildDowntimeModule(page) {
+    await onboard(page, { templates: ['Contacts'] });
+    await page.click('#add-module-btn');
+    await page.click('.template-line[data-blank]');
+    await page.fill('#b-name', 'Daily digest');
+
+    // The default row is the module's Name field; three number columns after it.
+    const cols = ['Down time L1 (hours)', 'Down time L2 (hours)', 'Down time L3 (hours)'];
+    for (const label of cols) {
+      await page.click('#b-add-field');
+      const row = page.locator('.builder-field').last();
+      await row.locator('.bf-label').fill(label);
+      await row.locator('.bf-type').selectOption('number');
+      await row.locator('.bf-list').check();
+    }
+
+    await page.click('#b-add-field');
+    const calc = page.locator('.builder-field').last();
+    await calc.locator('.bf-label').fill('Total down time (hours)');
+    await calc.locator('.bf-type').selectOption('formula');
+
+    // The picker is rebuilt from the DRAFT, so the three columns added moments
+    // ago are offered. Without the key-on-label-input step they would not be:
+    // a key is normally minted at save, and a checkbox needs one to carry.
+    await expect(calc.locator('.bf-input')).toHaveCount(3);
+    await calc.locator('.bf-op').selectOption('sum');
+    for (let i = 0; i < 3; i += 1) await calc.locator('.bf-input').nth(i).check();
+
+    // Shown by default, unlike an ordinary new field — a calculated column
+    // nobody can see is pointless.
+    await expect(calc.locator('.bf-list')).toBeChecked();
+
+    await page.click('#b-save');
+    await expect(page.locator('.page-head h1')).toContainText('Daily digest', { timeout: 20000 });
+  }
+
+  test('a calculated column sums its inputs, skips blanks, and stores nothing', async ({ page }) => {
+    await buildDowntimeModule(page);
+
+    // Two shifts: one complete, one with a column nobody filled in.
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Monday');
+    await page.fill('#f-down_time_l1_hours', '2');
+    await page.fill('#f-down_time_l2_hours', '0');
+    await page.fill('#f-down_time_l3_hours', '1');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Monday")')).toBeVisible();
+
+    await page.click('#add-record-btn');
+    await page.fill('#f-name', 'Tuesday');
+    await page.fill('#f-down_time_l1_hours', '4');
+    await page.fill('#f-down_time_l3_hours', '1');
+    await page.click('#record-save');
+    await expect(page.locator('tr:has-text("Tuesday")')).toBeVisible();
+
+    const monday = page.locator('tr:has-text("Monday")');
+    const tuesday = page.locator('tr:has-text("Tuesday")');
+    await expect(monday).toContainText('3');
+    // 5 over two of three columns, and it SAYS so — a blank read as zero is
+    // the same 5 here, so the suffix is what distinguishes the two.
+    await expect(tuesday).toContainText('5');
+    await expect(tuesday.locator('.calc-part')).toHaveText('·2/3');
+    await expect(monday.locator('.calc-part')).toHaveCount(0);
+
+    /*
+     * The assertion this whole design turns on: the result is NOWHERE in
+     * storage. A stored copy is what needs a mass-recalculation button to
+     * repair later, and it would travel in every export as ghost data.
+     */
+    const stored = await page.evaluate(async () => {
+      const mods = await DB.getAll('modules');
+      const mod = mods.find((m) => m.name === 'Daily digest');
+      const rows = await DB.recordsByModule(mod.id);
+      const calcField = mod.fields.find((f) => f.type === 'formula');
+      return {
+        operation: calcField.operation,
+        inputs: calcField.inputs,
+        keysHoldingTheResult: rows.filter((r) => calcField.key in r.data).length,
+      };
+    });
+    expect(stored.operation).toBe('sum');
+    expect(stored.inputs).toHaveLength(3);
+    expect(stored.keysHoldingTheResult).toBe(0);
+
+    // The export resolves it, because an export missing a column the screen
+    // shows is the kind of gap nobody notices until a spreadsheet is wrong.
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.click('#export-csv-btn'),
+    ]);
+    const csv = require('node:fs').readFileSync(await download.path(), 'utf8');
+    expect(csv).toContain('Total down time (hours)');
+    expect(csv).toMatch(/Monday,2,0,1,3/);
+    expect(csv).toMatch(/Tuesday,4,,1,5/);
+  });
+
+  test('the record form shows the total as a value and recalculates as you type', async ({ page }) => {
+    await buildDowntimeModule(page);
+    await page.click('#add-record-btn');
+
+    // A value, never an input — §36 rule 2. A disabled box still looks like a
+    // box that failed, and this also has to carry no `name`, which is what
+    // keeps the result out of stored data without a branch in the save.
+    const readout = page.locator('.calc-readout');
+    await expect(readout).toBeVisible();
+    await expect(page.locator('input[name="total_down_time_hours"]')).toHaveCount(0);
+    await expect(readout).toContainText('Sum of Down time L1 (hours)');
+
+    /*
+     * Live, and this is not polish. The readout renders from the stored row,
+     * so without recalculation a Total sits on the old figure while somebody
+     * edits the three columns it sums — a number that is correct, adjacent to
+     * the inputs that contradict it, and reads as broken.
+     */
+    await expect(readout).toContainText('—');
+    await page.fill('#f-down_time_l1_hours', '2');
+    await expect(readout).toContainText('2');
+    await page.fill('#f-down_time_l2_hours', '5');
+    await expect(readout).toContainText('7');
+    await page.fill('#f-down_time_l2_hours', '');
+    await expect(readout).toContainText('2');
+  });
+
+  test('a calculated column refuses the three things that would break it', async ({ page }) => {
+    await buildDowntimeModule(page);
+
+    // 1. It is not a CSV import destination. A column mapped onto one would be
+    //    read, coerced and silently dropped by the writer.
+    await page.click('#import-csv-btn');
+    await page.setInputFiles('#import-csv-file', {
+      name: 'shifts.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from('Shift,Down time L1 (hours),Total down time (hours)\nWed,3,99\n'),
+    });
+    await expect(page.locator('.map-select').first()).toBeVisible();
+    const targets = await page.locator('.map-select').first().locator('option').allInnerTexts();
+    expect(targets.join('|')).not.toContain('Total down time');
+    await page.click('[data-close]');
+
+    // 2. Removing an input it depends on is refused, naming both halves —
+    //    rather than dropping the input, which would turn a three-column Sum
+    //    into a two-column Sum and move every figure on screen in silence.
+    await page.click('#edit-module-btn');
+    await page.locator('.builder-field:has(.bf-label[value="Down time L2 (hours)"]) .bf-remove').click();
+    await page.click('#b-save');
+    await expect(page.locator('.toast').last()).toContainText('Down time L2');
+    await expect(page.locator('#b-save')).toBeVisible();
+
+    // 3. And a formula may not reference another formula, which is what makes
+    //    a cycle structurally impossible rather than something detected.
+    await page.click('#b-add-field');
+    const second = page.locator('.builder-field').last();
+    await second.locator('.bf-label').fill('Double total');
+    await second.locator('.bf-type').selectOption('formula');
+    const offered = await second.locator('.bf-input').evaluateAll((els) => els.map((e) => e.value));
+    expect(offered).not.toContain('total_down_time_hours');
+  });
+});

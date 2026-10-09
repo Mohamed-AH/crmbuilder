@@ -666,8 +666,37 @@
             <tr><td>Phone</td><td>Phone numbers</td><td>Becomes a clickable dial link</td></tr>
             <tr><td>Link</td><td>Websites, shared documents</td><td>Opens in a new tab</td></tr>
             <tr><td>Link to module</td><td>A Project's Client, a Deal's Company</td><td>Shows a picker listing records from the module you choose</td></tr>
+            <tr><td>Calculated</td><td>A total, an average or a difference across other columns in the same record</td><td>Read-only. Pick an operation and tick the Number or Currency fields it should use</td></tr>
           </tbody>
         </table>
+      </div>
+
+      <h3>Columns that work something out for you</h3>
+      <p>A <strong>Calculated</strong> field adds up, averages or compares other columns in
+        the same record. Pick the operation, tick the fields it should use, and the column
+        fills itself in — on the table, on the record, and in a CSV export.</p>
+      <p>It is <strong>read-only everywhere</strong>: there is nothing to type into, and it
+        is not offered as a destination when you import a CSV. The figure is worked out fresh
+        every time it is shown, so it can never be out of date with the columns it is made
+        from.</p>
+      <p>An <strong>empty cell is skipped, not counted as zero</strong>. An average over three
+        columns where one was never filled in divides by two, not three — and the column says
+        so, with a small <code>·2/3</code> beside the figure.</p>
+      <p>The operations are Sum, Average, Minimum, Maximum, Count filled, Difference (a − b)
+        and Ratio (a ÷ b). The last two take exactly two columns and the order matters; both
+        need their columns filled in, so a missing second figure gives a dash rather than a
+        number.</p>
+
+      <div class="note caution">
+        <span class="note-label">Careful</span>
+        <p>A calculation can only read <strong>Number</strong> and <strong>Currency</strong>
+          columns. If a column holds <code>2 hours</code> rather than <code>2</code>, change
+          its type to Number and move the unit into the heading — <code>Down time (hours)</code>.
+          Text cannot be added up, and a column of text also sorts alphabetically, so
+          <code>10 hours</code> lands between <code>1 hour</code> and <code>2 hours</code>.</p>
+        <p>There is no formula box, so <code>(a − b) ÷ c</code> is not possible, and one
+          calculated column cannot use another. If you remove a column a calculation depends
+          on, the save is refused and the message names both — edit the calculation first.</p>
       </div>
 
       <div class="note tip">

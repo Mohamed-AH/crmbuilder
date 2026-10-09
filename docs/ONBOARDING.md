@@ -171,6 +171,25 @@ Sell it as the win-back list, because that is what it becomes: dormant
 customers, narrowed to one module and one tag, out as CSV. **Say the limit in
 the same breath** — it only knows what they logged.
 
+### If they are totalling anything by hand, replace it with a column
+
+Watch for the spreadsheet beside the CRM. Somebody adding three figures to get
+a fourth is the case a **Calculated** column takes over: pick the operation,
+tick the columns, and it fills itself in on the table and in the export.
+
+**Check the column types first, because this is where it goes wrong.** A
+calculation only reads Number and Currency. People type `2 hours` and `£400`
+into text columns, which looks right and cannot be added up — and sorts
+alphabetically, so `10 hours` sits between `1 hour` and `2 hours`. The fix is
+the heading: `Down time (hours)` as a Number holding `2`. Do that conversion
+with them rather than mentioning it, because a text column that *looks* numeric
+is not something they will spot.
+
+**Say the two limits in the same breath**: there is no formula box, so
+`(a − b) ÷ c` is not possible, and a blank is skipped rather than counted as
+zero — which is right for an average and worth saying out loud, because it is
+the one behaviour somebody will otherwise assume the other way round.
+
 ### Switch the daily digest on — but only now, not on day one
 
 Leave it off during setup. A digest over a half-imported workspace counts rows

@@ -233,6 +233,43 @@ Three things worth knowing:
 | **Phone** | Phone numbers | Becomes a clickable dial link |
 | **Link** | Websites, shared documents | Opens in a new tab |
 | **Link to module** | Connecting records: a Project's Client, a Deal's Company | Shows a picker listing records from the module you choose |
+| **Calculated** | A total, an average, a difference across other columns in the same record | Read-only. Pick an operation and tick the Number or Currency fields it should use |
+
+### Columns that work something out for you
+
+A **Calculated** field adds up, averages or compares other columns in the same
+record. Pick the operation, tick the fields it should use, and the column fills
+itself in — on the table, on the record, and in a CSV export.
+
+Three things worth knowing before you build one:
+
+- **It is read-only, everywhere.** There is nothing to type into, and it is not
+  offered as a destination when you import a CSV. The figure is worked out
+  fresh every time it is shown, so it can never be out of date with the columns
+  it is made from.
+- **An empty cell is skipped, not counted as zero.** An average over three
+  columns where one was never filled in divides by two, not three — and the
+  column says so, with a small `·2/3` beside the figure. Treating a blank as
+  zero would quietly drag every average down.
+- **It only reads Number and Currency columns.** If a column holds `2 hours`
+  rather than `2`, change its type to **Number** and move the unit into the
+  column heading — `Down time (hours)`. Text cannot be added up, and a column
+  of text also sorts alphabetically, so `10 hours` lands between `1 hour` and
+  `2 hours`.
+
+The operations are **Sum**, **Average**, **Minimum**, **Maximum**, **Count
+filled**, **Difference (a − b)** and **Ratio (a ÷ b)**. The last two take
+exactly two columns and the order matters. A difference or a ratio needs both
+of its columns filled in — a missing second figure gives you a dash rather than
+a number, because the answer genuinely is not known.
+
+**What it will not do:** there is no formula box, so you cannot write
+`(a − b) ÷ c`. One calculated column also cannot use another one. If you need
+two steps, do the first in a spreadsheet before importing.
+
+**If you remove a column a calculation depends on**, the save is refused and
+the message names both. Edit the calculation first, then remove the column —
+nothing is lost either way.
 
 **A tip on dropdowns:** the option order *is* your pipeline. Put them in the
 order work actually flows — Lead, Qualified, Proposal, Negotiation, Won, Lost —
