@@ -2396,6 +2396,33 @@ const SYNC_BODY_LIMIT = process.env.SYNC_BODY_LIMIT || '8mb';
 const bigJson = express.json({ limit: SYNC_BODY_LIMIT });
 app.use('/api/sync', bigJson);
 app.use('/api/data', bigJson);
+
+/*
+ * The payment webhook takes RAW BYTES, and the mount order is load-bearing.
+ *
+ * Its signature covers the body exactly as sent, so the bytes must reach
+ * lib/webhook-verify.js unparsed. body-parser sets `req._body` once it has
+ * handled a request and every later parser bails on seeing it, so a raw
+ * parser mounted here wins and the global json below skips the path — the
+ * same mechanism, and the same ordering dependency, that `bigJson` relies on
+ * two lines up (§38). Reverse these and verification fails on every delivery
+ * for a reason that looks like the provider's fault.
+ *
+ * The type matcher is a wildcard rather than 'application/json', and
+ * deliberately so: a webhook is authenticated by its signature, not by its
+ * Content-Type, and a provider that sent a different one would otherwise fall
+ * through to the global parser and arrive as an object — which verifyWebhook
+ * correctly refuses as `parsedbody`, but refuses for the wrong reason.
+ * (The wildcard cannot be written in a block comment: its own slash-star
+ * closes the comment. §60 records the same shape with a backtick.)
+ *
+ * Its own small limit, and NOT the 8mb sync one: a subscription or payment
+ * object is a few KB, and this is the only unauthenticated route in the
+ * application that accepts a body at all.
+ */
+const PAYMENT_BODY_LIMIT = process.env.PAYMENT_BODY_LIMIT || '64kb';
+app.use('/api/payments/dodo', express.raw({ type: '*/*', limit: PAYMENT_BODY_LIMIT }));
+
 app.use(express.json({ limit: '64kb' }));
 app.use(cookieParser());
 
@@ -2473,6 +2500,25 @@ function rateLimit(name, max) {
  */
 app.use('/auth/google/callback', rateLimit('auth', Number(process.env.RATE_AUTH_MAX || 60)));
 app.use('/api/access-request', rateLimit('ask', Number(process.env.RATE_ASK_MAX || 5)));
+
+/*
+ * The payment webhook is bounded, and it is the one place the limiter sits in
+ * FRONT of the authentication rather than behind it.
+ *
+ * That is not a contradiction of §61's R2 finding. There, a limiter ran ahead
+ * of an authorization check on an authenticated route, so a caller who was
+ * about to be refused could spend a slot belonging to a colleague sharing an
+ * office IP. Here there is no authenticated caller to protect: the bucket is
+ * keyed on req.ip, an attacker cannot send from the provider's delivery
+ * addresses, and so the only thing a flood can exhaust is its own bucket.
+ * Putting the bound first means an unsigned flood costs us no HMAC work.
+ *
+ * The number is generous because of the RETRY schedule rather than the steady
+ * rate: one event is retried up to eight times, the dashboard can replay a
+ * time range in bulk, and a 429 is itself a delivery failure — so a bound set
+ * too low turns a replay into dropped events and then retries the drops.
+ */
+app.use('/api/payments/dodo', rateLimit('dodowh', Number(process.env.RATE_DODO_WEBHOOK_MAX || 120)));
 
 /*
  * Health.
@@ -4635,6 +4681,316 @@ async function remindersDue(wsId, { now = new Date(), ignoreEnabled = false } = 
   };
 }
 
+/* ------------------------------------------------------------------------ *
+ * PAYMENTS — the inbound webhook
+ *
+ * The only route in this application with NO SESSION BEHIND IT. There is no
+ * cookie, no req.user, no workspaceIdFor(): the signature is the
+ * authentication and lib/webhook-verify.js is the entire gate. §69.
+ * ------------------------------------------------------------------------ */
+
+const { verifyWebhook } = require('./lib/webhook-verify');
+
+const DODO_WEBHOOK_SECRET = process.env.DODO_WEBHOOK_SECRET || '';
+
+/*
+ * The subscription lifecycle, and payments, kept as TWO sets with TWO clocks.
+ *
+ * One clock for both would let a `payment.failed` arriving a second after
+ * `subscription.active` decide the subscription's status, and — worse — would
+ * make the two kinds of fact compete for the same staleness test. They are
+ * separately sourced facts about one workspace, so they get separate clocks:
+ * §26's field-level reasoning, without needing §26's machinery.
+ *
+ * Anything not in either set is acknowledged and ignored. A 2xx is what stops
+ * it being retried eight times over twenty-eight hours for no purpose.
+ */
+const BILLING_SUBSCRIPTION_EVENTS = new Set([
+  'subscription.active',
+  'subscription.renewed',
+  'subscription.updated',
+  'subscription.plan_changed',
+  'subscription.past_due',
+  'subscription.on_hold',
+  'subscription.paused',
+  'subscription.unpaused',
+  'subscription.cancelled',
+  'subscription.expired',
+  'subscription.failed',
+]);
+const BILLING_PAYMENT_EVENTS = new Set(['payment.succeeded', 'payment.failed']);
+
+/*
+ * wsId rides out on the payment link as `metadata_wsId` and comes back inside
+ * the SIGNED payload, so it is exactly as trustworthy as the signature — but
+ * it is still a string from off-machine about to be used as a storage key, so
+ * it is coerced and shape-checked first (§30 Phase 2's rule for a JSON body).
+ *
+ * Deliberately permissive rather than a UUID pattern: ids are
+ * crypto.randomUUID() today, and a regex written to that shape would refuse a
+ * legacy or a future one. The real gate is that the organisation has to exist.
+ */
+const WSID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+/*
+ * The event's own clock, in ms.
+ *
+ * Returns null rather than falling back to Date.now(), and that is the whole
+ * point: an event we cannot order must not be applied, because applying it
+ * could put an older state over a newer one. `Number(x) || now` on a clock is
+ * §10's trap, which once let a device's blank defaults wipe a workspace's real
+ * settings.
+ */
+function eventClock(value) {
+  const ms = Date.parse(String(value == null ? '' : value));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function isoOrNull(value) {
+  const ms = Date.parse(String(value == null ? '' : value));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/*
+ * What a workspace's billing record holds — and, more importantly, what it
+ * does not.
+ *
+ * NO CUSTOMER IDENTITY. No email, no name, no billing address, even though
+ * the payload carries all three. `workspaces[].meta` IS the `data` collection
+ * (§17), so everything on the meta doc is in every nightly backup artifact,
+ * downloadable by anyone with read access to the private repo. The provider
+ * already holds the customer record and is the system of record for it; we
+ * need ids and statuses to decide what a workspace may do, and nothing else.
+ *
+ * The field inventory is deliberately THIN, and this is the honest reason:
+ * nothing here has yet seen a real delivery (§69), so it stores only fields
+ * the provider's own documentation names — `subscription_id`, `status`,
+ * `next_billing_date`, `past_due_ends_at`, `payment_id`. Widening it is the
+ * first thing to do once a real payload has been read, not before.
+ */
+function billingFieldsFor(type, data) {
+  if (BILLING_SUBSCRIPTION_EVENTS.has(type)) {
+    return {
+      subscriptionEvent: type,
+      subscriptionId: String(data.subscription_id || '') || null,
+      // Both are recorded: `status` is what the provider says, and the event
+      // type is what it says it is. Their own payout note states the two
+      // always agree, so a disagreement is worth being able to see rather
+      // than resolving silently in favour of one of them.
+      status: String(data.status || '') || null,
+      nextBillingAt: isoOrNull(data.next_billing_date),
+      pastDueEndsAt: isoOrNull(data.past_due_ends_at),
+    };
+  }
+  return {
+    paymentEvent: type,
+    paymentId: String(data.payment_id || '') || null,
+    paymentStatus: String(data.status || '') || null,
+  };
+}
+
+/*
+ * Apply one verified event, newest-wins per kind.
+ *
+ * THE ORDERING IS THE CORRECTNESS MECHANISM HERE, not the webhook-id.
+ *
+ * The provider states plainly that events "are neither terminal nor strictly
+ * ordered" and that each payload carries the latest state at delivery time —
+ * so a retried `subscription.active` arriving after `subscription.cancelled`
+ * would otherwise bring a cancelled subscription back to life. Comparing the
+ * event's own timestamp against the stored one is what prevents that, and it
+ * is the same last-write-wins rule, for the same reason, that §10 already
+ * applies to record edits.
+ *
+ * It also dedupes retries for free: a redelivery carries the same timestamp
+ * and the same body, so re-applying it is a write of identical data. That is
+ * only safe because the payload is a STATE SNAPSHOT rather than an increment
+ * — see the note on what is not built, below.
+ */
+async function applyBillingEvent(wsId, type, data, at) {
+  const meta = (await store.getData(wsId)) || {};
+  const prior = meta.billing && typeof meta.billing === 'object' ? meta.billing : {};
+
+  const clockKey = BILLING_SUBSCRIPTION_EVENTS.has(type) ? 'subscriptionAt' : 'paymentAt';
+  const was = Number(prior[clockKey]);
+  if (Number.isFinite(was) && at < was) return { applied: false, reason: 'stale' };
+
+  /*
+   * putData merges TOP-LEVEL keys only — `{ billing }` replaces the whole
+   * object. Merging onto `prior` by hand is what stops a payment event
+   * blanking the subscription fields sitting beside it, and it is exactly the
+   * mistake the two-clock split above would otherwise hide.
+   */
+  const billing = {
+    ...prior,
+    ...billingFieldsFor(type, data),
+    [clockKey]: at,
+    provider: 'dodo',
+    updatedAt: Date.now(),
+  };
+
+  /*
+   * A SIBLING of settings, never a field inside it — the same structural rule
+   * as `hook` (§38) and `mail` (§52). `pullChanges` sends `meta.settings`
+   * whole to every role including viewers, and last-write-wins would then let
+   * a client's copy overwrite whatever the server put there.
+   */
+  await store.putData(wsId, { billing });
+  return { applied: true };
+}
+
+function publicBilling(billing) {
+  if (!billing || typeof billing !== 'object') return null;
+  return {
+    provider: billing.provider || null,
+    subscriptionId: billing.subscriptionId || null,
+    status: billing.status || null,
+    subscriptionEvent: billing.subscriptionEvent || null,
+    nextBillingAt: billing.nextBillingAt || null,
+    pastDueEndsAt: billing.pastDueEndsAt || null,
+    paymentEvent: billing.paymentEvent || null,
+    paymentStatus: billing.paymentStatus || null,
+    updatedAt: billing.updatedAt || null,
+  };
+}
+
+/*
+ * The receiver.
+ *
+ * Every answer after a successful verification is a 2xx, including the ones
+ * that do nothing. A non-2xx is a delivery FAILURE to this provider, so an
+ * event we have deliberately ignored would be retried eight times across
+ * twenty-eight hours and then shown as failed in their dashboard — teaching
+ * an operator to ignore the one screen that reports real failures (§25's
+ * lesson about alerts, arriving at a provider's console).
+ */
+app.post('/api/payments/dodo', async (req, res) => {
+  /*
+   * 503, not 404, and deliberately unlike `/api/admin/export`.
+   *
+   * That route 404s when BACKUP_TOKEN is unset so nothing can discover
+   * whether a deployment has backups (§17) — it guards a one-request dump of
+   * every customer's data. This guards nothing of the kind, and the operator
+   * diagnostic is worth more: a 503 makes the provider retry and shows up in
+   * their dashboard as a failing endpoint, which is the signal somebody needs
+   * when they have registered a URL against a deployment that has no secret.
+   * What it must never be is a 2xx, which would silently discard the event.
+   */
+  if (!DODO_WEBHOOK_SECRET) {
+    console.warn('A payment webhook arrived with no DODO_WEBHOOK_SECRET set — refusing it.');
+    return res.status(503).json({ error: 'Payments are not configured' });
+  }
+
+  const check = verifyWebhook(req.body, req.headers, DODO_WEBHOOK_SECRET);
+  if (!check.ok) {
+    /*
+     * The code and the detail go to the LOG; the caller gets a status and
+     * nothing else. Telling an unauthenticated prober which check it failed
+     * is an oracle, and §30 Phase 4's error handler exists for exactly this
+     * class of leak. The detail is safe to log by construction: it never
+     * carries the secret or the body (§69).
+     */
+    console.warn(`Refused a payment webhook: ${check.code} — ${check.detail}`);
+    return res.status(401).json({ error: 'Invalid signature' });
+  }
+
+  let event;
+  try {
+    event = JSON.parse(req.body.toString('utf8'));
+  } catch {
+    // Signed by us and still not JSON: not something a retry can fix.
+    console.warn(`Payment webhook ${check.id} verified, but its body is not JSON.`);
+    return res.json({ received: true, ignored: 'unparseable' });
+  }
+
+  const type = String((event && event.type) || '');
+  const data = event && event.data && typeof event.data === 'object' ? event.data : {};
+  const known = BILLING_SUBSCRIPTION_EVENTS.has(type) || BILLING_PAYMENT_EVENTS.has(type);
+  if (!known) return res.json({ received: true, ignored: 'unsubscribed event' });
+
+  const at = eventClock(event.timestamp);
+  if (at === null) {
+    console.warn(`Payment webhook ${check.id} (${type}) has no usable timestamp — ignoring it.`);
+    return res.json({ received: true, ignored: 'no timestamp' });
+  }
+
+  const meta = data.metadata && typeof data.metadata === 'object' ? data.metadata : {};
+  const wsId = String(meta.wsId || '');
+  if (!wsId || !WSID_PATTERN.test(wsId)) {
+    /*
+     * Loud, because the fix is at the other end: a payment link built without
+     * `metadata_wsId` produces events nothing can attribute, and the money has
+     * already been taken by the time anybody notices. Named rather than
+     * counted, so a single bad link is traceable.
+     */
+    console.warn(`Payment webhook ${check.id} (${type}) carries no usable metadata.wsId — ignoring it.`);
+    return res.json({ received: true, ignored: 'no workspace' });
+  }
+
+  /*
+   * wsId is the ownership key and orgId is a separate field that happens to
+   * equal it (§5). This lookup is one of the places that has to change if
+   * they ever diverge, which is why it says so rather than silently assuming.
+   */
+  const org = await store.getOrg(wsId);
+  if (!org) {
+    console.warn(`Payment webhook ${check.id} (${type}) names a workspace that does not exist: ${wsId}`);
+    return res.json({ received: true, ignored: 'unknown workspace' });
+  }
+
+  /*
+   * PROCESSED BEFORE THE 200, which departs from the provider's generic
+   * "respond immediately, then handle it asynchronously" advice — on purpose,
+   * and the condition is what makes it right rather than the preference.
+   *
+   * That advice protects a 30-second delivery timeout from slow work. The work
+   * here is ONE small idempotent write, milliseconds on Mongo and a
+   * whole-file rewrite on the file store, both far inside the budget. In
+   * exchange, a write that fails becomes a 500 — which this provider retries
+   * on its own schedule, so the event survives. Answer 200 first and a failed
+   * write is lost silently, and a lost event means a customer paid and
+   * nothing recorded it.
+   *
+   * THE CONDITION: this holds only while the handler is one small write. The
+   * moment it grows — provisioning, sending mail, calling anything out — it
+   * has to move behind the response, and then it needs a durable queue rather
+   * than a floating promise, because an unawaited rejection in an async route
+   * was §55's entire finding.
+   */
+  const outcome = await applyBillingEvent(wsId, type, data, at);
+  return res.json({ received: true, ...outcome });
+});
+
+/*
+ * So that an owner can see it, which is not decoration.
+ *
+ * §38's restore finding and §39's digest card are the same lesson twice: state
+ * nobody can look at is state that breaks silently. `enabled` is the half that
+ * matters — without it, a workspace nobody has paid for and a deployment with
+ * no DODO_WEBHOOK_SECRET are byte-identical from this route, and that is
+ * exactly the pair of states §39 had to name separately on the digest card.
+ */
+function requireBillingOwner(req, res, next) {
+  /*
+   * Its own middleware rather than requireSettingsOwner, for the wording
+   * alone: that one says "Only an owner can change workspace notifications",
+   * which is the wrong rule named at the wrong moment — §53's 403 finding, in
+   * miniature. Generalising the three of them would touch six routes for a
+   * message (§9), so this is the cheaper correct answer.
+   */
+  if (!canEditSettings(req.user)) {
+    return res.status(403).json({ error: 'Only an owner can see the billing status' });
+  }
+  if (!req.user.orgId) return res.status(400).json({ error: 'You are not in an organisation' });
+  return next();
+}
+
+app.get('/api/org/billing', requireAuth, requireBillingOwner, async (req, res) => {
+  const wsId = workspaceIdFor(req.user);
+  const meta = (await store.getData(wsId)) || {};
+  res.json({ enabled: Boolean(DODO_WEBHOOK_SECRET), billing: publicBilling(meta.billing) });
+});
+
 /*
  * The preview. Owner-only, like the webhook it will feed — this is
  * notification configuration rather than a view of the data, and everything it
@@ -5022,6 +5378,17 @@ app.get('/api/admin/export', async (req, res) => {
      *
      * The same call for mail, which is why the provider name and the
      * from-address go too rather than riding along as harmless context.
+     */
+    /*
+     * `billing` is the THIRD sibling on this document and is deliberately NOT
+     * redacted, which is worth saying because the pattern above invites it.
+     *
+     * It holds no credential and no customer identity by construction (see
+     * billingFieldsFor) — ids, statuses and two clocks. Redacting it would
+     * make a restore silently un-subscribe every paying customer, which is
+     * §38's webhook finding with money attached: the recovery looks clean and
+     * the breakage shows up weeks later as people losing access they paid for.
+     * A subscription state must survive a restore. A secret must not.
      */
     const out = { ...meta };
     if (hooked) out.hook = { redacted: true };

@@ -153,6 +153,12 @@ never change, because everything cross-references them.
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
 | What the daily live run does NOT catch | §65 · §46 |
+| **The payment webhook** — the one route with no session behind it | §70 · §69 · [`docs/API.md`](docs/API.md) §7 |
+| Why ordering, not a webhook id, is what keeps a cancellation cancelled | §70 · §10 |
+| Two clocks on one document, and the tidier version that loses money | §70 · §26 |
+| A state that must survive a restore, next to two that must not | §70 · §38 · §52 · §17 |
+| Processing before the 200, and the condition that makes it right | §70 · §18 · §55 |
+| A mutation that passed, because the code it broke never ran | §70 · §9 · §34 |
 | **Taking payment through Dodo** — what is pinned, what is not built | §69 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) · §64 |
 | **Verifying an inbound webhook** — the gate with no session behind it | §69 · §61 · §38 |
 | Two provider CLI tools that cannot test verification, one of them a false pass | §69 · §34 |
@@ -581,6 +587,7 @@ parallel and they each spawn real servers:
 | `reminders.test.mjs` | 9700–9750 | 1 app + 1 capture |
 | `mail.test.mjs` | 9800–9850 | 2 capture (9800–9839) + 1 app (9840–9849) |
 | `resilience.test.mjs` | 9900–9950 | 1 |
+| `payments.test.mjs` | 9960–9990 | 2 app (9960–9985 · 9986–9990) |
 
 They used to overlap badly — `api.test.mjs` alone spanned 8300–8899, across
 three other files' ranges. Widen a block and check the neighbours.
@@ -10051,3 +10058,254 @@ mail paragraph on exactly that condition and §41 published the backup-encryptio
 sentence only once an encrypted artifact had been restored end to end. §40's
 *"that is the complete list"* has already been false twice, both times caught by
 looking at what the deployment does rather than at what the code could do.
+
+
+---
+
+## 70. The webhook route, and the clock that is the correctness mechanism
+
+`POST /api/payments/dodo` receives a verified payment event and records the
+workspace's subscription state. §69 built the gate; this is the thing behind
+it. **Still nothing takes money** — there is no checkout link, no price and no
+enforcement, and the deliberate reason for the last of those is below.
+
+### Two routes, and the second is not decoration
+
+`GET /api/org/billing` is owner-only and returns `{ enabled, billing }`.
+`enabled` is the half that earns its place: without it, *a workspace nobody
+has paid for* and *a deployment with no `DODO_WEBHOOK_SECRET`* are
+byte-identical from this route — the exact pair of states §39 had to name
+separately on the digest card, and §38's restore finding one more time. State
+nobody can look at is state that breaks silently.
+
+It has its own `requireBillingOwner` rather than reusing
+`requireSettingsOwner`, for the **wording alone**: that one answers *"Only an
+owner can change workspace notifications"*, which is the wrong rule named at
+the wrong moment — §53's 403 finding in miniature. Generalising the three
+near-identical guards would touch six routes for a message (§9), so a fourth
+small one is the cheaper correct answer.
+
+### Ordering is the correctness mechanism, not the `webhook-id`
+
+The provider states plainly that its events **"are neither terminal nor
+strictly ordered"** and that each payload carries the latest state at delivery
+time. So a retried `subscription.active` can legitimately arrive *after*
+`subscription.cancelled` — and without a clock comparison it would bring a
+cancelled subscription back to life, handing somebody access they stopped
+paying for. Silent, and visible only as a billing discrepancy weeks later.
+
+So the event's own `timestamp` is compared against the stored one and anything
+**strictly older** is discarded. That is the same last-write-wins rule, for
+the same reason, that §10 already applies to record edits.
+
+**It dedupes retries for free**, which is why there is no `webhook-id` store:
+a redelivery carries the same timestamp and the same body, so re-applying it
+is a write of identical data. That is only safe because the payload is a
+**state snapshot rather than an increment** — the moment anything here counts
+instead of sets, this needs the id.
+
+**And `webhook-id` dedup alone would not have been sufficient anyway.** It
+prevents double-processing and says nothing about order, which is the failure
+that actually costs money. Worth stating, because their docs recommend the id
+and a reader could conclude the clock is the optional half.
+
+### Two clocks, not one, and the test is what pins it
+
+`subscriptionAt` and `paymentAt` are separate. One shared clock would let a
+`payment.failed` stamped a second later decide a subscription's staleness —
+and worse, would make the two kinds of fact compete: a subscription event
+arriving between two payments would be discarded as stale while being
+genuinely newer than the subscription state it describes.
+
+That is §26's field-level reasoning without §26's machinery, and it has its
+own test precisely because the tidier single-clock version looks correct.
+
+### The same-timestamp choice, and its cost
+
+Their timestamps are second-precision, so two distinct events in one second
+are possible. The comparison is **"apply unless strictly older"**, so the
+second one is not silently dropped.
+
+The cost, stated rather than discovered: a redelivery of the *first* arriving
+after the *second* would regress. It is narrow (needs same-second distinct
+events **and** a retry landing out of order), it self-corrects on the next
+event, and closing it means the `webhook-id` store this section just declined.
+Pinned by a test, because the opposite choice reads as the safer one.
+
+### Processed BEFORE the 200, which departs from their own advice
+
+Their docs say respond immediately and handle the event asynchronously. That
+advice protects a 30-second delivery timeout from slow work. **The work here
+is one small idempotent write** — milliseconds on Mongo, a whole-file rewrite
+on the file store, both far inside the budget.
+
+In exchange, a failed write becomes a **500**, which this provider retries on
+its own schedule, so the event survives. Answer 200 first and a failed write
+is lost in silence, and a lost event means a customer paid and nothing
+recorded it.
+
+**THE CONDITION, which is what makes this a decision rather than a
+preference:** it holds only while the handler is one small write. The moment
+it grows — provisioning, sending mail, calling anything outward — it has to
+move behind the response, and then it needs a **durable queue** rather than a
+floating promise, because an unawaited rejection in an async route was §55's
+entire finding. §18's "respond immediately, notify after" is the opposite
+case: that is an *outbound* notification where slowness would make reporting a
+bug feel like a bug.
+
+### Every verified answer is a 2xx, including the ones that do nothing
+
+A non-2xx is a delivery **failure** to this provider: eight retries across
+twenty-eight hours and then a red mark on the one dashboard screen that
+reports real failures, which is §25's alert-fatigue lesson arriving in
+somebody else's console. So an unsubscribed event type, an unparseable body, a
+missing or unknown workspace and an unusable timestamp are all acknowledged
+and logged.
+
+It matters more than it looks, because **their docs state that deselecting
+every event subscribes you to all of them** — an endpoint receiving the whole
+catalogue is one misconfigured checkbox away.
+
+The two that are *not* 2xx:
+
+| | Why |
+|---|---|
+| **401** on a failed check | and the body says nothing about *which* check. The code and the detail go to the log; telling an unauthenticated prober "the timestamp is 400s from now" confirms the endpoint is real and the secret is set |
+| **503** when unconfigured | **deliberately not** the 404 `/api/admin/export` uses for a missing token. That hides whether a deployment has backups (§17); this needs to be a *visible* failure in the sender's dashboard, which is the only signal an operator gets when they have registered a URL against a deployment with no secret. What it must never be is a 2xx |
+
+### What the record holds, and the two opposite calls about it
+
+`billing` is a **sibling of `settings`** on the meta doc — the same structural
+rule as `hook` (§38) and `mail` (§52), for the same reason: `pullChanges`
+sends `meta.settings` whole to every role including viewers, and
+last-write-wins would then let a client's copy overwrite it. Driven through
+the real sync path by a test, because that is the only way to see it.
+
+**No customer identity, even though the payload carries it.** No email, no
+name, no billing address. `workspaces[].meta` **is** the `data` collection
+(§17), so everything on that document is in every nightly artifact,
+downloadable by anyone with read access to the private repo. The provider is
+the system of record for the customer; we need ids and statuses to decide what
+a workspace may do, and nothing else.
+
+**And it is NOT redacted on export, unlike the two credentials beside it.**
+That is the opposite call and the pattern invites the wrong one: redacting it
+would make a restore silently un-subscribe every paying customer — §38's
+webhook finding with money attached, where the recovery looks clean and the
+breakage surfaces weeks later as people losing access they paid for. **A
+subscription state must survive a restore. A secret must not.** Said in
+`redactMeta` itself, where somebody would otherwise add it by pattern.
+
+**The field inventory is deliberately thin**, and the honest reason is §69's:
+nothing here has seen a real delivery, so it stores only fields the provider's
+own documentation names — `subscription_id`, `status`, `next_billing_date`,
+`past_due_ends_at`, `payment_id`. Widening it is the first thing to do once a
+real payload has been read, not before.
+
+### The limiter sits in FRONT of the authentication here
+
+Which looks like §61's R2 finding reversed, and is not. There, a limiter ran
+ahead of an **authorization** check on an authenticated route, so a caller
+about to be refused could spend a slot belonging to a colleague on the same
+office IP. Here there is no authenticated caller to protect: the bucket is
+keyed on `req.ip`, an attacker cannot send from the provider's delivery
+addresses, and the only thing a flood exhausts is its own bucket. Putting the
+bound first means an unsigned flood costs no HMAC work.
+
+### Traps
+
+- **A block comment cannot contain the wildcard content-type.** Its own
+  slash-star closes the comment, and `node --check` then reports
+  `Unexpected token '*'`. §60 records the same shape with a backtick inside an
+  HTML comment inside a template literal — a syntax error pointing at the
+  wrong thing.
+- **`putData` merges TOP-LEVEL keys only**, so `{ billing }` replaces the
+  whole object. Merging onto the prior value by hand is what stops a payment
+  event blanking the subscription fields beside it, and it is exactly the
+  mistake the two-clock split would otherwise hide.
+- **`Date.parse` → `null`, never `Date.now()`.** §10's `Number(x) || now`
+  trap, and here it is worse than a wrong number: an event stamped "now"
+  always wins the staleness test, so one malformed timestamp could overwrite
+  good state for ever.
+- **`wsId` is the ownership key and `orgId` is a separate field that happens
+  to equal it** (§5). The existence check says so rather than silently
+  assuming, because it is one of the places that must change if they diverge —
+  and it logs loudly rather than dropping quietly, since the symptom otherwise
+  is every webhook being acknowledged and discarded.
+
+### Verified: eleven mutations, and the one that passed was the finding
+
+Ten failed the test that names them. The eleventh **passed**, and that was the
+useful result:
+
+| Mutation | Fails |
+|---|---|
+| the raw parser does not cover the route | **12 tests** — the mount-order check, and it is the happy-path test that carries it |
+| no staleness check | *a cancellation sticks, and a retried older event cannot undo it* |
+| strictly-newer only | *two events sharing a timestamp are applied in arrival order* |
+| `billing` rebuilt without the prior object | *a payment event does not blank the subscription beside it* |
+| one shared clock | *the two clocks are independent, not one shared clock* |
+| the clock falls back to now | *an event with an unusable timestamp is dropped rather than stamped with now* |
+| the refusal borrows the notifications wording | *a viewer cannot read the billing status* |
+| 503 becomes a 200 | *an unconfigured deployment answers 503, never a 2xx* |
+| `billing` written inside `settings` | **8 tests**, including the currency one |
+| no workspace-existence check | *an event naming a workspace that does not exist…* |
+| **`billing` redacted on export** | **nothing — see below** |
+
+**`redactMeta` returns early when a workspace has no hook and no mail key**,
+so the redaction branch was never entered and the export test could not have
+detected a `billing` redaction. It was passing, and it was passing for the
+wrong reason. The test now configures a mail key first — `PUT /api/org/mail`
+makes no outbound call (§52), so this needs no capture server — and asserts
+the **contrast**: `mail` must be `{ redacted: true }` and `billing` must not.
+Found by the mutation, not by reading, which is the whole argument for §9's
+rule.
+
+**Two other things the tests produced rather than confirmed.** My
+`subscriptionEvent()` helper spread `type` into `data` instead of onto the
+envelope, so every event was delivered as `subscription.active` whatever the
+test asked for — four failures all pointing at ordering code that was correct
+the whole time. And an assertion I added about the status in the export test
+was simply wrong about the sequence; it is gone rather than pinned, because
+which event happened to land last is an artifact of the order of the tests
+above (§33's rule about asserting what you mean).
+
+### Blast radius
+
+`server.js` only — no client file, no served file, so **no `CACHE_VERSION`
+bump** (checked, not assumed) and smoke stays **51 local / 56 live predicted**.
+
+**`docs/API.md` gains a seventh section and the count moves 58 → 60**,
+counted with
+`grep -cE "^app\.(get|post|put|patch|delete)\(" server.js` rather than
+incremented by hand. `DEPLOYMENT.md`'s environment matrix gains
+`DODO_WEBHOOK_SECRET`, `PAYMENT_BODY_LIMIT` and `RATE_DODO_WEBHOOK_MAX`.
+
+`tests/payments.test.mjs` takes **9960–9990**, two app servers, and §9's table
+says so.
+
+§27's six user-facing documents need **nothing**, and that is checked rather
+than skipped: no capability moved for any user, there is no screen, and
+nothing can be bought. They get walked when there is a checkout.
+`privacy.html` likewise — Dodo becomes a named recipient of personal data when
+the **first payment actually runs**, not when a route exists (§52's condition,
+§41's precedent, and §40's *"that is the complete list"* having already been
+false twice).
+
+Counts: Node **592 → 613**, Playwright **146** unchanged, smoke **51** locally.
+
+### What is deliberately still not built
+
+- **Enforcement.** Nothing reads `billing` to decide what a workspace may do.
+  That is a *pricing* decision before it is code, and §17's "nothing is
+  enforced" still stands. When it lands it is §24 stage B's suspension —
+  read-only sync, reversible, nothing deleted, never reaching
+  `deleteAccount()` (§15, §5) — with **export open to every role** (§36).
+- **The checkout link.** `metadata_wsId` on
+  `https://checkout.dodopayments.com/buy/{product_id}` is what ties a payment
+  to a workspace, and it needs no third-party JavaScript, which is what keeps
+  `script-src 'self'` intact (§30 Phase 4).
+- **A `webhook-id` store**, costed above and declined: the clock already
+  dedupes and also orders, which the id does not.
+- **Any UI.** `GET /api/org/billing` exists so the state is *visible*, not so
+  it is pretty.

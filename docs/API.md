@@ -7,9 +7,12 @@
 > and every section here points at the relevant one rather than restating it —
 > one fact, one home (`CLAUDE.md` §27).
 
-58 routes over six boundaries (§5b added three at the domain move). All JSON unless noted. All authenticated routes
-take the session cookie; there is no bearer token anywhere except
-`/api/admin/export`, which is deliberately different (see §5).
+60 routes over **seven** boundaries (§5b added three at the domain move; §7
+is the payment webhook, which has no session at all). All JSON unless noted.
+All authenticated routes take the session cookie; there is no bearer token
+anywhere except `/api/admin/export`, which is deliberately different
+(see §5) — and `/api/payments/dodo`, which is authenticated by a signature
+rather than by anything a caller could present (see §7).
 
 ---
 
@@ -720,6 +723,74 @@ That is why there is no "request access" form and should not be one.
 
 Declining is **silent and final** — the handler short-circuits on any
 non-pending row and answers *received* without writing.
+
+---
+
+## 7. Payments — the boundary with no session
+
+### `POST /api/payments/dodo`
+
+**The only route here that no caller can authenticate to.** There is no
+cookie, no `req.user` and no `workspaceIdFor()`: the Standard Webhooks
+signature is the authentication, and `lib/webhook-verify.js` is the whole
+gate. `CLAUDE.md` §69, §70.
+
+Takes **raw bytes**. A raw parser is mounted on this path *before* the global
+`express.json()`, because the signature covers the body exactly as sent —
+body-parser sets `req._body` and later parsers bail, so the order is what
+makes it work. Reversing the two mounts breaks every delivery and looks like
+the provider's fault.
+
+| Header | |
+|---|---|
+| `webhook-id` | unique per event |
+| `webhook-timestamp` | unix seconds; outside ±5 minutes is refused |
+| `webhook-signature` | one or more space-separated `v1,<base64>` entries; any `v1` match passes |
+
+Body: `{ business_id, type, timestamp, data }`, where `data` is the resource
+itself plus a `payload_type`. The workspace is read from
+`data.metadata.wsId`, which rides out on the payment link as
+`metadata_wsId` and is therefore as trustworthy as the signature — and is
+coerced and shape-checked anyway.
+
+**Status codes, and every one of them is a decision:**
+
+| | When |
+|---|---|
+| `503` | no `DODO_WEBHOOK_SECRET` configured. **Not** the `404` that `/api/admin/export` uses for a missing token — that one hides whether backups exist; this one needs to be a visible failure in the sender's dashboard. Never a 2xx, which would discard the event silently |
+| `401` | signature, timestamp or body check failed. The body is `{ error: 'Invalid signature' }` and says nothing about *which* check — the code and the reason go to the log |
+| `200` | verified. **Including every case that does nothing**: an unsubscribed event type, an unparseable body, a missing or unknown workspace, an unusable timestamp. A non-2xx is a delivery failure to this provider, so refusing an event we deliberately ignore means eight retries across twenty-eight hours and then a false failure on the one screen that reports real ones |
+| `500` | the write failed. Deliberately reachable: the provider retries on its own schedule, so the event survives |
+
+Response on success: `{ received: true, applied: true }`, or
+`{ received: true, applied: false, reason: 'stale' }`, or
+`{ received: true, ignored: '<why>' }`.
+
+**Processed before the 200**, which departs from the provider's generic
+"respond immediately" advice on purpose. The work is one small idempotent
+write, far inside the 30-second delivery timeout, and in exchange a failed
+write becomes a retry rather than a silent loss. That holds only while it
+stays one small write — see §70.
+
+**Ordering is the correctness mechanism, not the `webhook-id`.** Events are
+not strictly ordered and each payload carries current state, so an event
+older than the stored one is discarded. Subscription facts and payment facts
+carry **separate clocks**, so a payment cannot decide a subscription's status.
+
+### `GET /api/org/billing`
+
+Owner only, 403 otherwise. Returns
+`{ enabled, billing }` — `enabled` says whether the deployment has a webhook
+secret at all, which is what distinguishes *nobody has paid* from *this
+deployment is not wired up*. `billing` is `null` until an event lands.
+
+The stored record carries **no customer identity** — no email, no name, no
+address — because the meta doc is in every nightly backup artifact. It is
+also **not redacted on export**, unlike `hook` and `mail`: a restore that
+dropped it would silently un-subscribe every paying customer.
+
+`billing` is a **sibling of `settings`** on the meta doc and never travels
+through `/api/sync`.
 
 ---
 
