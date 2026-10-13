@@ -220,6 +220,16 @@ const MUST_NOT_SERVE = [
    * is exactly how a provider key would end up in front-end code.
    */
   ['/lib/mail-send.js', 'server-side source'],
+  /*
+   * The third, and the one whose exposure would be most quietly useful to an
+   * attacker: it is the only description in the repository of exactly how an
+   * inbound webhook is authenticated, including which headers are read and
+   * which refusals are distinguishable from outside. None of that is a secret
+   * — the algorithm is the provider's published one — but a served copy is
+   * again the standing invitation to move it to js/, and a verifier that a
+   * browser can call is a verifier running where the secret would have to be.
+   */
+  ['/lib/webhook-verify.js', 'server-side source'],
 ];
 
 for (const [path, what] of MUST_NOT_SERVE) {

@@ -153,6 +153,12 @@ never change, because everything cross-references them.
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
 | What the daily live run does NOT catch | §65 · §46 |
+| **Taking payment through Dodo** — what is pinned, what is not built | §69 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) · §64 |
+| **Verifying an inbound webhook** — the gate with no session behind it | §69 · §61 · §38 |
+| Two provider CLI tools that cannot test verification, one of them a false pass | §69 · §34 |
+| A fixture that must not import the thing it tests, and a vector not computed in Node | §69 · §29 · §34 |
+| Why the provider's SDK is refused over a Node version floor | §69 · §38 · §30 |
+| `$!` after a backgrounded `&&` chain, and a figure measured on the old binary | §4 · §69 · §47 |
 
 ---
 
@@ -202,13 +208,13 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**570 Node tests pass, and Playwright ran 146 of 146 green** — both observed
+**592 Node tests pass, and Playwright ran 146 of 146 green** — both observed
 in this session, not carried forward. The green Playwright run does **not**
 retire §66's finding: *signing out hides the workspace* fails about 1 run in 3
 and simply did not fire here, so a single clean run is evidence of the suite
 being sound and not of that test being fixed. §54 records it as intermittent,
 §66 records what was established about it and the artifact to start from.
-Smoke is at **50 passing locally**; **55 live is predicted, not observed**
+Smoke is at **51 passing locally**; **56 live is predicted, not observed**
 (§8 — this session reaches neither host, and CI is what prints the real figure,
 per §46's rule that the two numbers differ and both are real). The same checks
 run either way, with five informational on a local file-store HTTP deployment
@@ -390,6 +396,18 @@ the symptom is not an error: the run **hangs**, because the tests are waiting
 on sockets that will never answer, with no output to say why. It cost eight
 minutes of staring at an empty log here. Kill by recorded PID, or check
 `ps` first.
+
+**And `$!` after a backgrounded `&&` chain is the SUBSHELL, not the server.**
+`cp x y && node server.js > log 2>&1 &` then `kill $!` kills the wrapper and
+leaves node running — so the next boot dies `EADDRINUSE`, **the old binary
+keeps answering**, and whatever you then measure is the build you thought you
+had replaced. Cost here: a smoke run reported `51 passed` against an
+unmutated server while proving a mutation, which is the one result that
+reads as success and means nothing. Record the PID with `pgrep -x node`
+*after* the boot, or `exec` the server so the shell becomes it, and confirm
+the mutation is live (`curl` the thing that should have changed) before
+trusting a figure. Same family as the two notes above and as §47's sweep that
+healed what it was looking for.
 
 **Restarting a test server on the same port is not reliable.** `expireInvite()`
 in `api.test.mjs` stops the server, edits `store.json` and starts it again;
@@ -9783,3 +9801,253 @@ A user can do something new, so this was a real walk.
 | `docs/BETA.md` tester note | what to try to break, including that the group totals must add up to the footer |
 | `docs/API.md` | **nothing** — checked, not skipped. No route, no wire shape, and nothing is stored at all: grouping is view state, so there is not even a `doc` key for a caller to see |
 | `privacy.html`, `terms.html` | nothing — no new data, no new recipient, and nothing leaves the device |
+
+
+---
+
+## 69. The inbound signature check, built before the route that needs it
+
+The payment rail is **Dodo Payments**, signed up for as an **individual**
+rather than a company, which is what makes it startable without a commercial
+setup. This commit is the one piece of that integration that must not be
+wrong: `lib/webhook-verify.js`, its signing fixture, and the tests. **No route
+receives a webhook yet, and nothing takes money.**
+
+That order is §52's, for its reasons: the mail work built the storage, the
+redaction and the adapter before any send route, because the alternative is
+writing the part that handles a credential under pressure with the feature
+already half-built. Here it is one step stronger — an inbound webhook carries
+**no session**. There is no cookie, no `req.user`, no `workspaceIdFor()`. The
+signature *is* the authentication, so this function is the entire gate in front
+of anything a payment event is allowed to change.
+
+### `docs/PAYMENTS.md` rejected this vendor, and that table is now wrong
+
+Its §7 says Dodo was passed over because *"every source for them is their own
+marketing page… a vendor with no independent operating history is the wrong
+trade."* The decision went the other way. That is the user's call and it is
+reaffirmed, but the document now contradicts the account that exists, which is
+exactly the drift §27 and §29 are about. **It needs rewriting around the rail
+actually chosen**, and the Paddle-specific halves — §3's chargeback analysis,
+§5's fee comparison, and §6's *"replaceable in a week"* resting partly on the
+FTC action against Paddle — do not transfer. Deferred until the dashboard shows
+real fee and MSA terms rather than guessed at now.
+
+### Neither of the provider's CLI tools can test verification
+
+This is the finding that shaped the work, and it is in their own
+documentation:
+
+| | What it does | What it can produce |
+|---|---|---|
+| `dodo wh trigger <event> <url>` | sends a mock payload **with no `webhook-id`, no signature and no timestamp** — their docs tell you to parse it with `unsafeUnwrap` | a **false pass** |
+| `dodo wh listen <url>` | forwards real headers, but *"the relay and the CLI parse the JSON body and serialize it again before forwarding. If the forwarded body differs byte for byte… signature verification fails even though the headers are intact"* | a **false failure** |
+
+Of the two the false pass is the dangerous one: it is how a verification
+function ends up looking right and verifying nothing. So the only things that
+settle it are the dashboard's **Webhooks → Testing → Send example**, which they
+state is *"signed the same way"* as a real event, against a deployment — and,
+for CI, a local signer with no network in it.
+
+### Three implementations agree, and the frozen one is not Node
+
+`tests/sign-webhook.mjs` is the signer: one file, shared, the
+`tests/fake-telegram.mjs` precedent, because a second copy of a provider's wire
+format goes stale in the direction that matters (§29).
+
+**It deliberately does not import `expectedSignature`.** If it did, a bug in
+that function would be reproduced identically here and *every test would pass*
+— the verifier and the fixture would agree, wrongly, and the suite would be
+measuring agreement rather than correctness. §34's shape, a test passing
+against its own broken fixture.
+
+And the frozen vector in the test file was computed with **openssl**, not with
+Node:
+
+```sh
+printf '%s' 'whk_frozen.1760000000.{"type":"payment.succeeded"}' \
+  | openssl dgst -sha256 -hmac 'crmbuilder-test-webhook-signing-key' -binary | base64
+# sPOQm3nfGeqW2rpojNYr8L/kFTM4xetKuoTenVFj/3A=
+```
+
+A value produced by Node would come from the same runtime as the code under
+test. Three independent implementations — openssl, the helper, the fixture —
+produce that string, which is the strongest evidence available from in here.
+
+### Not their SDK, and the reason is a version floor
+
+**The Dodo Node SDK requires Node 20 or later; `package.json` is
+`engines: ">=18"`.** §38 records what that class of mismatch costs in this
+repository: an `.mjs` under `lib/` ran locally on 22 and threw
+`ERR_REQUIRE_ESM` on a deployment pinned to 18 — *at require time*, so the
+whole server failed to boot rather than one feature failing. It would also be a
+fifth production dependency against the four §30 calls an asset on a shared
+free tier, to replace thirty lines. `jsonwebtoken` is already a dependency, so
+HMAC verification is not new ground here.
+
+### Decisions inside the helper, each with a mutation behind it
+
+- **`Buffer.concat`, never `${id}.${ts}.${body}`.** Interpolating a Buffer
+  calls `toString()`, which replaces any non-UTF-8 byte with U+FFFD — so the
+  bytes signed differ from the bytes that arrived and a perfectly good request
+  fails. **This is the provider's own relay bug reached from inside our code**,
+  which is why it has a test with a lone `0x80` in the body and an assertion
+  that the naive construction really does differ on that input.
+- **Hash both sides before `timingSafeEqual`.** It throws on a length
+  mismatch and the throw would leak the length — the trap `tokenMatches()`
+  already carries for `BACKUP_TOKEN` (§17). The mutation showed the failure is
+  worse than a wrong answer: an attacker sends `v1,x`, the function **throws**,
+  and it throws in the one place that has no session to report to, which in an
+  async handler was §55's entire finding.
+- **`badsecret` is a different answer from `mismatch`**, because the action is
+  different — fix the environment, versus refuse the request and perhaps look
+  at who sent it. Collapsing them is how somebody hunts an attacker who does
+  not exist. **The honest limit is stated in the file**: this catches a secret
+  that cannot be base64 at all; one truncated mid-paste usually stays in
+  charset, still decodes, and is indistinguishable from a wrong one.
+- **A parsed body is REFUSED, never re-serialised.** `JSON.stringify` of a
+  parsed payload preserves key order but not whitespace, so re-serialising
+  makes verification pass or fail for a reason unconnected to the signature —
+  worse than either outcome. `parsedbody` says what is actually wrong: the body
+  parser is mounted in the wrong order.
+- **The timestamp must be a run of digits.** `Number('')` is 0 and
+  `parseInt('12abc')` is 12, either of which turns a junk header into a
+  plausible epoch — §10's `Number(x) || now` trap, which once wiped a
+  workspace's settings, in a new place.
+- **The replay window is five minutes in BOTH directions**, and the detail
+  carries the skew in seconds, because the likeliest cause of either sign is a
+  drifting server clock rather than an attack.
+- **The scheme must be exactly `v1`.** `startsWith('v1')` would accept a future
+  `v1a` as though we understood it, which is the one way a version check is
+  worse than none.
+- **Nothing is short-circuited on match**, so the time taken does not depend on
+  which of several signatures matched — a rotation legitimately carries two,
+  since the old secret stays valid for 24 hours.
+- **It never throws**, following `sendGuarded` and `telegramChats` (§38) and
+  `resolveZone` (§39), and returns a `code` so the route can make §38's
+  refuse/warn split.
+
+### The empty-body finding, which the tests produced
+
+A test expectation and the code disagreed, and **the code was wrong**: a
+zero-length body fell through to `mismatch`. That is the real shape rather than
+an edge case — `express.raw()` hands over an empty Buffer for a request with
+`Content-Length: 0`, which is a health probe or a misconfigured endpoint
+pointed at the path. Nothing empty could match a signature over a real payload,
+so calling it a mismatch is not incorrect, it is **useless**: it sends whoever
+reads the log after the secret. `nobody` now, for an empty Buffer, an empty
+string and an absent body alike.
+
+### Two leak tests, and they search the whole result
+
+The secret must never reach a `detail`, a log line or a stored field (§61's
+rule, §52's `redactKey`), and neither must the body — a webhook payload holds a
+customer's name, email and billing address, so §18's rule about the feedback
+notifier applies: the diagnostic must not become the disclosure.
+
+Both assertions serialise the **entire** result and search it, rather than
+checking named fields — §38's rule, because a field-by-field check only covers
+the fields somebody thought of. The secret test looks for the prefixed form,
+the bare base64 **and the decoded key**, which is the thing an attacker
+actually wants.
+
+### Verified
+
+Ten mutations, each failing the test that names it, and eight of ten failing
+**exactly one** test — which is what shows the tests cover different things
+rather than one thing ten times.
+
+| Mutation | Fails |
+|---|---|
+| body interpolated instead of `Buffer.concat` | *a body that is not valid UTF-8 is signed over its bytes* |
+| `startsWith('v1')` instead of `=== 'v1'` | *a signature header with no v1 entry says so* |
+| a parsed body re-serialised | *an already-parsed body is refused, never re-serialised* |
+| no base64 check on the secret | *a secret that is not base64 is badsecret, distinct from mismatch* |
+| `parseInt` instead of the digits pattern | *a timestamp that is not a run of digits is refused* |
+| skew checked one way | *the replay window is five minutes, in both directions* |
+| `timingSafeEqual` without hashing first | *a signature of the wrong length is refused, and does not throw* |
+| the secret put into a detail | *no result carries the secret, in any form* |
+| an empty body falling through | *an empty body is nobody, not a signature mismatch* |
+| `lib` added to `ASSET_DIRS` | the three smoke assertions, with byte counts |
+
+**One of those tests had to be written because of a mutation, not before it.**
+Hashing-removed originally failed only the two leak tests — it throws, and the
+leak tests happen to call the function with a short signature — so a mutation
+was being caught by tests whose names describe something else entirely. §67's
+lesson, and the fix is a test that names the trap.
+
+**And the `ASSET_DIRS` check was nearly proved against the wrong binary.** The
+first attempt reported `51 passed` while `lib/` was being served, because the
+old server was still listening — see §4's new `$!` note. The real run fails
+three assertions with byte counts, which is §28's own shape.
+
+### Blast radius
+
+`lib/webhook-verify.js` is new and is **not** under `js/` — server-side code,
+and `tests/smoke.mjs` asserts it 404s, the allow-list check run backwards
+beside its two neighbours. That is what moves smoke **50 → 51 local**
+(56 live predicted, not observed — §8).
+
+`tests/webhook-verify.test.mjs` is **pure**: no servers, no sockets, no
+network. So it claims no port block from §9's table and cannot collide with
+one.
+
+**No `CACHE_VERSION` bump**, checked rather than assumed: nothing under `js/`,
+`css/` or the app shell changed, so `crmbuilder-v60` stands. **No
+`docs/API.md` change** — no route exists yet, so no wire contract moved, which
+is the check §46 and §54 both say to run instead of reading the route count.
+§27's user-facing documents need nothing: no capability moved, and padding them
+to look thorough is its own inaccuracy (§40, §41).
+
+Counts: Node **570 → 592**, Playwright **146** unchanged, smoke **51** locally.
+
+### What is still not built
+
+The webhook route itself, the checkout link, and where subscription state
+lives. The shapes are pinned now and recorded here so the next commit is not
+research:
+
+- **`https://test.dodopayments.com` / `https://live.dodopayments.com`** are
+  separate hosts, and a key authenticates against one mode only. Products, API
+  keys and webhook endpoints each belong to the mode they were made in. That is
+  the `GOOGLE_TOKEN_URL` / `TELEGRAM_API_BASE` / `MAIL_API_BASE` test seam for
+  free (§30, §38, §52) — `DODO_API_BASE`, one variable, no flag of its own.
+- **Env-only, all three** (`DODO_API_KEY`, `DODO_WEBHOOK_SECRET`,
+  `DODO_API_BASE`). Never `platform`, which is in every nightly artifact
+  (§17). Not `settings`, which syncs whole to viewers and would then be
+  destroyed by the masking (§38). Not a meta-doc sibling either, unlike the
+  mail key — that varies per tenant and this does not.
+- **The route needs a raw parser mounted BEFORE the global `express.json()`**.
+  Their docs warn about it and §38 already records the mechanism here: `bigJson`
+  wins on `/api/sync` only because of mount order, since body-parser sets
+  `req._body` and later parsers bail. Then its own small body limit, its own
+  rate bucket, and §61 R2's ordering — verify, then authorize, then meter.
+- **Idempotency on `webhook-id`, recorded only after the handler succeeds**, or
+  a failed attempt is skipped on retry. 8 retries — immediate, 5s, 5min, 30min,
+  2h, 5h, 10h, 10h — 30-second timeout, and any non-2xx counts as a failure.
+  Events may arrive out of order; the payload carries a `timestamp` to order by.
+- **Deselecting every event subscribes you to all of them**, per their docs. A
+  footgun worth knowing before the dashboard is configured.
+- **Payment links carry `metadata_*` query parameters** —
+  `https://checkout.dodopayments.com/buy/{product_id}?metadata_wsId=…&redirect_url=…`
+  — which is how a payment ties back to a workspace with **no third-party
+  JavaScript**, keeping `script-src 'self'` intact (§30 Phase 4). An overlay or
+  inline checkout would mean opening that header up, so it is ruled out by a
+  constraint rather than a preference.
+- **Non-payment behaviour is already specified** and must not be improvised:
+  §24 stage B's suspension — read-only sync, reversible, nothing deleted, never
+  reaching `deleteAccount()` (§15, §5) — with export open to every role (§36).
+- **A subscription product must be at least $1.00 USD**, which is a floor under
+  the pricing decision.
+- **Test mode sends REAL customer email** to the real address with a
+  `[TEST MODE]` subject, capped at 100/week; off in Settings → Communication →
+  Email. And **test subscriptions keep renewing**, delivering webhooks weeks
+  after testing stops, so each one wants cancelling via
+  `PATCH /subscriptions/{id}` with `status: cancelled`.
+
+`privacy.html` gains Dodo as a recipient of personal data **when the first
+payment actually runs**, not when the account is approved — §52 deferred the
+mail paragraph on exactly that condition and §41 published the backup-encryption
+sentence only once an encrypted artifact had been restored end to end. §40's
+*"that is the complete list"* has already been false twice, both times caught by
+looking at what the deployment does rather than at what the code could do.
