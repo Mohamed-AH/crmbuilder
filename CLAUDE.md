@@ -159,6 +159,11 @@ never change, because everything cross-references them.
 | A state that must survive a restore, next to two that must not | §70 · §38 · §52 · §17 |
 | Processing before the 200, and the condition that makes it right | §70 · §18 · §55 |
 | A mutation that passed, because the code it broke never ran | §70 · §9 · §34 |
+| **The checkout link** — why a static link and not an overlay | §71 · §30 · §64 |
+| A return URL that cannot carry a fragment, measured before it was written | §71 · §70 |
+| Where the price lives, and why not in this repository | §71 · §29 · §64 |
+| A customer email appended to a return URL, and what strips it | §71 · §17 · §16 |
+| Two mutations that passed, and the two gaps they named | §71 · §9 · §55 |
 | **Taking payment through Dodo** — what is pinned, what is not built | §69 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) · §64 |
 | **Verifying an inbound webhook** — the gate with no session behind it | §69 · §61 · §38 |
 | Two provider CLI tools that cannot test verification, one of them a false pass | §69 · §34 |
@@ -214,12 +219,15 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**592 Node tests pass, and Playwright ran 146 of 146 green** — both observed
-in this session, not carried forward. The green Playwright run does **not**
-retire §66's finding: *signing out hides the workspace* fails about 1 run in 3
-and simply did not fire here, so a single clean run is evidence of the suite
-being sound and not of that test being fixed. §54 records it as intermittent,
-§66 records what was established about it and the artifact to start from.
+**616 Node tests pass, and Playwright ran 150 of 151** — both observed in this
+session, not carried forward. The one failure is §66's known intermittent,
+*signing out hides the workspace*, which **did** fire on this run with §66's
+exact recorded signature (the artifact shows Settings still rendered after the
+navigation) and then passed 6/6 in isolation. Six passes do not re-measure its
+rate — against 1-in-3 that happens about 9% of the time — so treat the figure
+as 150 of 151 with one known-open test rather than as a suite with a new
+fault. §54 records it as intermittent, §66 records what was established about
+it and the artifact to start from, §71 records this occurrence.
 Smoke is at **51 passing locally**; **56 live is predicted, not observed**
 (§8 — this session reaches neither host, and CI is what prints the real figure,
 per §46's rule that the two numbers differ and both are real). The same checks
@@ -318,7 +326,7 @@ to render *and still navigate*.
 globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v60`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v61`). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -10309,3 +10317,232 @@ Counts: Node **592 → 613**, Playwright **146** unchanged, smoke **51** locally
   dedupes and also orders, which the id does not.
 - **Any UI.** `GET /api/org/billing` exists so the state is *visible*, not so
   it is pretty.
+
+
+---
+
+## 71. The checkout link, and a return URL that cannot carry a hash
+
+The third of §69/§70's three pieces: a Settings card with a **Subscribe**
+button that opens the provider's hosted checkout, and the handling of the
+customer coming back from it. **Still nothing is actually on sale** —
+`DODO_PRODUCT_ID` is unset on every deployment, which makes the card absent
+rather than broken, and a price is still the undecided half (§64).
+
+### A static link, and the CSP is what decided that
+
+Their integration guide offers four paths. **Overlay and inline checkout both
+mean loading the provider's JavaScript**, which `script-src 'self'` refuses
+(§30 Phase 4) — so they are ruled out by a constraint rather than a
+preference, and taking either would mean punching a third-party origin into
+the one header that has never had one.
+
+A **static payment link** over the Checkout Sessions API for a smaller reason:
+a session is created, expires in 24 hours and is single-use, so it needs a
+round trip and an error path. A link is a string. If a session is ever wanted —
+to pass a quantity, or to pre-apply a discount — the shape here is the place
+it goes.
+
+### The price is not in this repository, and that is a decision
+
+The provider's product carries it and the checkout page states it. A figure in
+this file would be a **second copy of the number actually being charged**,
+which is §29's thesis with money attached and the one kind of drift a customer
+notices in the same second they see it.
+
+So the card links out and says nothing about cost, and an E2E assertion pins
+that: `not.toContainText(/[£$€]\s?\d/)`. That makes putting a price on the
+card a decision somebody takes again rather than a helpful line that slips in.
+
+### `redirect_url` cannot carry a fragment, and this was measured first
+
+The provider **appends** `?payment_id=…&status=…&email=…` to whatever return
+URL it is given. So a `redirect_url` of `…/app#/settings` produces:
+
+```
+https://nimbleclerk.com/app#/settings?payment_id=pay_x&status=succeeded
+  location.search → ""          ← the query is inside the FRAGMENT
+  location.hash   → "#/settings?payment_id=pay_x&status=succeeded"
+```
+
+`location.search` is empty, so the code that has to read **and strip** that
+query never sees it. Measured with `new URL()` before a line was written, not
+discovered afterwards — and the app is hash-routed, so pointing the return at
+Settings directly is exactly the thing somebody would reach for.
+
+It points at the bare app and `captureCheckoutReturn()` sets the hash itself,
+which is also the only place that knows where the card lives.
+
+### The return is not proof of payment, and the gap it leaves is named
+
+A query parameter is something anybody can type. Only the signed webhook
+records anything (§70), and it is still in flight when the customer lands —
+so for a second or two the server honestly has nothing, and a card reading
+*"No subscription on this workspace yet"* to somebody who has just paid is the
+worst sentence on the screen.
+
+`crmb:checkoutPending` in **sessionStorage**, set on a `succeeded` return and
+cleared the moment the server has a record. Three things about that:
+
+- **sessionStorage rather than a poll**, and the reload is the reason: somebody
+  who refreshes while waiting keeps the explanation, where a timer would have
+  died with the page.
+- **Cleared by the server having an answer**, not by elapsed time — what ends
+  the wait is the only thing that actually answers the question it asks.
+- **Per-tab and transient**, so it cannot outlive the question. It is not a
+  workspace setting and never goes near `settings` (§60's rule, §38's reason).
+
+### The email is stripped, and that is the half that matters
+
+The provider appends the **customer's email address** to the return URL. An
+address left in the bar goes into browser history and into the `Referer` of
+whatever the page loads next — §17 refuses a *correct* `?token=` for exactly
+that reason, and the fact that this one is the person's own address makes it
+less bad rather than fine.
+
+`captureCheckoutReturn` strips `payment_id`, `status`, `email`,
+`subscription_id` and `license_key`, the same way `captureInvite` and
+`captureBetaCode` strip a credential. Asserted on the URL afterwards, in both
+the encoded and plain spellings.
+
+### No customer prefill, deliberately
+
+The provider accepts `email`, `fullName` and a full address as query
+parameters, and the signed-in address is right there. **Not sent**: a billing
+address is not necessarily a sign-in address, and this is the one screen where
+guessing wrong costs somebody money — §45's rule, and the provider's own form
+is where that question belongs.
+
+Asserted field by field, so "helpfully" adding one is a decision rather than a
+line that slips in.
+
+### Four card states, and two of them are absences
+
+§39's `digestStatusHTML` is the precedent and the reason — a card whose only
+line needs an event to have happened says nothing in exactly the state
+somebody is reading it.
+
+| Card | State |
+|---|---|
+| *Payments are not finished being set up here* | `enabled: false` — a payment would be taken and **never recorded**. An operator fault that looks identical to "nobody has paid" from outside |
+| *Confirming your payment* | paid seconds ago, webhook not landed |
+| *No subscription on this workspace yet* | nothing recorded, nothing pending |
+| a read view of status, next payment, access-until | a record exists |
+
+The card is **absent entirely** when there is nothing to sell and nothing
+recorded (§36 rule 1) — which is where every deployment is today. The
+condition asks for a checkout link **or** an existing record rather than for
+`enabled`, so a workspace that already subscribed still sees its state if the
+product id is later unset.
+
+### Traps
+
+- **`credit-card` is not in `LUCIDE`.** Checked rather than rendered, because
+  an unknown name falls back to a **box** that looks deliberate (§53).
+  `external-link` is both present and the more honest glyph: this hands off to
+  somebody else's site, which is what §53 chose it for on the mail draft.
+- **§60's backtick trap, twice in one commit.** A backtick inside an HTML
+  comment inside a template literal closes the string, and `node --check`
+  reported `Unexpected identifier 'enabled'` and then `'credit'` — pointing at
+  my own comment prose rather than at anything structural. The comment now
+  says so in itself.
+- **`fmtWhen` is wrong for a date the provider stated as a DAY.** It runs
+  `toLocaleDateString` on the instant, so a UTC midnight renders as the
+  previous day west of Greenwich — §50's trap, in the one place this card says
+  a date out loud. `dayISOFromMs` → `fmtDate`.
+- **The billing fetch is owner-only and its 403 is swallowed**, like the
+  invite list and the webhook beside it: asking as a member is expected, not
+  an error worth surfacing.
+
+### Verified: ten mutations, and two found gaps rather than confirming cover
+
+Each fails the test that names it:
+
+| Mutation | Fails |
+|---|---|
+| `redirect_url` carries the settings hash | *the checkout link carries this workspace, and nothing else* |
+| the product id interpolated, not encoded | the same test — the id in the fixture holds a space and a slash, so an unencoded one changes the **path** |
+| `wsId` read from the query | *the workspace on the link is the session, never a parameter* |
+| the customer email prefilled | the same link test, field by field |
+| checkout offered when nothing can record it | *a deployment that cannot record a payment says so…* |
+| the return query read but not stripped | **both** return journeys |
+| any return status treated as a payment | *a cancelled checkout says nothing was charged…* |
+| the pending note never set | *a payment return strips the query…* |
+| **the pending note never cleared** | **nothing, at first — see below** |
+| **a local getter on the stored day stamp** | **nothing, at first — see below** |
+
+**Two passed, and both were coverage gaps rather than safe code.**
+
+*The note never cleared* passed because no test had ever set the note and then
+loaded a card with a record — so the clear had nothing to clear. The defect it
+would have shipped is two contradicting lines on one card: a live subscription
+with *"confirming your payment"* above it, per tab, for ever. The
+existing-subscription journey now seeds `crmb:checkoutPending` first.
+
+*A local getter on the date* passed because **this container is UTC**, where
+`toISOString` and `getFullYear/getMonth/getDate` agree. §55 and §68 record the
+same vacuity; the describe pins `timezoneId: 'America/New_York'` and
+`locale: 'en-GB'` now, and the assertion names the exact day — `13 Nov 2026`,
+where a local read renders the 12th.
+
+**And a failure that was my selector, not the product.** Both return journeys
+failed on `.sidebar`, which this app does not call it — `#sidebar`. The
+artifact showed the page rendered correctly and already on Settings, so the
+capture code had worked the whole time. §9's *read the trace first* earning
+its keep: re-running would have reproduced it forever.
+
+### Blast radius
+
+`js/app.js` and `js/cloud.js` are in `APP_SHELL`, so `CACHE_VERSION` →
+**`crmbuilder-v61`**. No new served file, so smoke stays **51 local /
+56 live predicted** — and running it is what proves that (§9).
+
+**`docs/API.md` gains no route and the count stays 60**, because this extended
+`GET /api/org/billing` rather than adding a sibling. §46's trap for the fourth
+time: the number is right and the file read correctly while a **response
+shape** moved underneath it.
+
+`DEPLOYMENT.md` gains `DODO_PRODUCT_ID` and `DODO_CHECKOUT_BASE`.
+
+Counts: Node **613 → 616**, Playwright **146 → 151**, smoke **51** locally.
+
+**One failure on the full Playwright run**, and it is §66's intermittent
+rather than anything here: *signing out hides the workspace* with §66's exact
+recorded signature — the artifact shows **Settings still rendered** after the
+navigation. 6/6 in isolation afterwards, which neither retires it nor
+re-measures its rate: six passes against a 1-in-3 rate happens about 9% of the
+time, so the honest claim is only that the signature matches and nothing in
+this commit sits on that path.
+
+### §27's walk is deferred, with the condition named
+
+No user-facing document is touched, and that is a checked omission rather than
+a skipped step: **the card is absent on every deployment**, because no
+`DODO_PRODUCT_ID` is set anywhere. Nobody can subscribe, so nobody has gained
+a capability to document — §52's precedent exactly, where the mail adapter
+shipped with no docs walk because no client could reach it.
+
+They get walked **when a price is set**, which is the same moment
+`docs/LAUNCH-CHECKLIST.md` §2.1's twelve-file list fires and
+`MARKETING.md`'s *"No per-seat pricing. Free. No ads."* has to be dealt with
+(§48, §64).
+
+`privacy.html` likewise: Dodo becomes a named recipient of personal data when
+the **first payment actually runs**, not when a button exists. §41 published
+the backup-encryption sentence only once an encrypted artifact had been
+restored end to end, and §40's *"that is the complete list"* has already been
+false twice — both times caught by looking at what the deployment does rather
+than at what the code could do.
+
+### What is still not built
+
+- **Enforcement**, unchanged from §70: nothing reads `billing` to decide what
+  a workspace may do. A pricing decision before it is code, and when it lands
+  it is §24 stage B's suspension with export open to every role (§36).
+- **Tiers.** One product id, because §64 settled per-workspace pricing and the
+  tiers themselves are undecided. This becomes a map, not a redesign.
+- **A customer portal link.** The provider hosts one for changing a card or
+  cancelling; the button currently reads *Manage payment* and goes to the same
+  checkout. That is the next small thing, and it wants the portal URL shape
+  confirmed against a real account rather than guessed (§69's standing rule
+  that nothing here has seen a real delivery).

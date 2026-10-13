@@ -4985,10 +4985,77 @@ function requireBillingOwner(req, res, next) {
   return next();
 }
 
+/*
+ * The hosted checkout link.
+ *
+ * ONE product id, in the environment, and the price is NOT in this repository.
+ * The provider's product carries it, so a figure written here would be a
+ * second copy of the number we are actually charging — §29's thesis with money
+ * attached, and the one kind of drift a customer notices immediately. The card
+ * links to checkout and the checkout page states the price.
+ *
+ * A static payment link rather than the Checkout Sessions API, and rather than
+ * an overlay. The overlay means loading the provider's JavaScript, which
+ * `script-src 'self'` refuses (§30 Phase 4) — so an inline or overlay checkout
+ * is ruled out by a constraint rather than a preference, and a link needs no
+ * third-party script, no session to create and nothing to expire.
+ *
+ * When tiers exist this becomes a map rather than one value. Said here because
+ * the single id reads as an oversight otherwise, and §64 settled that the
+ * tiers are per-workspace rather than per-seat.
+ */
+const DODO_PRODUCT_ID = process.env.DODO_PRODUCT_ID || '';
+const DODO_CHECKOUT_BASE = (process.env.DODO_CHECKOUT_BASE || 'https://checkout.dodopayments.com').replace(/\/+$/, '');
+
+function checkoutUrl(wsId) {
+  if (!DODO_PRODUCT_ID) return null;
+  /*
+   * `redirect_url` MUST NOT carry a hash, and this is measured rather than
+   * assumed (§70): the provider APPENDS `?payment_id=…&status=…` to whatever
+   * it is given, so a redirect_url of `…/app#/settings` produces
+   * `…/app#/settings?payment_id=…` — where `location.search` is EMPTY and the
+   * query sits inside the fragment, unreadable by the code that has to strip
+   * it. So this points at the bare app and the client navigates itself.
+   *
+   * encodeURIComponent, never esc(): a URL and a document are different things
+   * and §51 records both directions of getting that wrong.
+   *
+   * NO CUSTOMER PREFILL, deliberately. The provider accepts `email`,
+   * `fullName` and an address, and the signed-in address is right here — but a
+   * billing address is not necessarily a sign-in address, and this is the one
+   * screen where guessing wrong costs somebody money. §45's rule: where the
+   * answer is not provable, ask rather than preselect, and the provider's own
+   * form is where that question belongs.
+   */
+  const params = new URLSearchParams();
+  params.set('redirect_url', APP_BASE);
+  // How a payment finds its way back to a workspace, with no third-party
+  // JavaScript anywhere in it. The webhook reads this back out of the SIGNED
+  // payload (§70), so it is as trustworthy as the signature.
+  params.set('metadata_wsId', wsId);
+  return `${DODO_CHECKOUT_BASE}/buy/${encodeURIComponent(DODO_PRODUCT_ID)}?${params}`;
+}
+
 app.get('/api/org/billing', requireAuth, requireBillingOwner, async (req, res) => {
   const wsId = workspaceIdFor(req.user);
   const meta = (await store.getData(wsId)) || {};
-  res.json({ enabled: Boolean(DODO_WEBHOOK_SECRET), billing: publicBilling(meta.billing) });
+  /*
+   * Three facts in one call, because the card needs all three together and
+   * `/api/org/reminders` is the precedent for not making a screen round-trip
+   * twice for one question.
+   *
+   * `checkout` is null when no product is configured, which is a DIFFERENT
+   * state from `enabled: false`: a deployment can be able to receive webhooks
+   * and have nothing to sell yet, and that is exactly where this one is.
+   *
+   * The wsId comes from the session and is never a parameter — §5, and here it
+   * is what decides which workspace a payment is credited to.
+   */
+  res.json({
+    enabled: Boolean(DODO_WEBHOOK_SECRET),
+    checkout: checkoutUrl(wsId),
+    billing: publicBilling(meta.billing),
+  });
 });
 
 /*

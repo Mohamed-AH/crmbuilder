@@ -134,6 +134,11 @@ describe('the payment webhook', () => {
         // For the export assertion at the foot of this describe. Bearer only,
         // never a query string — §17.
         BACKUP_TOKEN: 'export-token-for-payments-test',
+        // The checkout link. A product id with a character that MUST be
+        // encoded, so the test can tell an encoded id from an interpolated
+        // one — a plain `pdt_123` would pass either way.
+        DODO_PRODUCT_ID: 'pdt test/1',
+        APP_URL: 'https://checkout-test.example',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -447,6 +452,57 @@ describe('the payment webhook', () => {
     assert.equal(pull.text.includes('"billing"'), false);
   });
 
+  /* ------------------------------------------------------------------ *
+   * The checkout link
+   * ------------------------------------------------------------------ */
+
+  test('the checkout link carries this workspace, and nothing else', async () => {
+    const { checkout } = await billingNow();
+    const u = new URL(checkout);
+    const q = u.searchParams;
+
+    assert.equal(u.origin, 'https://checkout.dodopayments.com');
+    // Encoded, not interpolated. The id holds a space and a slash, so an
+    // unencoded one would change the PATH rather than merely look wrong.
+    assert.equal(u.pathname, '/buy/pdt%20test%2F1');
+
+    assert.equal(q.get('metadata_wsId'), wsId);
+
+    /*
+     * No hash on the return URL, and this is the assertion that matters most
+     * (§70): the provider appends its query to whatever it is given, so a
+     * redirect_url carrying a fragment produces a URL whose query sits inside
+     * the hash — where location.search is empty and the client cannot read or
+     * strip it. Measured before it was written, not assumed.
+     */
+    const back = new URL(q.get('redirect_url'));
+    assert.equal(back.hash, '', 'redirect_url carries a hash, so the return is unreadable');
+    assert.equal(back.href, 'https://checkout-test.example/app');
+
+    /*
+     * No customer prefill. The provider accepts email, name and an address,
+     * and the signed-in address is right there — but a billing address is not
+     * necessarily a sign-in address, and this is the screen where guessing
+     * wrong costs money (§45). Asserted so "helpfully" adding one is a
+     * decision somebody takes again rather than a line that slips in.
+     */
+    for (const guessed of ['email', 'fullName', 'firstName', 'lastName', 'country', 'addressLine', 'city', 'zipCode']) {
+      assert.equal(q.get(guessed), null, `the checkout link guessed ${guessed}`);
+    }
+  });
+
+  test('the workspace on the link is the session, never a parameter', async () => {
+    /*
+     * §5's rule at the one place it decides who a payment is credited to. The
+     * viewer is in the SAME org, so a handler reading a query parameter would
+     * be caught by a cross-org test — this one catches it by asking as a
+     * different person in the same workspace and by trying to say otherwise.
+     */
+    const out = await req(`/api/org/billing?wsId=somebody-elses&orgId=somebody-elses`, { cookies: owner });
+    assert.equal(out.status, 200);
+    assert.equal(new URL(out.json.checkout).searchParams.get('metadata_wsId'), wsId);
+  });
+
   test('a viewer cannot read the billing status', async () => {
     const out = await req('/api/org/billing', { cookies: viewer });
     assert.equal(out.status, 403);
@@ -537,6 +593,11 @@ describe('a deployment with no DODO_WEBHOOK_SECRET', () => {
         SESSION_SECRET: 'payments-off-secret',
         NODE_ENV: 'test',
         DODO_WEBHOOK_SECRET: '',
+        // Nothing to sell and nothing able to confirm a sale — the two
+        // absences the card must not collapse into one another.
+        DODO_PRODUCT_ID: '',
+        ALLOW_DEV_LOGIN: '1',
+        SIGNUP_MODE: 'open',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -571,5 +632,34 @@ describe('a deployment with no DODO_WEBHOOK_SECRET', () => {
     });
     assert.equal(res.status, 503);
     assert.ok(serverLog.includes('DODO_WEBHOOK_SECRET'), 'the operator problem was not logged');
+  });
+
+  test('with nothing to sell there is no checkout link, and that is not the same as not configured', async () => {
+    /*
+     * Two absences that read identically if either is dropped, which is why
+     * the route reports them separately (§70, §39's digest card):
+     *
+     *   enabled: false   nothing could RECORD a payment — an operator fault,
+     *                    and the one state where subscribing would take money
+     *                    and leave no trace
+     *   checkout: null   nothing to SELL yet — correct, and where this
+     *                    deployment actually is until a price is decided
+     */
+    const cookies = jar();
+    const res = await fetch(`${BASE2}/auth/dev`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'pay-off-owner@team.test' }),
+      signal: AbortSignal.timeout(20000),
+    });
+    cookies.absorb(res);
+
+    const out = await fetch(`${BASE2}/api/org/billing`, {
+      headers: { Cookie: cookies.header() },
+      signal: AbortSignal.timeout(20000),
+    });
+    assert.equal(out.status, 200);
+    const body = await out.json();
+    assert.deepEqual(body, { enabled: false, checkout: null, billing: null });
   });
 });

@@ -147,6 +147,81 @@
    * still the runtime's, with the two values it omits added back.
    */
   /*
+   * Per-tab, and it exists because of a gap nothing else can cover.
+   *
+   * A customer returns from checkout a second or two after paying, and the
+   * webhook that records it is still in flight — so the server honestly has
+   * nothing, and a card reading "no subscription" to somebody who has just
+   * paid is the worst thing on this screen. The return URL is NOT proof of
+   * payment (§52's `unconfirmed`, §18's "a resolved fetch is not delivery"):
+   * only the signed webhook is, which is the whole of §70.
+   *
+   * sessionStorage rather than a poll, and the reason is the reload: somebody
+   * who refreshes while waiting keeps the explanation, where a timer would
+   * have died with the page. Per-tab and transient, so it cannot outlive the
+   * question it answers. Cleared the moment the server has a record.
+   */
+  const CHECKOUT_PENDING = 'crmb:checkoutPending';
+  const checkoutPending = {
+    get() { try { return sessionStorage.getItem(CHECKOUT_PENDING) || ''; } catch { return ''; } },
+    set(id) { try { sessionStorage.setItem(CHECKOUT_PENDING, id); } catch { /* private mode */ } },
+    clear() { try { sessionStorage.removeItem(CHECKOUT_PENDING); } catch { /* private mode */ } },
+  };
+
+  /*
+   * What the subscription is doing RIGHT NOW, and it always says something.
+   *
+   * §39's digestStatusHTML is the precedent and the reason: a card whose only
+   * line needs an event to have happened says nothing in exactly the state
+   * somebody is looking at it. Four states here and none of them may collapse
+   * into another — two are absences, and one of those is an operator fault
+   * that looks identical to "nobody has paid" from the outside (§70).
+   */
+  function billingStatusHTML(state) {
+    const line = (text) => `<p class="settings-hint">${text}</p>`;
+    /*
+     * The deployment cannot receive a confirmation at all, so a payment made
+     * now would be taken and never recorded. An operator problem, said out
+     * loud rather than shown as "not subscribed" — which is what it would
+     * otherwise look like, for ever, to everybody.
+     */
+    if (!state.enabled) {
+      return line('<strong>Payments are not finished being set up here.</strong> Nothing would be recorded against your workspace yet, so this is not the moment to subscribe.');
+    }
+    const b = state.billing;
+    if (!b) {
+      // Paid seconds ago and the webhook has not landed. The only state on
+      // this card the server cannot distinguish from the one below it.
+      if (checkoutPending.get()) {
+        return line('<strong>Confirming your payment.</strong> This usually takes a few seconds. Reload this page and it will show once your provider has told us — nothing is lost if you close the tab.');
+      }
+      return line('No subscription on this workspace yet.');
+    }
+    const when = (ms) => (ms ? esc(fmtDate(dayISOFromMs(ms))) : '');
+    const rows = [
+      ['Status', esc(b.status || b.subscriptionEvent || 'unknown')],
+      b.nextBillingAt ? ['Next payment', when(b.nextBillingAt)] : null,
+      b.pastDueEndsAt ? ['Access until', when(b.pastDueEndsAt)] : null,
+      b.updatedAt ? ['Last updated', esc(fmtWhen(b.updatedAt))] : null,
+    ].filter(Boolean);
+    return `<div class="record-read">${rows.map(([k, v]) => `
+      <div class="read-row"><div class="read-label">${k}</div><div class="read-value">${v}</div></div>`).join('')}</div>`;
+  }
+
+  /*
+   * A stored millisecond stamp back to the day coordinate fmtDate wants.
+   *
+   * fmtWhen would be the shorter call and is WRONG for a date the provider
+   * stated as a day: it runs toLocaleDateString on the instant, so a UTC
+   * midnight renders as the previous day for everyone west of Greenwich —
+   * §50's trap, in the one place this card says a date out loud.
+   */
+  function dayISOFromMs(ms) {
+    const d = new Date(Number(ms));
+    return Number.isFinite(d.getTime()) ? d.toISOString().slice(0, 10) : '';
+  }
+
+  /*
    * What the digest is doing RIGHT NOW, and it always says something.
    *
    * Found by running the trial rather than the tests. With the default 09:00
@@ -4051,9 +4126,25 @@
           const mailState = canSendMail()
             ? await Cloud.org.getMail().catch(() => null)
             : null;
+          /*
+           * Owner-only, like the webhook — a member's request is a 403 and is
+           * swallowed the same way. Kept as the WHOLE answer rather than
+           * `.billing`, because the card has to tell three states apart and
+           * two of them are absences: no product configured, nothing paid yet,
+           * and a deployment that cannot receive webhooks at all (§70).
+           */
+          const billingState = canEditSettings()
+            ? await Cloud.org.billing().catch(() => null)
+            : null;
+          // The webhook has landed, so the "confirming" line has done its job
+          // and must stop being shown. Cleared here rather than on a timer:
+          // what ends the wait is the server having a record, which is the
+          // only thing that actually answers the question it asks.
+          if (billingState && billingState.billing) checkoutPending.clear();
           org = {
             hook: (wh && wh.hook) || null,
             mail: (mailState && mailState.mail) || null,
+            billing: billingState,
             reminders: (wh && wh.reminders) || null,
             reminded: (wh && wh.reminded) || null,
             ...res.org,
@@ -4365,6 +4456,40 @@
           <p class="settings-hint">Your provider must have verified that address, or it will refuse to send from it. We work out which service the key belongs to from the key itself.</p>
           <button class="btn btn-primary" id="mail-save">Save email settings</button>
           <p class="settings-hint" style="margin:12px 0 0">The key stays on the server and is never sent to a browser, never shared with your team, and never included in a backup. It is your account with your provider — reminders leave from your address, on your billing, and we never see who you sent one to.</p>
+        </div>` : ''}
+        ${authed && org && org.billing && (org.billing.checkout || org.billing.billing) ? `
+        <!--
+          Subscription.
+
+          Absent entirely on a deployment with nothing to sell — §36's rule 1,
+          and it is why the condition asks for a checkout link OR an existing
+          record rather than for the enabled flag. A workspace that already
+          subscribed must still see its state if the product id is later unset,
+          and a deployment that never sells anything shows no card at all
+          rather than an empty one explaining itself.
+
+          (No backticks in this comment: it sits inside a template literal, so
+          one would close the string — §60's trap, which cost a syntax error
+          pointing hundreds of lines away.)
+
+          NO PRICE IS WRITTEN HERE. The provider's product carries it and the
+          checkout page states it; a figure in this file would be a second copy
+          of the number actually being charged (§29), and the one kind of drift
+          a customer spots instantly.
+        -->
+        <div class="card">
+          <div class="card-head"><h2>Subscription</h2></div>
+          ${billingStatusHTML(org.billing)}
+          ${org.billing.checkout ? `
+            <div class="btn-row">
+              <!-- external-link, not a card glyph: LUCIDE here has no
+                   credit-card icon, and an unknown name renders a BOX that
+                   looks deliberate (§53). It is also the more honest one — this
+                   hands off to somebody else's site, which is what §53 chose
+                   it for on the mail draft. -->
+              <a class="btn btn-primary" href="${esc(org.billing.checkout)}" id="checkout-go" rel="noopener">${icon('external-link', 15)} ${org.billing.billing ? 'Manage payment' : 'Subscribe'}</a>
+            </div>
+            <p class="settings-hint" style="margin:12px 0 0">Payment is handled by Dodo Payments, who are the seller of record — your card details never reach us. The price is on their page.</p>` : ''}
         </div>` : ''}
         <div class="card">
           <div class="card-head"><h2>Backup & restore</h2></div>
@@ -6808,6 +6933,50 @@
     history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : '') + location.hash);
   }
 
+  /*
+   * Coming back from the provider's checkout.
+   *
+   * It appends `?payment_id=…&status=…&email=…` to the return URL, and that
+   * third one is why this strips rather than merely reads: a CUSTOMER'S EMAIL
+   * ADDRESS in the address bar goes into browser history and into the Referer
+   * of anything the page loads next. §17 refuses a correct `?token=` for
+   * exactly that reason, and the fact that this one is the person's own
+   * address makes it less bad rather than fine. captureInvite and
+   * captureBetaCode do the same thing to a credential, the same way.
+   *
+   * IT IS NOT PROOF OF PAYMENT, and nothing here treats it as one. A query
+   * parameter is something anybody can type; only the signed webhook records
+   * anything (§70). So this sets a per-tab note that a payment is being
+   * confirmed and says so, and the card still reports what the SERVER knows.
+   *
+   * It navigates to Settings itself because `redirect_url` cannot carry a
+   * hash — measured, §70: the provider appends its query to whatever it is
+   * given, and a query that lands after a fragment is unreadable by
+   * location.search. So the return is to the bare app and the hash is set
+   * here, which is also the only place that knows where the card lives.
+   */
+  function captureCheckoutReturn() {
+    const params = new URLSearchParams(location.search);
+    const paymentId = params.get('payment_id');
+    if (!paymentId) return;
+    const status = String(params.get('status') || '').toLowerCase();
+
+    for (const key of ['payment_id', 'status', 'email', 'subscription_id', 'license_key']) params.delete(key);
+    const qs = params.toString();
+    history.replaceState(null, '', `${location.pathname}${qs ? `?${qs}` : ''}#/settings`);
+
+    if (status === 'succeeded' || status === 'active') {
+      checkoutPending.set(paymentId);
+      toast('Payment received — confirming it now');
+    } else {
+      // Cancelled, failed, or a status we have never seen. Not an error on our
+      // side and not something to dress up: the provider has the detail, and
+      // the card below says what this workspace actually has.
+      checkoutPending.clear();
+      toast('Checkout closed — nothing was charged');
+    }
+  }
+
   async function redeemPendingInvite() {
     let code = null;
     try { code = localStorage.getItem(INVITE_KEY); } catch { /* none */ }
@@ -6976,6 +7145,10 @@
 
     captureInvite();
     captureBetaCode();
+    // After the other two, and before the auth_error read below, because it
+    // sets the hash: a later reader of location.search is unaffected, and
+    // anything that set a hash first would have it overwritten.
+    captureCheckoutReturn();
     const params = new URLSearchParams(location.search);
     const authError = params.get('auth_error');
     if (authError) {

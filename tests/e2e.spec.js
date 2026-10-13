@@ -5754,3 +5754,178 @@ test.describe('grouping by week and month', () => {
     expect(stored.rowKeys).toEqual([]);
   });
 });
+
+/* ---------------------------------------------------------------------- *
+ * The checkout link, and coming back from it
+ * ---------------------------------------------------------------------- */
+
+test.describe('subscribing', () => {
+  /*
+   * The card itself is INJECTED, per §20's precedent and §38's: a browser test
+   * cannot hold a product id or reach the provider, and playwright.config.js
+   * sets neither DODO_WEBHOOK_SECRET nor DODO_PRODUCT_ID — so the real route
+   * correctly answers `{enabled:false, checkout:null, billing:null}` and the
+   * card is correctly absent. Changing that config would move every test in
+   * this file (§9 names it by name).
+   *
+   * The RETURN flow below needs no interception at all and is the better test
+   * for it: it drives the real capture code against a real URL.
+   */
+  /*
+   * Pinned, and the pin is the test for the date below.
+   *
+   * The card formats a stored millisecond stamp, and the provider states its
+   * next-billing date as a DAY. Read back with local getters, a UTC midnight
+   * renders as the previous day for everyone west of Greenwich (§50) — and in
+   * this UTC container both readings agree, so an unpinned assertion passes on
+   * the bug. §55 and §68 record the same vacuity, twice.
+   */
+  test.use({ locale: 'en-GB', timezoneId: 'America/New_York' });
+
+  const CHECKOUT = 'https://checkout.dodopayments.com/buy/pdt_e2e?redirect_url=https%3A%2F%2Fexample.test%2Fapp&metadata_wsId=ws_e2e';
+
+  async function withBilling(page, body) {
+    await page.route('**/api/org/billing*', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+  }
+
+  test('a workspace with nothing recorded is offered checkout, and the price is not quoted here', async ({ page }) => {
+    await onboard(page, { name: 'Paying Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('checkout-new'));
+    await withBilling(page, { enabled: true, checkout: CHECKOUT, billing: null });
+
+    await page.goto('/app#/settings');
+    const card = page.locator('.card:has(h2:text-is("Subscription"))');
+    await expect(card).toBeVisible({ timeout: 20000 });
+    await expect(card).toContainText(/No subscription on this workspace yet/i);
+
+    const go = card.locator('#checkout-go');
+    await expect(go).toHaveText(/Subscribe/);
+    await expect(go).toHaveAttribute('href', CHECKOUT);
+
+    /*
+     * No price anywhere on the card. The provider's product carries it, so a
+     * figure here would be a second copy of the number being charged (§29) —
+     * and this assertion is what makes that a decision somebody has to take
+     * again rather than a helpful line that slips in.
+     */
+    await expect(card).not.toContainText(/[£$€]\s?\d/);
+  });
+
+  test('an existing subscription is shown as values, with its dates', async ({ page }) => {
+    await onboard(page, { name: 'Subscribed Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('checkout-live'));
+    await withBilling(page, {
+      enabled: true,
+      checkout: CHECKOUT,
+      billing: {
+        provider: 'dodo',
+        subscriptionId: 'sub_e2e_1',
+        status: 'active',
+        subscriptionEvent: 'subscription.active',
+        nextBillingAt: Date.UTC(2026, 10, 13),
+        pastDueEndsAt: null,
+        paymentEvent: 'payment.succeeded',
+        paymentStatus: 'succeeded',
+        updatedAt: Date.UTC(2026, 9, 13),
+      },
+    });
+
+    /*
+     * Seeded as though this person has JUST come back from checkout, which is
+     * what makes the clear observable. Without it the "confirming" note has
+     * nothing to clear, so removing the clear changes nothing and the mutation
+     * passes — found exactly that way (§9), and the defect it would ship is
+     * two contradicting lines on one card: a live subscription with
+     * "confirming your payment" sitting above it, per tab, for ever.
+     */
+    await page.goto('/app#/');
+    await page.evaluate(() => sessionStorage.setItem('crmb:checkoutPending', 'pay_e2e_seeded'));
+
+    await page.goto('/app#/settings');
+    const card = page.locator('.card:has(h2:text-is("Subscription"))');
+    await expect(card).toBeVisible({ timeout: 20000 });
+    await expect(card).not.toContainText(/Confirming your payment/i);
+    await expect.poll(() => page.evaluate(() => sessionStorage.getItem('crmb:checkoutPending')), { timeout: 10000 })
+      .toBe(null);
+    // A read view, not a filled-in form — §36 rule 2, like the mail card.
+    await expect(card.locator('.read-row', { hasText: 'Status' })).toContainText('active');
+    // The exact day, not merely the year: nextBillingAt is UTC midnight on
+    // 13 November, and a local-getter read in New York renders the 12th.
+    await expect(card.locator('.read-row', { hasText: 'Next payment' })).toContainText('13 Nov 2026');
+    await expect(card.locator('#checkout-go')).toHaveText(/Manage payment/);
+    // Nothing on the card may carry a customer identity: the server does not
+    // store one (§70), and this is the screen where one would show up.
+    await expect(card).not.toContainText('@');
+  });
+
+  test('a deployment that cannot record a payment says so, rather than reading as unsubscribed', async ({ page }) => {
+    /*
+     * The pair §70 refuses to collapse. With no webhook secret a payment would
+     * be taken and never recorded, which is an operator fault — and from the
+     * outside it looks exactly like nobody having subscribed. The card has to
+     * name it, and must NOT offer checkout.
+     */
+    await onboard(page, { name: 'Halfset Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('checkout-off'));
+    await withBilling(page, {
+      enabled: false,
+      checkout: CHECKOUT,
+      billing: null,
+    });
+
+    await page.goto('/app#/settings');
+    const card = page.locator('.card:has(h2:text-is("Subscription"))');
+    await expect(card).toBeVisible({ timeout: 20000 });
+    await expect(card).toContainText(/not finished being set up/i);
+    await expect(card).not.toContainText(/No subscription on this workspace yet/i);
+  });
+
+  test('a payment return strips the query, including the email, and lands on Settings', async ({ page }) => {
+    /*
+     * REAL, with nothing intercepted — this is the capture code against the
+     * URL shape the provider actually produces.
+     *
+     * The email is the half that matters. The provider appends
+     * `&email=<customer>` to the return URL, and an address left in the bar
+     * goes into browser history and into the Referer of whatever the page
+     * loads next — §17 refuses a correct `?token=` for that reason.
+     */
+    await onboard(page, { name: 'Returning Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('checkout-return'));
+
+    await page.goto('/app?payment_id=pay_e2e_1&status=succeeded&email=payer%40example.com');
+    await expect(page.locator('#sidebar')).toBeVisible({ timeout: 20000 });
+
+    await expect.poll(() => page.evaluate(() => location.href), { timeout: 10000 })
+      .toMatch(/\/app#\/settings$/);
+    const href = await page.evaluate(() => location.href);
+    expect(href).not.toContain('payer%40example.com');
+    expect(href).not.toContain('payer@example.com');
+    expect(href).not.toContain('pay_e2e_1');
+    expect(await page.evaluate(() => location.search)).toBe('');
+
+    /*
+     * And the note it leaves behind, which exists because the return is NOT
+     * proof of payment (§70): the webhook is, and it is still in flight. A
+     * card reading "no subscription" to somebody who has just paid is the
+     * worst thing this screen could say.
+     */
+    expect(await page.evaluate(() => sessionStorage.getItem('crmb:checkoutPending'))).toBe('pay_e2e_1');
+  });
+
+  test('a cancelled checkout says nothing was charged, and leaves no note', async ({ page }) => {
+    await onboard(page, { name: 'Cancelled Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('checkout-cancel'));
+
+    await page.goto('/app?payment_id=pay_e2e_2&status=cancelled');
+    await expect(page.locator('#sidebar')).toBeVisible({ timeout: 20000 });
+
+    await expect.poll(() => page.evaluate(() => location.href), { timeout: 10000 })
+      .toMatch(/\/app#\/settings$/);
+    // No pending note: there is nothing to confirm, so the card must fall back
+    // to what the server knows rather than claiming a payment is on its way.
+    expect(await page.evaluate(() => sessionStorage.getItem('crmb:checkoutPending'))).toBe(null);
+  });
+});

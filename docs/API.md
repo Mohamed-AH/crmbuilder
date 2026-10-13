@@ -779,10 +779,41 @@ carry **separate clocks**, so a payment cannot decide a subscription's status.
 
 ### `GET /api/org/billing`
 
-Owner only, 403 otherwise. Returns
-`{ enabled, billing }` — `enabled` says whether the deployment has a webhook
-secret at all, which is what distinguishes *nobody has paid* from *this
-deployment is not wired up*. `billing` is `null` until an event lands.
+Owner only, 403 otherwise. Returns `{ enabled, checkout, billing }`, and the
+three are deliberately separate because two of them are absences that read
+identically if either is dropped:
+
+| | |
+|---|---|
+| `enabled` | the deployment has a webhook secret, so a payment could be **recorded**. False means a payment taken now would leave no trace — an operator fault, not an unsubscribed workspace |
+| `checkout` | the hosted payment link, or `null` when no product is configured: nothing to **sell** yet |
+| `billing` | `null` until a webhook event lands |
+
+The checkout link is a static payment link,
+`https://checkout.dodopayments.com/buy/{product_id}`, carrying exactly two
+parameters:
+
+- **`metadata_wsId`** — the session's workspace, never a parameter (§5). It
+  comes back inside the signed webhook payload, so it is as trustworthy as the
+  signature.
+- **`redirect_url`** — the bare app, **with no fragment**. The provider
+  *appends* `?payment_id=…&status=…&email=…` to whatever it is given, so a
+  redirect_url carrying a hash produces a URL whose query sits inside the
+  fragment, where `location.search` is empty and the client can neither read
+  nor strip it. Measured, not assumed.
+
+No customer fields are prefilled, deliberately: a billing address is not
+necessarily a sign-in address, and this is the one screen where guessing wrong
+costs money.
+
+**The price is not in this repository.** The provider's product carries it and
+the checkout page states it — a figure here would be a second copy of the
+number actually being charged.
+
+A static link rather than the Checkout Sessions API or an overlay: an overlay
+means loading the provider's JavaScript, which `script-src 'self'` refuses
+(`CLAUDE.md` §30 Phase 4), so the inline and overlay integrations are ruled out
+by a constraint rather than a preference.
 
 The stored record carries **no customer identity** — no email, no name, no
 address — because the meta doc is in every nightly backup artifact. It is

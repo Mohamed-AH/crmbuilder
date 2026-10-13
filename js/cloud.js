@@ -348,6 +348,16 @@ const Cloud = (() => {
       getMail: () => api('/api/org/mail', {}, TIMEOUT.admin),
       setMail: (key, from) => api('/api/org/mail', { method: 'PUT', body: JSON.stringify({ key, from }) }, TIMEOUT.admin),
       /*
+       * Subscription state and the checkout link, in one call — the card needs
+       * them together and they come from one place.
+       *
+       * Owner-only; a member gets a 403, which is expected on this screen and
+       * not an error worth surfacing. Nothing here is a credential: the
+       * checkout URL is a page a customer is meant to visit, and the billing
+       * record carries ids and statuses and no customer identity (§70).
+       */
+      billing: () => api('/api/org/billing', {}, TIMEOUT.admin),
+      /*
        * TIMEOUT.admin, for setHook's reason: the server opens an outbound
        * connection with its own 10s budget, and a client that gave up first
        * would report a failure the server does not agree with — which here
