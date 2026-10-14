@@ -5882,6 +5882,51 @@ test.describe('subscribing', () => {
     await expect(card).not.toContainText(/No subscription on this workspace yet/i);
   });
 
+  test('a declined first payment says the card was refused, never "unknown"', async ({ page }) => {
+    /*
+     * The fifth card state, found on a real test-mode run rather than designed
+     * (§71 designed four).
+     *
+     * A declined first payment emits payment.failed beside subscription.failed,
+     * and a workspace subscribed to only the first — which the runbook's own
+     * event list caused — stores a payment outcome with no `status` and no
+     * `subscriptionEvent`. The row read `Status: unknown`, so the owner could
+     * not tell a declined card from a broken deployment while the true answer
+     * sat unread in `paymentEvent`.
+     *
+     * Asserted on BOTH halves, because they fail differently: the word must be
+     * gone, and the reason must be present. Checking only for the absence of
+     * "unknown" would pass on a card that said nothing at all.
+     */
+    await onboard(page, { name: 'Declined Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('checkout-declined'));
+    await withBilling(page, {
+      enabled: true,
+      checkout: CHECKOUT,
+      billing: {
+        provider: 'dodo',
+        subscriptionId: null,
+        status: null,
+        subscriptionEvent: null,
+        nextBillingAt: null,
+        pastDueEndsAt: null,
+        paymentEvent: 'payment.failed',
+        paymentStatus: 'failed',
+        updatedAt: Date.now(),
+      },
+    });
+
+    await page.goto('/app#/settings');
+    const card = page.locator('.card:has(h2:text-is("Subscription"))');
+    await expect(card).toBeVisible({ timeout: 20000 });
+    await expect(card).toContainText(/did not go through/i);
+    await expect(card).toContainText(/nothing has been charged/i);
+    await expect(card).not.toContainText(/unknown/i);
+    // And it must not read as a live subscription either — there is no status
+    // row to show, so the labelled table must be absent entirely.
+    await expect(card.locator('.read-label')).toHaveCount(0);
+  });
+
   test('a payment return strips the query, including the email, and lands on Settings', async ({ page }) => {
     /*
      * REAL, with nothing intercepted — this is the capture code against the

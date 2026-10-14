@@ -599,11 +599,33 @@ not a guess. The route answers 2xx for anything it does not handle, so nothing
 breaks either way; the reason to be explicit is the log. The ones that matter:
 
 ```
-subscription.active      subscription.renewed     subscription.past_due
-subscription.on_hold     subscription.cancelled   subscription.expired
-subscription.plan_changed
+subscription.active      subscription.renewed     subscription.updated
+subscription.plan_changed subscription.past_due   subscription.on_hold
+subscription.paused      subscription.unpaused    subscription.cancelled
+subscription.expired     subscription.failed
 payment.succeeded        payment.failed
 ```
+
+**This list was WRONG the first time and the omission is instructive.** It
+named seven subscription events where the server handles eleven, leaving out
+`updated`, `paused`, `unpaused` and — the expensive one — **`failed`**. A real
+test-mode decline then emitted `payment.failed`, `subscription.failed` and
+`subscription.updated`; only the first was subscribed, so the workspace stored
+a payment outcome with no subscription state behind it and the Subscription
+card read **"Status: unknown"**. The provider's dashboard showed *3 events
+logged, 1 delivery succeeded*, which is the pair of numbers that names it.
+
+**The authority is the code, not this list** — keep them in step by reading
+`BILLING_SUBSCRIPTION_EVENTS` and `BILLING_PAYMENT_EVENTS` in `server.js`:
+
+```sh
+grep -A 14 'const BILLING_SUBSCRIPTION_EVENTS' server.js | grep -oE "'[a-z.]+'"
+```
+
+Selecting **more** than this costs nothing — every verified event the server
+does not handle is acknowledged with a 2xx and logged (§70) — so if their UI
+offers a select-all for `subscription.*` and `payment.*`, take it. Selecting
+**fewer** is what produces a card that is confidently wrong.
 
 **6 · Copy the signing secret.**
 On the endpoint's **Overview** tab, `whsec_…`. **It is a bearer credential** —

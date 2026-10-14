@@ -198,8 +198,36 @@
       return line('No subscription on this workspace yet.');
     }
     const when = (ms) => (ms ? esc(fmtDate(dayISOFromMs(ms))) : '');
+    /*
+     * A record carrying only a PAYMENT event and no subscription state — the
+     * fifth state, and §71 designed four.
+     *
+     * It is reached by the ordinary first-payment decline: the provider emits
+     * payment.failed beside subscription.failed, and a workspace subscribed to
+     * only the first stores a payment outcome with no `status` and no
+     * `subscriptionEvent` behind it. The row then read `Status: unknown`,
+     * which is this file's standing failure shape on the one card whose job is
+     * to say where the money stands — the owner cannot tell "your card was
+     * declined" from "this is broken", and the true answer was sitting unread
+     * in `paymentEvent`.
+     *
+     * So say what the payment did. NEVER the word "unknown": a card that
+     * admits to knowing nothing, while holding the answer, is worse than one
+     * that says nothing at all.
+     */
+    if (!b.status && !b.subscriptionEvent) {
+      const failed = b.paymentEvent === 'payment.failed';
+      const note = failed
+        ? '<strong>Your last payment attempt did not go through.</strong> Nothing has been charged and no subscription has started. Your provider will say why — try again with another card when you are ready.'
+        : '<strong>A payment was recorded, and your subscription has not been confirmed yet.</strong> This usually resolves on its own within a few minutes.';
+      const seen = b.updatedAt ? ` <span class="settings-hint">Last heard from your provider ${esc(fmtWhen(b.updatedAt))}.</span>` : '';
+      return line(note + seen);
+    }
     const rows = [
-      ['Status', esc(b.status || b.subscriptionEvent || 'unknown')],
+      // `status` is what the provider said and `subscriptionEvent` is what it
+      // called the event; the branch above guarantees at least one is present,
+      // so no placeholder is needed and none should be reintroduced.
+      ['Status', esc(b.status || b.subscriptionEvent)],
       b.nextBillingAt ? ['Next payment', when(b.nextBillingAt)] : null,
       b.pastDueEndsAt ? ['Access until', when(b.pastDueEndsAt)] : null,
       b.updatedAt ? ['Last updated', esc(fmtWhen(b.updatedAt))] : null,
