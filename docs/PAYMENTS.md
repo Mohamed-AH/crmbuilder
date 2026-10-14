@@ -1151,6 +1151,65 @@ Three more facts read off the **subscription** body, each with a consequence:
 - **`cancel_at_next_billing_date: false`, `scheduled_change: null`** — which
   is what makes the cancellation step below need a check before the replay.
 
+### The PAUSE body: all reads land, and two findings that are not reads
+
+A real `subscription.paused` has been read. Every read lands again — the type
+is in the handled set, `status: "paused"`, `subscription_id` present,
+`metadata.wsId` rides on a pause as it does on a payment, the envelope
+`timestamp` parses, and `past_due_ends_at` is **present-and-null for the third
+time**, which is now a pattern rather than a single observation.
+
+**`paused_at` is the first new field any real payload has offered that is
+worth taking**, and the reason is the defect below rather than completeness.
+
+**The card contradicts itself on a paused subscription.**
+`next_billing_date` survives the pause **unchanged** — still
+`2026-11-14T03:07:44` on a subscription paused at `09:33:09` — and
+`billingStatusHTML` renders that row whenever it is truthy. So the card reads:
+
+```
+Status        paused
+Next payment  14 Nov 2026
+```
+
+A paused subscription has no next payment. Two adjacent rows, one contradicting
+the other, and the wrong one looks like a fact — §33's shape on the one card
+whose job is to say where the money stands. **The fix is `paused_at`**: store
+it, say *Paused since 14 Oct*, and suppress the next-payment row while a
+subscription is paused. Not done in the same sitting as the matrix, because
+`js/app.js` means a `CACHE_VERSION` bump and a mirror sync, which changes the
+deployment under a half-finished test run.
+
+### TWO live subscriptions on one workspace, and the card can only show one
+
+Three subscription ids now exist carrying the same
+`metadata.wsId: 916160ba-5a85-44e7-b190-08bfb4f19a11`:
+
+| id | Created | Priced | State |
+|---|---|---|---|
+| `sub_0NpgzTEZbXlEAgR4zJU6P` | — | INR | failed, never activated |
+| `sub_0Nph1H0sBfHPI2Qw3Gi4y` | 03:07:23 | **USD** 6500, US billing address | paused 09:33 |
+| `sub_0Nph212BlsXmVQEUgSYxV` | ~03:12 | INR charged / USD settled | **still active**, next 14 Nov |
+
+The US card and the India card each created a subscription and **both went
+live**. Nothing is wrong with the code: `applyBillingEvent` resolves by clock
+exactly as §70 designed, so the card reflects *the most recent event* rather
+than *the workspace's billing*. It currently says `paused` while a renewal is
+scheduled on a subscription it is not describing.
+
+**This is §71's duplicate-subscription hazard, arrived at legitimately.** The
+Settings card hands an existing subscriber the same checkout URL labelled
+*Manage payment* (§6, *Not built*), so a customer can reach this state by
+pressing the only control on the card. Here it came from testing two regions,
+which is the same end state by a different road — and it proves the hazard is
+reachable rather than theoretical.
+
+**It also confounds the cancel-then-replay step.** If the surviving
+subscription emits anything mid-test, that event is genuinely newer, it
+legitimately overwrites the cancelled state, and it is indistinguishable from
+the ordering guard failing. §34's shape. **Cancel down to one subscription
+before running step 15/16.**
+
 ### The eleven subscription events, and which can be produced at all
 
 The route handles eleven. Test mode can produce six of them on demand; the
@@ -1163,7 +1222,8 @@ other five need a billing cycle to pass or a dunning sequence to run out.
 | `subscription.updated` | arrives alongside the others | ✅ **done** |
 | `subscription.renewed` | arrived on a *first* payment, which was not expected | ✅ **done** — see below |
 | `subscription.cancelled` | **Dodo's** dashboard → cancel the subscription | ☐ **§7 step 15 — check WHICH cancel it did** |
-| `subscription.paused` / `.unpaused` | **Dodo's** dashboard → pause, then resume | ☐ **§7 step 14a** |
+| `subscription.paused` | **Dodo's** dashboard → Sales → Subscriptions → Pause | ✅ **done** — every read lands; see above |
+| `subscription.unpaused` | the same screen → Resume | ☐ **§7 step 14a** |
 | `subscription.plan_changed` | needs a **second product** and a plan change | ☐ — see below |
 | `subscription.past_due` | a renewal that fails — the US-only card, §7 step 14 | ☐ **probably unreachable on INR** |
 | `subscription.on_hold` | dunning exhausting its retries after `past_due` | ☐ **days, not minutes** |
@@ -1281,16 +1341,27 @@ remainder is one sitting:
    Entirely client-side: no `abandoned_checkout` event is involved or needed.
 3. **Pause, then resume** the live test subscription (§7 step 14a) — from
    **Dodo's** dashboard. Our app has no control for it, and §6 lists the
-   portal link under *Not built*. Two events, two card states.
-4. **Cancel it** (§7 step 15) — **then read the log to see which cancel it
+   portal link under *Not built*. **Pause is done** and every read landed; it
+   also found the next-payment row contradicting a paused status. Resume
+   outstanding.
+4. **Cancel down to ONE subscription first.** Two are live on one workspace —
+   see above. The surviving one emitting anything mid-test is newer, so it
+   legitimately overwrites a cancellation and reads as the ordering guard
+   failing.
+5. **Cancel it** (§7 step 15) — **then read the log to see which cancel it
    was** — and only then **replay an earlier `active`** (§7 step 16). That pair
    is the one that costs money if the clock comparison is wrong, and it is the
    last thing the dashboard can prove that the suite proves only synthetically.
-5. **Decide `past_due`** — a USD-priced test, or accept production as the first
+6. **Decide `past_due`** — a USD-priced test, or accept production as the first
    sighting and watch the *Access until* row. A short-period second product
    closes `plan_changed` and `expired` with it.
-6. **Cancel every test subscription** (§7 step 17), because they keep renewing
+7. **Cancel every test subscription** (§7 step 17), because they keep renewing
    and keep delivering for weeks.
+8. **Then fix the two card defects this sitting found** — the next-payment row
+   on a paused subscription, and the *Manage payment* button handing an
+   existing subscriber a live checkout URL. Both are `js/app.js`, so both want
+   a `CACHE_VERSION` bump and a mirror sync, which is why they wait until no
+   test is running against the deployed build.
 
 Then §7's *before live mode* list, which is mostly not code.
 
