@@ -707,16 +707,42 @@ is the signature, and a 200 is the only way it can pass.
 
 ### Pay end to end
 
-**10 · Settings → Subscribe**, and pay with a test card. CVV `123` on all of
-them, any address:
+**10 · Settings → Subscribe**, and pay with a test card. CVV `123` and expiry
+`06/32` on all of them, any address.
+
+**Read the currency on the checkout page BEFORE picking a card, and take the
+card from the same region.** The provider offers a different set of payment
+methods per currency — an INR checkout offers India-issued cards and UPI, and
+a US card is simply not among them. The refusal is
+*"This payment method can't be used here. Please use a different payment
+method."*, which reads as a declined card rather than as the wrong card, and
+their own FAQ records the same mismatch surfacing as a 500 in test mode. The
+first attempt here was `4242…` on a `₹` checkout and cost a failed payment plus
+the time to work out why.
+
+An unpriced-currency product resolves to the **buyer's** region, so if you are
+in India you get `₹` and these are the four that work:
 
 | | |
 |---|---|
-| `4242 4242 4242 4242` exp `06/32` | US Visa, succeeds |
-| `5555 5555 5555 4444` | US Mastercard, succeeds |
 | `4576 2389 1277 1450` | India Visa, succeeds |
+| `5409 1626 6938 1034` | India Mastercard, succeeds |
+| `4706 1312 1121 2123` | India Visa, generic decline |
+| `5105 1051 0510 5100` | India Mastercard, generic decline |
+
+On a `$` checkout:
+
+| | |
+|---|---|
+| `4242 4242 4242 4242` | US Visa, succeeds |
+| `5555 5555 5555 4444` | US Mastercard, succeeds |
 | `4000 0000 0000 0002` | generic decline |
 | `4000 0000 0000 9995` | insufficient funds |
+
+**And an India card subscription is not instant.** RBI mandate rules apply, so
+`subscription.active` can lag the payment — do not read a card still saying
+*"Confirming your payment"* as a webhook failure until the delivery log says so
+(step 12).
 
 **11 · Watch the return.** You land back on `/app`, the client moves you to
 Settings, and the provider's appended `payment_id`, `status` and **`email`**
@@ -737,14 +763,25 @@ await (await fetch('/api/org/billing')).json()
 
 ### The unhappy paths, which are the ones worth testing
 
-**13 · A cancelled or declined checkout.** Use `4000 0000 0000 0002`, or
-abandon the page. The return carries a `status` other than `succeeded`, and the
-card must say nothing was charged — **not** show a pending note.
+**13 · A cancelled or declined checkout.** Use the decline card **for the
+checkout's own currency** (step 10), or abandon the page. The return carries a
+`status` other than `succeeded`, and the card must say nothing was charged —
+**not** show a pending note.
+
+A declined first payment also emits `payment.failed` *and*
+`subscription.failed` *and* `subscription.updated`, which is why step 5
+subscribes to all three. With only `payment.failed` delivered, the record holds
+a payment and no subscription — the state §72 added the fifth card branch for.
 
 **14 · A renewal failure.** `4000 0000 0000 0341` exp `12/34` — this card
 **succeeds the first charge and fails the renewal**, which is the only way to
 exercise `subscription.past_due` and the *Access until* row that
 `past_due_ends_at` drives.
+
+**It is a US card and the docs publish no India equivalent**, so on an INR
+checkout step 10's method rule probably refuses it. Unverified. If it does,
+either price the product in USD for this one test or drive `past_due` by
+replaying a hand-edited event from the delivery log instead.
 
 **15 · Cancel from the dashboard.** Expect `subscription.cancelled` and a card
 that reflects it.

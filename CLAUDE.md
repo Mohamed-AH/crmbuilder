@@ -148,6 +148,10 @@ never change, because everything cross-references them.
 | **A trailing slash made the live-smoke wait a no-op** — and a repo variable outlived the default it overrides | §63 · §46 · §40 |
 | **Taking payment** — the rail, the price, the chargeback plan, India tax | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) · §72 · §64 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2 |
 | **Setting up and TESTING test-mode payments** — the dashboard steps | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7 · §72 · §65 |
+| **What a real payment found** — the host, the event list, the card region | §73 · §71 · §70 |
+| A checkout link that renders "This link isn't available" | §73 · §71 |
+| Why a test card is refused rather than declined | §73 · §45 |
+| A card that said `unknown` with the answer already in the record | §73 · §39 · §36 |
 | Why Stripe cannot collect for an Indian seller, and what an MoR sidesteps | §64 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §1 |
 | What an MoR protects you from, and the half it does not | §64 · §72 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §3 |
 | **A claim on a customer-facing card that only the MSA can support** | §72 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §1 · §40 |
@@ -10732,3 +10736,180 @@ One formatting repair while in there: §8's table had rows stranded **after** a
 blockquote, so two of them rendered as prose and *"Payout fee and FX spread
 into INR"* appeared twice. Markdown does not resume a table across a block
 element — the kind of thing that reads fine in a diff and wrong on a page.
+
+
+---
+
+## 73. Driving the real dashboard, and four things only a real payment found
+
+§69 through §72 built the inbound gate, the webhook route, the checkout link and
+the document, and every one of them says the same thing in its own words:
+**nothing here has seen a real delivery.** This is what happened when one
+arrived. Two of the four landed in `fee243d` and `245a0cd` without a section —
+this is that section, written after the fourth.
+
+### 1 · The repository told the operator not to set the variable test mode needs
+
+§71 introduced `DODO_CHECKOUT_BASE` as *"a pure test seam"*, and
+`DEPLOYMENT.md`'s matrix and `docs/PAYMENTS.md` §7 both said **do not set it on
+a real deployment.** The provider serves checkout on **two hosts** —
+`checkout.dodopayments.com` live, `test.checkout.dodopayments.com` test — and a
+product created in test mode exists on the second only. So the one deployment
+state the variable is *required* for was the state our own documentation
+forbade.
+
+The symptom is **not** an error that names the cause: both hosts 307 an id they
+do not know to their own `/error/not-found`, which renders *"This link isn't
+available"*. A wrong host and a wrong product id are therefore
+indistinguishable from the screen, which is why the runbook now carries the
+five-second separator:
+
+```sh
+curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
+  "https://test.checkout.dodopayments.com/buy/<product id>"
+```
+
+A `200` is the id being real on that host; a `307` to `/error/not-found` is the
+id, not the host, once the host is known good.
+
+**It is a mode selector, not a seam**, and all four places say so now. The
+seam/selector framing is the whole defect: a variable described by *why it was
+added* rather than by *what it decides* gets a warning attached to it that is
+correct for the author and wrong for every operator.
+
+### 2 · The event list in the runbook was short, and it cost a real event
+
+§7 step 5 named **seven** subscription events. `BILLING_SUBSCRIPTION_EVENTS` in
+`server.js` handles **eleven**: `updated`, `paused`, `unpaused` and — the
+expensive omission — **`failed`** were missing.
+
+A declined first payment emits three events: `payment.failed`,
+`subscription.failed` and `subscription.updated`. Only the first was
+subscribed, so the provider's *Activity* tab read **Succeeded 1** while its
+*Logs* tab listed **three** — two generated and never delivered. Both screens
+were telling the truth about different things, which is §40's pair of monitors
+in somebody else's console.
+
+The list is exhaustive now, and it is **derived rather than retyped**:
+
+```sh
+grep -A 14 'const BILLING_SUBSCRIPTION_EVENTS' server.js | grep -oE "'[a-z.]+'"
+```
+
+§29's thesis, in the one place it is checkable: a list of events written in a
+second place is a list that goes stale, and the dashboard is a third place it
+cannot be checked against from in here at all.
+
+**And deselecting every event subscribes you to all of them**, per their docs —
+so the failure mode of getting this wrong is an endpoint receiving either too
+few events or the entire catalogue, with nothing in between. §70's rule that
+every verified answer is a 2xx is what makes the second survivable.
+
+### 3 · The card said `Status: unknown`, and the answer was sitting unread
+
+With only `payment.failed` delivered, the stored `billing` carries
+`paymentEvent` and `paymentStatus` and **no `status` and no
+`subscriptionEvent`** — `billingFieldsFor` writes one set or the other, never
+both. §71's card read:
+
+```js
+['Status', esc(b.status || b.subscriptionEvent || 'unknown')],
+```
+
+So the owner saw **Status: unknown** on a workspace whose payment had just been
+refused. The information was in the record; the card simply did not look at it.
+Indistinguishable from a broken deployment, which is the one reading that sends
+somebody to the service log instead of to their bank.
+
+A fifth branch above `rows`, and the placeholder is **deleted rather than
+reworded** — the whole point is that there is no state in which `unknown` is
+the best available answer:
+
+| Record | Card |
+|---|---|
+| `paymentEvent: 'payment.failed'`, no subscription | *your last payment attempt did not go through… nothing has been charged* |
+| a payment, no subscription, not failed | *a payment was recorded, and your subscription has not been confirmed yet* |
+
+The second is the gap §71's pending note covers for the tab that did the
+paying; this is the same gap seen from **another device**, or after that tab
+has gone, where `sessionStorage` cannot help. *"Last heard from your provider
+⟨when⟩"* carries `updatedAt`, because the difference between *waiting* and
+*stuck* is how long it has been.
+
+**Guarded by *"a declined first payment says the card was refused, never
+'unknown'"***, in §71's `subscribing` describe so it inherits
+`timezoneId: 'America/New_York'` and `locale: 'en-GB'`. It asserts
+`.read-label` count is **0** as well as the wording: a build that kept the rows
+*and* added the note would pass a text assertion while still printing
+`Status: unknown` underneath it. Checked against the broken state per §9 —
+restoring the placeholder fails it by name.
+
+### 4 · A US test card on an INR checkout is refused, and reads as a decline
+
+The fourth, and the one that cost a failed payment. The checkout rendered
+**₹6,429.04/Month** with **GST ₹1,157.23** itemised, and refused
+`4242 4242 4242 4242` with *"This payment method can't be used here. Please use
+a different payment method."*
+
+**The payment methods offered depend on the CURRENCY, not on test mode.** An
+INR checkout offers India-issued cards and UPI; a US card is not among them,
+and their own FAQ records the same mismatch surfacing as a 500. So the refusal
+is about the card's *region* and says nothing about the card — a message that
+is accurate and points away from the cause, which is this file's standing
+failure shape arriving in somebody else's UI.
+
+§7 step 10 now reads the currency **first** and groups the cards by region
+(India Visa `4576 2389 1277 1450`, India Mastercard `5409 1626 6938 1034`,
+with their declines), rather than listing the US ones first with India third —
+which is the ordering that produced the failure.
+
+Two consequences carried into the runbook rather than left to be rediscovered:
+
+- **The renewal-failure card `4000 0000 0000 0341` is US-only** and the docs
+  publish no India equivalent, so step 14 — the only way to exercise
+  `subscription.past_due` — is probably unreachable on an INR checkout.
+  **Recorded as unverified**, with two ways round it, because claiming either
+  outcome without driving it is what §69 already refuses to do.
+- **An India card subscription is not instant.** RBI mandate rules apply, so
+  `subscription.active` can lag the payment and a card still saying
+  *"Confirming your payment"* is not yet evidence of a webhook fault.
+
+### Two findings for `docs/PAYMENTS.md` §8, read off a checkout page
+
+Neither is proof and both narrow an open question, which is the most a
+screenshot can do:
+
+- **GST is computed and itemised at 18%.** A provider collecting and showing
+  destination tax per jurisdiction is behaving like a merchant of record, which
+  is §8's first open row — *whether they are contractually the seller of
+  record for our sales*, the claim `js/app.js` already prints to customers and
+  the one §1's whole VAT escape rests on. Behaviour is evidence about the
+  implementation, not about the contract. Still an MSA question.
+- **₹6,429.04 carries a converted decimal**, so localized pricing is on and an
+  unpriced currency resolves to the **buyer's** region. Two things follow: the
+  currency in the webhook payload varies by buyer, and §5's *GBP primary*
+  decision has to be checked against what the product's **base** currency
+  actually is rather than against what was intended.
+
+### Blast radius
+
+`js/app.js` was the only served file and it is in `APP_SHELL`, so
+`CACHE_VERSION` → **`crmbuilder-v62`**, which `245a0cd` carried. No new served
+file, so smoke stays **51 local / 56 live predicted** — §8, this session
+reaches neither host.
+
+**`docs/API.md` needs nothing** — no route, and no response shape moved:
+`publicBilling` already returned `paymentEvent`, and what changed is that the
+client finally reads it. The check §46 and §54 both say to run, run rather than
+the route count read.
+
+**§27's six user-facing documents need nothing, and that is the same checked
+omission as §70, §71 and §72's**: no `DODO_PRODUCT_ID` is set on any
+deployment the public can reach, so the card is absent for every user. They get
+walked when a price is set — the same moment
+[`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1's twelve-file list
+fires and `MARKETING.md`'s *"No per-seat pricing"* has to be dealt with (§48,
+§64). `privacy.html` names the provider as a recipient of personal data when
+the **first real payment** runs, not when a test one does.
+
+Counts: Playwright **151 → 152**, Node **616**, smoke **51** locally.
