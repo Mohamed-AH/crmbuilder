@@ -163,6 +163,7 @@ never change, because everything cross-references them.
 | **Where the customer portal link lives**, and why not composed | §74 · §73 · §70 |
 | A field that survives the state it names (`paused_at`) | §74 · §9 |
 | A comment that had promised an assertion nobody wrote | §74 · §46 · §14 |
+| **A test count carried forward and read as measured** | §74 · §2 · §29 · §9 |
 | A cancel flow that is a chargeback control rather than a nicety | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) §1 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §3 · §64 |
 | A derived list that was wrong the same way the typed one was | §73 · §29 · §34 |
 | Events that production would see first, and cannot be produced in test mode | §73 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §9 |
@@ -242,15 +243,26 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**616 Node tests pass, and Playwright ran 150 of 151** — both observed in this
-session, not carried forward. The one failure is §66's known intermittent,
-*signing out hides the workspace*, which **did** fire on this run with §66's
-exact recorded signature (the artifact shows Settings still rendered after the
-navigation) and then passed 6/6 in isolation. Six passes do not re-measure its
-rate — against 1-in-3 that happens about 9% of the time — so treat the figure
-as 150 of 151 with one known-open test rather than as a suite with a new
-fault. §54 records it as intermittent, §66 records what was established about
-it and the artifact to start from, §71 records this occurrence.
+**623 Node tests pass and Playwright ran 154 of 154** — both observed in this
+session, not carried forward.
+
+**154 of 154 does NOT mean §66's intermittent is fixed.** *Signing out hides
+the workspace* simply did not fire on this run; §71 fired it, and six passes
+in isolation afterwards did not re-measure its rate either (against 1-in-3,
+six clean runs happen about 9% of the time). It is a known-open test that
+passes most of the time. §54 records it as intermittent, §66 records what was
+established and the artifact to start from, §71 records an occurrence.
+
+**And the 616 that stood here was short by 2.** §74's five new tests take 618
+to 623 — the static `test(` declarations across `tests/` moved by exactly five
+between the two commits, so this commit accounts for five of the seven and the
+other two predate it. **The trail is visible:** §72 *measured* 616, and §73
+reprinted it on its own Counts line while saying in the next sentence that it
+had run `tests/payments.test.mjs` **rather than the full suite**. A figure
+carried forward reads exactly like a figure observed, which is §29's thesis
+arriving in this file's own status section. Re-measured rather than adjusted,
+and the only safe way to use it is to run the suite.
+
 Smoke is at **51 passing locally**; **56 live is predicted, not observed**
 (§8 — this session reaches neither host, and CI is what prints the real figure,
 per §46's rule that the two numbers differ and both are real). The same checks
@@ -11266,7 +11278,9 @@ list is where that now sits.
 the **first real payment** runs, not when a test one does — unchanged, because
 no customer's data has reached them.
 
-Counts: Playwright **151 → 152**, Node **616**, smoke **51** locally. The later
+Counts: Playwright **151 → 152**, Node **616** — *carried forward from §72
+rather than measured, and §74 found it had been 618 by then*, smoke **51**
+locally. The later
 findings are documentation only, so `crmbuilder-v62` stands and the counts do
 not move — checked by diffing the touched paths, per §41. **The payload read
 touched `server.js`, and only a comment block**, which is why the bump still
@@ -11495,4 +11509,16 @@ fires and `MARKETING.md`'s *"No per-seat pricing. Free. No ads."* has to be
 dealt with (§48, §64). `privacy.html` likewise: the provider is named as a
 recipient of personal data when the **first real payment** runs.
 
-Counts: Node **616 → 621**, Playwright **152 → 154**, smoke **51** locally.
+Counts: Node **618 → 623**, Playwright **152 → 154**, smoke **51** locally —
+all three run, and the first is a correction: §2 said **616** and the real
+figure before this commit was 618, because §73 reprinted §72's measured 616 on
+a Counts line while saying it had not run the full suite. The five tests added
+here are confirmed by the static `test(` declarations across `tests/` moving
+by exactly five between the two commits, so the shortfall predates this work.
+**Predicting 621 from a stale number and then measuring 623 is the whole
+argument for §9's *"state what was actually run"*** — the prediction went into
+the commit message *marked as a prediction*, which is the only reason it reads
+as a correction here rather than as a count nobody will question.
+
+**Playwright 154 of 154 does not retire §66's intermittent.** It did not fire;
+§71's occurrence stands and nothing here touches that path.
