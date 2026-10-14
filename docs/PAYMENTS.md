@@ -1162,14 +1162,15 @@ time**, which is now a pattern rather than a single observation.
 **`paused_at` is the first new field any real payload has offered that is
 worth taking**, and the reason is the defect below rather than completeness.
 
-**The card contradicts itself on a paused subscription.**
-`next_billing_date` survives the pause **unchanged** — still
+**The card contradicts itself on a paused subscription — OBSERVED, not
+derived.** `next_billing_date` survives the pause **unchanged** — still
 `2026-11-14T03:07:44` on a subscription paused at `09:33:09` — and
-`billingStatusHTML` renders that row whenever it is truthy. So the card reads:
+`billingStatusHTML` renders that row whenever it is truthy. A screenshot of
+the live card reads exactly:
 
 ```
 Status        paused
-Next payment  14 Nov 2026
+Next payment  Nov 14, 2026
 ```
 
 A paused subscription has no next payment. Two adjacent rows, one contradicting
@@ -1180,19 +1181,51 @@ subscription is paused. Not done in the same sitting as the matrix, because
 `js/app.js` means a `CACHE_VERSION` bump and a mirror sync, which changes the
 deployment under a half-finished test run.
 
-### TWO live subscriptions on one workspace, and the card can only show one
+**`paused_at` resets to `null` on resume**, read off a real
+`subscription.unpaused` — so it is a usable *condition* and not merely a field
+to display. That is what makes the fix one branch rather than two pieces of
+state to keep in step.
 
-Three subscription ids now exist carrying the same
-`metadata.wsId: 916160ba-5a85-44e7-b190-08bfb4f19a11`:
+### The UNPAUSE body, and the pair that was never actually driven
 
-| id | Created | Priced | State |
+Every read lands on `subscription.unpaused` too (`status: "active"`,
+`subscription_id`, `metadata.wsId`, envelope timestamp, `past_due_ends_at`
+present-and-null a fourth time). **But it is a different subscription on a
+different workspace than the pause**, which means the *transition* was never
+observed — only the two shapes, separately:
+
+| | the pause | the unpause |
+|---|---|---|
+| `metadata.wsId` | `916160ba-5a85-…` | **`4e7a2b1b-625e-…`** |
+| `subscription_id` | `sub_0Nph1H0sBfHPI2Qw3Gi4y` | **`sub_0NpiDYUvqFDCW61KztGPJ`** |
+| `created_at` | 03:07:23 | **09:37:57** — four minutes *after* the 09:33 pause |
+| customer | `mac@docnald.com`, US address | `adwasd@asd.com`, Gangtok IN |
+
+A subscription created at 09:37 cannot be the one paused at 09:33, so
+`sub_0Nph1H0sBfHPI2Qw3Gi4y` **remains paused**. Worth distinguishing because
+the valuable half — the payload inventory — is closed either way, and the
+cheap half is closed by resuming *that* subscription and watching *that*
+workspace's card go `paused` → `active`.
+
+**And `recurring_pre_tax_amount` is not stable per product**: `6500` on the
+paused subscription against `6499` on this one, same
+`product_id: pdt_0NpgrNlojLxbnMOoISbcr`, both `currency: "USD"`. Almost
+certainly a conversion round-trip against the India billing address. Nothing in
+`billingFieldsFor` reads it, so it costs nothing today — recorded because the
+moment anything *does* read it, a per-product constant is the wrong assumption.
+
+### THREE live subscriptions across TWO workspaces, and a card can only show one
+
+| id | Workspace | Priced | State |
 |---|---|---|---|
-| `sub_0NpgzTEZbXlEAgR4zJU6P` | — | INR | failed, never activated |
-| `sub_0Nph1H0sBfHPI2Qw3Gi4y` | 03:07:23 | **USD** 6500, US billing address | paused 09:33 |
-| `sub_0Nph212BlsXmVQEUgSYxV` | ~03:12 | INR charged / USD settled | **still active**, next 14 Nov |
+| `sub_0NpgzTEZbXlEAgR4zJU6P` | `916160ba` | INR | failed, never activated |
+| `sub_0Nph1H0sBfHPI2Qw3Gi4y` | `916160ba` | USD 6500, US address | **paused** 09:33 |
+| `sub_0Nph212BlsXmVQEUgSYxV` | `916160ba` | INR charged / USD settled | **active**, next 14 Nov |
+| `sub_0NpiDYUvqFDCW61KztGPJ` | **`4e7a2b1b`** | USD 6499, IN address | **active**, resumed 09:40 |
 
-The US card and the India card each created a subscription and **both went
-live**. Nothing is wrong with the code: `applyBillingEvent` resolves by clock
+**Workspace `916160ba` alone carries three**, two of them live. The US card and
+the India card each created a subscription and **both went live**. Nothing is
+wrong with the code: `applyBillingEvent` resolves by clock
 exactly as §70 designed, so the card reflects *the most recent event* rather
 than *the workspace's billing*. It currently says `paused` while a renewal is
 scheduled on a subscription it is not describing.
@@ -1223,7 +1256,7 @@ other five need a billing cycle to pass or a dunning sequence to run out.
 | `subscription.renewed` | arrived on a *first* payment, which was not expected | ✅ **done** — see below |
 | `subscription.cancelled` | **Dodo's** dashboard → cancel the subscription | ☐ **§7 step 15 — check WHICH cancel it did** |
 | `subscription.paused` | **Dodo's** dashboard → Sales → Subscriptions → Pause | ✅ **done** — every read lands; see above |
-| `subscription.unpaused` | the same screen → Resume | ☐ **§7 step 14a** |
+| `subscription.unpaused` | the same screen → Resume | ✅ **shape done** — but on a *different* subscription, so the paused→active transition is unobserved; see above |
 | `subscription.plan_changed` | needs a **second product** and a plan change | ☐ — see below |
 | `subscription.past_due` | a renewal that fails — the US-only card, §7 step 14 | ☐ **probably unreachable on INR** |
 | `subscription.on_hold` | dunning exhausting its retries after `past_due` | ☐ **days, not minutes** |
@@ -1339,14 +1372,15 @@ remainder is one sitting:
    and needs no widening.
 2. **Abandon a checkout** (§7 step 13) — the one return branch never driven.
    Entirely client-side: no `abandoned_checkout` event is involved or needed.
-3. **Pause, then resume** the live test subscription (§7 step 14a) — from
-   **Dodo's** dashboard. Our app has no control for it, and §6 lists the
-   portal link under *Not built*. **Pause is done** and every read landed; it
-   also found the next-payment row contradicting a paused status. Resume
-   outstanding.
-4. **Cancel down to ONE subscription first.** Two are live on one workspace —
-   see above. The surviving one emitting anything mid-test is newer, so it
-   legitimately overwrites a cancellation and reads as the ordering guard
+3. ~~**Pause, then resume**~~ — **both shapes read, every read lands.** It also
+   found the next-payment row contradicting a paused status, and that
+   `paused_at` resets to null on resume. **The transition itself is
+   unobserved** — the two events came from different subscriptions on
+   different workspaces — so resume `sub_0Nph1H0sBfHPI2Qw3Gi4y` and watch that
+   workspace's card if the pair is wanted on one subscription.
+4. **Cancel down to ONE subscription first.** Three are live across two
+   workspaces — see above. A survivor emitting anything mid-test is newer, so
+   it legitimately overwrites a cancellation and reads as the ordering guard
    failing.
 5. **Cancel it** (§7 step 15) — **then read the log to see which cancel it
    was** — and only then **replay an earlier `active`** (§7 step 16). That pair
