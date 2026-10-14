@@ -1182,9 +1182,23 @@ subscription is paused. Not done in the same sitting as the matrix, because
 deployment under a half-finished test run.
 
 **`paused_at` resets to `null` on resume**, read off a real
-`subscription.unpaused` — so it is a usable *condition* and not merely a field
-to display. That is what makes the fix one branch rather than two pieces of
-state to keep in step.
+`subscription.unpaused`.
+
+> **It is NOT a usable "is paused" condition, and this document said it was.**
+> The `subscription.cancelled` body carries
+> `paused_at: "2026-10-14T09:33:09.666207Z"` with `status: "cancelled"` —
+> resume clears it, cancel does not. So present means *was paused and never
+> resumed*, not *is paused*. **The condition is `status`.** Left corrected in
+> place rather than rewritten, because the wrong half is the reusable warning:
+> a field that reads like a state flag on the two payloads you have seen is
+> still a timestamp, and the third payload is where that costs you.
+
+**And the defect is broader than pause — `cancelled` keeps the row too.**
+`next_billing_date` is still `2026-11-14T03:07:44` on the cancelled
+subscription, so the card reads *Status cancelled / Next payment Nov 14, 2026*.
+That is the worse of the two cases: it tells somebody who has just cancelled
+that they are being charged next month. **So the fix keys on any status that
+will not bill** — `cancelled`, `paused`, `expired` — and not on `paused_at`.
 
 ### The UNPAUSE body, and the pair that was never actually driven
 
@@ -1213,6 +1227,58 @@ paused subscription against `6499` on this one, same
 certainly a conversion round-trip against the India billing address. Nothing in
 `billingFieldsFor` reads it, so it costs nothing today — recorded because the
 moment anything *does* read it, a per-product constant is the wrong assumption.
+
+### The CANCEL body: the immediate kind, and a new identity class
+
+Read off a real `subscription.cancelled`, and it is the **immediate** cancel
+rather than the deferred one — `status: "cancelled"`,
+`cancel_at_next_billing_date: false`, `scheduled_change: null`. That is the
+state §7 step 16's replay needs to mean anything, so the check below it is
+meaningful rather than vacuous.
+
+Every read lands. Three new fields arrive and none is read:
+
+| Field | Why it is not stored |
+|---|---|
+| `cancelled_at` | the envelope `timestamp` already carries it, and §70 stores one clock per fact |
+| `cancellation_feedback` | `"other"` — a dropdown the merchant picked; decides nothing about what a workspace may do |
+| **`cancelled_by`** | **operator identity — a class nothing anticipated** |
+
+```json
+"cancelled_by": { "actor_type": "merchant_user",
+                  "email": "emah84@gmail.com", "name": "Mohamed A Hameed" }
+```
+
+**§70's rule is about *customer* identity; this is the operator's.** Storing it
+would put the deployment operator's name and address on **every tenant's** meta
+doc and therefore into every nightly artifact (§17) — a wider leak than the one
+that rule was written to prevent, since it is the same person on every row.
+`billingFieldsFor` reads five fields and this is not one of them, verified
+rather than assumed, so it is already excluded. Recorded so a future widening
+knows there are now two identity classes to refuse, not one.
+
+### SIX subscriptions, three distinct amounts, and a status we never see
+
+The dashboard lists six against the four the payloads had revealed:
+
+| id | Status | Amount |
+|---|---|---|
+| `sub_0Nph212BlsXmVQEUgSYxV` | **Active** | $65.00 |
+| `sub_0NpiDYUvqFDCW61KztGPJ` | Cancelled | $64.99 |
+| `sub_0Nph1H0sBfHPI2Qw3Gi4y` | Cancelled | $65.00 |
+| `sub_0NpgzTEZbXlEAgR4zJU6P` | Failed | $65.00 |
+| `sub_0NpgvabPhQqhHLju8mxiE` | Failed | $65.00 |
+| `sub_0Npi6jaStnWZkK1zu0TRe` | **Pending** | $64.98 |
+
+**`Pending` is what an abandoned checkout leaves behind.** It never reaches
+this endpoint — there is no `subscription.pending` in the handled set and no
+event arrived — which is correct, and is why §7 step 13 passes as a purely
+client-side check. Worth knowing it leaves a row on their side, because
+somebody reconciling the two screens will otherwise count it as a subscription.
+
+**Three amounts on one `product_id`** — $65.00, $64.99, $64.98 — which
+sharpens the note above from *not stable* to *drifting a cent per attempt*,
+consistent with a conversion round-trip. Still read by nothing.
 
 ### THREE live subscriptions across TWO workspaces, and a card can only show one
 
@@ -1254,7 +1320,7 @@ other five need a billing cycle to pass or a dunning sequence to run out.
 | `subscription.failed` | the region's decline card | ✅ **done** — India |
 | `subscription.updated` | arrives alongside the others | ✅ **done** |
 | `subscription.renewed` | arrived on a *first* payment, which was not expected | ✅ **done** — see below |
-| `subscription.cancelled` | **Dodo's** dashboard → cancel the subscription | ☐ **§7 step 15 — check WHICH cancel it did** |
+| `subscription.cancelled` | **Dodo's** dashboard → cancel the subscription | ✅ **done — and it was the IMMEDIATE cancel**, so the replay is meaningful |
 | `subscription.paused` | **Dodo's** dashboard → Sales → Subscriptions → Pause | ✅ **done** — every read lands; see above |
 | `subscription.unpaused` | the same screen → Resume | ✅ **shape done** — but on a *different* subscription, so the paused→active transition is unobserved; see above |
 | `subscription.plan_changed` | needs a **second product** and a plan change | ☐ — see below |
@@ -1378,14 +1444,16 @@ remainder is one sitting:
    unobserved** — the two events came from different subscriptions on
    different workspaces — so resume `sub_0Nph1H0sBfHPI2Qw3Gi4y` and watch that
    workspace's card if the pair is wanted on one subscription.
-4. **Cancel down to ONE subscription first.** Three are live across two
-   workspaces — see above. A survivor emitting anything mid-test is newer, so
-   it legitimately overwrites a cancellation and reads as the ordering guard
-   failing.
-5. **Cancel it** (§7 step 15) — **then read the log to see which cancel it
-   was** — and only then **replay an earlier `active`** (§7 step 16). That pair
-   is the one that costs money if the clock comparison is wrong, and it is the
-   last thing the dashboard can prove that the suite proves only synthetically.
+4. ~~**Cancel down to ONE subscription**~~ — **done.** 1 Active, 0 On Hold,
+   2 Cancelled, plus two Failed and one Pending that were never live.
+5. ~~**Cancel, then read the log**~~ — **done, and it was the IMMEDIATE cancel**
+   (`status: "cancelled"`, `cancel_at_next_billing_date: false`,
+   `scheduled_change: null`), so the replay below is not vacuous. **Now replay
+   an earlier `active`** (§7 step 16) and require the card to still read
+   cancelled. This is the one that costs money if the clock comparison is
+   wrong, and the only part of the matrix the suite proves solely
+   synthetically. Safe to run now: the surviving Active emits nothing until
+   14 Nov, so nothing newer can land mid-test.
 6. **Decide `past_due`** — a USD-priced test, or accept production as the first
    sighting and watch the *Access until* row. A short-period second product
    closes `plan_changed` and `expired` with it.
