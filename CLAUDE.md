@@ -146,9 +146,11 @@ never change, because everything cross-references them.
 | Only one URL may become the cached shell, and why a list could not say so | §63 · §47 |
 | A state cookie is per-origin, so a stale `APP_URL` breaks sign-in rather than misrouting it | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.3 · §63 |
 | **A trailing slash made the live-smoke wait a no-op** — and a repo variable outlived the default it overrides | §63 · §46 · §40 |
-| **Taking payment** — the rail, the price, the chargeback plan, India tax | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) · §64 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2 |
+| **Taking payment** — the rail, the price, the chargeback plan, India tax | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) · §72 · §64 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2 |
+| **Setting up and TESTING test-mode payments** — the dashboard steps | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7 · §72 · §65 |
 | Why Stripe cannot collect for an Indian seller, and what an MoR sidesteps | §64 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §1 |
-| What an MoR protects you from, and the half it does not | §64 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §3 |
+| What an MoR protects you from, and the half it does not | §64 · §72 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §3 |
+| **A claim on a customer-facing card that only the MSA can support** | §72 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §1 · §40 |
 | Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
@@ -164,7 +166,10 @@ never change, because everything cross-references them.
 | Where the price lives, and why not in this repository | §71 · §29 · §64 |
 | A customer email appended to a return URL, and what strips it | §71 · §17 · §16 |
 | Two mutations that passed, and the two gaps they named | §71 · §9 · §55 |
-| **Taking payment through Dodo** — what is pinned, what is not built | §69 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) · §64 |
+| **Taking payment through Dodo** — what is pinned, what is not built | §69 · §72 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) · §64 |
+| **A credential planned for and never needed** — and why the list got shorter | §72 · §69 · §17 |
+| A rejected vendor chosen anyway, and how much of the objection moved | §72 · §21 · §29 |
+| A figure deleted rather than converted when the vendor changed | §72 · §17 · §5 |
 | **Verifying an inbound webhook** — the gate with no session behind it | §69 · §61 · §38 |
 | Two provider CLI tools that cannot test verification, one of them a false pass | §69 · §34 |
 | A fixture that must not import the thing it tests, and a vector not computed in Node | §69 · §29 · §34 |
@@ -9836,17 +9841,22 @@ already half-built. Here it is one step stronger — an inbound webhook carries
 signature *is* the authentication, so this function is the entire gate in front
 of anything a payment event is allowed to change.
 
-### `docs/PAYMENTS.md` rejected this vendor, and that table is now wrong
+### `docs/PAYMENTS.md` rejected this vendor, and that table was wrong
 
-Its §7 says Dodo was passed over because *"every source for them is their own
-marketing page… a vendor with no independent operating history is the wrong
-trade."* The decision went the other way. That is the user's call and it is
-reaffirmed, but the document now contradicts the account that exists, which is
-exactly the drift §27 and §29 are about. **It needs rewriting around the rail
-actually chosen**, and the Paddle-specific halves — §3's chargeback analysis,
-§5's fee comparison, and §6's *"replaceable in a week"* resting partly on the
-FTC action against Paddle — do not transfer. Deferred until the dashboard shows
-real fee and MSA terms rather than guessed at now.
+Its §2 table — *"every source for them is their own marketing page… a vendor
+with no independent operating history is the wrong trade"* — was written before
+the account existed. (This section first cited it as §7, which was itself
+wrong; the table was always in §2.) The decision went the other way, that is
+the user's call and it is reaffirmed, but the document then contradicted the
+account, which is exactly the drift §27 and §29 are about.
+
+**Rewritten in §72**, around the rail actually chosen. What that rewrite
+established, because it is the part worth carrying: the objection has **only
+partly** moved — the engineering surface is read and verified, and the
+*economics* are still unread, so none of the Paddle-specific halves (§3's
+0.65%-by-value threshold, §5's net-rate table, §6's *"replaceable in a week"*
+resting on the FTC action) transfer as facts. They are kept as a **prior for
+what to ask the MSA**, which is a different and smaller claim.
 
 ### Neither of the provider's CLI tools can test verification
 
@@ -10019,19 +10029,34 @@ Counts: Node **570 → 592**, Playwright **146** unchanged, smoke **51** locally
 ### What is still not built
 
 The webhook route itself, the checkout link, and where subscription state
-lives. The shapes are pinned now and recorded here so the next commit is not
-research:
+lives. **§70 and §71 built all three; this list is what was pinned before
+them, and two of its entries turned out to name variables nothing reads** —
+corrected in place below rather than deleted, because what the prediction got
+wrong is the useful part.
 
 - **`https://test.dodopayments.com` / `https://live.dodopayments.com`** are
   separate hosts, and a key authenticates against one mode only. Products, API
   keys and webhook endpoints each belong to the mode they were made in. That is
   the `GOOGLE_TOKEN_URL` / `TELEGRAM_API_BASE` / `MAIL_API_BASE` test seam for
-  free (§30, §38, §52) — `DODO_API_BASE`, one variable, no flag of its own.
-- **Env-only, all three** (`DODO_API_KEY`, `DODO_WEBHOOK_SECRET`,
-  `DODO_API_BASE`). Never `platform`, which is in every nightly artifact
-  (§17). Not `settings`, which syncs whole to viewers and would then be
-  destroyed by the masking (§38). Not a meta-doc sibling either, unlike the
-  mail key — that varies per tenant and this does not.
+  free (§30, §38, §52) — ~~`DODO_API_BASE`, one variable, no flag of its own.~~
+  **No such variable exists.** Nothing here calls their API, so there is no API
+  host to point anywhere. The seam that was actually needed is
+  `DODO_CHECKOUT_BASE` (§71), which points the *checkout link* at a stand-in so
+  a test can assert the URL — the same shape, on the only outbound thing there
+  turned out to be.
+- ~~**Env-only, all three** (`DODO_API_KEY`, `DODO_WEBHOOK_SECRET`,
+  `DODO_API_BASE`).~~ **There is ONE credential, and it is
+  `DODO_WEBHOOK_SECRET`.** `DODO_API_KEY` is read by no line of `server.js` —
+  a **static payment link** (§71) plus **signature verification** (§69) uses
+  the provider's API not at all and holds no bearer token for it, so the two
+  pieces that looked like they would need one each need none. Env-only, never
+  `platform`, which is in every nightly artifact (§17); not `settings`, which
+  syncs whole to viewers and would then be destroyed by the masking (§38); not
+  a meta-doc sibling either, unlike the mail key — that varies per tenant and
+  this does not. The rule stands for the day an API call is wanted; the
+  correction is that **today's credential surface is one signing secret.**
+  `DODO_PRODUCT_ID` is not a credential — it appears in a URL the customer
+  visits.
 - **The route needs a raw parser mounted BEFORE the global `express.json()`**.
   Their docs warn about it and §38 already records the mechanism here: `bigJson`
   wins on `/api/sync` only because of mount order, since body-parser sets
@@ -10546,3 +10571,164 @@ than at what the code could do.
   checkout. That is the next small thing, and it wants the portal URL shape
   confirmed against a real account rather than guessed (§69's standing rule
   that nothing here has seen a real delivery).
+
+
+---
+
+## 72. The payments document rewritten, and a credential that was never needed
+
+Documentation only, and it closes §69's own outstanding item: *"`docs/PAYMENTS.md`
+rejected this vendor, and that table was wrong."* Two deliverables — the
+document rewritten around the rail actually chosen, and
+[`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7, an operator step-by-step for
+standing up and testing **test-mode** payments on the provider's dashboard.
+
+### What survived the rail change, and the split is the whole point
+
+Rewriting a research document after its recommendation is overturned invites
+throwing the lot away. Most of it is structural rather than about the vendor:
+
+| | |
+|---|---|
+| **§1** RBI PA-CB, Stripe's absence from the authorised list, the UK/EU zero-threshold VAT arithmetic | **unchanged.** It is the reason an MoR was chosen *at all*, so it survives choosing a different one |
+| **§3's thresholds** Visa VAMP at 1.5%, Mastercard ECM, the 3DS analysis | **unchanged** — card-scheme rules |
+| **§3's five levers** annual invoicing, descriptor, pre-renewal mail, two-click cancel, 14-day refunds | **unchanged, and that is now the point**: none of them depends on which provider was picked, which is why this was the only section needing no edit |
+| **§4** the tax split, LUT, the one-year FX window, the intermediary opinion | **unchanged** — a property of the structure |
+| **§5** per-workspace tiers, GBP primary, the CRM comparison | **unchanged** |
+| **§2** the recommendation | **rewritten** |
+| **§3's numbers** 0.65% by value, £20 kept win-or-lose, no evidence accepted, the pre-chargeback refund path | **demoted from facts to a prior** — see below |
+| **§5's net-rate table** | **deleted, not converted** |
+| **§6, §7, §8** | rewritten |
+
+### A rejection is not deleted when it is overruled
+
+The old §2 table said Dodo was *"the wrong trade"* for having no independent
+operating history. The decision went the other way for a reason that table did
+not weigh — **it accepts an individual**, and every alternative wanted a
+company, so the comparison was never between two rails but between a rail now
+and a rail after an incorporation.
+
+**What the rewrite had to be careful about is that the objection only PARTLY
+moved**, and saying "chosen" would have overstated it:
+
+- **answered** — the engineering surface, read first-party and verified:
+  Standard Webhooks signing, the two-mode separation, the retry schedule, the
+  event catalogue, the payload shape, the test cards, the static-link
+  parameters. Drivable end to end before a customer exists, which is §7.
+- **not answered** — the economics. Fee, payout into INR, FX spread,
+  chargeback set-off, per-seller threshold, and **whether the provider is
+  contractually the seller of record.**
+
+So the document states it as *the integration is verified and the commercial
+terms are unread*, which is better than the table assumed and worse than
+settled.
+
+**And `js/app.js` already prints the claim that needs the MSA.** The
+Subscription card says *"Dodo Payments, who are the seller of record"* — a
+contractual claim, in front of customers, that §1's entire VAT escape rests
+on. If they are a gateway wearing MoR language, §1 is Option A in disguise:
+UK VAT and EU OSS owed from the first sale, and §4's split wrong on every row.
+That is now the first row of §8 rather than a line in a table.
+
+### Paddle's policy is kept, as a question rather than as a figure
+
+The temptation was to convert the chargeback section to Dodo. **Converting a
+number nobody has read is the error §17 names** — records-times-a-constant, in
+the one place it would be quoted back. So §5's net table is **blank with the
+four columns it needs**, and §3 says *assume the worst of all three* instead.
+
+What the Paddle research becomes is three questions for the MSA, which is a
+smaller and far more useful claim: is the threshold measured **by value or by
+count**, does a **won** dispute still count, and may you **submit evidence**?
+Those three answers decide whether §3's levers are preventive-only or whether
+there is an appeal stage worth being good at — and no provider puts them on a
+pricing page. Written down because the alternative is re-deriving it at the
+moment the first dispute arrives.
+
+**The volume arithmetic is kept too, and it is the strongest argument in that
+file**: a rate measured by value is a **binary** while the denominator is
+small. One disputed £49 subscription stays under 0.65% only above £7,538 of
+monthly volume; £99 needs £15,231. Below that a single dispute breaches it
+alone, and if won disputes count, winning does not help. The job is keeping
+the count at zero, not shaving a percentage.
+
+### The correction: there is one credential, not three
+
+§69 pinned **`DODO_API_KEY`, `DODO_WEBHOOK_SECRET`, `DODO_API_BASE`** as
+"env-only, all three". Checked rather than carried forward, because a list of
+credentials is exactly the thing to verify:
+
+```
+server.js: DODO_WEBHOOK_SECRET  DODO_PRODUCT_ID  DODO_CHECKOUT_BASE
+           PAYMENT_BODY_LIMIT   RATE_DODO_WEBHOOK_MAX
+CLAUDE.md: DODO_API_KEY         ← and nowhere else
+```
+
+**`DODO_API_KEY` is read by no line of code, and that is a property of the
+design rather than an omission.** A **static payment link** (§71) plus
+**signature verification** (§69) uses the provider's API not at all: the link
+is a string, and the verification is HMAC over bytes we were sent. The two
+pieces that each looked like they would need a bearer token need none between
+them. `DODO_API_BASE` went the same way — there is no API host to point
+anywhere, and the seam that was actually needed is `DODO_CHECKOUT_BASE`, on
+the only outbound thing there turned out to be.
+
+So the credential surface is **one signing secret**, and §17's rule still
+governs it. Corrected in §69 **in place with the strike-through**, per §46's
+treatment: the hedge was right when it was written and what it got wrong is
+the reusable part — *a credential you plan for and a credential you need are
+different lists, and the second one is shorter when the integration is thin.*
+
+### §7, and the step it opens with
+
+The runbook is eighteen steps plus a before-live list, and three of them exist
+because of failures already recorded in this file:
+
+- **Step 0 is "sync the Render mirror".** §65: a push here does not deploy, so
+  `POST /api/payments/dodo` on a stale build is a **404** — which from the
+  provider's dashboard is indistinguishable from a wrong URL. The repository
+  cannot see which build is live, so the first instruction is to go and look
+  (`curl -s https://nimbleclerk.com/healthz`). §40's rule, at its smallest.
+- **Step 3 turns off test-mode customer email BEFORE the first payment.** Test
+  mode sends **real** email to **real** addresses with a `[TEST MODE]`
+  subject, capped at 100/week. Doing it afterwards means a receipt has already
+  gone somewhere.
+- **Step 9's pass looks like a failure, and the runbook says so first.**
+  *Webhooks → Testing → Send example* is the only thing that proves
+  verification — their `wh trigger` sends unsigned payloads (a **false pass**)
+  and `wh listen` re-serialises the body (a **false failure**). But the example
+  payload carries no `metadata.wsId`, so the correct outcome is **200 with the
+  card unchanged**. A reader expecting the screen to move would conclude it had
+  failed, which is this file's standing shape — a state that renders as
+  nothing — reached through a success.
+
+Two more worth having in writing: **step 16 replays an older event after a
+cancellation** and requires the card to still say cancelled, which is the one
+behaviour the provider's tools cannot produce on their own and the one that
+costs money if §70's clock comparison is wrong. And **step 17 cancels every
+test subscription**, because they keep renewing and keep delivering webhooks
+for weeks after testing stops.
+
+### Blast radius
+
+**Documentation only.** No code, no served file, no route, no wire change —
+`CACHE_VERSION` stays `crmbuilder-v61` and smoke stays 51 local / 56 live
+predicted, checked rather than assumed (§41's rule for a docs-only change).
+
+`docs/API.md` needs nothing: no route and no response shape moved, which is
+the check §46 and §54 both say to run instead of reading the route count.
+**§27's six user-facing documents need nothing, and that is the same checked
+omission as §70's and §71's** — no `DODO_PRODUCT_ID` is set on any
+deployment, so the Subscription card is absent and nobody has gained a
+capability to document. They get walked when a price is set, which is the same
+moment [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1's
+twelve-file list fires. `privacy.html` likewise: the provider becomes a named
+recipient of personal data when the **first payment actually runs** — §52's
+condition, §41's precedent, and §40's *"that is the complete list"* having
+already been false twice, both times caught by looking at what the deployment
+does rather than at what the code could do.
+
+One formatting repair while in there: §8's table had rows stranded **after** a
+blockquote, so two of them rendered as prose and *"Payout fee and FX spread
+into INR"* appeared twice. Markdown does not resume a table across a block
+element — the kind of thing that reads fine in a diff and wrong on a page.

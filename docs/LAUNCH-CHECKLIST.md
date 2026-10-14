@@ -858,6 +858,17 @@ Then, by hand, because none of it is greppable:
 >   smaller than it looks: the *"no per-seat pricing"* promise survives, and
 >   only the *"free / $0/month"* half has to be rewritten. The owner has chosen
 >   **per-workspace tiers, priced in GBP**.
+>
+> **Updated 2026-10-13: the rail is chosen and partly built.** It is
+> **Dodo Payments**, as merchant of record, signed up as an *individual* —
+> which is what made it startable without a company formation.
+> `CLAUDE.md` §69–§71 built signature verification, the webhook route and the
+> checkout link, and [`PAYMENTS.md`](PAYMENTS.md) §7 is the dashboard runbook
+> for testing it. **Nothing takes money**: no deployment sets
+> `DODO_PRODUCT_ID`, so the Subscription card is absent, and nothing reads
+> subscription state to decide what a workspace may do. So this part is
+> unblocked on the rail and still blocked on **the price**, which is what fires
+> §2.1's list below.
 
 ## 2.1 The claims that become false the moment you charge
 

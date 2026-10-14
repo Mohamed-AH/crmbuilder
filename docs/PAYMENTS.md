@@ -1,16 +1,28 @@
 # Taking payment — the rail, the price, and the chargeback plan
 
-> **Current reference, and nothing here is scheduled.** This sits in `docs/`,
-> the tier `CLAUDE.md` §29 defines as maintained — not `docs/archive/`, which
-> is frozen. Researched 2026-10-07. **No charging is planned yet**; this is the
-> document to open *when* that decision is made, so that nothing has to be
-> worked out under time pressure. If you change something it names, change it
-> here too.
+> **Current reference.** This sits in `docs/`, the tier `CLAUDE.md` §29 defines
+> as maintained — not `docs/archive/`, which is frozen. Researched 2026-10-07,
+> **rewritten 2026-10-13 around the rail actually chosen.** If you change
+> something it names, change it here too.
 >
-> **Two decisions are taken and the rest are questions.** Per-workspace tiers
-> rather than per-seat, and **GBP as the primary currency** — both chosen by
-> the owner, recorded here rather than argued for. Everything else is written
-> as a question with the reasoning attached (§2.4's style), never as an answer.
+> **The rail is decided: [Dodo Payments](https://dodopayments.com) as merchant
+> of record, and the account exists.** Signed up as an **individual**, which is
+> what made it startable without a company formation — and which is the whole
+> reason this moved off the recommendation below. §2 records the decision and
+> the objection it overrides, honestly rather than quietly.
+>
+> **Shape and currency are also decided:** per-workspace tiers rather than
+> per-seat, and **GBP as the primary currency** — both chosen by the owner,
+> recorded here rather than argued for. **The price itself is not decided**, and
+> it gates more than it looks: `CLAUDE.md` §27's doc walk,
+> [`LAUNCH-CHECKLIST.md`](LAUNCH-CHECKLIST.md) §2.1's twelve files, and
+> `MARKETING.md`'s *"No per-seat pricing. Free. No ads."*
+>
+> **Three pieces of code are built and nothing takes money.** `CLAUDE.md` §69
+> (signature verification), §70 (the webhook route) and §71 (the checkout link).
+> No deployment sets `DODO_PRODUCT_ID`, so the Subscription card is **absent**
+> rather than broken, and nothing anywhere reads subscription state to decide
+> what a workspace may do. §6 is what is built; §7 is how to set up and test it.
 >
 > **This file is deliberately unserved.** `PUBLIC_DOCS` in `server.js` is
 > `['manual.html', 'product-tour.html']` and nothing else under `docs/` is
@@ -18,11 +30,11 @@
 > blunt about what is unfinished and about what it does not know.
 >
 > **Scope.** This is the *commercial* half: how money reaches an Indian bank
-> account from a UK customer, what a chargeback costs and who bears it, and
-> what to charge. The *consequences* of charging — the twelve files whose text
-> goes false, `TERMS_VERSION`, the privacy roster, and the six product
-> decisions pricing forces — are [`LAUNCH-CHECKLIST.md`](LAUNCH-CHECKLIST.md)
-> **Part 2**, and are not restated here. Read both.
+> account from a UK customer, what a chargeback costs and who bears it, and what
+> to charge. The *consequences* of charging — the twelve files whose text goes
+> false, `TERMS_VERSION`, the privacy roster, and the six product decisions
+> pricing forces — are [`LAUNCH-CHECKLIST.md`](LAUNCH-CHECKLIST.md) **Part 2**,
+> and are not restated here. Read both.
 
 ---
 
@@ -32,7 +44,7 @@
 |---|---|
 | **Part 2 of the checklist** | what charging *breaks*: text, terms, privacy, enforcement, suspension, the signup gate |
 | **This document** | what charging *needs*: a payment rail that works from India, a tax position, a price |
-| **Neither** | company formation, the CA engagement, the ICO registration and the solicitor-drafted DPA — all still outstanding |
+| **Neither** | the CA engagement, the ICO registration and the solicitor-drafted DPA — all still outstanding |
 
 **One disclaimer, once.** The India half of §4 below needs a chartered
 accountant who has done SaaS service exports. That is a few hours of somebody's
@@ -45,6 +57,8 @@ short rather than exploratory.
 ## 1. The structural fact: Stripe cannot be the collection rail
 
 This is the finding that decides the architecture, and it is not a preference.
+**It is unchanged by the move to Dodo** — it is the reason an MoR was chosen at
+all, so it survives the choice of *which* one.
 
 **RBI's *Regulation of Payment Aggregator – Cross Border* circular (31 October
 2023)** brought every entity facilitating cross-border payment collection under
@@ -68,12 +82,21 @@ in the first place.
 | **A. Direct** — PA-CB aggregator | hundreds of consumer card payments, cross-border | you | **you** | **you** |
 | **B. Merchant of Record** | one B2B payout from one foreign company | the MoR | the MoR | the MoR |
 
-**Option B is the recommendation.** Under an MoR there is no cross-border
-collection to regulate: you sell to a UK company, that company resells to the
-end customer, and it pays you by bank transfer. One foreign customer, one
-export invoice per payout, settled through your AD bank in the ordinary way.
-The PA-CB framework never engages, because nobody is aggregating anything on
-your behalf.
+**Option B is what was chosen.** Under an MoR there is no cross-border
+collection to regulate: you sell to the MoR, it resells to the end customer,
+and it pays you. One foreign customer, one export invoice per payout, settled
+through your AD bank in the ordinary way. The PA-CB framework never engages,
+because nobody is aggregating anything on your behalf.
+
+> **Everything in this table rests on the MoR genuinely being the seller of
+> record, which is a contractual fact and not a marketing one.** §8 records it
+> as the single most important thing to confirm from the MSA — because if Dodo
+> is a *gateway* rather than a seller of record for our sales, then §1 is
+> Option A wearing Option B's clothes: we would owe UK VAT and EU OSS from the
+> first sale, and §4's split would be wrong on every row. `js/app.js` already
+> prints the claim on the Subscription card (*"Dodo Payments, who are the
+> seller of record"*), so the sentence is in front of customers and the MSA is
+> what has to support it.
 
 ### What Option A would cost on day one, measured rather than assumed
 
@@ -96,61 +119,106 @@ quote:
   somebody's full-time job to keep current.
 
 Two foreign VAT registrations and quarterly filings, before the first £1,000 of
-revenue. That is the thing 5% buys.
+revenue. That is the thing the MoR fee buys.
 
 ---
 
-## 2. The recommendation: Paddle as Merchant of Record
+## 2. The rail: Dodo Payments, and the objection it overrides
 
-**5% + $0.50 per transaction**, no monthly fee *(secondary sources — and one
-reports a platform fee from $99/month, which §8 records as unresolved because
-`/pricing` is client-rendered and cannot be read; confirm before relying on
-§5's net-rate table)*, falling to 4% + $0.50 above
-$100k/month and 3% + $0.50 above $1M/month. No Indian entity required; payout
-to an Indian business by bank transfer or Wise.
+### This document rejected it, and that is recorded rather than deleted
 
-### Why Paddle and not the others
+The 2026-10-07 version of this file put Dodo in a *rejected options* table:
 
-| | Why not |
+> | **Dodo Payments · Playto · Creem** | India-friendly and cheaper on paper, and **every source for them is their own marketing page**. For the rail that holds all the revenue, a vendor with no independent operating history is the wrong trade |
+
+**The decision went the other way, and the reason is the one thing that table
+did not weigh: Dodo accepts an individual.** Every alternative wanted a
+company, and a company formation is weeks and money ahead of the first pound of
+revenue — so the comparison was never between two rails, it was between a rail
+now and a rail after an incorporation.
+
+**What has changed about the objection, precisely, because it has only partly
+moved.** It was *"every source is their own marketing page"*. After reading
+their documentation end to end (2026-10-13, `docs.dodopayments.com`):
+
+| | |
 |---|---|
-| **Lemon Squeezy** | acquired by **Stripe** (July 2024); new seller signups reported waitlist-gated through 2026. Building the revenue rail on a product whose owner also sells the competing product is a dependency not worth taking at launch |
-| **Dodo Payments · Playto · Creem** | India-friendly and cheaper on paper, and **every source for them is their own marketing page**. For the rail that holds all the revenue, a vendor with no independent operating history is the wrong trade |
+| **Answered** | the *engineering* surface. Standard Webhooks signing, the two-mode separation, the retry schedule, the event list, the payload shape, the test cards, the static-link parameters. All first-party, specific, and — the half that matters — **drivable end to end in test mode before a customer exists**, which §7 is |
+| **Not answered** | the *economics*. Fee, payout into INR, FX spread, chargeback set-off, per-seller chargeback threshold, MoR contractual status. **None of these is in this document as a number**, deliberately, and §8 lists each one |
+
+So the honest statement of where this stands is: **the integration is verified
+and the commercial terms are unread.** That is a materially better position
+than the table assumed and a materially worse one than "chosen". The MSA read
+in §7's *before live mode* list is what closes it, and it is not optional.
+
+### What makes this reversible, and why it matters MORE than it did
+
+§6's constraint — one module, one webhook handler, no provider object reaching
+the client — was written for Paddle, where the reason was the FTC action
+against them. **For Dodo the reason is stronger, not weaker**: a thinner
+operating history is precisely the case where the integration has to be a
+week's work to replace. The constraint is identical; its justification got
+better.
+
+Measured against what is built: `lib/webhook-verify.js` is **Standard
+Webhooks**, not a Dodo format — the same scheme Svix, Resend and others emit —
+so the verification half is portable as it stands. What is provider-specific is
+one function (`applyBillingEvent`'s event-name mapping) and one URL builder.
+
+### The other options, and what the research on them is worth keeping
+
+§29's rule: a plan records the cost that made something not worth building, and
+none of that survives in the code. These rows are what you need before
+reversing the decision above.
+
+| | Where it stands |
+|---|---|
+| **Paddle** | the 2026-10-07 recommendation, and the research on it is the best available **prior** for what an MoR's chargeback policy looks like — see the note below, because the numbers are specific and they are *not* Dodo's |
+| **Lemon Squeezy** | acquired by **Stripe** (July 2024); new seller signups reported waitlist-gated through 2026. Building the revenue rail on a product whose owner also sells the competing product is a dependency not worth taking |
+| **Playto · Creem** | same class as Dodo was in: India-friendly, thin independent history. No reason to move to one |
 | **FastSpring** | credible MoR, materially more expensive, aimed higher up market |
-| **PA-CB aggregator direct** | Option A above — the VAT position, not the fee, is what rules it out |
+| **PA-CB aggregator direct** | Option A in §1 — the VAT position, not the fee, is what rules it out |
 
-Paddle has the longest track record on the edge cases that actually bite:
-Canadian provincial tax, Indian GST, Brazilian DST.
-
-### The vendor risk, stated rather than glossed
-
-**The FTC fined Paddle $5 million in June 2025** for facilitating deceptive
-tech-support schemes — inadequate KYC (merchants charging US consumers before
-KYC completed, in one case past $500,000 with no identification), and using
-Ethoca/Verifi to refund flagged transactions before they became reportable
-chargebacks, which **masked the real fraud rate**. The settlement permanently
-bans it from processing for tech-support telemarketers and imposes tighter
-client screening and transaction monitoring.
-
-Two consequences, and neither is a reason to avoid them:
-
-- **Onboarding will be stricter than the marketing implies.** Expect real KYC,
-  and start it early because it can block everything downstream.
-- **The MoR model as a category now has regulatory attention.** So the
-  constraint that matters is not *which* MoR — it is that the integration must
-  stay thin enough that a second one is a week's work. See §6.
+> **What Paddle's policy actually said, kept as a prior and not as a fact about
+> Dodo.** Read from their help centre on 2026-10-07, and it is the most
+> informative thing in this document about how MoR chargeback terms are
+> *shaped*:
+>
+> - **0.65% of transaction volume**, measured **by value** rather than by
+>   count, against the card networks' 1.5%.
+> - **Won disputes still count** toward that rate.
+> - **Sellers may not submit dispute evidence at all** — *"the system is fully
+>   automated, and additional evidence submitted by sellers is not required or
+>   accepted."*
+> - **£20 per dispute, kept whether they win or lose**, plus the transaction
+>   amount while the case runs.
+> - A **pre-chargeback refund path**: they buy ~48-hour alerts and refund
+>   before the chargeback finalises, *"a chargeback fee is still applied"* — so
+>   a disputed sale can cost the full amount plus £20 and never appear as a
+>   chargeback. The FTC fined them **$5 million in June 2025** partly for using
+>   exactly that mechanism to mask fraud rates.
+>
+> **Three things to take from it when reading Dodo's MSA**, which is the only
+> reason it is still here: ask whether the threshold is measured by **value or
+> count**, whether a **won** dispute counts, and whether you may **submit
+> evidence**. Those three answers decide whether §3's levers are preventive-only
+> or whether there is an appeal stage worth being good at — and no provider puts
+> them on a pricing page.
 
 ---
 
 ## 3. Chargebacks: what an MoR protects you from, precisely
 
 "Chargeback protection" is the most oversold phrase in this market, so this
-section separates what is real from what is advertising.
+section separates what is structural from what is a vendor's policy. **The
+structural half is known; Dodo's policy half is not** (§8).
 
-### What is real, and it is the larger half
+### What is structural, and it holds for any MoR
 
-**The dispute is raised against Paddle, not you.** You hold no merchant
-account, so **your MID cannot be terminated and you cannot be MATCH-listed.**
-That is the protection worth having, and the thresholds say why:
+**The dispute is raised against the MoR, not you.** You hold no merchant
+account, so **your MID cannot be terminated and you cannot be MATCH-listed, and
+no scheme fine is billed to you.** That is the protection worth having, and the
+thresholds say why:
 
 | | Trigger, 2026 |
 |---|---|
@@ -158,84 +226,34 @@ That is the protection worth having, and the thresholds say why:
 | **Mastercard ECM** | 1.5%–2.99% **and** 100+ chargebacks in a month, fines escalating monthly, possible MATCH listing |
 | **Mastercard HECM** | 3%+ and 300+ chargebacks |
 
-A one-person Indian merchant selling to UK/EU consumers is directly exposed to
-that. ~~Under an MoR, it is Paddle's ratio and Paddle's problem.~~
+A one-person Indian merchant selling direct to UK/EU consumers is exposed to
+all of that. Under an MoR it is the MoR's merchant account and the MoR's scheme
+relationship.
 
-> **That last sentence was WRONG, and the primary source is what showed it.**
-> Paddle keeps a **per-seller chargeback rate** and enforces it at a threshold
-> **tighter than either card network's**, measured by **value** rather than by
-> count:
->
-> > *"Acceptable Chargeback Rate: Below 0.65% of transaction volume."* …
-> > *"Paddle calculates chargeback rates by comparing the total dollar value of
-> > chargebacks received against your total transaction volume for a given
-> > month."* … *"If your chargeback rate exceeds 0.65%, Paddle may require
-> > changes to your processes to bring the rate down."*
->
-> So **0.65% by value**, against VAMP's and ECM's 1.5%. And —
-> *"Even if a dispute is won, it still counts towards your chargeback rate."*
-> The dispute defence protects the money, never the ratio.
->
-> **What survives, stated precisely**, because it is still worth having: there
-> is no merchant account of ours to terminate, no MATCH listing, and no scheme
-> fine billed to us. What does *not* survive is the idea that the ratio stops
-> being our problem. It is measured, it is stricter, and the consequence is a
-> risk review rather than a termination.
->
-> **And because it is measured by value, the threshold behaves backwards at
-> the volumes we will actually start at.** One disputed Team subscription at
-> £49 stays under 0.65% only above **£7,538** of monthly volume; one Business
-> subscription at £99 needs **£15,231**. Below that, **a single dispute
-> breaches the threshold on its own** — and winning it does not help, because
-> won disputes still count. So for the first several months the rate is not a
-> ratio to manage, it is a **binary**: one dispute and you are in
-> conversation with their Risk Team.
->
-> That is the strongest argument in this document for §3's levers, and
-> especially for annual invoicing: it is not about shaving a percentage, it is
-> about keeping the count at zero while the denominator is too small to
-> absorb anything.
+### What does NOT follow, and the 2026-10-07 version of this file got it wrong
 
-Paddle runs the dispute defence automatically and **bears fraud liability** —
-and that automation is a constraint as much as a convenience:
+The earlier draft said *"it is the MoR's ratio and the MoR's problem."* Reading
+a real MoR's published policy disproved it: an MoR keeps a **per-seller**
+chargeback rate and enforces it at a threshold of its own, which can be
+**tighter than either card network's**. So:
 
-> *"The system is fully automated, and additional evidence submitted by sellers
-> is not required or accepted."*
+- **Assume a per-seller rate exists and is stricter than 1.5%** until the MSA
+  says otherwise.
+- **Assume you bear the cash cost of every dispute** — the amount plus a fee,
+  whoever wins.
+- **Assume the consequence is a risk review**, not a termination. That is the
+  real difference the MoR makes, and it is worth having; it is just not what
+  the phrase implies.
 
-**So you cannot fight a dispute yourself even holding the evidence that would
-win it** — sync logs showing the customer used the workspace for a month, say.
-Every lever in this section is therefore **preventive**; there is no appeal
-stage to be good at.
+**And at our volumes the threshold behaves backwards, whatever its exact
+number.** A rate measured by value is a *binary* while the denominator is
+small: one disputed £49 subscription stays under 0.65% only above **£7,538** of
+monthly volume, and one at £99 needs **£15,231**. Below that, a single dispute
+breaches it on its own — and if won disputes count, winning does not help.
 
-A second dispute (pre-arbitration) is **not contested at all** and is treated
-as a standard chargeback.
-
-### What is not real, and must be planned around
-
-**Confirmed from the source, 2026-10-07** — this was the document's flagged
-unverified claim and the secondary reporting was accurate word for word:
-
-> *"Paddle deducts both the transaction amount and the fee from your seller
-> balance."* … *"If Paddle wins the chargeback dispute: we return the recovered
-> transaction amount to your seller balance, but the chargeback fee is not
-> refunded."* … *"The chargeback fee is 20 USD/GBP/EUR or 40 CAD/AUD."*
-
-So **£20 a dispute, kept whether they win or lose**, plus the transaction
-amount while the case runs.
-
-**And one more cost path, which is the FTC's finding as documented behaviour.**
-Paddle buys pre-chargeback alerts (~48 hours' notice) and *"issue[s] a full
-refund to the buyer before the chargeback is finalised"* — and *"a chargeback
-fee is still applied to cover the cost of the alert."* So a disputed sale can
-cost the full amount **plus £20** and **never appear as a chargeback at all**.
-§2 records the FTC fining them $5M partly for using exactly this mechanism to
-mask fraud rates; it is current, documented, and the practical consequence for
-us is that the refund figure and the dispute figure measure different things
-and neither alone tells you how much a bad month cost.
-
-**So budget as if you bear the cash cost of every dispute.** What you are
-buying is that disputes cannot end your ability to take payment at all — not
-that they stop being counted against you.
+That is the strongest argument in this document for the levers below, and
+especially for annual invoicing: **the job is keeping the count at zero while
+the denominator is too small to absorb anything**, not shaving a percentage.
 
 ### The liability shift that is yours to earn
 
@@ -252,8 +270,9 @@ MoR's job here, not ours.
 
 ### The levers that are actually ours, ranked
 
-None of these needs a vendor, and the first one is worth more than the rest
-combined.
+**None of these depends on which provider was chosen**, which is exactly why
+they are the part of this section that did not have to be rewritten. The first
+is worth more than the rest combined.
 
 1. **Annual billing, invoiced, for anything above a single seat.** A bank
    transfer has **no chargeback mechanism at all**. It also removes 11
@@ -261,27 +280,36 @@ combined.
    way as the margin.
 2. **A statement descriptor the customer recognises** — `NIMBLECLERK`, never
    the processor's name. *"I don't recognise this charge"* is the most common
-   consumer dispute and it is entirely self-inflicted.
+   consumer dispute and it is entirely self-inflicted. **Check where this is
+   configured on the provider's side**; on an MoR it is usually their name plus
+   a seller string, and the seller string is the lever.
 3. **A pre-renewal email, 7 days out, naming the amount and carrying the cancel
    link.** For an annual renewal this is the difference between a renewal and a
-   dispute. **Note what this deployment cannot do:** it has no outbound email
-   of its own — §51's chaser drafts into the reader's own mail client, and
+   dispute. **Note what this deployment cannot do:** it has no outbound email of
+   its own — §51's chaser drafts into the reader's own mail client, and
    §52/§53's send uses the *tenant's* own provider key. So this must come from
-   the MoR's own dunning and receipts. Do not build a mail sender for it.
+   the provider's own dunning and receipts. **Do not build a mail sender for
+   it**, and do check in §7 that the provider's dunning emails are actually
+   switched on, because in test mode they are the thing you deliberately turn
+   off.
 4. **Self-serve cancellation that works in two clicks.** A cancel flow that
-   requires an email is a dispute generator.
+   requires an email is a dispute generator. Today the Subscription card's
+   button is the same checkout link for a subscriber as for a new one (§71's
+   open item) — a **customer-portal link** is the fix and it is small.
 5. **Refund on request inside 14 days, without argument.** UK and EU consumers
    have statutory cancellation rights for digital services anyway; a refund
-   costs 5% and a chargeback costs the amount, the fee, and a mark against a
-   1.5% ceiling.
+   costs the fee and a chargeback costs the amount, the fee, and a mark against
+   a threshold you cannot see.
 
 **Items 2–5 are product decisions, not payment configuration.** They belong in
-whatever ships the billing screen, and they are cheaper to build in than to
-retrofit.
+whatever ships enforcement, and they are cheaper to build in than to retrofit.
 
 ---
 
 ## 4. Tax, split into what goes away and what stays ours
+
+**Unchanged by the choice of MoR** — the split is a property of the structure,
+not of the vendor. It does depend on §1's blockquote being true.
 
 | | Who |
 |---|---|
@@ -300,9 +328,9 @@ retrofit.
 - **Payment must be received in convertible foreign exchange within one year of
   the invoice.** Miss that window and the zero-rating on *that invoice*
   collapses: you owe the IGST that was never charged, plus interest, with
-  roughly 15 days to pay once the deadline passes. Monthly MoR payouts make
-  this a non-risk in practice — which is exactly why the invoice-to-payout
-  matching has to stay clean enough to prove.
+  roughly 15 days to pay once the deadline passes. Monthly payouts make this a
+  non-risk in practice — which is exactly why the invoice-to-payout matching
+  has to stay clean enough to prove.
 - **The "not an intermediary" condition** is the one to get an opinion on. We
   sell our own software to the MoR rather than arranging a supply between two
   other parties, so we are not an intermediary — but a reseller structure is
@@ -310,7 +338,9 @@ retrofit.
 
 ### For the CA conversation, so it is short
 
-1. Entity: sole proprietorship or private limited, and what that changes.
+1. Entity: sole proprietorship or private limited, and what that changes. **The
+   account is an individual one**, so this is now a live question rather than a
+   theoretical one.
 2. The intermediary opinion above, in writing.
 3. Whether Softex / STPI reporting touches a SaaS service export at our scale.
 4. Whether anything about the MoR structure disturbs the five §2(6) conditions.
@@ -344,17 +374,30 @@ how much they cost:
 **Per-workspace needs one enforcement point: a member count at invite time.**
 That is one check in `/api/org/invite`, not a metering system — and §2.4
 already records that plan state belongs **on the org**, beside `suspendedAt`,
-because the workspace belongs to the org.
+because the workspace belongs to the org. What is built stores it on the
+workspace meta document instead (§6); that is a difference to settle when
+enforcement lands, not a bug.
 
 ### Currency: GBP primary. Decided.
 
 The market is UK and Europe. `£19` reads as a price; `$22.80` reads as a
 conversion, and a foreign-currency line on a card statement is itself a dispute
 trigger (§3, lever 2). An MoR does localised pricing, so this is configuration
-rather than code. `DEFAULT_SETTINGS.currency` is `'USD'` in the app (§42
-recorded that as wrong for this market and deliberately did not change it) —
-**that is the workspace's display currency for their own records and is a
-separate thing from what we bill in.** Do not conflate them.
+rather than code — **confirm GBP presentment is available on the account before
+treating it as settled** (§8).
+
+`DEFAULT_SETTINGS.currency` is `'USD'` in the app (§42 recorded that as wrong
+for this market and deliberately did not change it) — **that is the
+workspace's display currency for their own records and is a separate thing
+from what we bill in.** Do not conflate them.
+
+### A hard floor that is now known
+
+**A subscription product must be at least $1.00 USD**, or the equivalent value
+in another currency. Zero-cost subscriptions are allowed, which is a possible
+shape for a free tier, but anything paid is above that line. None of the tiers
+below is near it; it matters only if a £1–2 "keep my data" tier is ever
+considered.
 
 ### A starting point, not a decision
 
@@ -394,143 +437,387 @@ the comparison table above, and the thing to revisit first is whether **Solo**
 should exist at all — a one-person tier at £19 competes with free alternatives
 and is the hardest cohort to support per pound.
 
-### What the fee actually leaves
+### What the fee leaves — NOT computable yet, and deliberately left blank
 
-| | Gross | MoR fee | Net | Kept |
-|---|---|---|---|---|
-| Team, monthly | £49 | £2.45 + £0.50 | **£46.05** | 94.0% |
-| Team, annual | £490 | £24.50 + £0.50 | **£465.00** | 94.9% |
+The 2026-10-07 version carried a net-rate table computed from Paddle's
+5% + $0.50. **That table is deleted rather than converted**, because converting
+it would mean putting a Dodo fee in this document that nothing here has read —
+which is the same class of error as §17's records-times-a-constant estimate, in
+the one place it would be quoted back.
 
-Annual is worth ~0.9 points on fees alone, before the 11 removed dispute
-opportunities. **And this is not the final net** — a payout fee and the FX
-spread into INR sit underneath it. Confirm both from the MSA and record them
-here; a net rate that ignores FX is the same class of error as §17's
-records-times-a-constant estimate.
+Fill it in from the dashboard or the MSA, in this shape, and record the date:
+
+| | Gross | Provider fee | Payout fee | FX into INR | Net | Kept |
+|---|---|---|---|---|---|---|
+| Team, monthly | £49 | ? | ? | ? | ? | ? |
+| Team, annual | £490 | ? | ? | ? | ? | ? |
+
+**All four middle columns, not just the first.** A net rate that ignores the
+payout fee and the FX spread is wrong in the direction that flatters it, and
+annual billing is worth roughly a point on fees alone before the 11 removed
+dispute opportunities — so the comparison between the two rows is the thing the
+table is for.
 
 ---
 
-## 6. The engineering constraints, decided before any code
+## 6. What is built, and the constraints it was built under
 
-These exist so that the first integration does not become the only possible
-integration.
+Three commits, and **none of them takes money**: `CLAUDE.md` §69, §70, §71.
 
-- **The MoR is replaceable in a week.** One module, one webhook handler, and
-  plan state on the org. No provider object reaches `js/app.js`, and no
-  provider-specific field is stored on a record or a workspace. The FTC action
-  in §2 is why this is a constraint rather than an aspiration.
-- **The API key is env-only.** §17's rule has teeth here: *NEVER PUT A
-  CREDENTIAL IN `platform`* — it is in every nightly artifact, downloadable by
-  anyone with repo read access. Same class as `BACKUP_TOKEN`. It is also not a
-  `settings` field and not a meta-doc sibling: §38 and §52 both record why a
-  credential cannot live where sync can reach it, and **this one has no
-  per-tenant variation at all**, so it has no business being stored.
-- **The inbound webhook is §30 Phase 4 from scratch.** `lib/safe-fetch.js`
-  guards *outbound* and does nothing whatever for a request arriving at us
-  (§38, and §57 records the same point for inbound mail). It needs its own body
-  limit, its own rate-limit bucket, and **signature verification** — the sender
-  carries no session, so the signature is the only thing that authenticates it.
-  And §61 R2's ordering: authenticate, then authorize, then meter.
-- **Card data never reaches this deployment.** Hosted checkout only. §2.3 notes
-  that being able to write that sentence truthfully is worth something.
-- **Plan state on the org**, beside `suspendedAt` (§2.4). The workspace belongs
-  to the org (§5), so the thing being paid for is the org.
+| | |
+|---|---|
+| `lib/webhook-verify.js` | **Standard Webhooks** signature verification. CommonJS, `.js` not `.mjs` (§38's Node-version trap), not under `js/` — `tests/smoke.mjs` asserts it 404s. Never throws; returns a `code` so a route can tell a wrong secret from a replay from a mismatch |
+| `POST /api/payments/dodo` | the one route in the application with **no session behind it**, so the signature *is* the authentication. Raw parser mounted **before** the global JSON one, own body limit, own rate bucket |
+| `GET /api/org/billing` | owner-only, returns `{ enabled, checkout, billing }`. `enabled` exists so *"nobody has paid"* and *"this deployment cannot receive a confirmation"* are not the same answer |
+| the Subscription card | four states, a static checkout link, and a return handler that strips the provider's appended query |
+
+### The constraints, each a restatement of a rule this codebase already had
+
+- **The integration is replaceable in a week.** One module, one webhook
+  handler, one URL builder. No provider object reaches `js/app.js`. §2 records
+  why this matters *more* for a thinner vendor, not less.
+- **~~The API key is env-only.~~ There is no API key.** This is a **correction
+  to `CLAUDE.md` §69**, which pinned `DODO_API_KEY` and `DODO_API_BASE` in its
+  list of what the integration would need. Neither is read by any line of
+  `server.js` — a **static payment link** plus **signature verification** uses
+  the provider's API not at all, and holds no bearer token for it. The rule
+  stands for the day one is needed (§17: *NEVER PUT A CREDENTIAL IN
+  `platform`*, and §38/§52 on why a credential cannot live where sync can reach
+  it); the point is that today the credential surface is **one signing secret**
+  and nothing else.
+- **`DODO_WEBHOOK_SECRET` is the only credential**, and it is env-only. Never
+  logged, never exported, never in `platform`. `DODO_PRODUCT_ID` is *not* a
+  credential — it appears in a URL the customer visits.
+- **Ordering, not a `webhook-id` store, is what keeps a cancellation
+  cancelled.** The provider states its events are *"neither terminal nor
+  strictly ordered"*, so a retried `subscription.active` can arrive after
+  `subscription.cancelled`. Last-write-wins on the event's own timestamp
+  handles that **and** dedupes retries for free — only because the payload is a
+  state snapshot rather than an increment. §70 has the full reasoning and the
+  condition under which it stops holding.
+- **Card data never reaches this deployment.** Hosted checkout only, and the
+  checkout is a **static link** because an overlay or inline checkout means
+  loading the provider's JavaScript, which `script-src 'self'` refuses (§30
+  Phase 4). A constraint, not a preference.
+- **Subscription state survives a restore; the two credentials beside it do
+  not.** `billing` sits next to `hook` and `mail` on the workspace meta
+  document and is deliberately **not** redacted on export — redacting it would
+  silently un-subscribe every paying customer on a recovery, which is §38's
+  webhook finding with money attached.
 - **Non-payment must never reach `deleteAccount()`.** §24 stage B's suspension
   is read-only sync, reversible, destroys nothing; §15 records that the two are
   *"one word from deletion and a decade of data apart"*.
 - **Export stays open on suspension.** §36 keeps export available to every role
   deliberately — *"reading the workspace and taking a copy of it is the job"*.
   A customer who stops paying and cannot get their data out is the worst
-  version of this product, and it is also the fastest route to a dispute.
+  version of this product, and the fastest route to a dispute.
+
+### Not built, and listed so the gaps read as checked
+
+- **Enforcement.** Nothing reads `billing` to decide what a workspace may do.
+  That is a pricing decision before it is code, and §17's *"nothing is
+  enforced"* still stands.
+- **Tiers.** One `DODO_PRODUCT_ID`. This becomes a map, not a redesign.
+- **A customer-portal link.** The card's button is the same checkout URL for a
+  subscriber as for a new customer. §3's lever 4 is why this is next.
+- **A `webhook-id` store.** Costed and declined — the clock already dedupes
+  *and* orders, which the id does not.
 
 ---
 
-## 7. Sequence, when the decision is taken
+## 7. Setting it up and testing it — the dashboard steps, in order
 
-Nothing below is started yet. The ordering is load-bearing: steps 1–3 can block
-everything and none of them is code.
+**For test mode, end to end.** The ordering is load-bearing in three places and
+each is called out. Nothing here charges a real card, and step 3 is what stops
+it emailing real people.
 
-1. **One CA session** — §4's five questions. Get the intermediary point in
-   writing.
-2. **File the LUT** for the current financial year if it is not filed.
-3. **Apply to Paddle.** Post-FTC onboarding is stricter; this is the step with
-   an unknown duration and somebody else's timeline.
-4. **Read the MSA** — chargeback set-off, payout fees, FX spread. Correct §3
-   and §5 here from what it says.
-5. **Rewrite `MARKETING.md`** (§2.1), and **list where that copy has already
-   been published** — rewriting a source does nothing about a post written from
-   it months ago. If the answer is "nowhere yet", write that down; it is the
-   cheapest state this will ever be in.
+### Why the provider's own CLI cannot replace step 9
+
+Worth knowing before starting, because it is the thing that would otherwise
+waste an afternoon. Their documentation says so itself:
+
+| | What it does | What it produces |
+|---|---|---|
+| `dodo wh trigger <event> <url>` | sends a mock payload **with no `webhook-id`, no signature and no timestamp** — their docs tell you to parse it with `unsafeUnwrap` | a **false pass** |
+| `dodo wh listen <url>` | forwards real headers, but *"the relay and the CLI parse the JSON body and serialize it again before forwarding… signature verification fails even though the headers are intact"* | a **false failure** |
+
+Of the two, the false pass is the dangerous one: it is how a verification
+function ends up looking right and verifying nothing. **The dashboard's
+Webhooks → Testing → Send example is signed the same way as a real event**, so
+that is the only thing that settles it.
+
+### Step 0 — sync the Render mirror, or everything below tests an old build
+
+**Render deploys from a mirror of this repository, so a push here does not
+deploy** (`CLAUDE.md` §65). None of §69/§70/§71 is live until the mirror is
+synced, and `POST /api/payments/dodo` on a stale build is a **404** — which
+reads exactly like a wrong URL in the dashboard.
+
+Check which commit is actually serving:
+
+```sh
+curl -s https://nimbleclerk.com/healthz
+# {"ok":true,"storage":"mongodb","commit":"<sha>"}
+```
+
+Compare that `commit` against the head of
+`claude/pwa-modular-crm-builder-xcwgzv`. If it is behind, sync the mirror and
+wait for the redeploy before step 7.
+
+### On the dashboard, in test mode
+
+**Everything below belongs to the mode it was created in.** Products, API keys
+and webhook endpoints do not cross between test and live, and a test-mode
+signing secret does not verify a live delivery. Confirm the mode toggle before
+each step rather than once at the start.
+
+**1 · Create the subscription product.**
+A recurring product, **at least $1.00 USD** or equivalent. The price on it is
+the price the customer sees — this repository deliberately holds no copy of it
+(§71), so whatever is set here is the only figure. Copy the **product id**.
+
+**2 · Check the currency you can actually present in.**
+§5 decided GBP primary. If the product cannot be priced in GBP on this account,
+that is a finding for §8 rather than something to work around.
+
+**3 · Turn off test-mode customer email — BEFORE the first test payment.**
+*Settings → Communication → Email.* In test mode the provider sends **real
+email to real addresses**, with `[TEST MODE]` in the subject, capped at 100 a
+week. Doing this after the first payment means a receipt has already gone
+somewhere.
+
+**4 · Add the webhook endpoint.**
+*Developer → Webhooks → Add endpoint*, URL:
+
+```
+https://nimbleclerk.com/api/payments/dodo
+```
+
+**5 · Select the events explicitly.**
+**Deselecting everything subscribes you to every event type** — per their docs,
+not a guess. The route answers 2xx for anything it does not handle, so nothing
+breaks either way; the reason to be explicit is the log. The ones that matter:
+
+```
+subscription.active      subscription.renewed     subscription.past_due
+subscription.on_hold     subscription.cancelled   subscription.expired
+subscription.plan_changed
+payment.succeeded        payment.failed
+```
+
+**6 · Copy the signing secret.**
+On the endpoint's **Overview** tab, `whsec_…`. **It is a bearer credential** —
+it is the entire authentication on that route. Do not paste it into a file in
+this repository, a commit message, or a chat.
+
+### On Render
+
+**7 · Set two environment variables and nothing else.**
+
+| | |
+|---|---|
+| `DODO_WEBHOOK_SECRET` | the `whsec_…` from step 6 |
+| `DODO_PRODUCT_ID` | the product id from step 1 |
+
+**Do not set `DODO_CHECKOUT_BASE`** — it is a test seam that points the
+checkout link at a stand-in, and setting it on a real deployment sends
+customers nowhere.
+
+Saving these redeploys the service. Wait for it.
+
+**8 · Confirm the card appeared.**
+Sign in as an **owner** and open Settings. The **Subscription** card should now
+be present and read *"No subscription on this workspace yet"* with a
+**Subscribe** button.
+
+| What it says instead | What it means |
+|---|---|
+| *"Payments are not finished being set up here"* | `DODO_WEBHOOK_SECRET` is not set on the deployment, or the redeploy has not landed |
+| the card is **absent entirely** | `DODO_PRODUCT_ID` is not set *and* nothing is recorded — which is also the correct state for every other deployment |
+| nothing, as a member | it is owner-only, by design |
+
+### Prove the signature check — the step that actually matters
+
+**9 · Webhooks → your endpoint → Testing → Send example.**
+Pick `subscription.active`. **Expect HTTP 200.**
+
+**What success looks like is counter-intuitive, so read this before concluding
+it failed.** The example payload carries no `metadata.wsId`, so the server
+verifies the signature, finds no workspace named, logs that, and answers 200
+**without changing the card**. That is the correct result: the thing under test
+is the signature, and a 200 is the only way it can pass.
+
+| Response | Cause |
+|---|---|
+| **200** | verification passed — this is the pass |
+| **401** | the secret does not match this endpoint, or a live-mode secret was pasted into a test-mode deployment. The body deliberately does not say *which* check failed; the reason is in the service log |
+| **503** | `DODO_WEBHOOK_SECRET` is unset on the deployment. Deliberately not a 2xx, which would discard real events in silence |
+| **404** | the deployed build predates the route — step 0 |
+| **429** | more than 120 deliveries in a window from one IP. Raise `RATE_DODO_WEBHOOK_MAX` if a bulk replay needs it |
+
+### Pay end to end
+
+**10 · Settings → Subscribe**, and pay with a test card. CVV `123` on all of
+them, any address:
+
+| | |
+|---|---|
+| `4242 4242 4242 4242` exp `06/32` | US Visa, succeeds |
+| `5555 5555 5555 4444` | US Mastercard, succeeds |
+| `4576 2389 1277 1450` | India Visa, succeeds |
+| `4000 0000 0000 0002` | generic decline |
+| `4000 0000 0000 9995` | insufficient funds |
+
+**11 · Watch the return.** You land back on `/app`, the client moves you to
+Settings, and the provider's appended `payment_id`, `status` and **`email`**
+are stripped from the address bar. The card reads *"Confirming your payment"*
+until the webhook lands, then shows **Status** and **Next payment**.
+
+The pending note is per-tab and survives a reload, and it is cleared by the
+server having an answer rather than by a timer — so if it persists, the webhook
+has not arrived and the delivery log is where to look.
+
+**12 · Verify from the server, not from the screen.** Either the dashboard's
+delivery log (a 200 and the attempt count), or:
+
+```sh
+# as the signed-in owner, in the browser console on /app
+await (await fetch('/api/org/billing')).json()
+```
+
+### The unhappy paths, which are the ones worth testing
+
+**13 · A cancelled or declined checkout.** Use `4000 0000 0000 0002`, or
+abandon the page. The return carries a `status` other than `succeeded`, and the
+card must say nothing was charged — **not** show a pending note.
+
+**14 · A renewal failure.** `4000 0000 0000 0341` exp `12/34` — this card
+**succeeds the first charge and fails the renewal**, which is the only way to
+exercise `subscription.past_due` and the *Access until* row that
+`past_due_ends_at` drives.
+
+**15 · Cancel from the dashboard.** Expect `subscription.cancelled` and a card
+that reflects it.
+
+**16 · Replay an older event after the cancellation.** In the delivery log,
+re-send the earlier `subscription.active`. **The card must still say
+cancelled.** This is the behaviour the provider's own tools cannot produce on
+their own, it is the one that costs money if it is wrong, and it is the whole
+reason §70 compares timestamps rather than storing `webhook-id`s.
+
+### Clean up — not optional
+
+**17 · Cancel every test subscription.** Test subscriptions **keep renewing**
+and keep delivering webhooks for weeks after testing stops. Cancel each one
+from the dashboard, or with the test-mode key:
+
+```
+PATCH https://test.dodopayments.com/subscriptions/{id}
+{ "status": "cancelled" }
+```
+
+**18 · Decide whether to turn test-mode email back on.** Step 3 turned it off.
+If a dunning or receipt email is ever going to be tested, it has to go back on
+first — and §3's lever 3 depends on those emails existing in **live** mode, so
+check the live-mode setting separately.
+
+### Before live mode — and most of this is not code
+
+1. **Read the MSA**, and get four answers: **is the provider contractually the
+   seller of record** (§1's blockquote — everything rests on it), the fee, the
+   chargeback set-off and fee, and the payout plus FX into INR. Fill in §5's
+   blank table and correct §3 from what it says.
+2. **Account Verification.** Live mode exists at signup; live *payments and
+   payouts* turn on after it. Unknown duration and somebody else's timeline.
+3. **One CA session** — §4's five questions, with question 1 now live because
+   the account is an individual one. Get the intermediary point in writing.
+4. **File the LUT** for the current financial year if it is not filed.
+5. **Re-create the product in live mode** (copying keeps the details and gives
+   a **new id**), **add a second webhook endpoint** in live mode with **its own
+   secret**, and re-point both environment variables.
 6. **Answer §2.4's six product decisions** — quotas, non-payment, export when
    suspended, the signup gate, where plan state lives, and what happens to
    everybody currently on the free beta. Grandfathering is a decision; making
    it silently is not.
-7. **Walk §2.1's twelve files** and §2.5's doc list.
-8. **Bump `TERMS_VERSION`** — everybody re-prompted, which is the mechanism
-   working (§41, §2.2). The billing prompt goes **after** the terms modal, or
-   it asks for money before agreement.
-9. *Then* integrate, under §6's constraints, and verify per §2.6 — on a **test**
-   payment account driven end to end, because §36's lesson is that driving the
-   product is a different instrument from reading it.
+7. **Build enforcement** (§6) under §24 stage B's suspension rules, and the
+   customer-portal link (§3 lever 4).
+8. **Rewrite `MARKETING.md`** (§2.1), and **list where that copy has already
+   been published** — rewriting a source does nothing about a post written from
+   it months ago. If the answer is "nowhere yet", write that down; it is the
+   cheapest state this will ever be in.
+9. **Walk §2.1's twelve files** and §2.5's doc list, and add the provider to
+   `privacy.html`'s recipient roster — §40's *"that is the complete list"* has
+   already been false twice, both times caught by looking at what the
+   deployment does rather than at what the code could do.
+10. **Bump `TERMS_VERSION`** — everybody re-prompted, which is the mechanism
+    working (§41, §2.2). The billing prompt goes **after** the terms modal, or
+    it asks for money before agreement.
 
 ---
 
 ## 8. What this document does not know
 
-Recorded so the gaps read as checked rather than missed.
+Recorded so the gaps read as checked rather than missed. **The 2026-10-07
+version's open items were all about Paddle and are moot**; these replace them,
+and every one of them is answered by the same read — the dashboard and the MSA.
 
-| | Why |
+| | Why it is open |
 |---|---|
-| ~~**Paddle's exact chargeback set-off and fee wording**~~ | **RESOLVED 2026-10-07** from their help centre, and the secondary reporting was right word for word. §3 carries the quotes, and the read turned up four things nobody had reported: the 0.65%-by-value rate, that won disputes still count, that sellers may not submit evidence, and the pre-chargeback refund path |
-| **Whether there is a monthly platform fee** | **still open, and not for an access reason.** §2 says 5% + $0.50 with **no monthly fee** from secondary sources; another reports *"platform fees starting at $99/month"*. `/pricing` is **client-rendered** — 7.5 KB of text, all navigation, no figures in the HTML — so it cannot be read this way. It changes the Solo tier's economics materially: $99/month against £19/month of revenue is not a rounding error. Read it in the dashboard or the MSA |
-| **Their published account-verification requirements** | **still open**, same cause: `/help/start/account-verification` is client-rendered too (4.7 KB, navigation only). §7 step 3's blockers are from a search summary of that page, not the page. The *shape* is corroborated by `nimbleclerk.com` having no pricing page and no refund policy either way |
-| **Payout fee and FX spread into INR** | no help-centre page found for fees or payouts under the paths that do render; from the MSA or their support |
-
-> **A note on why half of this is still unknown with the site reachable.**
-> `www.paddle.com` is allow-listed now and answers 200. The **help centre
-> renders server-side** — which is how §3's quotes were read, 1.1 MB of real
-> content. The **marketing and onboarding pages do not**: `/pricing` and
-> `/help/start/account-verification` return ~1.1 MB of HTML containing ~5–7 KB
-> of text, all of it navigation. So the remaining gaps are a rendering
-> property of their site, not a permission we are missing, and no further
-> allow-list entry fixes them.
->
-> **Getting there first cost one detour worth recording**, because it is this
-> repository's own rule arriving from outside: `paddle.com` was added and
-> answered — with a **301 to `www.paddle.com`**, which was a *different host*
-> and not on the list, giving `CONNECT tunnel failed, response 403` one hop
-> later. `CLAUDE.md` §57 and
-> [`LAUNCH-CHECKLIST.md`](LAUNCH-CHECKLIST.md) §1.0 both state that **apex and
-> `www` are two origins**; an allow-list is a third place that is true, and the
-> failure looked like the entry had been applied because the apex *did* answer.
-> **Add hosts, not brands** — and `developer.paddle.com`, `api.paddle.com` and
-> `sandbox-api.paddle.com` are each separate again.
-| **Payout fee and FX spread into INR** | not published; from the MSA or from their support, and it changes the net rate in §5 |
-| **Whether Paddle's current onboarding accepts an Indian sole proprietorship** | sources say no Indian entity is *required*; none of them is Paddle's own KYC policy |
-| **Softex / STPI applicability** | §4's CA question 3 |
+| **Whether the provider is contractually the seller of record for our sales** | **the most important line in this document.** §1's entire VAT escape and §4's whole split depend on it, and `js/app.js` already prints the claim to customers. A gateway that markets itself with MoR language would leave us owing UK VAT from the first sale. From the MSA, not from a marketing page |
+| **The fee** | no figure is stated anywhere in this document on purpose. §5's net table is blank rather than estimated |
+| **Payout mechanics into INR, and the FX spread** | the two columns that make a net rate honest (§5), and the thing that decides whether monthly or annual is worth the difference |
+| **Chargeback set-off, the per-dispute fee, and whether a per-seller rate exists** | §3 assumes the worst of all three. §2's blockquote has the three questions to ask, drawn from a comparable MoR's published policy |
+| **Whether GBP presentment is available on this account** | §5's currency decision is configuration, and step 2 of §7 is where it is found out |
+| **Account-verification requirements for an individual seller** | §7's *before live mode* step 2 has an unknown duration, and it gates every live payment |
+| **Whether the statement descriptor is configurable** | §3's lever 2 is the cheapest dispute prevention there is, and on an MoR the seller string may or may not be ours to set |
 | **Where `MARKETING.md`'s copy has already been published** | §2.1's own open item, and only the owner can answer it |
+| **Softex / STPI applicability** | §4's CA question 3 |
+
+**What is NOT open, and is worth saying because this document used to be mostly
+unknowns:** the engineering surface is read and verified — Standard Webhooks
+signing against a frozen vector computed three independent ways (§69), the
+two-mode separation, the retry schedule, the event list, the payload shape, the
+test cards, the static-link parameters, and the two CLI tools that cannot test
+verification. §7 is drivable today.
 
 **And the thing no document here can establish.** §40's rule: *a mechanism that
 hangs off a URL configured somewhere else has a failure mode no test in this
 repository can see.* A payment provider is the largest such mechanism this
-deployment would ever have — the dashboard, the webhook endpoint, the dunning
+deployment will ever have — the dashboard, the webhook endpoint, the dunning
 schedule and the tax settings all live in somebody else's account. Whatever
 monitoring is built for it has to be checked against **the provider's own
 screens**, not against the code, which is the lesson §40 paid for with weeks of
-a reminder engine that had never once run.
+a reminder engine that had never once run. §7's step 0 is that rule's smallest
+instance: the repository cannot see which build is deployed, so the first step
+is to go and look.
 
 ---
 
 ## Sources
 
-Researched 2026-10-07. Primary and professional sources first; the secondary
-ones are marked, because §21's treatment is that a claim from outside gets
-checked rather than accepted, and knowing which tier a number came from is part
-of checking it.
+The regulatory, VAT and card-scheme research was done 2026-10-07 and is
+**unaffected by the change of rail** — §1, §3's thresholds and §4 all rest on
+it. The provider research was redone 2026-10-13.
+
+Primary and professional sources first; the secondary ones are marked, because
+§21's treatment is that a claim from outside gets checked rather than accepted,
+and knowing which tier a number came from is part of checking it.
+
+**The provider (2026-10-13)**
+
+- Everything in §6 and §7 is from **first-party documentation**, read as
+  `docs.dodopayments.com/llms-full.txt` — webhook signing and headers, the
+  retry schedule and timeout, the event catalogue and payload shape, the
+  test/live separation, the test card list, the static-payment-link parameters
+  and return query, the Checkout Sessions shape, the $1.00 subscription
+  minimum, the test-mode email behaviour, and the two CLI tools' limitations.
+  **No fee, payout or chargeback figure was found there**, which is §8.
+- The signature scheme is **[Standard Webhooks](https://www.standardwebhooks.com/)**,
+  which is what makes `lib/webhook-verify.js` portable.
 
 **Regulatory and professional**
 
 - RBI PA-CB circular, analysed — [Trilegal](https://trilegal.com/wp-content/uploads/2023/12/RBIs-circular-on-cross-border-payment-aggregators.pdf)
-- FTC v. Paddle — [Morrison Foerster](https://www.mofo.com/resources/insights/250707-the-ftc-gives-the-merchant-of-record-model-a-paddling) · [Frankfurt Kurnit](https://advertisinglaw.fkks.com/post/102kgk1/ftc-settles-with-paddle-for-5-million-over-alleged-role-in-deceptive-tech-suppor) · [BleepingComputer](https://www.bleepingcomputer.com/news/security/paddle-settles-for-5-million-over-facilitating-tech-support-scams/)
 - Stripe's own RBI e-mandate documentation — [support.stripe.com](https://support.stripe.com/questions/rbi-e-mandate-regulations-faqs?locale=en-GB) (relevant only to India-issued cards, so not to our market — recorded so nobody re-derives it)
 - GST export of services, zero-rating and LUT — [PayGlocal](https://payglocal.in/blog/gst-on-export-of-services-impact) · [TaxGuru on LUT filing](https://taxguru.in/goods-and-service-tax/guide-lut-filing-zero-rated-export-supply-compliance.html)
 
@@ -544,9 +831,23 @@ of checking it.
 - Visa VAMP and Mastercard ECM thresholds, 2026 — [Chargeflow](https://www.chargeflow.io/blog/chargeback-thresholds)
 - 3DS liability shift and what it does not cover — [DashDevs](https://dashdevs.com/blog/3ds-liability-shift-explained/)
 
+**The rejected option, kept as §2's prior**
+
+- Paddle's chargeback policy — [their help centre](https://www.paddle.com/help/manage/risk-prevention/understanding-chargebacks-with-paddle), read server-side 2026-10-07. This is where §2's blockquote and §3's "assume the worst" come from
+- FTC v. Paddle — [Morrison Foerster](https://www.mofo.com/resources/insights/250707-the-ftc-gives-the-merchant-of-record-model-a-paddling) · [Frankfurt Kurnit](https://advertisinglaw.fkks.com/post/102kgk1/ftc-settles-with-paddle-for-5-million-over-alleged-role-in-deceptive-tech-suppor) · [BleepingComputer](https://www.bleepingcomputer.com/news/security/paddle-settles-for-5-million-over-facilitating-tech-support-scams/)
+
 **Secondary — vendor and comparison content, treat as directional**
 
 - PA-CB authorisation list and Stripe's absence from it — [Winvesta](https://www.winvesta.in/blog/businesses/19-firms-got-rbis-pa-cb-license-who-won-and-why) · [Xflow](https://www.xflowpay.com/blog/international-payment-gateways) (Xflow is a PA-CB holder writing about its own market)
-- Paddle pricing tiers — [Comparedge](https://comparedge.com/tools/paddle/pricing)
-- Paddle chargeback handling — [Paddle help centre, via search](https://www.paddle.com/help/manage/risk-prevention/understanding-chargebacks-with-paddle) (**unverified — see §8**)
 - CRM price comparison — [Axis Consulting](https://axisconsulting.io/pipedrive-pricing-plans/)
+
+> **One access note worth keeping, because it is this repository's own rule
+> arriving from outside.** During the 2026-10-07 research, `paddle.com` was
+> allow-listed and answered — with a **301 to `www.paddle.com`**, a *different
+> host* and not on the list, giving `CONNECT tunnel failed, response 403` one
+> hop later. `CLAUDE.md` §57 and
+> [`LAUNCH-CHECKLIST.md`](LAUNCH-CHECKLIST.md) §1.0 both state that **apex and
+> `www` are two origins**; an allow-list is a third place that is true, and the
+> failure looked like the entry had been applied because the apex *did* answer.
+> **Add hosts, not brands** — and the same held for this provider, where
+> `docs.` and `app.` are each separate from the apex again.
