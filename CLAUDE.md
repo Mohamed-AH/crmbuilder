@@ -152,6 +152,8 @@ never change, because everything cross-references them.
 | A checkout link that renders "This link isn't available" | §73 · §71 |
 | Why a test card is refused rather than declined | §73 · §45 |
 | A card that said `unknown` with the answer already in the record | §73 · §39 · §36 |
+| **A return URL the provider does not navigate to** — and the 429 on their hop | §73 · §71 · §70 |
+| **A pricing ceiling read off a mandate screen** — ₹15,000, and annual billing | §73 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · §3 |
 | Why Stripe cannot collect for an Indian seller, and what an MoR sidesteps | §64 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §1 |
 | What an MoR protects you from, and the half it does not | §64 · §72 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §3 |
 | **A claim on a customer-facing card that only the MSA can support** | §72 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §1 · §40 |
@@ -10740,13 +10742,21 @@ element — the kind of thing that reads fine in a diff and wrong on a page.
 
 ---
 
-## 73. Driving the real dashboard, and four things only a real payment found
+## 73. Driving the real dashboard, and five things only a real payment found
 
 §69 through §72 built the inbound gate, the webhook route, the checkout link and
 the document, and every one of them says the same thing in its own words:
-**nothing here has seen a real delivery.** This is what happened when one
-arrived. Two of the four landed in `fee243d` and `245a0cd` without a section —
-this is that section, written after the fourth.
+**nothing here has seen a real delivery.** This is what happened when ten
+arrived. Two of the five landed in `fee243d` and `245a0cd` without a section —
+this is that section, written after the fourth, and extended after both cards
+finally paid.
+
+**Not one of the five is a defect in the code those four sections shipped.**
+Three are documentation that was wrong or short, one is a card that did not read
+a field it already had, and one is the provider's own hop failing. That is the
+useful shape of the result: the parts that were built against a written spec
+held, and everything that broke was a thing nobody could check without an
+account.
 
 ### 1 · The repository told the operator not to set the variable test mode needs
 
@@ -10874,22 +10884,81 @@ Two consequences carried into the runbook rather than left to be rediscovered:
   `subscription.active` can lag the payment and a card still saying
   *"Confirming your payment"* is not yet evidence of a webhook fault.
 
-### Two findings for `docs/PAYMENTS.md` §8, read off a checkout page
+### 5 · `redirect_url` is not navigated to directly, and their hop 429'd
 
-Neither is proof and both narrow an open question, which is the most a
-screenshot can do:
+Both cards then paid successfully, and the US one broke the **navigation**
+rather than the payment.
 
-- **GST is computed and itemised at 18%.** A provider collecting and showing
-  destination tax per jurisdiction is behaving like a merchant of record, which
-  is §8's first open row — *whether they are contractually the seller of
-  record for our sales*, the claim `js/app.js` already prints to customers and
-  the one §1's whole VAT escape rests on. Behaviour is evidence about the
-  implementation, not about the contract. Still an MSA question.
-- **₹6,429.04 carries a converted decimal**, so localized pricing is on and an
-  unpriced currency resolves to the **buyer's** region. Two things follow: the
-  currency in the webhook payload varies by buyer, and §5's *GBP primary*
-  decision has to be checked against what the product's **base** currency
-  actually is rather than against what was intended.
+The success page does not send the customer to our `redirect_url`. It
+auto-forwards to an **undocumented hop of theirs** —
+`test.dodopayments.com/return/<id>` — **and that hop is what appends
+`payment_id`, `status` and `email`.** So §71's `captureCheckoutReturn()` runs
+only if it completes. It returned **HTTP 429** after three test payments in
+half an hour, rendering Chrome's *"This page isn't working"* with no mention of
+the provider on it. A reload got through to `/app`.
+
+**The obvious conclusion from a browser error page on a URL we supplied is
+that our redirect is wrong, and it is the wrong conclusion** — which is why
+§7 step 11 now names the two things that distinguish it: the address bar says
+`dodopayments.com` rather than `nimbleclerk.com`, and `/api/org/billing`
+already holds the subscription.
+
+**The design held, and it held for a stated reason rather than by luck.** §70
+made the webhook the only thing that records anything, and it does not travel
+through that hop — the delivery log shows all four events in the same minute as
+the payment, and the Settings card read `active` / *Next payment Nov 14* on the
+reload. §71 built the pending note as reassurance for the tab that paid, never
+as the record, so losing the hop costs the note and nothing else.
+
+What it leaves is a **narrow worse case, recorded rather than fixed**: a
+customer whose return hop fails *and* whose webhook has not landed yet sees
+*"No subscription on this workspace yet"* — the wrong sentence for somebody who
+has just paid, and the §72 branch above cannot help because nothing told the
+client a payment was in flight. The window is seconds and **nothing can close
+it from our side**, because knowing a payment is in flight is exactly what the
+return URL was for. Not worth a poll: it would run on every Settings render for
+every workspace to cover a few seconds of one.
+
+**And four events landed inside one minute**, which exercises §70's
+same-timestamp note in production for the first time: `subscription.active`,
+`subscription.updated`, `subscription.renewed` and `payment.succeeded`, with
+*renewed* arriving on a **first** payment. The final state is right because all
+four carried the same status, which is the condition that section already
+states — *"apply unless strictly older"* resolves a tie by arrival order, so
+the tie being harmless is a property of the payloads rather than of the rule.
+
+### Four findings for `docs/PAYMENTS.md`, read off real screens
+
+- **A hard pricing CEILING at ₹15,000 per debit**, and this one is the reason
+  to read a mandate screen rather than a regulation. The India authorization
+  page — served by **Cashfree**, which is their India acquirer — reads *Max.
+  Amount INR 15,000.00*, *Frequency: As and when presented*. That figure is the
+  RBI additional-factor-of-authentication threshold for recurring e-mandates
+  (₹5,000 → ₹15,000 by a June 2022 circular, consolidated April 2026), so the
+  provider pins the mandate at exactly the ceiling. Below it a renewal debits
+  silently; **above it the customer authenticates every charge**, which for a
+  subscription is a dead subscription rather than a friction cost. It binds
+  nothing in §5's table (~$150/month) and it binds **annual invoicing** — §3's
+  strongest chargeback lever — which multiplies the debit by twelve and puts
+  any tier above about £10/month into AFA territory for an Indian card. So the
+  lever and the ceiling interact, and an annual plan needs a non-mandate path
+  for India. In §5 rather than §4, because it constrains the price and not the
+  tax.
+- **The test product's base currency is USD**, measured: `$65.00` to a US card
+  and `₹6,429.04` to an India one, ratio ~98.9 — a conversion, not two
+  configured prices. That **answers half of §8's currency row** (localised
+  presentment works) and leaves GBP specifically unread, while saying §5's
+  *GBP primary* decision has not been applied to the product.
+- **Destination tax is computed per jurisdiction** — 18% GST itemised on the
+  INR checkout, `$0.00` sales tax on the USD one. It points the right way on
+  §8's first row, and it is still **evidence about their implementation rather
+  than about who the contract says sold the thing.** Behaviour cannot answer a
+  contractual question; the MSA can.
+- **The mandate screen says *"Click here to go to Business Name website"*** —
+  a literal placeholder, on the one screen where a customer grants a standing
+  debit. Their configuration, not ours, so it is a support question rather than
+  a setting, and it is in §8 as a before-live item because the screen it is on
+  is the one that loses mandates.
 
 ### Blast radius
 
@@ -10903,13 +10972,32 @@ reaches neither host.
 client finally reads it. The check §46 and §54 both say to run, run rather than
 the route count read.
 
-**§27's six user-facing documents need nothing, and that is the same checked
-omission as §70, §71 and §72's**: no `DODO_PRODUCT_ID` is set on any
-deployment the public can reach, so the card is absent for every user. They get
-walked when a price is set — the same moment
-[`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1's twelve-file list
-fires and `MARKETING.md`'s *"No per-seat pricing"* has to be dealt with (§48,
-§64). `privacy.html` names the provider as a recipient of personal data when
-the **first real payment** runs, not when a test one does.
+**§27's six user-facing documents still need nothing — but the REASON has
+expired, and that is a finding rather than a footnote.** §70, §71 and §72 each
+deferred the walk on one stated condition: *no `DODO_PRODUCT_ID` is set on any
+deployment the public can reach, so the card is absent for every user.*
 
-Counts: Playwright **151 → 152**, Node **616**, smoke **51** locally.
+**It is set on production now**, because that is what testing against a real
+deployment requires. So `nimbleclerk.com` is currently showing **every
+workspace owner** — the card is gated on `canEditSettings()`, which every owner
+of every workspace passes — a **Subscribe** button pointing at a **test-mode**
+checkout that cannot take their money. A control that looks like it works and
+cannot is this file's standing failure shape, arrived at from configuration
+rather than from code.
+
+Nothing is at risk: test mode charges nothing, and a tester who pressed it
+would get a refusal rather than a debit. What is spent is the deferral. Three
+sections rested on a condition that an operator legitimately had to break to do
+the thing those same sections asked for, and **none of them said that setting
+the variable makes the card live for everybody.** The two honest states are
+unset between test sessions, or the walk done — and the second cannot happen
+until there is a price, which is §64's open decision. §7's *before live mode*
+list is where that now sits.
+
+`privacy.html` still names the provider as a recipient of personal data when
+the **first real payment** runs, not when a test one does — unchanged, because
+no customer's data has reached them.
+
+Counts: Playwright **151 → 152**, Node **616**, smoke **51** locally. The later
+findings are documentation only, so `crmbuilder-v62` stands and the counts do
+not move — checked by diffing the touched paths, per §41.

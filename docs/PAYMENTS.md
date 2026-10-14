@@ -386,6 +386,14 @@ trigger (§3, lever 2). An MoR does localised pricing, so this is configuration
 rather than code — **confirm GBP presentment is available on the account before
 treating it as settled** (§8).
 
+**The test product is priced in USD and the decision has not been applied.**
+Measured rather than assumed: the same subscription presented **$65.00** to a
+US card and **₹6,429.04** to an India one, a ratio of ~98.9, which is a
+conversion from a USD base rather than two configured prices. So localised
+presentment **works** — that half of §8's question is answered — and the base
+currency is the thing to change. Doing it in the provider's product is the
+whole job; nothing in this repository names a price (§71).
+
 `DEFAULT_SETTINGS.currency` is `'USD'` in the app (§42 recorded that as wrong
 for this market and deliberately did not change it) — **that is the
 workspace's display currency for their own records and is a separate thing
@@ -398,6 +406,33 @@ in another currency. Zero-cost subscriptions are allowed, which is a possible
 shape for a free tier, but anything paid is above that line. None of the tiers
 below is near it; it matters only if a £1–2 "keep my data" tier is ever
 considered.
+
+### And a hard CEILING, observed on a real mandate
+
+**₹15,000 per debit**, which is the RBI additional-factor-of-authentication
+threshold for recurring e-mandates — raised from ₹5,000 by a June 2022
+circular, consolidated in April 2026, and unchanged at that figure. Below it a
+renewal debits silently; **above it the customer has to authenticate every
+single charge**, which for a CRM subscription is a dead subscription rather
+than a friction cost.
+
+Not inferred from the regulation — **read off the authorization screen**: the
+India mandate registered on a test subscription says *Max. Amount
+INR 15,000.00*, *Frequency: As and when presented*. The provider pins the
+mandate at exactly the AFA ceiling, so the ceiling is theirs as well as the
+regulator's.
+
+At the test product's own rate that is roughly **$150/month**, so nothing in
+the table below is near it. It binds on two things that are not in the table:
+a future per-workspace tier for a larger team, and **annual invoicing** —
+§3's first and strongest chargeback lever, which multiplies the debit by
+twelve and lands any tier above about £10/month straight into AFA territory
+for an Indian card. So the lever and the ceiling interact, and an annual plan
+needs a non-mandate path (invoice plus bank transfer) for India rather than
+the same checkout.
+
+Only India has this shape. It is here rather than in §4 because it constrains
+the **price**, not the tax.
 
 ### A starting point, not a decision
 
@@ -753,6 +788,30 @@ The pending note is per-tab and survives a reload, and it is cleared by the
 server having an answer rather than by a timer — so if it persists, the webhook
 has not arrived and the delivery log is where to look.
 
+**`redirect_url` is not navigated to directly, and this matters when it
+fails.** The success page auto-forwards to an undocumented hop of theirs —
+`test.dodopayments.com/return/<id>` — **and that hop is what appends the query
+parameters**, so our `captureCheckoutReturn()` only ever runs if it completes.
+Observed failing with **HTTP 429** after three test payments in half an hour,
+on the customer-facing path, with Chrome's *"This page isn't working"* and no
+mention of the provider. A reload got through.
+
+**Do not read that as our redirect being wrong**, which is the obvious
+conclusion from a browser error page on a URL we supplied. Two things to check
+instead: the address bar says `dodopayments.com` rather than `nimbleclerk.com`,
+and `GET /api/org/billing` already holds the subscription (step 12) — because
+**the webhook is the only thing that records anything** (§70) and it does not
+travel through that hop. It arrived in the same minute here.
+
+So the hop failing costs the pending note and nothing else, which is the design
+holding rather than luck: §71 built the note as reassurance for the tab that
+paid, never as the record. What it leaves is a **narrow worse case** — a
+customer whose return hop fails *and* whose webhook has not landed yet sees
+*"No subscription on this workspace yet"*, which is the wrong sentence for
+somebody who has just paid. The window is seconds and nothing can close it from
+our side, because knowing a payment is in flight is exactly what the return URL
+was for.
+
 **12 · Verify from the server, not from the screen.** Either the dashboard's
 delivery log (a 200 and the attempt count), or:
 
@@ -808,6 +867,20 @@ If a dunning or receipt email is ever going to be tested, it has to go back on
 first — and §3's lever 3 depends on those emails existing in **live** mode, so
 check the live-mode setting separately.
 
+**19 · Unset `DODO_PRODUCT_ID` on the deployment when the session ends**, or
+decide not to — but decide. Setting it is what makes the Subscription card
+appear, and the card is gated on `canEditSettings()`, so **every owner of every
+workspace on that deployment** gets a *Subscribe* button pointing at a
+test-mode checkout that cannot take their money. Nothing is at risk — test mode
+charges nothing and a real card is refused — but a control that looks like it
+works and cannot is the one thing this product tries hardest not to ship.
+
+It is also the condition §70, §71 and §72 each deferred §27's documentation
+walk on (*"the card is absent for every user"*), so leaving it set means that
+walk is owed rather than deferred, and the walk needs a price first (§5). Two
+honest states, and the third is the one to avoid: **unset between test
+sessions**, or **set with the price decided and the documents walked**.
+
 ### Before live mode — and most of this is not code
 
 1. **Read the MSA**, and get four answers: **is the provider contractually the
@@ -853,11 +926,12 @@ and every one of them is answered by the same read — the dashboard and the MSA
 
 | | Why it is open |
 |---|---|
-| **Whether the provider is contractually the seller of record for our sales** | **the most important line in this document.** §1's entire VAT escape and §4's whole split depend on it, and `js/app.js` already prints the claim to customers. A gateway that markets itself with MoR language would leave us owing UK VAT from the first sale. From the MSA, not from a marketing page |
+| **Whether the provider is contractually the seller of record for our sales** | **the most important line in this document**, and still open after two real payments. §1's entire VAT escape and §4's whole split depend on it, and `js/app.js` already prints the claim to customers. A gateway that markets itself with MoR language would leave us owing UK VAT from the first sale. The *behaviour* now points the right way — destination tax computed and itemised per jurisdiction, 18% GST on the INR checkout and `$0.00` sales tax on the USD one — but **that is evidence about their implementation, not about who the contract says sold the thing.** From the MSA, not from a checkout page |
 | **The fee** | no figure is stated anywhere in this document on purpose. §5's net table is blank rather than estimated |
 | **Payout mechanics into INR, and the FX spread** | the two columns that make a net rate honest (§5), and the thing that decides whether monthly or annual is worth the difference |
 | **Chargeback set-off, the per-dispute fee, and whether a per-seller rate exists** | §3 assumes the worst of all three. §2's blockquote has the three questions to ask, drawn from a comparable MoR's published policy |
-| **Whether GBP presentment is available on this account** | §5's currency decision is configuration, and step 2 of §7 is where it is found out |
+| **Whether GBP presentment is available on this account** | **Narrowed, not closed.** Localised presentment demonstrably works — one USD-based product presented `$65.00` and `₹6,429.04` to two cards (§5) — so the mechanism is confirmed and only GBP specifically is unread. Step 2 of §7 is where it is found out |
+| **What the India acquirer's merchant name is on the mandate screen** | the authorization page is served by **Cashfree** and reads *"Click here to go to **Business Name** website"* — a literal placeholder, on the one screen where a customer is granting a standing debit. It is the provider's configuration, not ours, so it is a support question rather than a setting; raise it before live mode, because the screen it is on is the one that loses mandates |
 | **Account-verification requirements for an individual seller** | §7's *before live mode* step 2 has an unknown duration, and it gates every live payment |
 | **Whether the statement descriptor is configurable** | §3's lever 2 is the cheapest dispute prevention there is, and on an MoR the seller string may or may not be ours to set |
 | **Where `MARKETING.md`'s copy has already been published** | §2.1's own open item, and only the owner can answer it |
@@ -868,7 +942,11 @@ unknowns:** the engineering surface is read and verified — Standard Webhooks
 signing against a frozen vector computed three independent ways (§69), the
 two-mode separation, the retry schedule, the event list, the payload shape, the
 test cards, the static-link parameters, and the two CLI tools that cannot test
-verification. §7 is drivable today.
+verification. **§7 is not merely drivable — it has been driven**, in test mode,
+end to end: a declined payment and a successful one on each of two regions, the
+signature check passing, ten events delivered, and the Settings card reading
+`active` with the next billing date. What that leaves open is this table, and
+every row of it is commercial.
 
 **And the thing no document here can establish.** §40's rule: *a mechanism that
 hangs off a URL configured somewhere else has a failure mode no test in this
