@@ -547,8 +547,29 @@ const counts = results.reduce((a, r) => ({ ...a, [r.status]: (a[r.status] || 0) 
 const failed = counts.FAIL || 0;
 const warned = counts.WARN || 0;
 
+/*
+ * THE VERDICT NAMES ITS TARGET, and that is the point of this block.
+ *
+ * The header prints `target: <BASE>` — dimmed, five hundred lines up. The line
+ * anybody actually reads, quotes and pastes is the last one, and it used to be
+ * the bare sentence "Deployment is healthy." One CI run prints that twice: the
+ * local build at 51 checks and the live deployment at 56 (§46 — five checks are
+ * informational over a local file store and real assertions against a live
+ * one). The LOCAL one finishes LAST, because the E2E suite runs ahead of it, so
+ * scrolling to the bottom of a run lands on the misleading one.
+ *
+ * That cost a real misreading: a live audit was read as a local one, the count
+ * was taken for a regression, and the diagnosis that followed was of a bug that
+ * did not exist. §33's two-adjacent-unlabelled-numbers failure, in the one tool
+ * whose entire job is telling you whether the deployment is fine.
+ *
+ * So the base goes on the summary AND on the verdict, undimmed. The phrases
+ * "is healthy" and "is NOT healthy" survive as substrings on purpose: CLAUDE.md
+ * quotes them when recording past runs, and a grep for either still lands here.
+ */
 console.log(`\n${c.bold}Summary${c.off}`);
 console.log(`  ${counts.PASS || 0} passed · ${warned} warnings · ${failed} failed`);
+console.log(`  ${c.dim}target${c.off} ${BASE}${isLocal ? `${c.dim} — local build, not a deployment${c.off}` : ''}`);
 
 // Everything failing identically usually means the request never reached the
 // deployment — a corporate proxy, VPN or egress policy in the way. Saying
@@ -569,7 +590,7 @@ if (warned) {
 if (failed) {
   console.log(`\n${c.fail}Failures:${c.off}`);
   results.filter((r) => r.status === 'FAIL').forEach((r) => console.log(`  ✗ ${r.name} — ${r.detail}`));
-  console.log(`\n${c.fail}Deployment is NOT healthy.${c.off}\n`);
+  console.log(`\n${c.fail}${BASE} is NOT healthy.${c.off}\n`);
   process.exit(1);
 }
-console.log(`\n${c.pass}Deployment is healthy.${c.off}\n`);
+console.log(`\n${c.pass}${BASE} is healthy.${c.off}\n`);

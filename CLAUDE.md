@@ -164,6 +164,9 @@ never change, because everything cross-references them.
 | A field that survives the state it names (`paused_at`) | §74 · §9 |
 | A comment that had promised an assertion nobody wrote | §74 · §46 · §14 |
 | **A test count carried forward and read as measured** | §74 · §2 · §29 · §9 |
+| **Two identical verdicts in one CI run** — and the wrong one is last | §75 · §46 · §33 |
+| Why a blank `workflow_dispatch` input does NOT override its fallback | §75 · §63 · §65 |
+| Which five smoke checks differ between local and live, measured | §75 · §46 |
 | A cancel flow that is a chargeback control rather than a nicety | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) §1 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §3 · §64 |
 | A derived list that was wrong the same way the typed one was | §73 · §29 · §34 |
 | Events that production would see first, and cannot be produced in test mode | §73 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §9 |
@@ -263,11 +266,15 @@ carried forward reads exactly like a figure observed, which is §29's thesis
 arriving in this file's own status section. Re-measured rather than adjusted,
 and the only safe way to use it is to run the suite.
 
-Smoke is at **51 passing locally**; **56 live is predicted, not observed**
-(§8 — this session reaches neither host, and CI is what prints the real figure,
-per §46's rule that the two numbers differ and both are real). The same checks
-run either way, with five informational on a local file-store HTTP deployment
-and real assertions against a live one. **On Windows some Node tests skip
+Smoke is at **51 passing locally and 56 live — both OBSERVED**, which retires a
+hedge that stood through §63, §69–§74: this session reaches neither host (§8),
+so every live figure before now was predicted. CI run **#225** printed
+`56 passed · 0 warnings · 0 failed` against `nimbleclerk.com` with
+`deployed build 3b01d518d991`, which is §46's rule working as written — the two
+numbers differ, both are real, and CI is the thing that prints the second one.
+The same checks run either way, with five informational on a local file-store
+HTTP deployment and real assertions against a live one; §75 measured which five
+and confirmed 51 + 5 = 56 from the other direction. **On Windows some Node tests skip
 themselves** and say why — §4's SIGTERM note is one, and `resilience.test.mjs`
 skips whichever of its cases cannot be made to fail on the platform in hand
 (§55). A named platform limit, not a failure; the count is whatever the run
@@ -11522,3 +11529,90 @@ as a correction here rather than as a count nobody will question.
 
 **Playwright 154 of 154 does not retire §66's intermittent.** It did not fire;
 §71's occurrence stands and nothing here touches that path.
+
+
+---
+
+## 75. The verdict now names what it audited
+
+One line of output, and it is here because of what its absence cost: a live
+audit was read as a local one, the count was taken for a regression, and the
+fix proposed from that reading was to a line of workflow YAML that was correct.
+
+### One run prints the sentence twice, and the misleading one comes last
+
+`tests/smoke.mjs` ended with the bare `Deployment is healthy.` A dispatch run
+executes **both** smoke steps, and the local one finishes *later* because the
+E2E suite runs ahead of it:
+
+| Step | Finished | Printed |
+|---|---|---|
+| Smoke test the live deployment | 15:55:05 | `56 passed` |
+| Smoke test the local build | 16:01:25 | `51 passed` |
+
+So scrolling to the bottom of a green run lands on **51**, under a sentence
+that reads as the deployment's verdict. The header does print `target: <BASE>`
+— dimmed, five hundred lines up, which is not where anybody looks after a
+seven-minute run.
+
+That is §33's two-adjacent-unlabelled-numbers failure in the one tool whose
+entire job is telling you whether the deployment is fine, and §46 had already
+written the figures down without noticing that nothing on screen distinguishes
+them.
+
+### What changed, and what deliberately did not
+
+The base goes on the summary **and** on the verdict, undimmed, with
+`— local build, not a deployment` appended when `isLocal`. Nothing else moves:
+no check is added or removed, and the local count is still 51.
+
+**The phrases `is healthy` and `is NOT healthy` survive as substrings**, which
+is why the base is a prefix rather than a rewording. This file quotes both when
+recording past runs — §38's smoke-budget finding and §63's double-slash finding
+among them — so a grep for either still lands on them and on this.
+
+**The workflow was NOT touched**, and that is the finding rather than the
+omission. The reported cause was `${{ inputs.live_url || vars.LIVE_URL ||
+'https://nimbleclerk.com' }}` resolving a blank dispatch input to something
+empty. It does not: GitHub Actions `||` returns the first **truthy** operand and
+the empty string is falsy, so a blank input coalesces to the variable and, with
+that deleted, to the literal. Proven rather than argued — run #225's live job
+reported `storage backend mongodb`, `HTTPS yes` and `HSTS in production`, none
+of which a localhost file-store run can produce.
+
+**So the fix was to the reporting, not to the resolution.** Editing that
+expression would have been §30's category: changing correct code because a
+reading of a symptom named the wrong mechanism.
+
+### Verified by driving all three branches
+
+§9, and the third one is the one that matters at 2am:
+
+| `BASE_URL` | Prints |
+|---|---|
+| `http://localhost:8321` | `target http://localhost:8321 — local build, not a deployment` · `… is healthy.` |
+| `http://0.0.0.0:8321` (same server, non-local base) | `target http://0.0.0.0:8321`, no suffix |
+| a port with nothing listening | `http://127.0.0.2:8399 is NOT healthy.` |
+
+**And the middle one re-derived §46's arithmetic from the other side**, which
+was not the point of the run and is the most useful thing in it. Auditing the
+*same* local server through a non-local base turns exactly five checks from
+absent-or-informational into real ones — `HSTS in production`, `storage
+backend`, `sign-in method`, `dev login is off in production`, `HTTPS` — and
+they come back as five warnings beside the unchanged 51. That is 51 + 5 = 56,
+measured, against a figure §46 arrived at by diffing two runs. The five are the
+five it named.
+
+### Blast radius
+
+`tests/smoke.mjs` only — not a served file, not in `APP_SHELL`, so
+`CACHE_VERSION` stays **`crmbuilder-v63`** (checked, not assumed). No route, no
+wire shape, so `docs/API.md` needs nothing by §46's own check. §27's six
+user-facing documents need nothing: no capability moved, and `ONBOARDING.md`'s
+*"Deployment is live and healthy"* line is its own prose rather than a quote of
+this output — checked rather than skipped.
+
+Counts: smoke **51 local / 56 live**, both run. Node and Playwright untouched
+and not re-run, because a `console.log` in a file nothing imports has no blast
+radius (§9) — `node --check` plus the three runs above is the coverage this
+earns.
