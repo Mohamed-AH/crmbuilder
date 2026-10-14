@@ -844,8 +844,22 @@ checkout step 10's method rule probably refuses it. Unverified. If it does,
 either price the product in USD for this one test or drive `past_due` by
 replaying a hand-edited event from the delivery log instead.
 
-**15 · Cancel from the dashboard.** Expect `subscription.cancelled` and a card
-that reflects it.
+**14a · Pause, then resume.** *Dodo's* dashboard → Transactions →
+Subscriptions → the active subscription → **Pause**, read the Settings card,
+then **Resume** and read it again. Two events, two card states.
+
+**There is no control for this in our app, and that is why this step names the
+provider.** Every word in this section means *Dodo's* dashboard — §7 is headed
+"the dashboard steps" and says so — but this one step is the one a reader meets
+out of context, from §9's table or from a hand-off, and **this project calls its
+own operator panel the dashboard too** (§24: Admin → Deployment). A bare
+"dashboard → pause" therefore sends an owner into Settings looking for a
+control that was never built, which is exactly what happened. §6 lists the
+customer-portal link under *Not built*; until it exists, pausing is the
+provider's screen and nowhere else.
+
+**15 · Cancel from Dodo's dashboard.** Expect `subscription.cancelled` and a
+card that reflects it.
 
 **16 · Replay an older event after the cancellation.** In the delivery log,
 re-send the earlier `subscription.active`. **The card must still say
@@ -1133,8 +1147,8 @@ other five need a billing cycle to pass or a dunning sequence to run out.
 | `subscription.failed` | the region's decline card | ✅ **done** — India |
 | `subscription.updated` | arrives alongside the others | ✅ **done** |
 | `subscription.renewed` | arrived on a *first* payment, which was not expected | ✅ **done** — see below |
-| `subscription.cancelled` | dashboard → cancel the subscription | ☐ **§7 step 15 — check WHICH cancel it did** |
-| `subscription.paused` / `.unpaused` | dashboard → pause, then resume | ☐ |
+| `subscription.cancelled` | **Dodo's** dashboard → cancel the subscription | ☐ **§7 step 15 — check WHICH cancel it did** |
+| `subscription.paused` / `.unpaused` | **Dodo's** dashboard → pause, then resume | ☐ **§7 step 14a** |
 | `subscription.plan_changed` | needs a **second product** and a plan change | ☐ — see below |
 | `subscription.past_due` | a renewal that fails — the US-only card, §7 step 14 | ☐ **probably unreachable on INR** |
 | `subscription.on_hold` | dunning exhausting its retries after `past_due` | ☐ **days, not minutes** |
@@ -1250,7 +1264,9 @@ remainder is one sitting:
    and needs no widening.
 2. **Abandon a checkout** (§7 step 13) — the one return branch never driven.
    Entirely client-side: no `abandoned_checkout` event is involved or needed.
-3. **Pause, then resume** the live test subscription. Two events, two card states.
+3. **Pause, then resume** the live test subscription (§7 step 14a) — from
+   **Dodo's** dashboard. Our app has no control for it, and §6 lists the
+   portal link under *Not built*. Two events, two card states.
 4. **Cancel it** (§7 step 15) — **then read the log to see which cancel it
    was** — and only then **replay an earlier `active`** (§7 step 16). That pair
    is the one that costs money if the clock comparison is wrong, and it is the
