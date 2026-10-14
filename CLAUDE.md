@@ -155,6 +155,9 @@ never change, because everything cross-references them.
 | **A return URL the provider does not navigate to** — and the 429 on their hop | §73 · §71 · §70 |
 | **A pricing ceiling read off a mandate screen** — ₹15,000, and annual billing | §73 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · §3 |
 | **Testing every payment scenario** — what to hand-drive, and what not to | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §9 · §73 · §9 |
+| **After somebody pays** — cancel, pause, invoices, duplicates | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) · §71 · §64 |
+| Why a duplicate subscription cannot be caught by email | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) §2 · §71 · §5 |
+| A cancel flow that is a chargeback control rather than a nicety | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) §1 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §3 · §64 |
 | A derived list that was wrong the same way the typed one was | §73 · §29 · §34 |
 | Events that production would see first, and cannot be produced in test mode | §73 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §9 |
 | Why Stripe cannot collect for an Indian seller, and what an MoR sidesteps | §64 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §1 |
