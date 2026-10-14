@@ -601,10 +601,24 @@ wait for the redeploy before step 7.
 
 ### On the dashboard, in test mode
 
+**The dashboard is <https://app.dodopayments.com>.** Worth stating because the
+two hosts that look like they should be it are not: `test.dodopayments.com` and
+`live.dodopayments.com` are the **API** hosts, and a browser gets **403** from
+both whether or not you have an account — so they read as a sign-in wall rather
+than as the wrong address. `dashboard.dodopayments.com` does not resolve.
+Verified by probing all four, after this section was written assuming the
+reader already had it open and a reader did not.
+
+**Test mode is a toggle inside the dashboard, not a second URL.** One sign-in,
+both modes.
+
 **Everything below belongs to the mode it was created in.** Products, API keys
 and webhook endpoints do not cross between test and live, and a test-mode
 signing secret does not verify a live delivery. Confirm the mode toggle before
 each step rather than once at the start.
+
+**Subscriptions live at Transactions → Sales → Subscriptions**, which is where
+steps 14a, 15 and 17 all act. Three levels, not two.
 
 **1 · Create the subscription product.**
 A recurring product, **at least $1.00 USD** or equivalent. The price on it is
@@ -844,8 +858,8 @@ checkout step 10's method rule probably refuses it. Unverified. If it does,
 either price the product in USD for this one test or drive `past_due` by
 replaying a hand-edited event from the delivery log instead.
 
-**14a · Pause, then resume.** *Dodo's* dashboard → Transactions →
-Subscriptions → the active subscription → **Pause**, read the Settings card,
+**14a · Pause, then resume.** *Dodo's* dashboard → **Transactions → Sales →
+Subscriptions** → the active subscription → **Pause**, read the Settings card,
 then **Resume** and read it again. Two events, two card states.
 
 **There is no control for this in our app, and that is why this step names the
