@@ -139,6 +139,10 @@ describe('the payment webhook', () => {
         // one — a plain `pdt_123` would pass either way.
         DODO_PRODUCT_ID: 'pdt test/1',
         APP_URL: 'https://checkout-test.example',
+        // The customer portal. One whole URL, pasted from the dashboard's
+        // Share Invite dialog rather than composed from a business id — the
+        // test-mode host, which is what a test-mode deployment would hold.
+        DODO_PORTAL_URL: 'https://test.customer.dodopayments.com/login/bus_test_crmbuilder',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -548,10 +552,102 @@ describe('the payment webhook', () => {
   });
 
   /* ------------------------------------------------------------------ *
-   * The checkout link
+   * The checkout link, and the gate in front of it
    * ------------------------------------------------------------------ */
 
+  /*
+   * Every test that reads the checkout link now has a PRECONDITION, because
+   * the gate makes it null while a non-terminal subscription exists. Driving
+   * a cancellation first states which side of the gate the test is on,
+   * rather than inheriting whichever event the derived loop above happened to
+   * end on — reordering that Set would otherwise turn these into a null
+   * dereference several tests away from the change (§9).
+   *
+   * December, so every clock here is strictly newer than everything
+   * delivered above — and ONE counter rather than dates chosen per test,
+   * which is what made the first version of this fail `applied: false,
+   * reason: 'stale'`. Staleness is the mechanism this whole file tests, so
+   * hand-picking a timestamp beside another hand-picked one is the one thing
+   * not to do in it.
+   */
+  let laterMinute = 0;
+  function laterClock() {
+    return new Date(Date.UTC(2026, 11, 1, 0, laterMinute++)).toISOString();
+  }
+
+  async function cancelNow() {
+    const res = await deliver(subscriptionEvent({
+      type: 'subscription.cancelled', status: 'cancelled', at: laterClock(),
+    }));
+    assert.deepEqual(res.json, { received: true, applied: true });
+  }
+
+  test('a workspace already holding a live subscription is offered no checkout link', async () => {
+    /*
+     * The duplicate gate. Six subscriptions existed on the test account
+     * across two workspaces because nothing stopped an owner pressing
+     * Subscribe again, and the provider has no guard of its own — their
+     * blocklist docs say why the obvious one cannot work: "Checkout can
+     * create a new customer record for a returning email."
+     *
+     * Asserted on the SERVER's answer, not on the card: a client-side hide is
+     * a client-side hide, and the link is a plain URL anybody can keep.
+     */
+    await deliver(subscriptionEvent({
+      type: 'subscription.active', status: 'active', at: laterClock(),
+    }));
+    const live = await billingNow();
+    assert.equal(live.billing.status, 'active');
+    assert.equal(live.checkout, null, 'a live subscriber was offered a second subscription');
+    // And the portal is what replaces it, or the gate is a dead end.
+    assert.ok(live.portal, 'a live subscriber was left with no way to manage anything');
+
+    /*
+     * A TERMINAL subscription gets the link back, and that half is not
+     * decoration: resubscribing after cancelling is a thing somebody is
+     * entitled to do, and a gate written as "has a subscription record" would
+     * refuse it for ever.
+     */
+    await deliver(subscriptionEvent({
+      type: 'subscription.cancelled', status: 'cancelled', at: laterClock(),
+    }));
+    const done = await billingNow();
+    assert.equal(done.billing.status, 'cancelled');
+    assert.ok(done.checkout, 'a cancelled subscriber could not resubscribe');
+    // Both, deliberately — the alternative is a dead end for a receipt.
+    assert.ok(done.portal);
+  });
+
+  test('a declined first payment is not mistaken for a live subscription', async () => {
+    /*
+     * The one state this gate must not reach. A record holding only
+     * `payment.failed` with no subscription behind it (§73) is somebody whose
+     * card was refused, and blocking them would leave them unable to try
+     * again — on the one screen where that is the entire point.
+     *
+     * Checked by construction rather than by driving it: the stored record
+     * here already carries a subscription, so a fresh workspace is what makes
+     * the assertion mean anything.
+     */
+    const solo = jar();
+    const who = await req('/auth/dev', { method: 'POST', body: { email: 'pay-declined@team.test' }, cookies: solo });
+    const ws = who.json.user.orgId;
+
+    await deliver({
+      business_id: 'bus_test_crmbuilder',
+      type: 'payment.failed',
+      timestamp: laterClock(),
+      data: { payload_type: 'Payment', payment_id: 'pay_gate_decline', status: 'failed', metadata: { wsId: ws } },
+    });
+
+    const out = (await req('/api/org/billing', { cookies: solo })).json;
+    assert.equal(out.billing.paymentEvent, 'payment.failed');
+    assert.equal(out.billing.status, null);
+    assert.ok(out.checkout, 'a refused card was blocked from trying again');
+  });
+
   test('the checkout link carries this workspace, and nothing else', async () => {
+    await cancelNow();
     const { checkout } = await billingNow();
     const u = new URL(checkout);
     const q = u.searchParams;
@@ -575,15 +671,46 @@ describe('the payment webhook', () => {
     assert.equal(back.href, 'https://checkout-test.example/app');
 
     /*
-     * No customer prefill. The provider accepts email, name and an address,
-     * and the signed-in address is right there — but a billing address is not
-     * necessarily a sign-in address, and this is the screen where guessing
-     * wrong costs money (§45). Asserted so "helpfully" adding one is a
-     * decision somebody takes again rather than a line that slips in.
+     * The email is prefilled AND LOCKED, which is the duplicate fix: the
+     * address is how the provider identifies a customer, so letting it vary
+     * between attempts is what produced six subscriptions from two
+     * workspaces.
+     *
+     * BOTH, or the lock silently does nothing — their docs: "A disable flag
+     * takes effect only when it's true and the matching field has a value."
+     * So an assertion on `disableEmail` alone would pass against a link that
+     * leaves the field fully editable.
      */
-    for (const guessed of ['email', 'fullName', 'firstName', 'lastName', 'country', 'addressLine', 'city', 'zipCode']) {
+    assert.equal(q.get('email'), 'pay-owner@team.test');
+    assert.equal(q.get('disableEmail'), 'true');
+
+    /*
+     * No ADDRESS prefill, and that half of §45's reasoning stands: a billing
+     * address is genuinely not a sign-in address, and this is the screen where
+     * guessing wrong costs money. The name goes too — we hold one, and it is
+     * the account holder's rather than the cardholder's. Asserted so
+     * "helpfully" adding one is a decision somebody takes again rather than a
+     * line that slips in.
+     */
+    for (const guessed of ['fullName', 'firstName', 'lastName', 'country', 'addressLine', 'city', 'state', 'zipCode']) {
       assert.equal(q.get(guessed), null, `the checkout link guessed ${guessed}`);
     }
+  });
+
+  test('the prefilled email is the session, never a parameter', async () => {
+    /*
+     * §5 at the second place on this route where it decides something that
+     * costs money: the workspace decides who is credited, and the email
+     * decides who the provider bills and whose portal shows the invoice.
+     *
+     * The viewer is in the same org, so a handler reading a query parameter
+     * would not be caught by a cross-org test — this one catches it by trying
+     * to say otherwise outright.
+     */
+    await cancelNow();
+    const out = await req('/api/org/billing?email=attacker@example.test', { cookies: owner });
+    assert.equal(out.status, 200);
+    assert.equal(new URL(out.json.checkout).searchParams.get('email'), 'pay-owner@team.test');
   });
 
   test('the workspace on the link is the session, never a parameter', async () => {
@@ -593,9 +720,36 @@ describe('the payment webhook', () => {
      * be caught by a cross-org test — this one catches it by asking as a
      * different person in the same workspace and by trying to say otherwise.
      */
+    await cancelNow();
     const out = await req(`/api/org/billing?wsId=somebody-elses&orgId=somebody-elses`, { cookies: owner });
     assert.equal(out.status, 200);
     assert.equal(new URL(out.json.checkout).searchParams.get('metadata_wsId'), wsId);
+  });
+
+  test('the portal is offered only once there is something to manage', async () => {
+    /*
+     * A workspace that has never paid has no customer record at the provider,
+     * so the static link leads to a sign-in page that will never email them
+     * anything — a control that looks like it works and cannot, which is the
+     * shape this card has already been caught in twice (§73).
+     *
+     * A fresh workspace is the only way to assert the absence: the owner's
+     * has held a billing record since the second test in this file.
+     */
+    const fresh = jar();
+    await req('/auth/dev', { method: 'POST', body: { email: 'pay-never@team.test' }, cookies: fresh });
+    const out = (await req('/api/org/billing', { cookies: fresh })).json;
+    assert.equal(out.billing, null);
+    assert.equal(out.portal, null, 'a workspace that has never paid was sent to a portal');
+    // And the checkout link is there, which is what says the absence above is
+    // about the portal rather than about the deployment.
+    assert.ok(out.checkout);
+
+    // The owner, who has one, gets the whole URL as the operator pasted it —
+    // not a business id this code assembled a host around (§73's derivation
+    // trap).
+    const mine = await billingNow();
+    assert.equal(mine.portal, 'https://test.customer.dodopayments.com/login/bus_test_crmbuilder');
   });
 
   test('a viewer cannot read the billing status', async () => {
@@ -691,6 +845,10 @@ describe('a deployment with no DODO_WEBHOOK_SECRET', () => {
         // Nothing to sell and nothing able to confirm a sale — the two
         // absences the card must not collapse into one another.
         DODO_PRODUCT_ID: '',
+        // And a portal URL with no scheme, which is the misconfiguration this
+        // deployment is already playing the part of. It must be refused at
+        // boot and said out loud, not rendered as a button that goes nowhere.
+        DODO_PORTAL_URL: 'customer.dodopayments.com/login/bus_1',
         ALLOW_DEV_LOGIN: '1',
         SIGNUP_MODE: 'open',
       },
@@ -739,6 +897,11 @@ describe('a deployment with no DODO_WEBHOOK_SECRET', () => {
      *                    and leave no trace
      *   checkout: null   nothing to SELL yet — correct, and where this
      *                    deployment actually is until a price is decided
+     *   portal: null     no DODO_PORTAL_URL, so no self-service either
+     *
+     * The deepEqual is the assertion: it is what catches a key added to this
+     * response without a decision, which §46 records as the drift no route
+     * count can see.
      */
     const cookies = jar();
     const res = await fetch(`${BASE2}/auth/dev`, {
@@ -755,6 +918,21 @@ describe('a deployment with no DODO_WEBHOOK_SECRET', () => {
     });
     assert.equal(out.status, 200);
     const body = await out.json();
-    assert.deepEqual(body, { enabled: false, checkout: null, billing: null });
+    assert.deepEqual(body, { enabled: false, checkout: null, portal: null, billing: null });
+  });
+
+  test('a portal URL that is not https is refused at boot, and says so', async () => {
+    /*
+     * A property of the URL rather than of the moment, so it can never work
+     * and belongs in the log at boot rather than in front of a customer —
+     * §38's refuse/warn split. The alternative renders as a button that goes
+     * nowhere, which a subscriber cannot tell from the provider being down.
+     *
+     * Asserted on the server's own OUTPUT, because the response is `null`
+     * either way: a deployment with no portal and one with a broken portal
+     * both answer `portal: null`, and only the log distinguishes them. §40's
+     * refused-413 finding, in a new place.
+     */
+    assert.match(serverLog, /DODO_PORTAL_URL is not an https URL/);
   });
 });

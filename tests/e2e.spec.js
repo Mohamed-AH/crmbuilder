@@ -5782,7 +5782,8 @@ test.describe('subscribing', () => {
    */
   test.use({ locale: 'en-GB', timezoneId: 'America/New_York' });
 
-  const CHECKOUT = 'https://checkout.dodopayments.com/buy/pdt_e2e?redirect_url=https%3A%2F%2Fexample.test%2Fapp&metadata_wsId=ws_e2e';
+  const CHECKOUT = 'https://checkout.dodopayments.com/buy/pdt_e2e?redirect_url=https%3A%2F%2Fexample.test%2Fapp&metadata_wsId=ws_e2e&email=owner%40e2e.test&disableEmail=true';
+  const PORTAL = 'https://test.customer.dodopayments.com/login/bus_e2e';
 
   async function withBilling(page, body) {
     await page.route('**/api/org/billing*', async (route) => {
@@ -5793,7 +5794,12 @@ test.describe('subscribing', () => {
   test('a workspace with nothing recorded is offered checkout, and the price is not quoted here', async ({ page }) => {
     await onboard(page, { name: 'Paying Ltd', templates: ['Contacts'] });
     await signIn(page, uniqueEmail('checkout-new'));
-    await withBilling(page, { enabled: true, checkout: CHECKOUT, billing: null });
+    /*
+     * `portal: null`, which is what the server sends a workspace that has
+     * never paid: it has no customer record at the provider, so the link
+     * would lead to a sign-in page that will never email them anything.
+     */
+    await withBilling(page, { enabled: true, checkout: CHECKOUT, portal: null, billing: null });
 
     await page.goto('/app#/settings');
     const card = page.locator('.card:has(h2:text-is("Subscription"))');
@@ -5803,6 +5809,10 @@ test.describe('subscribing', () => {
     const go = card.locator('#checkout-go');
     await expect(go).toHaveText(/Subscribe/);
     await expect(go).toHaveAttribute('href', CHECKOUT);
+    await expect(card.locator('#portal-go')).toHaveCount(0);
+    // And nobody is told self-service is missing on a workspace that has
+    // nothing to self-serve — that line is for a SUBSCRIBER with no portal.
+    await expect(card).not.toContainText(/not set up on this deployment/i);
 
     /*
      * No price anywhere on the card. The provider's product carries it, so a
@@ -5816,9 +5826,17 @@ test.describe('subscribing', () => {
   test('an existing subscription is shown as values, with its dates', async ({ page }) => {
     await onboard(page, { name: 'Subscribed Ltd', templates: ['Contacts'] });
     await signIn(page, uniqueEmail('checkout-live'));
+    /*
+     * `checkout: null` and a portal, which is what the server sends a
+     * workspace holding a LIVE subscription — the gate that stops a second
+     * one being bought. The fixture carries the body the route would
+     * actually produce, so a test asserting on both buttons is asserting on
+     * a state that exists.
+     */
     await withBilling(page, {
       enabled: true,
-      checkout: CHECKOUT,
+      checkout: null,
+      portal: PORTAL,
       billing: {
         provider: 'dodo',
         subscriptionId: 'sub_e2e_1',
@@ -5854,7 +5872,16 @@ test.describe('subscribing', () => {
     // The exact day, not merely the year: nextBillingAt is UTC midnight on
     // 13 November, and a local-getter read in New York renders the 12th.
     await expect(card.locator('.read-row', { hasText: 'Next payment' })).toContainText('13 Nov 2026');
-    await expect(card.locator('#checkout-go')).toHaveText(/Manage payment/);
+    /*
+     * Manage, and NOT Subscribe. A live subscriber offered a Subscribe button
+     * is how six subscriptions came to exist on the test account across two
+     * workspaces, and the `toHaveCount(0)` is the half that pins it — the
+     * label assertion alone would pass on a card showing both.
+     */
+    await expect(card.locator('#portal-go')).toHaveText(/Manage subscription/);
+    await expect(card.locator('#portal-go')).toHaveAttribute('href', PORTAL);
+    await expect(card.locator('#checkout-go')).toHaveCount(0);
+    await expect(card).not.toContainText(/not set up on this deployment/i);
     // Nothing on the card may carry a customer identity: the server does not
     // store one (§70), and this is the screen where one would show up.
     await expect(card).not.toContainText('@');
@@ -5872,6 +5899,7 @@ test.describe('subscribing', () => {
     await withBilling(page, {
       enabled: false,
       checkout: CHECKOUT,
+      portal: PORTAL,
       billing: null,
     });
 
@@ -5880,6 +5908,99 @@ test.describe('subscribing', () => {
     await expect(card).toBeVisible({ timeout: 20000 });
     await expect(card).toContainText(/not finished being set up/i);
     await expect(card).not.toContainText(/No subscription on this workspace yet/i);
+    /*
+     * "must NOT offer checkout" is what this test's own comment has claimed
+     * since it was written, and nothing implemented or asserted it: the
+     * button block was gated on the link alone, so the card said "this is not
+     * the moment to subscribe" and put a Subscribe button underneath it. The
+     * same self-contradiction as the next-payment row, found by writing the
+     * assertion the comment had always promised (§46's shape).
+     */
+    await expect(card.locator('#checkout-go')).toHaveCount(0);
+    await expect(card.locator('#portal-go')).toHaveCount(0);
+  });
+
+  test('a paused subscription shows no next payment, and says why the row is gone', async ({ page }) => {
+    /*
+     * The card contradicting itself, read off a real test-mode subscription:
+     * the provider keeps `next_billing_date` on the payload for `paused` and
+     * for `cancelled` alike, so "Status: paused" sat directly above "Next
+     * payment: 14 Nov 2026".
+     *
+     * Both halves are asserted because they fail differently — the row must
+     * be gone, and the absence must be explained. Dropping a row somebody saw
+     * yesterday with nothing in its place is §36's state that renders as
+     * nothing.
+     */
+    await onboard(page, { name: 'Paused Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('checkout-paused'));
+    await withBilling(page, {
+      enabled: true,
+      checkout: null,
+      portal: PORTAL,
+      billing: {
+        provider: 'dodo',
+        subscriptionId: 'sub_e2e_paused',
+        status: 'paused',
+        subscriptionEvent: 'subscription.paused',
+        // Present, exactly as the real payload carries it. That is the whole
+        // defect: a stale date the provider never intends to act on.
+        nextBillingAt: Date.UTC(2026, 10, 13),
+        pastDueEndsAt: null,
+        paymentEvent: 'payment.succeeded',
+        paymentStatus: 'succeeded',
+        updatedAt: Date.UTC(2026, 9, 13),
+      },
+    });
+
+    await page.goto('/app#/settings');
+    const card = page.locator('.card:has(h2:text-is("Subscription"))');
+    await expect(card).toBeVisible({ timeout: 20000 });
+    await expect(card.locator('.read-row', { hasText: 'Status' })).toContainText('paused');
+    await expect(card.locator('.read-row', { hasText: 'Next payment' })).toHaveCount(0);
+    await expect(card).not.toContainText('13 Nov 2026');
+    await expect(card).toContainText(/No payment is currently scheduled/i);
+    // Still manageable — resuming is one of the six things the portal does,
+    // and a paused subscriber with no control is the dead end the gate would
+    // otherwise create.
+    await expect(card.locator('#portal-go')).toBeVisible();
+  });
+
+  test('a subscriber with no portal is told self-service is not set up, rather than left with nothing', async ({ page }) => {
+    /*
+     * The operator state the gate creates: with the checkout link correctly
+     * withheld from a live subscriber and no DODO_PORTAL_URL configured,
+     * there is no control on the card at all. Said out loud rather than
+     * rendered as a card with a status and no way to act on it — the same
+     * class as the enabled warning above.
+     */
+    await onboard(page, { name: 'Noportal Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('checkout-noportal'));
+    await withBilling(page, {
+      enabled: true,
+      checkout: null,
+      portal: null,
+      billing: {
+        provider: 'dodo',
+        subscriptionId: 'sub_e2e_noportal',
+        status: 'active',
+        subscriptionEvent: 'subscription.active',
+        nextBillingAt: Date.UTC(2026, 10, 13),
+        pastDueEndsAt: null,
+        paymentEvent: 'payment.succeeded',
+        paymentStatus: 'succeeded',
+        updatedAt: Date.UTC(2026, 9, 13),
+      },
+    });
+
+    await page.goto('/app#/settings');
+    const card = page.locator('.card:has(h2:text-is("Subscription"))');
+    await expect(card).toBeVisible({ timeout: 20000 });
+    await expect(card.locator('.read-row', { hasText: 'Status' })).toContainText('active');
+    await expect(card).toContainText(/not set up on this deployment/i);
+    await expect(card).toContainText(/get in touch/i);
+    await expect(card.locator('#portal-go')).toHaveCount(0);
+    await expect(card.locator('#checkout-go')).toHaveCount(0);
   });
 
   test('a declined first payment says the card was refused, never "unknown"', async ({ page }) => {
@@ -5902,7 +6023,12 @@ test.describe('subscribing', () => {
     await signIn(page, uniqueEmail('checkout-declined'));
     await withBilling(page, {
       enabled: true,
+      // The link is still there, and that is the gate working rather than an
+      // oversight: a record holding only a failed payment is not a
+      // subscription, so blocking it would leave somebody whose card was
+      // refused unable to try again.
       checkout: CHECKOUT,
+      portal: PORTAL,
       billing: {
         provider: 'dodo',
         subscriptionId: null,
@@ -5925,6 +6051,7 @@ test.describe('subscribing', () => {
     // And it must not read as a live subscription either — there is no status
     // row to show, so the labelled table must be absent entirely.
     await expect(card.locator('.read-label')).toHaveCount(0);
+    await expect(card.locator('#checkout-go')).toHaveText(/Subscribe/);
   });
 
   test('a payment return strips the query, including the email, and lands on Settings', async ({ page }) => {

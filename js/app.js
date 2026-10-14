@@ -169,11 +169,33 @@
   };
 
   /*
+   * The statuses that will actually produce a charge. Everything else
+   * suppresses the next-payment row.
+   *
+   * What it is for: the card contradicted itself on both `paused` and
+   * `cancelled`. The provider keeps `next_billing_date` on the payload for
+   * both of them, so "Status: cancelled" sat directly above "Next payment:
+   * 14 Nov 2026" — read off a real test-mode subscription, not reasoned about.
+   *
+   * Keyed on `status`, NEVER on `paused_at`: that field SURVIVES a
+   * cancellation, which is the correction §9 of docs/SUBSCRIPTION-UX.md had
+   * to make to its own first reading of it.
+   *
+   * Written as the statuses that DO bill, so an unrecognised one suppresses.
+   * That is the opposite default from the server's checkout gate, which
+   * blocks on anything it does not recognise — and both are chosen the same
+   * way: the unrecognised case has to err toward not misleading anybody. Here
+   * a date that might be wrong is worse than a missing row; there, selling a
+   * second subscription is worse than refusing one.
+   */
+  const BILLING_STATUSES = new Set(['active', 'past_due']);
+
+  /*
    * What the subscription is doing RIGHT NOW, and it always says something.
    *
    * §39's digestStatusHTML is the precedent and the reason: a card whose only
    * line needs an event to have happened says nothing in exactly the state
-   * somebody is looking at it. Four states here and none of them may collapse
+   * somebody is looking at it. Five states here and none of them may collapse
    * into another — two are absences, and one of those is an operator fault
    * that looks identical to "nobody has paid" from the outside (§70).
    */
@@ -223,17 +245,31 @@
       const seen = b.updatedAt ? ` <span class="settings-hint">Last heard from your provider ${esc(fmtWhen(b.updatedAt))}.</span>` : '';
       return line(note + seen);
     }
+    // Prefer what the provider SAID; fall back to the tail of the event it
+    // called it, which is the same vocabulary (the server reads it the same
+    // way, for the same reason).
+    const status = String(b.status || String(b.subscriptionEvent || '').replace(/^subscription\./, '')).toLowerCase();
+    const willBill = BILLING_STATUSES.has(status);
     const rows = [
       // `status` is what the provider said and `subscriptionEvent` is what it
       // called the event; the branch above guarantees at least one is present,
       // so no placeholder is needed and none should be reintroduced.
       ['Status', esc(b.status || b.subscriptionEvent)],
-      b.nextBillingAt ? ['Next payment', when(b.nextBillingAt)] : null,
+      b.nextBillingAt && willBill ? ['Next payment', when(b.nextBillingAt)] : null,
       b.pastDueEndsAt ? ['Access until', when(b.pastDueEndsAt)] : null,
       b.updatedAt ? ['Last updated', esc(fmtWhen(b.updatedAt))] : null,
     ].filter(Boolean);
+    /*
+     * Explain the absence rather than silently dropping a row somebody saw
+     * yesterday — and only where there WAS a date to drop, or it is noise on
+     * a record that never carried one. §33's rule: a qualifier shown in every
+     * state teaches the eye to skip the cell the one case needs.
+     */
+    const nothingDue = b.nextBillingAt && !willBill
+      ? '<p class="settings-hint">No payment is currently scheduled.</p>'
+      : '';
     return `<div class="record-read">${rows.map(([k, v]) => `
-      <div class="read-row"><div class="read-label">${k}</div><div class="read-value">${v}</div></div>`).join('')}</div>`;
+      <div class="read-row"><div class="read-label">${k}</div><div class="read-value">${v}</div></div>`).join('')}</div>${nothingDue}`;
   }
 
   /*
@@ -4508,16 +4544,43 @@
         <div class="card">
           <div class="card-head"><h2>Subscription</h2></div>
           ${billingStatusHTML(org.billing)}
-          ${org.billing.checkout ? `
+          <!--
+            Two links, and which of them appears is decided on the SERVER: a
+            workspace already holding a live subscription is sent no checkout
+            link at all, because stopping a second purchase is entitlement
+            rather than presentation.
+
+            The one thing decided here is the enabled check below, and it is
+            presentation: the status line immediately above already says this
+            is not the moment to subscribe, so offering the button underneath
+            it is the card contradicting itself — the same defect as the
+            next-payment row, which is what this commit went after. The E2E
+            test for that state has always CLAIMED the card must not offer
+            checkout, and nothing implemented or asserted it.
+          -->
+          ${org.billing.enabled && (org.billing.portal || org.billing.checkout) ? `
             <div class="btn-row">
               <!-- external-link, not a card glyph: LUCIDE here has no
                    credit-card icon, and an unknown name renders a BOX that
                    looks deliberate (§53). It is also the more honest one — this
                    hands off to somebody else's site, which is what §53 chose
                    it for on the mail draft. -->
-              <a class="btn btn-primary" href="${esc(org.billing.checkout)}" id="checkout-go" rel="noopener">${icon('external-link', 15)} ${org.billing.billing ? 'Manage payment' : 'Subscribe'}</a>
+              ${org.billing.portal ? `
+                <a class="btn btn-primary" href="${esc(org.billing.portal)}" id="portal-go" rel="noopener">${icon('external-link', 15)} Manage subscription</a>` : ''}
+              ${org.billing.checkout ? `
+                <a class="btn ${org.billing.portal ? '' : 'btn-primary'}" href="${esc(org.billing.checkout)}" id="checkout-go" rel="noopener">${icon('external-link', 15)} Subscribe</a>` : ''}
             </div>
-            <p class="settings-hint" style="margin:12px 0 0">Payment is handled by Dodo Payments, who are the seller of record — your card details never reach us. The price is on their page.</p>` : ''}
+            ${org.billing.portal ? `
+              <p class="settings-hint">Cancelling, pausing, updating your card and downloading invoices all happen on Dodo Payments' own portal. It asks for your email address and sends you a sign-in link.</p>` : ''}
+            <p class="settings-hint" style="margin:12px 0 0">Payment is handled by Dodo Payments, who are the seller of record — your card details never reach us.${org.billing.checkout ? ' The price is on their page.' : ''}</p>` : ''}
+          <!--
+            A subscriber with no portal configured would otherwise be left
+            with no control at all, now that the checkout button is gated
+            away from them — a dead end, said out loud rather than shown as a
+            card with nothing on it. An operator fault, like the enabled one.
+          -->
+          ${org.billing.enabled && org.billing.billing && !org.billing.portal ? `
+            <p class="settings-hint" style="margin:12px 0 0"><strong>Self-service billing is not set up on this deployment.</strong> To cancel, pause, change your card or get an invoice, get in touch and we will do it for you.</p>` : ''}
         </div>` : ''}
         <div class="card">
           <div class="card-head"><h2>Backup & restore</h2></div>

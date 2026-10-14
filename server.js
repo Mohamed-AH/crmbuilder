@@ -4721,6 +4721,74 @@ const BILLING_SUBSCRIPTION_EVENTS = new Set([
 const BILLING_PAYMENT_EVENTS = new Set(['payment.succeeded', 'payment.failed']);
 
 /*
+ * Which statuses mean a subscription is OVER. Everything else is live.
+ *
+ * Written as the TERMINAL set rather than the live one, and that is the
+ * decision rather than a style choice: this gates the checkout link, so an
+ * unrecognised future status must BLOCK a second purchase rather than permit
+ * one. A `live` list fails the other way and sells somebody a subscription
+ * they already hold.
+ *
+ * That default points the OPPOSITE way from the card's next-payment row in
+ * `js/app.js`, which lists the statuses that do bill and suppresses anything
+ * else — and both are chosen the same way: the unrecognised case has to err
+ * toward not misleading anybody. Here that means refusing a sale; there it
+ * means omitting a date. Said out loud because the two read as inconsistent
+ * side by side, and a later edit "tidying" them into one direction would
+ * break whichever one it moved.
+ */
+const TERMINAL_SUBSCRIPTION_STATUSES = new Set(['cancelled', 'expired', 'failed']);
+
+/*
+ * The status, preferring what the provider SAID over what it called the event.
+ *
+ * The event tail is a fallback rather than a second source: the two
+ * vocabularies are the same word — `subscription.cancelled` arrives carrying
+ * `status: "cancelled"` — and their own note is that the two always agree. No
+ * real payload has omitted `status`, so this is a shape guard, and without it
+ * a record missing one would leave a cancelled subscription unresubscribable
+ * for ever.
+ */
+function subscriptionStatus(billing) {
+  const stated = String((billing && billing.status) || '').toLowerCase();
+  if (stated) return stated;
+  const event = String((billing && billing.subscriptionEvent) || '');
+  return event.startsWith('subscription.') ? event.slice('subscription.'.length).toLowerCase() : '';
+}
+
+/*
+ * Does this workspace already hold a subscription that has not ended?
+ *
+ * What it is for: six subscriptions existed on the test account across two
+ * workspaces, because nothing stopped an owner pressing Subscribe again. The
+ * key is the workspace and the gate is ours — the provider has none, and its
+ * own blocklist documentation says why the obvious alternative cannot work:
+ * "Checkout can create a new customer record for a returning email."
+ *
+ * NOT ATOMIC, and accepted rather than overlooked. This is a read followed by
+ * a render, so two tabs can both see no subscription and both reach checkout;
+ * the window is the seconds between a first payment and its webhook landing.
+ * Closing it properly needs a lock this architecture has nowhere to put, and
+ * at this volume one duplicate to refund is cheaper than a lock to maintain
+ * for ever. The reconciliation in `docs/SUBSCRIPTION-UX.md` Phase 3 is what
+ * catches whatever slips through.
+ */
+function hasLiveSubscription(billing) {
+  if (!billing || typeof billing !== 'object') return false;
+  /*
+   * A record holding ONLY a payment outcome is not a subscription. That is the
+   * declined-first-payment state (§73): `payment.failed` lands with no
+   * subscription behind it, and blocking it would leave somebody whose card
+   * was refused unable to try again — the one state this gate must not reach.
+   */
+  if (!billing.subscriptionId && !billing.status && !billing.subscriptionEvent) return false;
+  const status = subscriptionStatus(billing);
+  // No readable status on a record that does have a subscription: block, per
+  // the direction chosen above.
+  return status ? !TERMINAL_SUBSCRIPTION_STATUSES.has(status) : true;
+}
+
+/*
  * wsId rides out on the payment link as `metadata_wsId` and comes back inside
  * the SIGNED payload, so it is exactly as trustworthy as the signature — but
  * it is still a string from off-machine about to be used as a storage key, so
@@ -5041,7 +5109,7 @@ const DODO_PRODUCT_ID = process.env.DODO_PRODUCT_ID || '';
  */
 const DODO_CHECKOUT_BASE = (process.env.DODO_CHECKOUT_BASE || 'https://checkout.dodopayments.com').replace(/\/+$/, '');
 
-function checkoutUrl(wsId) {
+function checkoutUrl(wsId, email) {
   if (!DODO_PRODUCT_ID) return null;
   /*
    * `redirect_url` MUST NOT carry a hash, and this is measured rather than
@@ -5053,13 +5121,6 @@ function checkoutUrl(wsId) {
    *
    * encodeURIComponent, never esc(): a URL and a document are different things
    * and §51 records both directions of getting that wrong.
-   *
-   * NO CUSTOMER PREFILL, deliberately. The provider accepts `email`,
-   * `fullName` and an address, and the signed-in address is right here — but a
-   * billing address is not necessarily a sign-in address, and this is the one
-   * screen where guessing wrong costs somebody money. §45's rule: where the
-   * answer is not provable, ask rather than preselect, and the provider's own
-   * form is where that question belongs.
    */
   const params = new URLSearchParams();
   params.set('redirect_url', APP_BASE);
@@ -5067,8 +5128,83 @@ function checkoutUrl(wsId) {
   // JavaScript anywhere in it. The webhook reads this back out of the SIGNED
   // payload (§70), so it is as trustworthy as the signature.
   params.set('metadata_wsId', wsId);
+
+  /*
+   * The email is PREFILLED AND LOCKED, which REVERSES what stood here first.
+   *
+   * That comment said "no customer prefill, deliberately", on §45's rule:
+   * where an answer is not provable, ask rather than preselect. It still
+   * holds for the ADDRESS, which is why nothing here touches one — a billing
+   * address is genuinely not a sign-in address, and this is the screen where
+   * guessing wrong costs money. It does NOT hold for the email, because the
+   * email is not a preference: it is the key the provider identifies a
+   * customer by, so letting it vary is what produced six subscriptions from
+   * two workspaces on the test account.
+   *
+   * From the session only, never a parameter — §5, and here the email decides
+   * who the provider bills and what their portal will show them.
+   *
+   * BOTH OR NEITHER, and the guard is not defensive tidiness. Their docs: "A
+   * disable flag takes effect only when it's true and the matching field has
+   * a value" — so `disableEmail` beside an empty `email` silently does
+   * nothing, leaving a field this code appears to have locked fully editable.
+   * That is this file's standing failure shape, in one query parameter.
+   */
+  const verified = String(email || '').trim();
+  if (verified) {
+    params.set('email', verified);
+    params.set('disableEmail', 'true');
+  }
   return `${DODO_CHECKOUT_BASE}/buy/${encodeURIComponent(DODO_PRODUCT_ID)}?${params}`;
 }
+
+/*
+ * The hosted customer portal: cancel, pause, resume, change the card,
+ * reactivate after dunning, and download invoices. One link closes six rows
+ * of `docs/SUBSCRIPTION-UX.md`'s audit, and none of it is code here.
+ *
+ * ONE WHOLE URL in the environment, rather than a business id this assembles.
+ * The static link is `https://{test.}customer.dodopayments.com/login/
+ * {business_id}`, so composing it means deriving a host from the mode — and
+ * §73 records that exact class of derivation costing a blocked test-mode run,
+ * when `DODO_CHECKOUT_BASE` was described by why it was added rather than by
+ * what it decides. The operator pastes the Static Link out of the dashboard's
+ * Share Invite dialog, which already contains it, and nothing here needs to
+ * know which mode it is in.
+ *
+ * The STATIC link rather than the dynamic one, because the dynamic one needs
+ * a `customer_id` and §70 deliberately stores no customer identity at all.
+ * The price is one email step for the subscriber, and one consequence worth
+ * knowing before testing it: sign-in emails are NOT SENT IN TEST MODE, so
+ * this cannot be driven end to end on a test deployment. What is testable is
+ * that the right link is offered to the right person.
+ *
+ * NOT A CREDENTIAL — a URL customers visit, like DODO_PRODUCT_ID. It
+ * discloses nothing either: the provider's own note is that the sign-in page
+ * "always shows the same confirmation… so the page doesn't reveal who your
+ * customers are", which is the identical-rejection discipline §13 and §16
+ * already use here.
+ */
+function portalFromEnv() {
+  const raw = String(process.env.DODO_PORTAL_URL || '').trim();
+  if (!raw) return '';
+  let parsed = null;
+  try { parsed = new URL(raw); } catch { parsed = null; }
+  /*
+   * Refused at boot and said out loud, rather than passed through. A
+   * malformed value renders as a button that goes nowhere, which a subscriber
+   * cannot tell from the provider being down — and it is a property of the
+   * URL rather than of the moment, so it can never work and belongs in the
+   * log rather than in front of a customer (§38's refuse/warn split).
+   */
+  if (!parsed || parsed.protocol !== 'https:') {
+    console.warn('DODO_PORTAL_URL is not an https URL — the customer portal link is disabled.');
+    return '';
+  }
+  return parsed.href;
+}
+
+const DODO_PORTAL_URL = portalFromEnv();
 
 app.get('/api/org/billing', requireAuth, requireBillingOwner, async (req, res) => {
   const wsId = workspaceIdFor(req.user);
@@ -5085,10 +5221,33 @@ app.get('/api/org/billing', requireAuth, requireBillingOwner, async (req, res) =
    * The wsId comes from the session and is never a parameter — §5, and here it
    * is what decides which workspace a payment is credited to.
    */
+  const billing = meta.billing && typeof meta.billing === 'object' ? meta.billing : null;
+  const live = hasLiveSubscription(billing);
   res.json({
     enabled: Boolean(DODO_WEBHOOK_SECRET),
-    checkout: checkoutUrl(wsId),
-    billing: publicBilling(meta.billing),
+    /*
+     * THE GATE, and it is on the server rather than in the card because this
+     * is about entitlement: a client-side hide is a client-side hide, and the
+     * link is a plain URL anybody can keep.
+     *
+     * A TERMINAL subscription gets BOTH links — checkout, because
+     * resubscribing is something somebody is entitled to do, and the portal,
+     * because their invoices and billing history are still in there.
+     * `docs/SUBSCRIPTION-UX.md` Phase 1 says "never both", which is right
+     * about the case it was written for (a live subscriber must never see
+     * Subscribe) and wrong about this one, where the alternative is a dead
+     * end for a receipt.
+     */
+    checkout: live ? null : checkoutUrl(wsId, req.user.email),
+    /*
+     * Offered only once there is something to manage. A workspace that has
+     * never paid has no customer record at the provider, so the link leads to
+     * a sign-in page that will never email them anything — a control that
+     * looks like it works and cannot, which is §36's shape and the one thing
+     * this card has already been caught doing twice.
+     */
+    portal: billing ? DODO_PORTAL_URL || null : null,
+    billing: publicBilling(billing),
   });
 });
 

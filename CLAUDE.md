@@ -155,8 +155,14 @@ never change, because everything cross-references them.
 | **A return URL the provider does not navigate to** — and the 429 on their hop | §73 · §71 · §70 |
 | **A pricing ceiling read off a mandate screen** — ₹15,000, and annual billing | §73 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · §3 |
 | **Testing every payment scenario** — what to hand-drive, and what not to | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §9 · §73 · §9 |
-| **After somebody pays** — cancel, pause, invoices, duplicates | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) · §71 · §64 |
-| Why a duplicate subscription cannot be caught by email | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) §2 · §71 · §5 |
+| **After somebody pays** — cancel, pause, invoices, duplicates | §74 · [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) · §71 · §64 |
+| **Stopping a second subscription** — the key, and the race accepted | §74 · [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) §2 |
+| Why a duplicate subscription cannot be caught by email | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) §2 · §74 · §71 · §5 |
+| A prefill refused in one commit and required in the next | §74 · §45 · §5 |
+| Two unrecognised-value defaults pointing opposite ways, on purpose | §74 · §33 · §36 |
+| **Where the customer portal link lives**, and why not composed | §74 · §73 · §70 |
+| A field that survives the state it names (`paused_at`) | §74 · §9 |
+| A comment that had promised an assertion nobody wrote | §74 · §46 · §14 |
 | A cancel flow that is a chargeback control rather than a nicety | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) §1 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §3 · §64 |
 | A derived list that was wrong the same way the typed one was | §73 · §29 · §34 |
 | Events that production would see first, and cannot be produced in test mode | §73 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §9 |
@@ -310,10 +316,19 @@ here, and its trailing slash is what turned §46's wait loop into a no-op.
   (§42), a subject-access search and self-serve account deletion (§43), and a
   retention review of what nothing has touched (§44). All three report or act
   on the tenant's own workspace; none of them make anybody compliant.
+- **Receiving a payment, and managing the subscription afterwards** — a signed
+  inbound webhook (§69, §70), a hosted checkout link gated so a workspace
+  cannot buy a second subscription, and a link to the provider's own portal for
+  cancel, pause, card and invoices (§74). **Nothing is on sale and nothing is
+  enforced**: there is no price (§64), and no code reads the subscription state
+  to decide what a workspace may do.
 - Docs: see `docs/README.md` — the map, and which are frozen
 
 ### Not built yet
 - Email sending, third-party integrations.
+- **Enforcing a subscription** — §74 records the state, and nothing acts on it.
+  Blocked on a price before it is blocked on code (§64,
+  [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2).
 - **Per-module permissions** — everyone on a team sees every module. Roles
   govern what you may *do* (§14), not which modules you can see. Considered and
   set aside: it needs per-module filtering in sync, or a member receives rows
@@ -11258,3 +11273,226 @@ touched `server.js`, and only a comment block**, which is why the bump still
 does not move: `server.js` is not in `APP_SHELL` and nothing executable
 changed. `node --check` plus `tests/payments.test.mjs` **26/26** rather than a
 full run, because a comment has no blast radius (§9).
+
+
+---
+
+## 74. The duplicate gate, and a portal that is one string
+
+Phases 0 and 1 of [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md), which
+§73's real test-mode run is what produced: six subscriptions existed on the
+test account across two workspaces, and the card contradicted itself on both
+`paused` and `cancelled`. Four changes plus one found while making them, one
+`CACHE_VERSION` bump, no new route.
+
+**None of it is a defect in §69–§73's code.** The money-*in* path held through
+every real payload; everything here is the money-*management* half, which did
+not exist.
+
+### The gate: the key is `wsId`, and the provider has none
+
+Pressing **Subscribe** twice bought two subscriptions, because nothing stopped
+it. The obvious key is the email, and **their own blocklist documentation is
+what rules it out**: *"Checkout can create a new customer record for a
+returning email, so a block on a single customer ID could be bypassed."* So
+the address is not a reliable identity even to them — and §73 had already
+produced four emails across two workspaces by using a different one per
+attempt, exactly because the checkout form asked.
+
+`hasLiveSubscription(billing)` on the server, and `checkout` is `null` while it
+is true. Three decisions inside it:
+
+- **The TERMINAL set is what is written down** — `cancelled`, `expired`,
+  `failed` — and everything else is live. A `live` list fails the other way and
+  sells somebody a subscription they already hold, so an unrecognised future
+  status blocks.
+- **That default points the opposite way from the card's next-payment row**,
+  which lists the statuses that *do* bill and suppresses anything else. Both
+  are chosen the same way — the unrecognised case has to err toward not
+  misleading anybody — and that is a different direction in each place. Written
+  into both files, because the two read as inconsistent side by side and a
+  later edit "tidying" them into one direction would break whichever it moved.
+- **A record holding only a payment outcome is not a subscription.** §73's
+  declined-first-payment state stores `payment.failed` with no subscription
+  behind it; blocking it would leave somebody whose card was refused unable to
+  try again, on the one screen where that is the entire point. Its own test,
+  on a fresh workspace, because the shared one has held a subscription since
+  the second test in the file.
+
+**On the server, not in the card**, because this is entitlement rather than
+presentation: a client-side hide is a client-side hide, and the link is a
+plain URL anybody can keep.
+
+**NOT ATOMIC, and accepted on instruction rather than overlooked.** It is a
+read followed by a render, so two tabs can both see no subscription in the
+seconds before a first webhook lands. Closing it properly needs a lock this
+architecture has nowhere to put, and at this volume one duplicate to refund is
+cheaper than a lock to maintain for ever. Recorded in the route, in
+`docs/API.md` and in the plan as a known limit; Phase 3's reconciliation is
+what catches what slips through.
+
+**A terminal subscription gets BOTH links**, which departs from the plan's own
+*"never both"*. That rule is right about the case it was written for — a live
+subscriber must never see *Subscribe* — and wrong about this one: resubscribing
+after cancelling is allowed, and the invoices are still in the portal, so the
+alternative is a dead end for a receipt.
+
+### The email is prefilled and locked, which reverses what was written there
+
+`checkoutUrl` carried a comment saying *"NO CUSTOMER PREFILL, deliberately"* on
+§45's rule — where an answer is not provable, ask rather than preselect.
+
+**That holds for the address and not for the email**, and the distinction is
+the whole of it: a billing address genuinely is not a sign-in address, and this
+is the screen where guessing wrong costs money. An email is not a *preference*
+at all here — it is the key the provider identifies a customer by. So
+`email=<verified>&disableEmail=true`, from the session only and never a
+parameter (§5), and nothing touches an address or a name.
+
+**Both or neither, and the guard is not defensive tidiness.** Their docs: *"A
+disable flag takes effect only when it's true and the matching field has a
+value."* So `disableEmail` beside an empty `email` **silently does nothing**,
+leaving a field this code appears to have locked fully editable — this file's
+standing failure shape, in one query parameter. No account can have an empty
+email (`upsertUser` requires one), so the guard has no reachable failure and
+therefore no test; it is the same status as §52's `redactKey` and §30's
+`UNSAFE_KEYS`. The *pair* is asserted, because an assertion on `disableEmail`
+alone would pass against a link that locks nothing.
+
+Parameter names read out of `docs.dodopayments.com/llms-full.txt` rather than
+recalled, against their own worked example — a wrong parameter name here is
+accepted by the URL and ignored by the page, which is the silent half.
+
+### The portal is one whole URL in the environment
+
+`DODO_PORTAL_URL`, pasted from the dashboard's *Sales → Customers → Share
+Invite → Static Link*. One link closes six rows of the audit — cancel, pause,
+resume, change the card, reactivate after dunning, invoices — and **none of it
+is code here.**
+
+- **Not composed from a business id.** The static link is
+  `https://{test.}customer.dodopayments.com/login/{business_id}`, so building
+  it means deriving a host from the mode — and §73 records exactly that class
+  of derivation costing a blocked test-mode run, when `DODO_CHECKOUT_BASE` was
+  described by *why it was added* rather than by *what it decides*. Pasting the
+  whole thing means nothing here has to know which mode it is in.
+- **The STATIC link, not the dynamic one**, because the dynamic one needs a
+  `customer_id` and §70 deliberately stores no customer identity. Taken on
+  instruction, and the price is one email step for the subscriber.
+- **Not a credential** — customers visit it, like `DODO_PRODUCT_ID` — and it
+  discloses nothing either: their note is that the sign-in page *"always shows
+  the same confirmation… so the page doesn't reveal who your customers are"*,
+  which is the identical-rejection discipline §13 and §16 already use here.
+- **Offered only once there is a billing record.** A workspace that has never
+  paid has no customer record at the provider, so the link leads to a sign-in
+  page that will never email them anything — a control that looks like it works
+  and cannot (§36).
+- **A value that is not `https` is refused at boot and said out loud.** A
+  property of the URL rather than of the moment (§38's split), and the
+  alternative renders as a button that goes nowhere, which a subscriber cannot
+  tell from the provider being down. **Asserted on the server's own output**,
+  because the response is `null` either way: no portal and a broken portal both
+  answer `portal: null`, and only the log distinguishes them — §40's
+  refused-413 finding in a new place.
+
+**Sign-in emails are NOT SENT IN TEST MODE**, so this cannot be driven end to
+end on a test deployment. What is testable is that the right link reaches the
+right person, which is what the tests claim and all they claim.
+
+### The next-payment row, and the field that is not the condition
+
+The provider keeps `next_billing_date` on the payload for `paused` and for
+`cancelled` alike, so *"Status: cancelled"* sat directly above *"Next payment:
+14 Nov 2026"* — read off a real subscription, not reasoned about.
+
+`BILLING_STATUSES` is `active` and `past_due`, and everything else suppresses
+the row. **Keyed on `status`, never on `paused_at`:** that field *survives* a
+cancellation, which is the correction the plan had to make to its own first
+reading of it — it looked like a usable "is paused" condition and the next real
+payload disproved it.
+
+**The absence is explained rather than silently dropped**, and only where there
+was a date to drop: *"No payment is currently scheduled."* A row somebody saw
+yesterday simply vanishing is §36's shape; a qualifier shown in every state is
+§33's, where the eye learns to skip the cell the one case needs.
+
+### A comment that had promised an assertion nobody wrote
+
+Found while editing the card, and it is §46's trap rather than part of either
+phase. The E2E test for `enabled: false` says in its own comment that the card
+*"must NOT offer checkout"* — and the button block was gated on the link alone,
+so the card said *"this is not the moment to subscribe"* and put a **Subscribe**
+button underneath it. Nothing implemented it and nothing asserted it.
+
+Closed in the **card** rather than on the server, and the split is deliberate:
+the gate above is entitlement, so it belongs to the server; this is one line
+contradicting the line above it, which is presentation. §14's rule — the client
+avoids offering a button whose effect would be wrong, and the server decides.
+
+The same change creates one new operator state: a subscriber with no portal
+configured now has **no control at all**, since the checkout link is correctly
+withheld from them. Said out loud, like the `enabled` warning beside it, rather
+than rendered as a status with no way to act on it.
+
+### Verified
+
+Eleven mutations, each failing the test that names it and — for ten of the
+eleven — **no other** (§9):
+
+| Mutation | Fails |
+|---|---|
+| the gate removed | *a workspace already holding a live subscription is offered no checkout link* |
+| nothing is terminal | the same test, **and the three link tests** — see below |
+| a payment-only record counted as live | *a declined first payment is not mistaken for a live subscription* |
+| no email prefill | *the checkout link carries this workspace…* and *the prefilled email is the session…* |
+| the email read from the query | *the prefilled email is the session, never a parameter* |
+| the portal offered regardless of a record | *the portal is offered only once there is something to manage* |
+| a non-https portal URL passed through | *a portal URL that is not https is refused at boot, and says so* |
+| the next-payment row never suppressed | *a paused subscription shows no next payment…* |
+| the absence not explained | the same test, on the second half |
+| the button block ignores `enabled` | *a deployment that cannot record a payment says so…* |
+| the no-portal dead end left silent | *a subscriber with no portal is told self-service is not set up…* |
+
+**The empty-terminal-set mutation fails four tests, and that is the documented
+dependency rather than noise.** Every test that reads the checkout link has a
+*precondition* now — the gate makes it null while a live subscription exists —
+so each one drives a cancellation first through a `cancelNow()` helper. Stating
+it is what stops a reorder of `BILLING_SUBSCRIPTION_EVENTS` turning them into a
+null dereference several tests away from the change.
+
+**And the first version of that helper failed `applied: false, reason:
+'stale'`.** It picked a December date beside two other hand-picked December
+dates in the new gate test. Staleness is the mechanism this entire file tests,
+so hand-picking a timestamp next to another hand-picked one is the one thing not
+to do in it; there is one monotonic `laterClock()` counter now.
+
+**§60's backtick trap, again, and caught by `node --check`:** a backtick inside
+an HTML comment inside a template literal closes the string, and the error named
+`Unexpected identifier 'enabled'` — my own comment prose, not anything
+structural.
+
+### Blast radius
+
+`js/app.js` is in `APP_SHELL`, so `CACHE_VERSION` → **`crmbuilder-v63`**. No
+new served file, so smoke stays **51 local / 56 live predicted** — §8, this
+session reaches neither host.
+
+**`docs/API.md` gains no route and the count stays 60**, which is §46's trap for
+the fifth time: the number is right and the file read correctly while a
+**response shape** moved underneath it. `portal` is new, and `checkout` is now
+conditional on something other than configuration — so a caller that used to
+receive a link receives `null` for a reason that is not *"nothing is set up"*.
+`DEPLOYMENT.md` gains `DODO_PORTAL_URL`.
+
+**§27's six user-facing documents are deferred, and the CONDITION is restated
+rather than inherited.** §73 recorded that §70–§72's reason for deferring had
+expired — the product id is set on production, so the card is no longer absent
+for every owner. The surviving reason is narrower and still holds: **there is
+no price**, so nobody can subscribe, so no user has gained a capability to
+document. The walk happens when a price is set, which is the same moment
+[`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1's twelve-file list
+fires and `MARKETING.md`'s *"No per-seat pricing. Free. No ads."* has to be
+dealt with (§48, §64). `privacy.html` likewise: the provider is named as a
+recipient of personal data when the **first real payment** runs.
+
+Counts: Node **616 → 621**, Playwright **152 → 154**, smoke **51** locally.

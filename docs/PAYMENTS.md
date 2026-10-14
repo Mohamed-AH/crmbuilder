@@ -953,16 +953,22 @@ sessions**, or **set with the price decided and the documents walked**.
 4. **File the LUT** for the current financial year if it is not filed.
 5. **Re-create the product in live mode** (copying keeps the details and gives
    a **new id**), **add a second webhook endpoint** in live mode with **its own
-   secret**, re-point both environment variables, and **unset
-   `DODO_CHECKOUT_BASE`** so the link goes back to the live host. All three
-   move together: a live product id left pointing at the test host fails
-   exactly as step 7 describes, in the other direction, and says nothing.
+   secret**, re-point both environment variables, **unset
+   `DODO_CHECKOUT_BASE`** so the link goes back to the live host, and
+   **re-point `DODO_PORTAL_URL`** at the live portal — it carries a host that
+   differs by a `test.` prefix, so a test-mode link left in place sends paying
+   customers to a portal where they have no account. All four move together: a
+   live product id left pointing at the test host fails exactly as step 7
+   describes, in the other direction, and says nothing.
 6. **Answer §2.4's six product decisions** — quotas, non-payment, export when
    suspended, the signup gate, where plan state lives, and what happens to
    everybody currently on the free beta. Grandfathering is a decision; making
    it silently is not.
-7. **Build enforcement** (§6) under §24 stage B's suspension rules, and the
-   customer-portal link (§3 lever 4).
+7. **Build enforcement** (§6) under §24 stage B's suspension rules. ~~and the
+   customer-portal link (§3 lever 4)~~ — **the portal link is built**
+   (`CLAUDE.md` §74), so what is left here is enforcement, and the
+   two-click cancel §3 lever 4 asks for is now the provider's hosted flow
+   rather than anything to write.
 8. **Rewrite `MARKETING.md`** (§2.1), and **list where that copy has already
    been published** — rewriting a source does nothing about a post written from
    it months ago. If the answer is "nowhere yet", write that down; it is the
@@ -1496,11 +1502,25 @@ remainder is one sitting:
    closes `plan_changed` and `expired` with it.
 7. **Cancel every test subscription** (§7 step 17), because they keep renewing
    and keep delivering for weeks.
-8. **Then fix the two card defects this sitting found** — the next-payment row
-   on a paused subscription, and the *Manage payment* button handing an
-   existing subscriber a live checkout URL. Both are `js/app.js`, so both want
-   a `CACHE_VERSION` bump and a mirror sync, which is why they wait until no
-   test is running against the deployed build.
+8. ~~**Then fix the two card defects this sitting found**~~ — **done, and both
+   fixes plus two more are in `CLAUDE.md` §74.** The next-payment row now
+   suppresses on any status that will not bill, and the *Manage payment*
+   button is gone: a live subscriber is sent no checkout link at all, and
+   gets the hosted customer portal instead. The two extras found while doing
+   it were the email arriving unlocked — which is what let one person create
+   four customer records — and a card that warned against subscribing while
+   offering the button.
+
+   **It needs `DODO_PORTAL_URL` set on the deployment**, pasted from
+   *Sales → Customers → Share Invite → **Static Link***. Until it is, a
+   subscriber is told self-service is not set up rather than being shown a
+   button to nowhere — correct, and not the state to leave it in. Note before
+   testing it: **the provider sends no portal sign-in emails in test mode**,
+   so the link can be checked and not driven.
+
+   Both are `js/app.js` and `server.js`, so they want a `CACHE_VERSION` bump
+   and a mirror sync, which is why they waited until no test was running
+   against the deployed build.
 
 Then §7's *before live mode* list, which is mostly not code.
 

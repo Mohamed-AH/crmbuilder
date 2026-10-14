@@ -779,18 +779,34 @@ carry **separate clocks**, so a payment cannot decide a subscription's status.
 
 ### `GET /api/org/billing`
 
-Owner only, 403 otherwise. Returns `{ enabled, checkout, billing }`, and the
-three are deliberately separate because two of them are absences that read
-identically if either is dropped:
+Owner only, 403 otherwise. Returns `{ enabled, checkout, portal, billing }`,
+and the four are deliberately separate because three of them are absences that
+read identically if any is dropped:
 
 | | |
 |---|---|
 | `enabled` | the deployment has a webhook secret, so a payment could be **recorded**. False means a payment taken now would leave no trace — an operator fault, not an unsubscribed workspace |
-| `checkout` | the hosted payment link, or `null` when no product is configured: nothing to **sell** yet |
+| `checkout` | the hosted payment link, or `null` when no product is configured (nothing to **sell** yet) **or when this workspace already holds a live subscription** — see the gate below |
+| `portal` | the hosted customer portal, or `null` when none is configured **or when the workspace has no billing record at all**: a workspace that has never paid has no customer record at the provider, so the link would lead to a sign-in page that never emails them anything |
 | `billing` | `null` until a webhook event lands |
 
+**The gate on `checkout` is a behaviour change and not a cosmetic one.** A
+workspace holding a subscription whose status is not **terminal** —
+`cancelled`, `expired`, `failed` — is sent `checkout: null`, so a caller that
+used to receive a link now receives `null` for a reason that is not "nothing is
+configured". Written as the terminal set so an unrecognised future status
+*blocks* rather than permits; a record holding only a payment outcome and no
+subscription (a declined first payment) is **not** a subscription and is not
+gated. It is a read followed by a render and therefore **not atomic** — two
+tabs can both be offered checkout in the seconds before a first webhook lands,
+which is accepted at this volume and recorded in
+[`SUBSCRIPTION-UX.md`](SUBSCRIPTION-UX.md).
+
+A terminal subscription receives **both** links: checkout, because
+resubscribing is allowed, and the portal, because the invoices are still there.
+
 The checkout link is a static payment link,
-`https://checkout.dodopayments.com/buy/{product_id}`, carrying exactly two
+`https://checkout.dodopayments.com/buy/{product_id}`, carrying four
 parameters:
 
 - **`metadata_wsId`** — the session's workspace, never a parameter (§5). It
@@ -801,10 +817,23 @@ parameters:
   redirect_url carrying a hash produces a URL whose query sits inside the
   fragment, where `location.search` is empty and the client can neither read
   nor strip it. Measured, not assumed.
+- **`email` and `disableEmail=true`** — the session's verified address,
+  prefilled and locked, and **never read from a parameter**. The email is how
+  the provider identifies a customer, so letting it vary between attempts is
+  what produced six subscriptions from two workspaces on the test account.
+  Both or neither: the provider's disable flag "takes effect only when it's
+  true and the matching field has a value", so a lock beside an empty field
+  silently does nothing.
 
-No customer fields are prefilled, deliberately: a billing address is not
-necessarily a sign-in address, and this is the one screen where guessing wrong
-costs money.
+No **address** or **name** fields are prefilled, deliberately: a billing
+address is not necessarily a sign-in address, and this is the one screen where
+guessing wrong costs money.
+
+The portal link is the provider's **static** link,
+`https://customer.dodopayments.com/login/{business_id}`, held whole in
+`DODO_PORTAL_URL` rather than composed. The static one rather than the dynamic
+one because the dynamic one needs a `customer_id`, and nothing here stores a
+customer identity.
 
 **The price is not in this repository.** The provider's product carries it and
 the checkout page states it — a figure here would be a second copy of the

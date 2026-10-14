@@ -1,10 +1,17 @@
 # Subscription lifecycle and customer experience — the plan
 
-> **Status: a plan, not a record.** Nothing here is built. It is written before
-> any code so the decisions are visible and arguable, which is §48's and §64's
-> precedent: the question to ask is *when* a thing can hurt you, and put the
-> check there. This lives in `docs/` (the maintained tier, §29) and 404s in
-> production by construction (§28), which is what lets it be blunt.
+> **Status: a plan, and PHASES 0 AND 1 ARE NOW BUILT** — `CLAUDE.md` §74 is
+> the record of what shipped and of the three places this document was wrong
+> or over-specified. Phases 2 and 3 are untouched, and Phase 2 is still
+> blocked on a price (§64).
+>
+> It was written before any code so the decisions were visible and arguable,
+> which is §48's and §64's precedent: the question to ask is *when* a thing can
+> hurt you, and put the check there. This lives in `docs/` (the maintained
+> tier, §29) and 404s in production by construction (§28), which is what lets
+> it be blunt. **The audit in §1 is kept as it was taken** — it is what sized
+> the work, and editing a plan's premises after the fact loses the reason the
+> plan was shaped that way (§29).
 >
 > **Research date 2026-10-14.** The provider half is first-party
 > (`docs.dodopayments.com/llms-full.txt`); the industry half is marked where it
@@ -119,7 +126,7 @@ Google verify. The address fields stay untouched.
 
 ## 3. The plan, in the order it should be built
 
-### Phase 0 — stop the bleeding · *now, before any more test payments*
+### Phase 0 — stop the bleeding · ✅ **BUILT** (`CLAUDE.md` §74)
 
 All three are ours, need no provider feature, and are small. They are grouped
 because they share a `CACHE_VERSION` bump and a mirror sync (§65), which is the
@@ -145,7 +152,16 @@ a lock this architecture has nowhere to put. **Accepted** at this volume, and
 recorded so it is a known limit rather than a surprise — the reconciliation
 in Phase 3 is what catches what slips through.
 
-### Phase 1 — give them control · *same sitting, one link*
+### Phase 1 — give them control · ✅ **BUILT** (`CLAUDE.md` §74)
+
+> **Three corrections §74 records, so this section is not read as the record.**
+> The *"never both"* rule below is right for a live subscriber and wrong for a
+> cancelled one, who gets checkout *and* the portal — the alternative is a dead
+> end for a receipt. The portal URL is held **whole** in `DODO_PORTAL_URL`
+> rather than composed from a business id, because composing means deriving a
+> host from the mode and §73 records what that already cost. And storing
+> `customer_id` was **declined** on instruction: the static link stays, which
+> keeps §70's no-customer-identity rule intact at the price of one email step.
 
 **The static Customer Portal link is a string containing only `business_id`:**
 
