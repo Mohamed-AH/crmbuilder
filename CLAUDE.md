@@ -11023,7 +11023,7 @@ one — and the assertion is removed with the reason, because changing a respons
 shape is a §46 decision rather than a test fix. The payment id is the useful
 one in a support conversation, so it is worth a decision rather than a drift.
 
-### A real payload, read at last, and the inventory needed nothing
+### Both real payloads, read at last, and the inventory needed nothing
 
 §70's own comment set the condition — *"nothing here has yet seen a real
 delivery, so it stores only fields the provider's own documentation names…
@@ -11050,11 +11050,61 @@ address — street, city, state, postcode, country. `workspaces[].meta` **is**
 the `data` collection (§17), so a generous `billingFieldsFor` would have put
 all of it into every nightly artifact.
 
-**Still unread: a PAYMENT envelope.** `payload_type: "Payment"` is a different
-shape, so `payment_id` and the payment branch's two siblings remain
-documentation-derived. The subscription body carries a `payment_id` key —
-null, because the subscription event is not the payment — which is suggestive
-and is not the same as having read one.
+**And then the PAYMENT envelope was read, which completes the inventory.**
+`payload_type: "Payment"` is a different shape and all three payment-branch
+reads land on it — `payment_id`, `status`, and the envelope's `type` and
+`timestamp`.
+
+**`metadata.wsId` riding on it is the finding, not a formality.**
+`metadata_wsId` is set on the *checkout link*, so it is a property of the
+subscription that link created, and nothing guaranteed the provider would copy
+it onto each payment. Had it not, every payment event would have been
+discarded as `ignored: 'no workspace'` — logged loudly per §70, and discarded
+all the same — while subscription events worked perfectly. A half-working
+integration whose failing half is the one carrying money, and it would have
+read as fine from the Settings card.
+
+**Both bodies justify §70's no-customer-identity rule, and the payment one
+more loudly.** Each carries `customer.email`, `customer.name` and a full
+billing address; the payment body adds **`card_holder_name`,
+`card_last_four`, `card_network`, `card_type` and `card_issuing_country`**. A
+generous `billingFieldsFor` would have put card details into every nightly
+artifact.
+
+Three money findings off it, none of them a field worth storing:
+
+- **There is no fee field anywhere** — no `platform_fee`, no `net_amount`, no
+  deduction. `settlement_amount` is **gross of tax**: `(7671 − 1170)/100` is
+  `$65.01`, the $65.00 base to within the conversion's own rounding. So
+  [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5's net-rate table **cannot be
+  filled from payment webhooks at all** — the fee is taken at payout, and a
+  payout record or statement is the only place to read it. That changes where
+  to look, which is the actionable part.
+- **`currency: "INR"` against `settlement_currency: "USD"`** — ₹7,587.26
+  charged (₹1,157.38 GST), $76.71 settled ($11.70 tax), an implied 98.91
+  INR/USD. §8's open row assumed **one** conversion into INR; this shows a USD
+  settlement leg, so there may be **two** with a spread on each. The payload
+  cannot say whether the second exists. The row is widened, not answered.
+- **`card_issuing_country: "IN"`** confirms item 4 above from the payment side
+  rather than from the refusal.
+
+**Two fields that would improve the product and are deliberately not taken:**
+
+- **`error_code` / `error_message`**, null on success. A `payment.failed` body
+  almost certainly names why a card was refused — exactly what item 3's card
+  cannot say. But **a failure body has still never been read**: §73 saw that
+  event arrive, not its contents. A candidate, not a change, and §53's rule
+  applies when it becomes one.
+- **`invoice_url`**, a per-payment receipt on the provider's host. Our screen
+  offers none, which is a real gap. **Not linked or stored until its access
+  control is known** — the payment id is in the path and we hold payment ids,
+  so an ungated URL would mean anyone with an id can fetch somebody else's
+  invoice, and we would have shipped the thing that hands it to them.
+
+`disputes: []` and `refunds: []` ride on the payment body as well, so a
+replayed payment event would carry dispute state without the dispute events
+being subscribed. Not a mechanism to rely on — nothing re-delivers a payment
+event on your schedule — but recorded beside the unhandled-families decision.
 
 Three more facts off the same body, each with a consequence, all in
 [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §9:

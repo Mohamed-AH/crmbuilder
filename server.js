@@ -4769,12 +4769,20 @@ function isoOrNull(value) {
  * arriving present-and-null, which is what says the NAME is right rather than
  * that nothing has filled it. No widening is wanted (§73).
  *
- * That same body carries `customer.email`, `customer.name` and a full billing
- * address, which is why none of them is here.
+ * A real PAYMENT envelope has now been read too (`payload_type: "Payment"`,
+ * a different shape), and the three reads below land on it — including
+ * `metadata.wsId`, which was NOT guaranteed: it is set on the checkout link,
+ * so a provider that copied it only onto subscription events would have had
+ * every payment here discarded as "no workspace". So the inventory is
+ * complete and no widening is wanted (§73).
  *
- * Still unread: a PAYMENT envelope. It is a different shape
- * (`payload_type: "Payment"`), so the three reads below are the ones that
- * remain documentation-derived.
+ * Both bodies carry `customer.email`, `customer.name` and a full billing
+ * address, and the payment body adds the card holder's name, last four,
+ * network, type and issuing country. That is why none of it is here.
+ *
+ * The payment body also carries settlement amounts and an invoice URL, and
+ * neither is stored: they decide nothing about what a workspace may do, which
+ * is the only reason anything is on this document.
  */
 function billingFieldsFor(type, data) {
   if (BILLING_SUBSCRIPTION_EVENTS.has(type)) {

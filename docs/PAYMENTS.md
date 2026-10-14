@@ -1023,17 +1023,82 @@ would read `null` and render as a missing row rather than an error — this
 document's standing failure shape — so seeing `past_due_ends_at` present-and-null
 is what distinguishes *not filled yet* from *looking in the wrong place*.
 
-`data.payment_id` is also present-and-null here, but a payment envelope is a
-different shape (`payload_type: "Payment"`) and is **still unread**. It is the
-one remaining gap in the inventory.
+**And the PAYMENT envelope has now been read too, so the inventory is
+complete.** `payload_type: "Payment"` is a genuinely different shape, and all
+three payment-branch reads plus all three envelope reads land:
 
-**And the payload confirms §70's exclusion was worth making.** It carries
-`customer.email`, `customer.name` and a full billing address — city, state,
-street, postcode, country. A generous `billingFieldsFor` would have put all of
-it on the meta doc, which **is** the `data` collection (§17), and therefore
-into every nightly backup artifact.
+| Code reads | Real payload carries | |
+|---|---|---|
+| `event.type` | `"payment.succeeded"` | ✅ in the handled set |
+| `event.timestamp` | `"2026-10-14T03:12:14.162928Z"` | ✅ envelope, parses |
+| `data.metadata.wsId` | `"916160ba-…"` | ✅ **see below — this was not guaranteed** |
+| `data.payment_id` | `"pay_0Nph210m6qtzcC3OX8IQ1"` | ✅ |
+| `data.status` | `"succeeded"` | ✅ |
 
-Three more facts read off the same body, each with a consequence:
+**`metadata` riding on the payment envelope is the finding, not a formality.**
+`metadata_wsId` is set on the *checkout link*, so it is a property of the
+subscription the link created — there was no guarantee the provider would copy
+it onto each payment. Had it not, every payment event would have been
+discarded as `ignored: 'no workspace'` (logged loudly, per §70, and discarded
+all the same) while subscription events worked perfectly. A half-working
+integration, and the half that fails is the one that carries money.
+
+**And BOTH payloads confirm §70's exclusion was worth making — the payment one
+more than the subscription one.** Each carries `customer.email`,
+`customer.name` and a full billing address (city, state, street, postcode,
+country); the payment body adds **`card_holder_name`, `card_last_four`,
+`card_network`, `card_type` and `card_issuing_country`**. A generous
+`billingFieldsFor` would have put all of it on the meta doc, which **is** the
+`data` collection (§17), and therefore into every nightly backup artifact —
+card details included.
+
+### The payment body answers one of §8's rows and moves another
+
+Three money findings, and none of them is a field worth storing:
+
+- **There is NO fee field. Anywhere.** No `platform_fee`, no `net_amount`, no
+  deduction of any kind. `settlement_amount: 7671` is **gross of tax** —
+  `(7671 − 1170) / 100 = $65.01`, which is the $65.00 base to within the
+  conversion's own rounding. So **§5's net-rate table cannot be filled from
+  payment webhooks at all**: the fee is taken at payout, not at payment, and a
+  payout record or a statement is the only place it can be read. That changes
+  *where to look*, which is why it is worth a line.
+- **`currency: "INR"` while `settlement_currency: "USD"`** — charged
+  ₹7,587.26 (₹1,157.38 GST), settled $76.71 ($11.70 tax), an implied 98.91
+  INR/USD. §8's open row reads *"payout fee and FX spread into INR"* and
+  assumed **one** conversion. This payload shows a settlement leg in USD, so
+  there may be **two**: INR charged → USD settled → INR paid out, with a
+  spread available on each. The payload cannot say whether the second leg
+  exists; the payout screen and the MSA can. The row is widened rather than
+  answered.
+- **`card_issuing_country: "IN"`, `card_network: "visa"`,
+  `card_last_four: "1450"`** — the India Visa test card from step 10,
+  confirming §73's card-region finding from the payment side rather than from
+  the refusal.
+
+**Two fields exist that would improve the product and are NOT being taken**,
+recorded so the decision reads as taken rather than missed:
+
+- **`error_code` and `error_message`**, both `null` on success. A
+  `payment.failed` body almost certainly names *why* a card was refused, which
+  is exactly what §73's declined-payment card cannot currently say. But **a
+  failure body has still never been read** — §73 saw the event arrive, not its
+  contents — so this is a candidate, not a change. §53's rule applies when it
+  is: the provider's own words are what the reader has to act on.
+- **`invoice_url`**, a per-payment receipt on the provider's host. Our screen
+  offers no receipt link, which is a real gap for anyone asking where theirs
+  is. **Do not link or store it until its access control is known:** the
+  payment id is in the path and we already hold the payment id, so if that URL
+  is not gated then anyone holding a payment id can fetch somebody else's
+  invoice — and we would have built the thing that hands it to them.
+
+`disputes: []` and `refunds: []` ride on the payment body too, which is
+relevant to the unhandled-families note below: a replayed payment event would
+carry dispute state without subscribing to the dispute events. Not a mechanism
+to rely on — nothing re-delivers a payment event on your schedule — but worth
+knowing it is there.
+
+Three more facts read off the **subscription** body, each with a consequence:
 
 - **`currency: "USD"`, `recurring_pre_tax_amount: 6500`** — confirms §5's
   measured finding that the product's base is USD and the INR figure is a
@@ -1168,8 +1233,9 @@ a feature decision sitting beside enforcement, not a defect.
 Nothing here needs a fresh payment except the plan change, so the whole
 remainder is one sitting:
 
-1. ~~**Read a real payload**~~ — **done.** All seven reads land; the inventory
-   needs no widening, and a payment envelope is the one shape still unread.
+1. ~~**Read a real payload**~~ — **done, both shapes.** Every read lands on the
+   subscription body *and* on the payment body, so the inventory is complete
+   and needs no widening.
 2. **Abandon a checkout** (§7 step 13) — the one return branch never driven.
    Entirely client-side: no `abandoned_checkout` event is involved or needed.
 3. **Pause, then resume** the live test subscription. Two events, two card states.
