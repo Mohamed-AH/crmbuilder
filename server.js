@@ -5005,6 +5005,24 @@ function requireBillingOwner(req, res, next) {
  * tiers are per-workspace rather than per-seat.
  */
 const DODO_PRODUCT_ID = process.env.DODO_PRODUCT_ID || '';
+/*
+ * The checkout host, and it has TWO legitimate values rather than one.
+ *
+ * This was written as a pure test seam — point the link at a stand-in so a
+ * test can assert the URL without sending anybody to a payment page — and
+ * `DEPLOYMENT.md` said "do not set it on a real deployment". That was wrong,
+ * and it cost a blocked test-mode run: the provider serves checkout on
+ * `checkout.dodopayments.com` for LIVE and `test.checkout.dodopayments.com`
+ * for TEST, products do not cross modes, and so a test-mode product id on the
+ * live host redirects to /error/not-found. Measured: both hosts serve
+ * `/buy/{id}` and both 307 an unknown id to that same page, which is why the
+ * failure names nothing.
+ *
+ * So the default stays live (production is the common case) and a deployment
+ * doing test-mode payments MUST set this. Checked against their docs first:
+ * the published payment-link format names only the live host, so the test one
+ * is established by probing rather than quoted.
+ */
 const DODO_CHECKOUT_BASE = (process.env.DODO_CHECKOUT_BASE || 'https://checkout.dodopayments.com').replace(/\/+$/, '');
 
 function checkoutUrl(wsId) {

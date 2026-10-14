@@ -612,18 +612,46 @@ this repository, a commit message, or a chat.
 
 ### On Render
 
-**7 · Set two environment variables and nothing else.**
+**7 · Set three environment variables.**
 
 | | |
 |---|---|
 | `DODO_WEBHOOK_SECRET` | the `whsec_…` from step 6 |
 | `DODO_PRODUCT_ID` | the product id from step 1 |
+| `DODO_CHECKOUT_BASE` | `https://test.checkout.dodopayments.com` |
 
-**Do not set `DODO_CHECKOUT_BASE`** — it is a test seam that points the
-checkout link at a stand-in, and setting it on a real deployment sends
-customers nowhere.
+**The third one is the step this runbook originally got wrong**, and it cost a
+blocked run. It said *"do not set `DODO_CHECKOUT_BASE` — it is a test seam"*,
+which was true of why the variable was added and false about what it does.
+**Checkout is served on two hosts**: `checkout.dodopayments.com` for live and
+`test.checkout.dodopayments.com` for test. Products do not cross modes (step
+1), so a test-mode product id on the live host redirects to
+*"This link isn't available"* — **the same page an id that does not exist at
+all produces**, so the failure names nothing and reads as a broken build.
+
+Measured rather than looked up, because their published payment-link format
+names only the live host: both hosts serve `/buy/{id}` and both 307 an unknown
+id to `/error/not-found`, and `test-checkout.dodopayments.com` does not
+resolve at all.
+
+**Before the redeploy, check the id itself** — five seconds, and it separates
+the two causes:
+
+```sh
+curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
+  "https://test.checkout.dodopayments.com/buy/<product id>"
+```
+
+| | |
+|---|---|
+| `200`, or a redirect that is **not** `/error/not-found` | the id is good; the host was the whole problem |
+| `307` → `/error/not-found` | the id is wrong on **both** hosts. Most likely **Save as Draft** was pressed instead of **Add product** — both buttons sit together on that form — so the product exists and is not purchasable. Otherwise it was mis-copied; theirs look like `pdt_…` |
 
 Saving these redeploys the service. Wait for it.
+
+**Unset `DODO_CHECKOUT_BASE` when moving to live mode**, with the product and
+webhook endpoint (§7's *before live mode*, step 5). A live product id on the
+test host fails exactly the same way, in the other direction.
 
 **8 · Confirm the card appeared.**
 Sign in as an **owner** and open Settings. The **Subscription** card should now
@@ -734,7 +762,10 @@ check the live-mode setting separately.
 4. **File the LUT** for the current financial year if it is not filed.
 5. **Re-create the product in live mode** (copying keeps the details and gives
    a **new id**), **add a second webhook endpoint** in live mode with **its own
-   secret**, and re-point both environment variables.
+   secret**, re-point both environment variables, and **unset
+   `DODO_CHECKOUT_BASE`** so the link goes back to the live host. All three
+   move together: a live product id left pointing at the test host fails
+   exactly as step 7 describes, in the other direction, and says nothing.
 6. **Answer §2.4's six product decisions** — quotas, non-payment, export when
    suspended, the signup gate, where plan state lives, and what happens to
    everybody currently on the free beta. Grandfathering is a decision; making
