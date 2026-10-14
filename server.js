@@ -4762,11 +4762,19 @@ function isoOrNull(value) {
  * already holds the customer record and is the system of record for it; we
  * need ids and statuses to decide what a workspace may do, and nothing else.
  *
- * The field inventory is deliberately THIN, and this is the honest reason:
- * nothing here has yet seen a real delivery (§69), so it stores only fields
- * the provider's own documentation names — `subscription_id`, `status`,
- * `next_billing_date`, `past_due_ends_at`, `payment_id`. Widening it is the
- * first thing to do once a real payload has been read, not before.
+ * The field inventory is deliberately THIN. It was written from the
+ * provider's documentation, and §70 said widening it was the first thing to
+ * do once a real payload had been read — so: A REAL `subscription.active` HAS
+ * NOW BEEN READ, and every read above lands, including `past_due_ends_at`
+ * arriving present-and-null, which is what says the NAME is right rather than
+ * that nothing has filled it. No widening is wanted (§73).
+ *
+ * That same body carries `customer.email`, `customer.name` and a full billing
+ * address, which is why none of them is here.
+ *
+ * Still unread: a PAYMENT envelope. It is a different shape
+ * (`payload_type: "Payment"`), so the three reads below are the ones that
+ * remain documentation-derived.
  */
 function billingFieldsFor(type, data) {
   if (BILLING_SUBSCRIPTION_EVENTS.has(type)) {

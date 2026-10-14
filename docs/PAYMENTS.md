@@ -1004,21 +1004,46 @@ so: *"nothing here has yet seen a real delivery, so it stores only fields the
 provider's own documentation names… widening it is the first thing to do once
 a real payload has been read, not before."*
 
-A real payload has now been read. So **open any delivery in the log and check
-the five reads against it**, which is ten minutes and needs no new payment:
+**Done. A real `subscription.active` body was read out of the delivery log and
+every read lands — the inventory needs no widening**, which is the answer §70
+asked for and could not give itself:
 
-| Code reads | From | Confirmed live? |
+| Code reads | Real payload carries | |
 |---|---|---|
-| `data.subscription_id` | subscription events | — |
-| `data.status` | subscription events | **yes** — the card renders `active` |
-| `data.next_billing_date` | subscription events | **yes** — the card renders *Nov 14, 2026* |
-| `data.past_due_ends_at` | subscription events | **no** — no `past_due` event has ever arrived |
-| `data.payment_id` | payment events | — |
+| `event.type` | `"subscription.active"` | ✅ in the handled set |
+| `event.timestamp` | `"2026-10-14T03:12:14.162928Z"` | ✅ on the **envelope**, ISO, parses |
+| `data.metadata.wsId` | `"916160ba-…-08bfb4f19a11"` | ✅ passes `WSID_PATTERN`, org resolves |
+| `data.subscription_id` | `"sub_0Nph212BlsXmVQEUgSYxV"` | ✅ |
+| `data.status` | `"active"` | ✅ |
+| `data.next_billing_date` | `"2026-11-14T03:12:14.213422Z"` | ✅ → *Nov 14, 2026* on the card |
+| `data.past_due_ends_at` | `null` | ✅ **the key is present** — the name is right, nothing has filled it |
 
-Two of five are confirmed by the screen already. A key the provider nests
-differently, or names differently, reads as `null` and renders as a **missing
-row rather than an error** — this document's standing failure shape, and the
-reason to compare against a payload rather than against the card.
+That last row is the useful one. A key the provider **named differently**
+would read `null` and render as a missing row rather than an error — this
+document's standing failure shape — so seeing `past_due_ends_at` present-and-null
+is what distinguishes *not filled yet* from *looking in the wrong place*.
+
+`data.payment_id` is also present-and-null here, but a payment envelope is a
+different shape (`payload_type: "Payment"`) and is **still unread**. It is the
+one remaining gap in the inventory.
+
+**And the payload confirms §70's exclusion was worth making.** It carries
+`customer.email`, `customer.name` and a full billing address — city, state,
+street, postcode, country. A generous `billingFieldsFor` would have put all of
+it on the meta doc, which **is** the `data` collection (§17), and therefore
+into every nightly backup artifact.
+
+Three more facts read off the same body, each with a consequence:
+
+- **`currency: "USD"`, `recurring_pre_tax_amount: 6500`** — confirms §5's
+  measured finding that the product's base is USD and the INR figure is a
+  conversion.
+- **`subscription_period_count: 20`, `subscription_period_interval: "Year"`,
+  `expires_at: "2046-10-14"`** — the test subscription is configured to run
+  **twenty years**. So `subscription.expired` is not merely slow to produce,
+  it is unreachable by waiting; see the table below.
+- **`cancel_at_next_billing_date: false`, `scheduled_change: null`** — which
+  is what makes the cancellation step below need a check before the replay.
 
 ### The eleven subscription events, and which can be produced at all
 
@@ -1031,12 +1056,35 @@ other five need a billing cycle to pass or a dunning sequence to run out.
 | `subscription.failed` | the region's decline card | ✅ **done** — India |
 | `subscription.updated` | arrives alongside the others | ✅ **done** |
 | `subscription.renewed` | arrived on a *first* payment, which was not expected | ✅ **done** — see below |
-| `subscription.cancelled` | dashboard → cancel the subscription | ☐ **§7 step 15** |
+| `subscription.cancelled` | dashboard → cancel the subscription | ☐ **§7 step 15 — check WHICH cancel it did** |
 | `subscription.paused` / `.unpaused` | dashboard → pause, then resume | ☐ |
 | `subscription.plan_changed` | needs a **second product** and a plan change | ☐ — see below |
 | `subscription.past_due` | a renewal that fails — the US-only card, §7 step 14 | ☐ **probably unreachable on INR** |
 | `subscription.on_hold` | dunning exhausting its retries after `past_due` | ☐ **days, not minutes** |
-| `subscription.expired` | a cancelled subscription reaching its period end | ☐ **a month** |
+| `subscription.expired` | the subscription reaching its period end | ☐ **2046 — see below** |
+
+**`expired` is worse than "a month", and the payload is what says so.** The
+test product carries `subscription_period_count: 20` /
+`subscription_period_interval: "Year"` and `expires_at: "2046-10-14"`, so
+waiting for it is not an option at any timescale. Producing it means a
+**purpose-built second product with a short subscription period**, which is
+the same second product `plan_changed` needs — so if that product is ever
+created, configure it to expire and close two rows at once.
+
+**Cancelling has two meanings and only one of them is testable.** The payload
+carries `cancel_at_next_billing_date: false` and `scheduled_change: null`, so
+the provider models *cancel now* and *cancel at period end* as different
+states. A deferred cancellation arrives as `subscription.updated` carrying
+`status: "active"` — which this route records faithfully, and which is the
+**correct** card (the customer still has access until the period ends). But it
+leaves nothing cancelled, so replaying an older `active` over it proves
+nothing: it is §34's shape, a check passing against its own fixture state.
+
+So after cancelling, **read the delivery log before doing the replay.** A
+`subscription.cancelled` carrying `status: "cancelled"` is the state the
+ordering guard is about. A `subscription.updated` carrying `status: "active"`
+means the cancel was deferred, and the replay has to wait for an immediate
+one.
 
 **`renewed` arriving on a first payment is a real finding and not noise.** The
 name says renewal; it fired on initial activation. Nothing broke — it is in
@@ -1097,20 +1145,41 @@ enforcement lands. So it is a row on *before live mode* rather than a fix now,
 and it needs the same question asked of it as everything else in §8: does the
 provider even send them to this endpoint, or only show them on the dashboard?
 
+**Three events are now SUBSCRIBED on the endpoint and not handled by the
+route**, which is a different and safer state than the families above — they
+will actually arrive. Sixteen are ticked on the dashboard; thirteen are in
+`BILLING_SUBSCRIPTION_EVENTS` plus `BILLING_PAYMENT_EVENTS`:
+
+| Arrives, ignored | What it means | Worth handling? |
+|---|---|---|
+| `payment.processing` | a debit is in flight, not yet settled | **maybe, for India** — a mandate debit can sit here, and the card currently says nothing |
+| `payment.cancelled` | a payment attempt was cancelled | low — the customer already knows |
+| `subscription.update_payment_method` | the provider wants a new card | **maybe** — it is the warning before a `past_due`, and silence is the state §39 keeps having to name |
+
+All three answer `200 {received:true, ignored:'unsubscribed event'}` with no
+log line, so nothing is retried and nothing is noisy. **Leave them ticked.**
+Unticking is the worse move in both directions: the provider's docs state that
+deselecting *every* event subscribes you to all of them, and a ticked-but-ignored
+event costs one 2xx while an unticked one has to be remembered later. They are
+a feature decision sitting beside enforcement, not a defect.
+
 ### Order to run it in
 
 Nothing here needs a fresh payment except the plan change, so the whole
 remainder is one sitting:
 
-1. **Read a real payload** against the five field reads above. No payment.
+1. ~~**Read a real payload**~~ — **done.** All seven reads land; the inventory
+   needs no widening, and a payment envelope is the one shape still unread.
 2. **Abandon a checkout** (§7 step 13) — the one return branch never driven.
+   Entirely client-side: no `abandoned_checkout` event is involved or needed.
 3. **Pause, then resume** the live test subscription. Two events, two card states.
-4. **Cancel it** (§7 step 15), then **replay an earlier `active` from the log**
-   (§7 step 16). That pair is the one that costs money if the clock comparison
-   is wrong, and it is the last thing the dashboard can prove that the suite
-   proves only synthetically.
+4. **Cancel it** (§7 step 15) — **then read the log to see which cancel it
+   was** — and only then **replay an earlier `active`** (§7 step 16). That pair
+   is the one that costs money if the clock comparison is wrong, and it is the
+   last thing the dashboard can prove that the suite proves only synthetically.
 5. **Decide `past_due`** — a USD-priced test, or accept production as the first
-   sighting and watch the *Access until* row.
+   sighting and watch the *Access until* row. A short-period second product
+   closes `plan_changed` and `expired` with it.
 6. **Cancel every test subscription** (§7 step 17), because they keep renewing
    and keep delivering for weeks.
 

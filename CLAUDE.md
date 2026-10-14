@@ -11023,6 +11023,68 @@ one — and the assertion is removed with the reason, because changing a respons
 shape is a §46 decision rather than a test fix. The payment id is the useful
 one in a support conversation, so it is worth a decision rather than a drift.
 
+### A real payload, read at last, and the inventory needed nothing
+
+§70's own comment set the condition — *"nothing here has yet seen a real
+delivery, so it stores only fields the provider's own documentation names…
+widening it is the first thing to do once a real payload has been read, not
+before"* — and a real `subscription.active` body has now been read out of the
+delivery log. **All seven reads land**: the envelope's `type` and `timestamp`,
+`data.metadata.wsId` (which passes `WSID_PATTERN` and resolves to a real org),
+`subscription_id`, `status`, and `next_billing_date`.
+
+**The useful row is `past_due_ends_at`, which arrives present-and-NULL.** A key
+the provider had named differently would read `null` through `isoOrNull` and
+render as a missing row rather than an error — so present-and-null is what
+distinguishes *nothing has filled it yet* from *we are looking in the wrong
+place*, and those two are indistinguishable from the card. That is the whole
+argument for comparing against a payload rather than against a screen.
+
+So the answer to the condition is **no widening**, which is a result rather
+than an absence of one. The comment says so now, because a comment naming a
+task that has been done reads as an outstanding one.
+
+**And the body confirms §70's exclusion was worth making** rather than
+cautious: it carries `customer.email`, `customer.name` and a full billing
+address — street, city, state, postcode, country. `workspaces[].meta` **is**
+the `data` collection (§17), so a generous `billingFieldsFor` would have put
+all of it into every nightly artifact.
+
+**Still unread: a PAYMENT envelope.** `payload_type: "Payment"` is a different
+shape, so `payment_id` and the payment branch's two siblings remain
+documentation-derived. The subscription body carries a `payment_id` key —
+null, because the subscription event is not the payment — which is suggestive
+and is not the same as having read one.
+
+Three more facts off the same body, each with a consequence, all in
+[`docs/PAYMENTS.md`](docs/PAYMENTS.md) §9:
+
+- **`currency: "USD"`, `recurring_pre_tax_amount: 6500`** — confirms the
+  measured USD base above, from the payload rather than from two screens.
+- **`subscription_period_count: 20` / `"Year"`, `expires_at: "2046-10-14"`** —
+  the test subscription runs **twenty years**, so `subscription.expired` is not
+  slow to produce, it is unreachable by waiting. It needs a purpose-built
+  short-period product, which is the same second product `plan_changed` needs.
+- **`cancel_at_next_billing_date: false`, `scheduled_change: null`** — the
+  provider models *cancel now* and *cancel at period end* separately, and a
+  deferred cancellation arrives as `subscription.updated` carrying
+  `status: "active"`. This route records that faithfully and the card is then
+  **correct** — access does run to the period end — but it leaves nothing
+  cancelled, so replaying an older `active` over it proves nothing. §34's
+  shape, so the matrix now says to read the delivery log between the cancel and
+  the replay.
+
+**Sixteen events are ticked on the endpoint and thirteen are handled.**
+`payment.processing`, `payment.cancelled` and
+`subscription.update_payment_method` arrive and are discarded with
+`200 {received:true, ignored:'unsubscribed event'}` and no log line — §70's
+rule working as designed. They stay ticked: their docs state that deselecting
+*every* event subscribes you to all of them, and a ticked-but-ignored event
+costs one 2xx while an unticked one has to be remembered later. The first and
+third are worth a decision beside enforcement — a mandate debit sitting in
+`processing`, and the provider asking for a new card, are both states the
+Settings card currently renders as nothing (§39's recurring shape).
+
 ### Blast radius
 
 `js/app.js` was the only served file and it is in `APP_SHELL`, so
@@ -11063,4 +11125,8 @@ no customer's data has reached them.
 
 Counts: Playwright **151 → 152**, Node **616**, smoke **51** locally. The later
 findings are documentation only, so `crmbuilder-v62` stands and the counts do
-not move — checked by diffing the touched paths, per §41.
+not move — checked by diffing the touched paths, per §41. **The payload read
+touched `server.js`, and only a comment block**, which is why the bump still
+does not move: `server.js` is not in `APP_SHELL` and nothing executable
+changed. `node --check` plus `tests/payments.test.mjs` **26/26** rather than a
+full run, because a comment has no blast radius (§9).
