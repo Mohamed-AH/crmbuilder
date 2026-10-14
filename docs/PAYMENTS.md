@@ -617,8 +617,9 @@ and webhook endpoints do not cross between test and live, and a test-mode
 signing secret does not verify a live delivery. Confirm the mode toggle before
 each step rather than once at the start.
 
-**Subscriptions live at Transactions → Sales → Subscriptions**, which is where
-steps 14a, 15 and 17 all act. Three levels, not two.
+**Subscriptions live at Sales → Subscriptions**, which is where steps 14a, 15
+and 17 all act. Not under *Transactions* — that is a sibling section, and
+guessing it is where this runbook sent a reader once already.
 
 **1 · Create the subscription product.**
 A recurring product, **at least $1.00 USD** or equivalent. The price on it is
@@ -858,9 +859,9 @@ checkout step 10's method rule probably refuses it. Unverified. If it does,
 either price the product in USD for this one test or drive `past_due` by
 replaying a hand-edited event from the delivery log instead.
 
-**14a · Pause, then resume.** *Dodo's* dashboard → **Transactions → Sales →
-Subscriptions** → the active subscription → **Pause**, read the Settings card,
-then **Resume** and read it again. Two events, two card states.
+**14a · Pause, then resume.** *Dodo's* dashboard → **Sales → Subscriptions** →
+the active subscription → **Pause**, read the Settings card, then **Resume** and
+read it again. Two events, two card states.
 
 **There is no control for this in our app, and that is why this step names the
 provider.** Every word in this section means *Dodo's* dashboard — §7 is headed
