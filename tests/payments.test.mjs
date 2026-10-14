@@ -20,7 +20,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -359,6 +359,101 @@ describe('the payment webhook', () => {
 
     assert.deepEqual(second.json, { received: true, applied: true }, 'a same-second event was dropped as stale');
     assert.equal((await billingNow()).billing.status, 'cancelled');
+  });
+
+  /* ------------------------------------------------------------------ *
+   * Every handled event, derived from the server's own list
+   * ------------------------------------------------------------------ */
+
+  test('every subscription event the server claims to handle is recorded', async () => {
+    /*
+     * Three of the eleven had never been driven by any test AND cannot be
+     * produced in test mode: `plan_changed` needs a second product,
+     * `on_hold` needs a dunning sequence to exhaust, and `expired` needs a
+     * billing period to end. So production would have been the first sighting
+     * of any kind for them — and two of the three are the ones that take
+     * access AWAY, which is the direction that generates a support ticket.
+     *
+     * THE LIST IS DERIVED FROM server.js, NOT TYPED HERE. §73 records the
+     * §7 runbook naming seven of these eleven and costing a real event for
+     * the four it missed; typing them again one file over would repeat that
+     * exact mistake, and the failure mode is the quiet one — a twelfth event
+     * added later would simply never be covered and nothing would say so.
+     */
+    const source = await readFile(join(ROOT, 'server.js'), 'utf8');
+    const block = source.match(/const BILLING_SUBSCRIPTION_EVENTS = new Set\(\[([^\]]*)\]/);
+    assert.ok(block, 'could not find BILLING_SUBSCRIPTION_EVENTS in server.js');
+    /*
+     * `[a-z_.]+`, and the underscore is the whole point: `[a-z.]+` — which is
+     * what §73 and §7 step 5 both documented — matches NOTHING for
+     * `plan_changed`, `past_due` and `on_hold`, because the class stops at the
+     * underscore and there is no closing quote to find. It derived eight of
+     * eleven and looked authoritative, silently dropping two of the four
+     * events §73 records the runbook having missed in the first place. A
+     * derivation that is wrong in the same direction as the typed list it
+     * replaced is the worst of both.
+     */
+    const events = [...block[1].matchAll(/'([a-z_.]+)'/g)].map((m) => m[1]);
+
+    /*
+     * A regex that silently matched nothing would make every assertion below
+     * vacuous — §34's shape, a test passing against its own broken fixture.
+     * The floor is what the server carried when this was written.
+     */
+    assert.ok(events.length >= 11, `derived only ${events.length} events: ${events}`);
+    assert.ok(events.includes('subscription.on_hold'), 'the derivation missed a known event');
+
+    /*
+     * Each needs a clock strictly newer than the last, or the staleness guard
+     * correctly drops it and the test reads as a handling failure.
+     */
+    let minute = 0;
+    for (const type of events) {
+      const at = new Date(Date.UTC(2026, 10, 1, 0, minute++)).toISOString();
+      const status = type.slice('subscription.'.length);
+      const res = await deliver(subscriptionEvent({ type, status, at }));
+
+      assert.deepEqual(res.json, { received: true, applied: true }, `${type} was not applied`);
+
+      const { billing } = await billingNow();
+      assert.equal(billing.subscriptionEvent, type, `${type} was not recorded`);
+      assert.equal(billing.status, status, `${type} did not carry its status through`);
+    }
+  });
+
+  test('a failed payment is recorded as its own event, beside the subscription', async () => {
+    /*
+     * `payment.failed` is the one payment event the suite never drove, and it
+     * is the state §73's fifth card branch exists for — a workspace holding a
+     * payment and no subscription. Driven here against the OTHER clock, so a
+     * failure cannot be mistaken for a subscription write.
+     */
+    const before = (await billingNow()).billing.subscriptionEvent;
+
+    const res = await deliver({
+      business_id: 'bus_test_crmbuilder',
+      type: 'payment.failed',
+      timestamp: '2026-11-02T00:00:00Z',
+      data: {
+        payload_type: 'Payment',
+        payment_id: 'pay_declined_0001',
+        status: 'failed',
+        metadata: { wsId },
+      },
+    });
+    assert.deepEqual(res.json, { received: true, applied: true });
+
+    const { billing } = await billingNow();
+    assert.equal(billing.paymentEvent, 'payment.failed');
+    assert.equal(billing.paymentStatus, 'failed');
+    /*
+     * NOT asserted: `paymentId`. It is stored, and `publicBilling` does not
+     * return it — while it does return `subscriptionId`. That asymmetry is
+     * undocumented and may be deliberate; it is left alone here because
+     * changing a response shape is a §46 decision rather than a test fix.
+     */
+    // The subscription half must be exactly where it was — two clocks, §70.
+    assert.equal(billing.subscriptionEvent, before);
   });
 
   /* ------------------------------------------------------------------ *

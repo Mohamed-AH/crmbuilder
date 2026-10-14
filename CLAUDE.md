@@ -154,6 +154,9 @@ never change, because everything cross-references them.
 | A card that said `unknown` with the answer already in the record | §73 · §39 · §36 |
 | **A return URL the provider does not navigate to** — and the 429 on their hop | §73 · §71 · §70 |
 | **A pricing ceiling read off a mandate screen** — ₹15,000, and annual billing | §73 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · §3 |
+| **Testing every payment scenario** — what to hand-drive, and what not to | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §9 · §73 · §9 |
+| A derived list that was wrong the same way the typed one was | §73 · §29 · §34 |
+| Events that production would see first, and cannot be produced in test mode | §73 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §9 |
 | Why Stripe cannot collect for an Indian seller, and what an MoR sidesteps | §64 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §1 |
 | What an MoR protects you from, and the half it does not | §64 · §72 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §3 |
 | **A claim on a customer-facing card that only the MSA can support** | §72 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §1 · §40 |
@@ -10803,7 +10806,7 @@ in somebody else's console.
 The list is exhaustive now, and it is **derived rather than retyped**:
 
 ```sh
-grep -A 14 'const BILLING_SUBSCRIPTION_EVENTS' server.js | grep -oE "'[a-z.]+'"
+grep -A 14 'const BILLING_SUBSCRIPTION_EVENTS' server.js | grep -oE "'[a-z_.]+'"
 ```
 
 §29's thesis, in the one place it is checkable: a list of events written in a
@@ -10959,6 +10962,66 @@ the tie being harmless is a property of the payloads rather than of the rule.
   debit. Their configuration, not ours, so it is a support question rather than
   a setting, and it is in §8 as a before-live item because the screen it is on
   is the one that loses mandates.
+
+### The sign-off matrix, and a derivation that was wrong the same way
+
+Asked for **every possible scenario on the test gateway before going live**.
+Building the matrix found that most of it should not be hand-driven at all,
+and that the fix §73 had just shipped for a stale list was producing a wrong
+list of its own.
+
+**`tests/payments.test.mjs` already proves the state machine** — 24 tests
+posting real signed payloads at the real route, including the cancellation
+ordering guard that is the one costing money if it is wrong. So the dashboard's
+job is not the mechanism; it is the three things no synthetic payload can
+answer: *is the real payload shaped the way the code reads it*, *do the real
+sequences match what was assumed*, and *does the provider's screen agree with
+ours*. [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §9 is the matrix.
+
+**Three events had never been driven by a test AND cannot be produced in test
+mode**: `plan_changed` needs a second product, `on_hold` needs a dunning
+sequence to exhaust, `expired` needs a billing period to end. Production would
+have been their first sighting of *any* kind, and two of the three are the ones
+that take access **away** — the direction that generates a support ticket. A
+derived, table-driven test covers all eleven now.
+
+**And the derivation reproduced the bug it was written to fix.** §73's own
+command, and §7 step 5's beside it:
+
+```sh
+grep -A 14 'const BILLING_SUBSCRIPTION_EVENTS' server.js | grep -oE "'[a-z.]+'"
+```
+
+`[a-z.]+` has **no underscore**, so for `'subscription.plan_changed'` the class
+stops at the `_` and finds no closing quote — the match is skipped entirely
+rather than truncated. It derived **eight of eleven**, dropping
+`plan_changed`, `past_due` and `on_hold`: **two of the four events §73 records
+the runbook having missed in the first place.** A typed list that goes stale at
+least looks like a typed list; a derivation that is wrong in the same direction
+looks authoritative. This file's standing failure shape, in the tool built to
+prevent it.
+
+Found by the new test's own floor assertion (`events.length >= 11`), which
+exists precisely because a regex that silently matches nothing makes every
+assertion below it vacuous — §34's shape. Without that floor the test would
+have passed over eight events and reported full coverage. Fixed in all three
+places; the test comment carries the reason, because the next person to widen
+that class will be looking at the regex rather than at this section.
+
+**Checked against the broken state** (§9), both failing by name: dropping an
+event from the server's Set, and restoring `[a-z.]+` in the test. The **floor**
+is what catches a removal or a broken derivation; the **per-event loop** is
+what catches a handling failure, and that is narrower than it looks because
+`applyBillingEvent` has no per-event branch — so the loop proves the round trip
+rather than eleven distinct behaviours. Said plainly rather than counted as
+eleven tests.
+
+**One asymmetry noted and deliberately not changed.** `publicBilling` returns
+`subscriptionId` and **not** `paymentId`, though both are stored. My test
+asserted on the one the route does not return — a test error, not a product
+one — and the assertion is removed with the reason, because changing a response
+shape is a §46 decision rather than a test fix. The payment id is the useful
+one in a support conversation, so it is worth a decision rather than a drift.
 
 ### Blast radius
 

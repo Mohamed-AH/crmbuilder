@@ -654,7 +654,9 @@ logged, 1 delivery succeeded*, which is the pair of numbers that names it.
 `BILLING_SUBSCRIPTION_EVENTS` and `BILLING_PAYMENT_EVENTS` in `server.js`:
 
 ```sh
-grep -A 14 'const BILLING_SUBSCRIPTION_EVENTS' server.js | grep -oE "'[a-z.]+'"
+# `[a-z_.]+` — NOT `[a-z.]+`, which silently drops plan_changed,
+# past_due and on_hold, and looks authoritative doing it (§9)
+grep -A 14 'const BILLING_SUBSCRIPTION_EVENTS' server.js | grep -oE "'[a-z_.]+'"
 ```
 
 Selecting **more** than this costs nothing — every verified event the server
@@ -958,6 +960,161 @@ screens**, not against the code, which is the lesson §40 paid for with weeks of
 a reminder engine that had never once run. §7's step 0 is that rule's smallest
 instance: the repository cannot see which build is deployed, so the first step
 is to go and look.
+
+---
+
+## 9. Before live: the test-mode sign-off matrix
+
+§7 is *do these in order*. This is *nothing goes live until every row is
+accounted for* — and the first thing it does is stop you re-driving by hand
+what is already proven.
+
+### What `tests/payments.test.mjs` already proves — do NOT hand-drive these
+
+Twenty-four tests post **real signed payloads** at the real route and read the
+state back. The whole ordering mechanism is covered synthetically, which is
+cheaper, deterministic, and runs on every push:
+
+| Already proven | Test |
+|---|---|
+| unsigned, wrong-secret, and altered-body deliveries refused | 3 tests |
+| the refusal says nothing about *which* check failed | 1 |
+| **a cancellation sticks, and a retried older event cannot undo it** | 1 — the one that costs money |
+| a newer event applied over an older one | 1 |
+| a redelivery changes nothing | 1 |
+| two events sharing a timestamp applied in arrival order | 1 |
+| a payment event does not blank the subscription beside it | 1 |
+| the two clocks are independent | 1 |
+| unknown event type / no wsId / unknown wsId / unusable timestamp → 2xx, dropped | 4 |
+| no customer identity stored | 1 |
+| `billing` never reaches a colleague through sync; a viewer cannot read it | 2 |
+| a currency change does not erase it; the export carries it | 2 |
+| unconfigured answers 503, never a 2xx | 1 |
+| nothing to sell is not the same as not configured | 1 |
+
+**So the dashboard's job is not the state machine.** It is the three things no
+synthetic payload can answer: *is the real payload shaped the way the code
+reads it*, *do the real sequences match what was assumed*, and *does the
+provider's own screen agree with ours*.
+
+### Step 1, and it closes an open item this document already names
+
+§70 wrote the field inventory from the provider's **documentation** and said
+so: *"nothing here has yet seen a real delivery, so it stores only fields the
+provider's own documentation names… widening it is the first thing to do once
+a real payload has been read, not before."*
+
+A real payload has now been read. So **open any delivery in the log and check
+the five reads against it**, which is ten minutes and needs no new payment:
+
+| Code reads | From | Confirmed live? |
+|---|---|---|
+| `data.subscription_id` | subscription events | — |
+| `data.status` | subscription events | **yes** — the card renders `active` |
+| `data.next_billing_date` | subscription events | **yes** — the card renders *Nov 14, 2026* |
+| `data.past_due_ends_at` | subscription events | **no** — no `past_due` event has ever arrived |
+| `data.payment_id` | payment events | — |
+
+Two of five are confirmed by the screen already. A key the provider nests
+differently, or names differently, reads as `null` and renders as a **missing
+row rather than an error** — this document's standing failure shape, and the
+reason to compare against a payload rather than against the card.
+
+### The eleven subscription events, and which can be produced at all
+
+The route handles eleven. Test mode can produce six of them on demand; the
+other five need a billing cycle to pass or a dunning sequence to run out.
+
+| Event | How to produce in test mode | Status |
+|---|---|---|
+| `subscription.active` | a successful checkout | ✅ **done** — both regions |
+| `subscription.failed` | the region's decline card | ✅ **done** — India |
+| `subscription.updated` | arrives alongside the others | ✅ **done** |
+| `subscription.renewed` | arrived on a *first* payment, which was not expected | ✅ **done** — see below |
+| `subscription.cancelled` | dashboard → cancel the subscription | ☐ **§7 step 15** |
+| `subscription.paused` / `.unpaused` | dashboard → pause, then resume | ☐ |
+| `subscription.plan_changed` | needs a **second product** and a plan change | ☐ — see below |
+| `subscription.past_due` | a renewal that fails — the US-only card, §7 step 14 | ☐ **probably unreachable on INR** |
+| `subscription.on_hold` | dunning exhausting its retries after `past_due` | ☐ **days, not minutes** |
+| `subscription.expired` | a cancelled subscription reaching its period end | ☐ **a month** |
+
+**`renewed` arriving on a first payment is a real finding and not noise.** The
+name says renewal; it fired on initial activation. Nothing broke — it is in
+`BILLING_SUBSCRIPTION_EVENTS` and carries the same status — but any logic that
+ever treats `renewed` as *"money arrived again"* would double-count the first
+payment. Worth confirming against a second real cycle before anything reads it
+that way.
+
+**The last three cannot be honestly signed off in test mode**, and saying so is
+better than a tick. `past_due` → `on_hold` → `expired` is a sequence measured
+in days to a month, and the renewal-failure card the provider publishes is
+US-only with no India equivalent. The code path is covered by the suite; **the
+payload shape is not, and `past_due_ends_at` is the one field in the inventory
+that nothing has ever filled.** Two ways to close it, neither free: price the
+product in USD for one test so the renewal-failure card is usable, or accept
+that the first real `past_due` in production is the first one anybody sees —
+in which case the Settings card's *Access until* row is the thing to watch.
+
+### What the dashboard's two facilities each prove, and what neither does
+
+They are not interchangeable and §7 step 9's pass already depends on knowing
+which is which:
+
+| | Proves | Does **not** prove |
+|---|---|---|
+| **Webhooks → Testing → Send example** | the signature check, end to end, against a real signed payload | any state transition — the example carries **no `metadata.wsId`**, so the correct outcome is *200 and the card unchanged* |
+| **Delivery log → replay** | ordering and re-delivery, because a replayed event is a **real** one and does carry `wsId` | anything about an event type you have never received — there is nothing to replay |
+
+So for the five events test mode cannot trigger, **neither facility helps**:
+Send example proves only the signature, and there is no real delivery to
+replay. That is the gap, stated once rather than discovered later.
+
+### The checkout and return paths
+
+| | Status |
+|---|---|
+| success return → query stripped, Settings reached | ✅ |
+| **cancelled / abandoned checkout** → *"nothing was charged"*, no pending note | ☐ **§7 step 13** |
+| declined → the fifth card branch, never `unknown` | ✅ |
+| their `/return/<id>` hop failing | ✅ observed — 429, recovered on reload |
+| a second workspace paying, each seeing only its own | ☐ — the suite proves isolation; the dashboard has never had two |
+
+### Events we do NOT handle, and two of them are a decision
+
+Their catalog carries **refund, dispute, licence key, payout, credit,
+abandoned checkout, dunning and entitlement grant** families beside the
+thirteen the route knows. All are acknowledged with a 2xx and logged, which is
+§70's deliberate rule and the right default — an endpoint that 404s an
+unexpected type earns eight retries and a red mark on somebody else's
+dashboard.
+
+**But refund and dispute are not decoration here.** §3 is an entire section
+about chargebacks, and today a customer can dispute a charge, win, and keep
+full access with the Settings card still reading `active` — because nothing
+reads those events. That is **not a bug** while nothing is enforced (§6: no
+code reads `billing` to decide anything), and it becomes one the moment
+enforcement lands. So it is a row on *before live mode* rather than a fix now,
+and it needs the same question asked of it as everything else in §8: does the
+provider even send them to this endpoint, or only show them on the dashboard?
+
+### Order to run it in
+
+Nothing here needs a fresh payment except the plan change, so the whole
+remainder is one sitting:
+
+1. **Read a real payload** against the five field reads above. No payment.
+2. **Abandon a checkout** (§7 step 13) — the one return branch never driven.
+3. **Pause, then resume** the live test subscription. Two events, two card states.
+4. **Cancel it** (§7 step 15), then **replay an earlier `active` from the log**
+   (§7 step 16). That pair is the one that costs money if the clock comparison
+   is wrong, and it is the last thing the dashboard can prove that the suite
+   proves only synthetically.
+5. **Decide `past_due`** — a USD-priced test, or accept production as the first
+   sighting and watch the *Access until* row.
+6. **Cancel every test subscription** (§7 step 17), because they keep renewing
+   and keep delivering for weeks.
+
+Then §7's *before live mode* list, which is mostly not code.
 
 ---
 
