@@ -876,11 +876,39 @@ provider's screen and nowhere else.
 **15 · Cancel from Dodo's dashboard.** Expect `subscription.cancelled` and a
 card that reflects it.
 
-**16 · Replay an older event after the cancellation.** In the delivery log,
-re-send the earlier `subscription.active`. **The card must still say
-cancelled.** This is the behaviour the provider's own tools cannot produce on
-their own, it is the one that costs money if it is wrong, and it is the whole
+**16 · Replay an older event after the cancellation.** **The card must still
+say cancelled.** This is the one that costs money if it is wrong, and the whole
 reason §70 compares timestamps rather than storing `webhook-id`s.
+
+The control is called **Replay**, and it is worth naming because *Resend* — the
+word this runbook used until a reader could not find it — is the provider's
+**email** control on a different screen entirely. Their steps, from their own
+documentation:
+
+1. **Developer → Webhooks** → the **Logs** tab. The table carries *Event type*,
+   *Message ID*, *Event ID*, *Sent at*, *Attempted at*, *Response code* and
+   *Duration*, searchable by id or event type and filterable by status.
+2. **Click the row** for the earlier `subscription.active`. The message detail
+   page shows the full payload, every delivery attempt with its response code
+   and duration, and any error the endpoint returned.
+3. **Replay** on the attempt — *"each attempt carries a Replay action to
+   re-drive that one message without leaving the page"*.
+4. Reload Settings on that workspace. The row must not move.
+
+**Do NOT use the bulk modes for this.** *More actions* offers *Recover failed
+messages*, *Replay missing messages* and *Bulk replay messages*; the last
+re-drives successful messages too, which would re-deliver the cancellation and
+destroy the ordering the step exists to test. One attempt, one Replay.
+
+> **Then read the replayed delivery's envelope `timestamp`, because the whole
+> test turns on it.** §70 discards anything strictly older, so a Replay that
+> preserves the original `03:12:14` is correctly discarded — and a Replay that
+> re-stamps it to replay time is genuinely **newer**, is accepted, and brings a
+> cancelled subscription back to life. **Their documentation does not say
+> which**, and it must not be assumed: their *email* docs state a resend "keeps
+> the date of the original event", but that is a different subsystem. If the
+> card flips back to active, that is a finding about the limits of the ordering
+> guard before it is a defect in it.
 
 ### Clean up — not optional
 
@@ -946,6 +974,15 @@ sessions**, or **set with the price decided and the documents walked**.
 10. **Bump `TERMS_VERSION`** — everybody re-prompted, which is the mechanism
     working (§41, §2.2). The billing prompt goes **after** the terms modal, or
     it asks for money before agreement.
+11. **Decide how a stopped webhook endpoint gets noticed.** Their documentation
+    states plainly that **the webhooks dashboard offers no email alerts for
+    failing deliveries** — monitoring is the **Logs** and **Activity** tabs,
+    which are *pull*. That is §40's rule arriving at the one mechanism in this
+    deployment that carries money: a dead endpoint means payments taken and
+    never recorded, and the only thing that would say so is a screen nobody is
+    obliged to open. §39's push-versus-pull split is the shape of the answer —
+    the *Error rate (24h)* column is the pull half and exists; the push half
+    does not, and nothing in this repository can see the failure either.
 
 ---
 
