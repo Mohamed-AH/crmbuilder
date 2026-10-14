@@ -1063,6 +1063,13 @@ Three money findings, and none of them is a field worth storing:
   payment webhooks at all**: the fee is taken at payout, not at payment, and a
   payout record or a statement is the only place it can be read. That changes
   *where to look*, which is why it is worth a line.
+
+  **And it is worse than "no fee field", because the FAILURE body carries the
+  same three numbers.** `settlement_amount`, `settlement_tax` and
+  `settlement_currency` are byte-identical on the refused payment and on the
+  successful one, so they are a **quotation** and not a settlement record.
+  Summing them would count the payments that failed. A payout record is not
+  the better source here — it is the only one.
 - **`currency: "INR"` while `settlement_currency: "USD"`** — charged
   ₹7,587.26 (₹1,157.38 GST), settled $76.71 ($11.70 tax), an implied 98.91
   INR/USD. §8's open row reads *"payout fee and FX spread into INR"* and
@@ -1079,12 +1086,17 @@ Three money findings, and none of them is a field worth storing:
 **Two fields exist that would improve the product and are NOT being taken**,
 recorded so the decision reads as taken rather than missed:
 
-- **`error_code` and `error_message`**, both `null` on success. A
-  `payment.failed` body almost certainly names *why* a card was refused, which
-  is exactly what §73's declined-payment card cannot currently say. But **a
-  failure body has still never been read** — §73 saw the event arrive, not its
-  contents — so this is a candidate, not a change. §53's rule applies when it
-  is: the provider's own words are what the reader has to act on.
+- **`error_code` and `error_message`**, `null` on success and **populated on a
+  failure, which has now been read** — so this is no longer a candidate
+  awaiting data. It is **declined on the data**, for three reasons:
+  `error_message` reads *"Ask the customer to use a supported method"*, which
+  is addressed to the **merchant**; under an MoR that is Dodo and us, while the
+  Settings card is read by the **payer**, so §53's "the provider's own words"
+  rule inverts and the text reaches nobody present. A raw `error_code` is not
+  the safe half either — issuers return vague declines to payers on purpose,
+  so a field that *can* carry a real decline reason makes its disclosure a
+  decision rather than a UX win. And **one observed code is not a
+  vocabulary**. Full reasoning in §73.
 - **`invoice_url`**, a per-payment receipt on the provider's host. Our screen
   offers no receipt link, which is a real gap for anyone asking where theirs
   is. **Do not link or store it until its access control is known:** the

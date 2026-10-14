@@ -10865,11 +10865,22 @@ The fourth, and the one that cost a failed payment. The checkout rendered
 a different payment method."*
 
 **The payment methods offered depend on the CURRENCY, not on test mode.** An
-INR checkout offers India-issued cards and UPI; a US card is not among them,
-and their own FAQ records the same mismatch surfacing as a 500. So the refusal
-is about the card's *region* and says nothing about the card — a message that
-is accurate and points away from the cause, which is this file's standing
-failure shape arriving in somebody else's UI.
+INR checkout offers India-issued cards and UPI; a foreign-issued card is not
+among them, and their own FAQ records the same mismatch surfacing as a 500. So
+the refusal is about the card's *region* and says nothing about the card — a
+message that is accurate and points away from the cause, which is this file's
+standing failure shape arriving in somebody else's UI.
+
+> **"US card" is wrong, and the failure payload is what says so.** The
+> `payment.failed` body reports `card_issuing_country: "GB"` for
+> `4242 4242 4242 4242` — so the refused card is **GB**-issued, not US. The
+> mechanism is unchanged and is the point: *issuing country against checkout
+> currency*, not one named country against another. Left corrected rather than
+> rewritten, because the heading is what a reader searches for and the wrong
+> label is the reusable warning — a card's region is a property the provider
+> reports, not one you infer from where the number came from. What the other
+> published test cards report is **unknown**: only this one has been seen in a
+> payload.
 
 §7 step 10 now reads the currency **first** and groups the cards by region
 (India Visa `4576 2389 1277 1450`, India Mastercard `5409 1626 6938 1034`,
@@ -11134,6 +11145,70 @@ costs one 2xx while an unticked one has to be remembered later. The first and
 third are worth a decision beside enforcement — a mandate debit sitting in
 `processing`, and the provider asking for a new card, are both states the
 Settings card currently renders as nothing (§39's recurring shape).
+
+### And the FAILURE body, which answers the deferred candidate against itself
+
+The subsection above left one thing open: *"a `payment.failed` body almost
+certainly names why a card was refused… but a failure body has still never
+been read. A candidate, not a change."* It has been read now, and the
+prediction was right about the data and **wrong about what to do with it.**
+
+All the reads land — `payment.failed` is in `BILLING_PAYMENT_EVENTS`,
+`payment_id` and `status: "failed"` are there, `metadata.wsId` rides on a
+failure exactly as it does on a success. And the two fields are populated:
+
+```
+error_code:    "PAYMENT_METHOD_UNSUPPORTED"
+error_message: "This payment method isn't supported for this transaction.
+                Ask the customer to use a supported method."
+```
+
+**Read that second line again: it is addressed to the MERCHANT.** *"Ask the
+customer"* — the provider is talking to whoever sells the thing. §53's rule
+says the provider's own words are what the reader has to act on, and that rule
+**inverts here**, because the audiences are not the same two parties. On the
+mail chaser the owner *is* the account holder at Resend, so Resend's words
+reach the person who can fix the DNS record. Under an MoR the merchant is
+**Dodo and us**, and the Settings card is read by **our customer** — the payer.
+Showing this verbatim would tell a customer to ask themselves to use a
+different method.
+
+So the finding is not "now we can show it". It is that a provider message is
+written for a position in the transaction, and copying it across a boundary
+where that position changes produces text that is accurate and addressed to
+nobody present.
+
+**And the raw `error_code` is not the safe half either.** Card issuers
+deliberately return vague declines to payers — a precise reason is an oracle
+for whoever is testing stolen numbers — so a field that can carry a real
+decline reason is a field whose *disclosure* is a decision, not a UX
+improvement. `PAYMENT_METHOD_UNSUPPORTED` is harmless; nothing says the next
+one is.
+
+**Still not taken, then, and now for three better reasons than "unread":** the
+message has the wrong audience, the code may carry what an issuer withholds on
+purpose, and **one sample is not a vocabulary** — a map built from a single
+observed code ships with one correct entry and a fallback that fires on
+everything real (§45's rule about a guess presented as an answer). The card's
+existing wording stands.
+
+Two more facts off the same body, and the first is a trap:
+
+- **`settlement_amount`, `settlement_tax` and `settlement_currency` are
+  IDENTICAL on the failure and on the success** — `7671` / `1170` / `USD`,
+  byte for byte, on a payment where **nothing settled**. So those fields are a
+  *quotation* rather than a settlement record. That sharpens the no-fee finding
+  above into something stronger: you cannot read revenue off payment webhooks
+  at all, because summing `settlement_amount` counts the payments that failed.
+  A payout record is not merely the better source, it is the only one.
+- **A failed first payment mints a subscription that never activates.** The
+  failure carries `sub_0NpgzTEZbXlEAgR4zJU6P` and the successful retry carries
+  `sub_0Nph212BlsXmVQEUgSYxV` — different ids. `applyBillingEvent` resolves
+  that correctly by clock, so nothing is wrong; what is worth knowing is that
+  **a subscription id is not stable across a retried first payment**, so it is
+  not an identifier to key anything else on. `payment_method_id` is `null` on
+  the failure and `service_periods` is `[]`, both consistent with a
+  subscription that never began.
 
 ### Blast radius
 
