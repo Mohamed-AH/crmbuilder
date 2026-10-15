@@ -4710,6 +4710,28 @@ const BILLING_SUBSCRIPTION_EVENTS = new Set([
   'subscription.renewed',
   'subscription.updated',
   'subscription.plan_changed',
+  /*
+   * A REQUEST, not a state: the provider wants a new card and the subscription
+   * is still live. It arrives already — it is ticked on the endpoint and was
+   * being answered `{received:true, ignored:'unsubscribed event'}` — and it is
+   * the warning BEFORE a past_due, so the silence meant the first a customer
+   * knew was losing access. Phase 1's portal is what makes it actionable; there
+   * was nowhere to send them before it.
+   *
+   * NO SEPARATE FLAG, and that is the design rather than a shortcut. A stored
+   * `needsPaymentMethod` has to be cleared by something, and the only honest
+   * clearer is a later PAYMENT succeeding — which lives on the other clock, so
+   * clearing across the two would reintroduce exactly the competition the split
+   * above exists to prevent. Instead the card reads `subscriptionEvent`, which
+   * already carries the last subscription event and is already newest-wins: any
+   * later subscription event replaces this one and the notice goes on its own.
+   *
+   * The cost, stated rather than discovered: if the provider emits nothing when
+   * a card is updated, the notice outlives the fix until the next subscription
+   * event. So it is worded as a request with §51's disregard clause rather than
+   * as a current deficiency.
+   */
+  'subscription.update_payment_method',
   'subscription.past_due',
   'subscription.on_hold',
   'subscription.paused',
@@ -4718,7 +4740,25 @@ const BILLING_SUBSCRIPTION_EVENTS = new Set([
   'subscription.expired',
   'subscription.failed',
 ]);
-const BILLING_PAYMENT_EVENTS = new Set(['payment.succeeded', 'payment.failed']);
+/*
+ * `payment.processing` is the third, and it earns its place on ONE card state.
+ *
+ * A debit is in flight and has not settled — which for an India-issued card on
+ * an RBI mandate is a real wait rather than a millisecond. For a workspace that
+ * already has a live subscription it changes nothing visible, and that is
+ * correct: an in-flight renewal on an active subscription is not news. What it
+ * fixes is the FIRST payment, where the card had only two readings of a
+ * payment-only record — refused, or recorded — and an in-flight one was being
+ * reported as recorded, which overstates it.
+ *
+ * Said out loud because "I subscribed to an event and nothing appeared" reads
+ * as a mistake later: for an existing subscriber nothing is meant to appear.
+ */
+const BILLING_PAYMENT_EVENTS = new Set([
+  'payment.succeeded',
+  'payment.failed',
+  'payment.processing',
+]);
 
 /*
  * Which statuses mean a subscription is OVER. Everything else is live.

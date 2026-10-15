@@ -777,6 +777,16 @@ not strictly ordered and each payload carries current state, so an event
 older than the stored one is discarded. Subscription facts and payment facts
 carry **separate clocks**, so a payment cannot decide a subscription's status.
 
+**No route and no response shape moved, and two value DOMAINS widened** —
+which is the thing to check rather than the route count (§46). The route now
+handles `subscription.update_payment_method` and `payment.processing`, both of
+which it previously answered `{ received: true, ignored: 'unsubscribed event' }`.
+So a caller switching on `subscriptionEvent` or `paymentEvent` in the response
+below sees a value it has not seen before, and
+`subscription.update_payment_method` is the one that needs reading carefully: it
+is a **request, not a state**, so it arrives alongside `status: "active"` and is
+retired by the next subscription event rather than by anything clearing it.
+
 ### `GET /api/org/billing`
 
 Owner only, 403 otherwise. Returns `{ enabled, checkout, portal, billing }`,

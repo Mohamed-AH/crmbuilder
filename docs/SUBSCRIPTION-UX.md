@@ -1,9 +1,10 @@
 # Subscription lifecycle and customer experience — the plan
 
-> **Status: a plan, and PHASES 0 AND 1 ARE NOW BUILT** — `CLAUDE.md` §74 is
-> the record of what shipped and of the three places this document was wrong
-> or over-specified. Phases 2 and 3 are untouched, and Phase 2 is still
-> blocked on a price (§64).
+> **Status: a plan, and PHASES 0, 1 AND 1.5 ARE NOW BUILT** — `CLAUDE.md` §74
+> is the record of what shipped for the first two and of the three places this
+> document was wrong or over-specified; §76 is Phase 1.5, which this document
+> did not contain and which is argued for in its own section below. Phases 2
+> and 3 are untouched, and Phase 2 is still blocked on a price (§64).
 >
 > It was written before any code so the decisions were visible and arguable,
 > which is §48's and §64's precedent: the question to ask is *when* a thing can
@@ -198,6 +199,54 @@ Three things to know before building it:
   default and §9 already records that a deferred cancel arrives as
   `subscription.updated` carrying `status: "active"` — so the card must not
   read that as "nothing happened".
+
+### Phase 1.5 — say what to do about it · ✅ **BUILT** (`CLAUDE.md` §76)
+
+**This phase was not in the plan, and it is the tail of Phase 0's own
+transparency row rather than a new idea.** §1 graded transparency **poor** for
+two reasons: the card contradicted itself, and there were no invoices or
+receipts. Phase 0 fixed the first and Phase 1 answered the second by delegating
+it. Neither touched a third thing §1 did not separate out — **the card was
+honest about state and silent about action**, and it printed the provider's own
+`past_due` and `on_hold` at a customer.
+
+It is here rather than folded into Phase 0 because **Phase 1 is what made it
+possible**: advice is only worth giving if there is somewhere to act on it, and
+until the portal link existed a customer told their payment had failed had
+nowhere to go. Built in this order, the dependency is visible; built the other
+way round it would have been a dead end with wording on it.
+
+Three pieces:
+
+1. **The status row carries a label**, and the provider's snake_case appears
+   nowhere. An unrecognised status falls through to the raw word and gets **no
+   advice** — §73's warning about a vocabulary built from one sample, and the
+   reason it does not apply is that these are the tails of an enumerated event
+   list rather than observed values.
+2. **`subscription.update_payment_method` is handled.** It was ticked on the
+   endpoint and discarded, and it is the warning *before* a `past_due` — so the
+   first a customer knew was losing access. It is a **request, not a state**:
+   the status stays `active`, so the notice sits beside a healthy status. There
+   is **no stored flag**; the card derives it from `subscriptionEvent`, so the
+   next subscription event retires it through machinery that already exists.
+3. **`payment.processing` is handled**, for the India case: a mandate debit
+   sits there for real time, and a first payment in flight was being reported
+   as one that had been recorded.
+
+**The audit, re-graded — and §1 is deliberately left as it was taken** (§29):
+
+| | §1 | After Phases 0, 1 and 1.5 |
+|---|---|---|
+| Transparency | poor | **good** — no contradiction, no jargon, and the states that need action say so. Still no in-product receipts; the portal has them |
+| Flexibility | absent | **delegated** — cancel, pause, resume and card update are hosted. Plan change is still impossible (one product) |
+| Self-service | absent | **done** |
+| Reliability | good / unverified | **unchanged** — dunning unconfirmed, and nothing can see a dead endpoint (Phase 3) |
+| Proactive comms | absent | **unchanged, and cannot be ours** |
+| Fair treatment | n/a / absent | **unchanged** — nothing is enforced (Phase 2) |
+
+**What it did NOT do**, so the omissions read as decided: `payment.cancelled`
+is still ignored on purpose (the customer cancelled it themselves), and refund
+and dispute events are still unhandled — see Phase 2, where they belong.
 
 ### Phase 2 — enforcement · *blocked on pricing (§64)*
 

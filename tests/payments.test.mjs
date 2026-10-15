@@ -404,7 +404,7 @@ describe('the payment webhook', () => {
      * vacuous — §34's shape, a test passing against its own broken fixture.
      * The floor is what the server carried when this was written.
      */
-    assert.ok(events.length >= 11, `derived only ${events.length} events: ${events}`);
+    assert.ok(events.length >= 12, `derived only ${events.length} events: ${events}`);
     assert.ok(events.includes('subscription.on_hold'), 'the derivation missed a known event');
 
     /*
@@ -458,6 +458,92 @@ describe('the payment webhook', () => {
      */
     // The subscription half must be exactly where it was — two clocks, §70.
     assert.equal(billing.subscriptionEvent, before);
+  });
+
+  test('a payment in flight is recorded as its own event, not as a recorded payment', async () => {
+    /*
+     * `payment.processing` was ticked on the endpoint and ignored by the route,
+     * so a debit in flight was indistinguishable from one that had settled —
+     * and on a FIRST payment the card read "a payment was recorded", which
+     * overstates what happened. An India-issued card on an RBI mandate can sit
+     * here for real time (§73), so this is not a millisecond edge.
+     */
+    const before = (await billingNow()).billing.subscriptionEvent;
+
+    const res = await deliver({
+      business_id: 'bus_test_crmbuilder',
+      type: 'payment.processing',
+      timestamp: '2026-11-03T00:00:00Z',
+      data: {
+        payload_type: 'Payment',
+        payment_id: 'pay_inflight_0001',
+        status: 'processing',
+        metadata: { wsId },
+      },
+    });
+    assert.deepEqual(res.json, { received: true, applied: true });
+
+    const { billing } = await billingNow();
+    assert.equal(billing.paymentEvent, 'payment.processing');
+    assert.equal(billing.paymentStatus, 'processing');
+    // Two clocks (§70): an in-flight payment says nothing about the
+    // subscription, so the subscription half must be exactly where it was.
+    assert.equal(billing.subscriptionEvent, before);
+  });
+
+  /*
+   * ONE monotonic counter for every test from here down, and it is not
+   * housekeeping.
+   *
+   * December, so every clock it hands out is strictly newer than the
+   * hand-picked November dates above. §74's first version of the gate section
+   * picked its own December date beside another hand-picked one and failed
+   * `applied: false, reason: 'stale'` — staleness is the mechanism this whole
+   * file tests, so hand-picking a timestamp next to another hand-picked one is
+   * the one thing not to do in it.
+   */
+  let laterMinute = 0;
+  function laterClock() {
+    return new Date(Date.UTC(2026, 11, 1, 0, laterMinute++)).toISOString();
+  }
+
+  test('a request for a new payment method is recorded, and a later event clears it', async () => {
+    /*
+     * THE SECOND HALF IS THE TEST. There is no stored flag and no clearing
+     * logic — the card derives the notice from `subscriptionEvent`, so what
+     * retires it is the ordinary newest-wins write that every other
+     * subscription event already does.
+     *
+     * A flag would need clearing, and the only honest clearer is a payment
+     * succeeding — which is on the other clock, so clearing across the two
+     * would reintroduce the competition §70's split exists to prevent. This
+     * asserts that the cheaper mechanism actually works: without the second
+     * delivery, an implementation that stored the request and never let go of
+     * it would pass just as happily.
+     */
+    const asked = await deliver(subscriptionEvent({
+      type: 'subscription.update_payment_method',
+      status: 'active',
+      at: laterClock(),
+    }));
+    assert.deepEqual(asked.json, { received: true, applied: true });
+
+    let { billing } = await billingNow();
+    assert.equal(billing.subscriptionEvent, 'subscription.update_payment_method');
+    // Still live, which is the point of handling it: this is the warning
+    // BEFORE a failure, not a report of one.
+    assert.equal(billing.status, 'active');
+
+    const renewed = await deliver(subscriptionEvent({
+      type: 'subscription.renewed',
+      status: 'active',
+      at: laterClock(),
+    }));
+    assert.deepEqual(renewed.json, { received: true, applied: true });
+
+    ({ billing } = await billingNow());
+    assert.equal(billing.subscriptionEvent, 'subscription.renewed',
+      'a later subscription event did not replace the request, so the notice would never clear');
   });
 
   /* ------------------------------------------------------------------ *
@@ -524,16 +610,47 @@ describe('the payment webhook', () => {
      * meta doc is in every nightly backup artifact — downloadable by anyone
      * with read access to the private repo. The provider is the system of
      * record for the customer; we need ids and statuses.
+     *
+     * THIS TEST WAS VACUOUS TWICE OVER, and both halves were found by running
+     * the mutation rather than by reading it (§9).
+     *
+     * 1. It delivered a hand-picked OCTOBER date, and §73's derived-events loop
+     *    had already landed November ones — so the delivery was dropped as
+     *    stale and the record was never written at all. `applied` is asserted
+     *    first now, so a reordering that makes it stale again fails HERE.
+     * 2. It then searched `GET /api/org/billing`, which is `publicBilling()` —
+     *    a WHITELIST. A leaked field cannot appear in that response by
+     *    construction, so the assertion could never have failed however much
+     *    identity the server stored. With `customerEmail` and `customerName`
+     *    added to `billingFieldsFor` it passed on both counts.
+     *
+     * The guarantee is about what is STORED, because `workspaces[].meta` IS the
+     * data collection (§17) and that is what the nightly artifact dumps — so
+     * the admin export is the instrument, being literally the artifact in
+     * question rather than a projection of it.
      */
-    await deliver(subscriptionEvent({
-      at: '2026-10-13T18:00:00Z',
+    const stored = await deliver(subscriptionEvent({
+      at: laterClock(),
       customer: { email: 'payer@example.com', name: 'A Real Person' },
       billing: { street: '1 Example Road', city: 'Leeds', country: 'GB' },
     }));
+    assert.deepEqual(stored.json, { received: true, applied: true },
+      'the identity payload was never applied, so this test cannot see what it stores');
 
-    const dump = JSON.stringify(await billingNow());
+    const res = await fetch(`${BASE}/api/admin/export`, {
+      headers: { Authorization: 'Bearer export-token-for-payments-test' },
+      signal: AbortSignal.timeout(20000),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    const ws = body.workspaces.find((w) => w.wsId === wsId);
+    assert.ok(ws && ws.meta && ws.meta.billing, 'no billing record reached the export to inspect');
+
+    // The WHOLE stored record, not named fields — §38's rule: a field-by-field
+    // check only covers the fields somebody thought of.
+    const dump = JSON.stringify(ws.meta.billing);
     for (const leaked of ['payer@example.com', 'A Real Person', 'Example Road', 'Leeds']) {
-      assert.equal(dump.includes(leaked), false, `the billing record carried ${leaked}`);
+      assert.equal(dump.includes(leaked), false, `the stored billing record carried ${leaked}`);
     }
   });
 
@@ -563,18 +680,9 @@ describe('the payment webhook', () => {
    * end on — reordering that Set would otherwise turn these into a null
    * dereference several tests away from the change (§9).
    *
-   * December, so every clock here is strictly newer than everything
-   * delivered above — and ONE counter rather than dates chosen per test,
-   * which is what made the first version of this fail `applied: false,
-   * reason: 'stale'`. Staleness is the mechanism this whole file tests, so
-   * hand-picking a timestamp beside another hand-picked one is the one thing
-   * not to do in it.
+   * Every clock here comes from `laterClock()`, declared further up now that
+   * two sections share it.
    */
-  let laterMinute = 0;
-  function laterClock() {
-    return new Date(Date.UTC(2026, 11, 1, 0, laterMinute++)).toISOString();
-  }
-
   async function cancelNow() {
     const res = await deliver(subscriptionEvent({
       type: 'subscription.cancelled', status: 'cancelled', at: laterClock(),

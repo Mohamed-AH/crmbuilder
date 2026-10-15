@@ -164,6 +164,11 @@ never change, because everything cross-references them.
 | A field that survives the state it names (`paused_at`) | §74 · §9 |
 | A comment that had promised an assertion nobody wrote | §74 · §46 · §14 |
 | **A test count carried forward and read as measured** | §74 · §2 · §29 · §9 |
+| **A test that read a whitelisted projection could not see the leak behind it** | §76 · §70 · §38 · §9 |
+| **Saying what to DO about a billing state**, and the phase that made it possible | §76 · §74 · [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) |
+| A provider's vocabulary on a customer's screen — and when a map is safe to write | §76 · §73 · §45 |
+| A request that is not a state, and the flag it did NOT need | §76 · §70 · §26 |
+| Why a notice that might be stale has to say so | §76 · §51 |
 | **Two identical verdicts in one CI run** — and the wrong one is last | §75 · §46 · §33 |
 | Why a blank `workflow_dispatch` input does NOT override its fallback | §75 · §63 · §65 |
 | Which five smoke checks differ between local and live, measured | §75 · §46 |
@@ -246,10 +251,10 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**623 Node tests pass and Playwright ran 154 of 154** — both observed in this
-session, not carried forward.
+**625 Node tests pass and Playwright ran 158 of 158** — both observed in this
+session, not carried forward. §76 added two Node and four Playwright.
 
-**154 of 154 does NOT mean §66's intermittent is fixed.** *Signing out hides
+**158 of 158 does NOT mean §66's intermittent is fixed.** *Signing out hides
 the workspace* simply did not fire on this run; §71 fired it, and six passes
 in isolation afterwards did not re-measure its rate either (against 1-in-3,
 six clean runs happen about 9% of the time). It is a known-open test that
@@ -377,7 +382,9 @@ to render *and still navigate*.
 globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v62`). Miss the allow-list and it 404s in production
+(currently `crmbuilder-v64` — and this line was left at v62 through §74's bump
+to v63, which is §29's thesis arriving in §3's own invariant: read `sw.js`,
+never this sentence). Miss the allow-list and it 404s in production
 while working locally from cache.
 
 **The server serves an allow-list, never the repository.** Anything not named
@@ -11616,3 +11623,217 @@ Counts: smoke **51 local / 56 live**, both run. Node and Playwright untouched
 and not re-run, because a `console.log` in a file nothing imports has no blast
 radius (§9) — `node --check` plus the three runs above is the coverage this
 earns.
+
+
+---
+
+## 76. The card said what was wrong and never what to do, and a guarantee had stopped being testable
+
+Phase 1.5 of [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) — a phase
+that document did not contain, and which is the tail of its own §1 transparency
+row rather than a new idea. §1 graded transparency **poor** for two reasons:
+the card contradicted itself, and there were no invoices. §74 fixed the first
+and delegated the second to the portal. Neither touched the third thing §1 did
+not separate out: **the card was honest about state and silent about action**,
+and it printed the provider's own `past_due` and `on_hold` at a customer.
+
+**Done now because §74 is what made it possible.** Advice is only worth giving
+if there is somewhere to act on it, and until the portal link existed a
+customer told their payment had failed had nowhere to go. In this order the
+dependency is visible; the other way round it would have been wording on a
+dead end.
+
+### The status row carries a label, and the unrecognised case is the test
+
+`STATUS_LABELS` maps the provider's vocabulary to words somebody can act on —
+`past_due` → *Payment overdue*, `on_hold` → *On hold*, and `failed` →
+**Never started** rather than "Failed", because that status is a first payment
+having been declined, so the subscription never existed.
+
+**An unrecognised status falls through to the raw word and gets no advice**,
+which is the same direction every other default in this area points (§74): the
+unrecognised case errs toward not misleading anybody.
+
+§73 is the standing warning here, and it is worth saying why it does not
+apply. That section refused to map `error_code` to customer-facing text because
+**one sample is not a vocabulary** — a map built from one observed value ships
+with one correct entry and a fallback that fires on everything real. These are
+different: they are the **tails of `BILLING_SUBSCRIPTION_EVENTS`**, read from
+the provider's own documentation, plus `pending`, which §73 read off the
+dashboard. An enumeration, not a sighting.
+
+The risk is therefore not today's words but tomorrow's, so that is what has a
+test. *"a status we do not recognise shows the provider word, and invents no
+advice"* drives `grace_period_extended` and requires the raw string, no advice,
+and — the half worth having — **`#portal-go` visible with `#checkout-go`
+absent**, which is the server's opposite default (§74) observed from the client
+for the first time. A `|| 'Unknown'` fallback fails it by name, which is the
+placeholder §73 deleted from this very card once already.
+
+### A request is not a state, and it needed no new field
+
+`subscription.update_payment_method` was **ticked on the endpoint and discarded
+by the route** — answered `{received:true, ignored:'unsubscribed event'}` — and
+it is the warning *before* a `past_due`. So the first a customer knew about a
+card the provider could not charge was losing access.
+
+**The subscription stays `active` while it is pending**, which is the whole
+point of handling it: the notice has to sit *beside* a healthy status rather
+than replace it. That is why it is not in `STATUS_LABELS` and reads off
+`subscriptionEvent` instead.
+
+**NO STORED FLAG, and that is the design rather than a shortcut.** A
+`needsPaymentMethod` has to be cleared by something, and the only honest
+clearer is a later *payment* succeeding — which lives on the **other clock**,
+so clearing across the two would reintroduce exactly the competition §70's
+two-clock split exists to prevent. Deriving the notice from `subscriptionEvent`
+gets it for free: that field is already newest-wins, so any later subscription
+event retires the notice through machinery that already exists and is already
+tested.
+
+**The cost is stated rather than discovered.** If the provider emits nothing
+when a card is updated, the notice outlives the fix until the next subscription
+event. So it is worded as a request carrying §51's disregard clause — *"if you
+have already done it, you can ignore this"* — which is the same sentence that
+section put on a payment chaser, for the same reason: a notice that might be
+stale has to say so, or it reads as a demand somebody has already met.
+
+**The second half of its test is the test.** Without a later delivery, an
+implementation that stored the request and never let go of it would pass just
+as happily. There is no single-line mutation that breaks only that half — it is
+guarded by the same write every other event uses — and that is said plainly
+rather than counted as a mutation that was run.
+
+### A third reading of a payment-only record
+
+`payment.processing` is a debit in flight. The card had two readings — refused,
+or recorded — so an in-flight one fell to the catch-all, *"a payment was
+recorded"*, which overstates what has happened on the one screen where the
+difference is the customer's money.
+
+Not a millisecond edge: **an India-issued card on an RBI mandate sits there for
+real time** (§73), which is also why the wording says mandates take a few
+minutes rather than implying something is wrong.
+
+**For a workspace that already has a live subscription it changes nothing
+visible, and that is correct** — an in-flight renewal on an active subscription
+is not news. Said out loud in the code, because *"I subscribed to an event and
+nothing appeared"* reads as a mistake later (§46's rule about a check that adds
+coverage without moving a number).
+
+### The advice line sits after the absence it explains
+
+`nothingDue` says why the next-payment row is gone; the advice says what to do
+about why. On an `on_hold` record the pair reads as a sequence rather than a
+contradiction — nothing is scheduled, and here is what restarts it.
+
+**Only where there is something to do and the owner might not know it** —
+`past_due`, `on_hold`, `failed`, `pending`, and the request above. `active`,
+`paused`, `cancelled` and `expired` say nothing, because nothing is wrong or
+the Subscribe button beside it already says the only thing there is to say.
+§33's rule: a line shown in every state teaches the eye to skip the one case
+that needed it, and the existing-subscription test now asserts its **absence**
+for exactly that reason.
+
+**The advice points at the button already on the card** rather than minting a
+second link to the same place, and the pointer is gated on `state.portal` — a
+deployment with no `DODO_PORTAL_URL` must not be told to press a button that is
+not there, and §74's no-portal notice already covers that case.
+
+### The finding: a guarantee that had stopped being testable, twice over
+
+Worth more than the feature. *"no customer identity is stored, even when the
+payload carries it"* guards §70's rule, which exists because
+`workspaces[].meta` **is** the `data` collection (§17) and therefore lands in
+every nightly artifact, downloadable by anyone with read access to the private
+repo. It was passing and could not fail:
+
+1. **It delivered a hand-picked October date**, and §73's derived-events loop
+   had already landed November ones — so the delivery was dropped as **stale**
+   and the record was never written at all. The dump had nothing to find.
+2. **It then searched `GET /api/org/billing`**, which is `publicBilling()` — a
+   **whitelist**. A leaked field cannot appear in that response by
+   construction, so the assertion could never have failed however much identity
+   the server stored.
+
+**Measured, not reasoned about, and the second fault only surfaced because the
+first fix did not help.** With `customerEmail` and `customerName` added to
+`billingFieldsFor`, it passed; after giving it a fresh clock, it *still*
+passed — which is what named the projection problem. Only then did it fail.
+
+**The admin export is the instrument now**, because it is literally the
+artifact the rule is about rather than a projection of it, and the assertion
+searches the whole serialised record rather than named fields (§38's rule). The
+delivery asserts `applied: true` **first**, so a future reordering that makes
+it stale again fails there and says so instead of going quietly green.
+
+The general shape, and it is this file's standing one from a new angle: **a
+test that reads a whitelisted projection cannot see a leak into the thing
+behind it.** Both of §30's and §38's leak assertions search a whole response
+for that reason; this one searched a whole response that had been filtered
+first.
+
+### `laterClock()` moved up, because two sections share it
+
+§74 declared it inside the gate section. It is hoisted, so calling it from
+earlier worked — and a helper used 150 lines above its declaration is the kind
+of thing that gets duplicated by the next reader, which is how §74's own
+stale-clock failure happened. One counter, declared before its first use, with
+the December reasoning kept on it.
+
+### Verified
+
+Six mutations, each failing the test that names it (§9):
+
+| Mutation | Fails |
+|---|---|
+| `subscription.update_payment_method` out of the set | *a request for a new payment method is recorded…*, and the derived-event floor |
+| `payment.processing` out of the set | *a payment in flight is recorded as its own event…* |
+| the advice line dropped | *an overdue payment says what to do about it…* and *a request for a new card is shown beside a live subscription…*, and **no others** |
+| the raw provider word back in the status row | **five** — the label is shared surface |
+| `|| 'Unknown'` for an unrecognised status | *a status we do not recognise…* |
+| the in-flight arm collapsed into the catch-all | *a first payment still in flight is not reported as money received* |
+| **identity stored by `billingFieldsFor`** | *no customer identity is stored…* — **and it did not, before this commit repaired it** |
+
+### Blast radius
+
+`js/app.js` is in `APP_SHELL`, so `CACHE_VERSION` → **`crmbuilder-v64`**. No
+new served file, so smoke stays **51 local / 56 live** — and running it is what
+proves that (§9).
+
+Full runs, because `js/app.js` and `CACHE_VERSION` are shared surface: Node
+**623 → 625** (three consecutive clean runs), Playwright **154 → 158**, smoke
+**51** locally. **One run of five had a single failure whose name was not
+captured** — only the tail was kept — and three subsequent full runs were
+clean. Recorded rather than dismissed and rather than inflated: §66's
+intermittent is the standing candidate, and the honest claim is that it is
+unidentified.
+
+`docs/API.md` gains a line and **no route** — §46's trap for the sixth time:
+the count is right and the file reads correctly while two **value domains**
+widened, so a caller switching on `subscriptionEvent` or `paymentEvent` sees a
+value it has not seen before.
+
+**§27's six user-facing documents are still deferred, on the condition §74
+restated rather than the one §70–§72 used.** Checked rather than skipped: not
+one of them mentions subscriptions at all, because **there is no price**, so
+nobody can subscribe and no user has gained a capability to document. The walk
+happens when a price is set, which is the same moment
+[`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1's twelve-file list
+fires. `privacy.html` likewise.
+
+### The production test-mode button, decided rather than left
+
+§73 and §74 both record `DODO_PRODUCT_ID` being set on production in **test
+mode**, so every workspace owner sees a Subscribe button that cannot take their
+money — and §73 named two honest states: unset it between sessions, or do the
+doc walk, which needs a price.
+
+**Left as it is, on instruction, and the reason is what makes it defensible
+rather than the shrug it would otherwise be:** signups are closed and will not
+open until the controls are in place, so the only accounts that can reach the
+card are ones the operator controls. That is a third honest state, and it is
+bounded by a decision rather than by nobody having looked. It stops being
+defensible the moment signups open, which is where
+[`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7's *before live mode* list already has
+it.

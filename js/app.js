@@ -191,6 +191,78 @@
   const BILLING_STATUSES = new Set(['active', 'past_due']);
 
   /*
+   * The provider's status vocabulary, in words the person reading it can act
+   * on. `past_due` and `on_hold` are the two that matter: they are the states
+   * where something is wrong and the owner has to do something, and they were
+   * being printed as the provider's own snake_case.
+   *
+   * An UNRECOGNISED status falls through to the raw word rather than to a
+   * guess, which is the same direction every other default in this area points
+   * (§74): the unrecognised case errs toward not misleading anybody. §73 is the
+   * standing warning here — a map built from one observed value ships with one
+   * correct entry and a fallback that fires on everything real — and the reason
+   * this is not that case is that the vocabulary is ENUMERATED: these are the
+   * tails of `BILLING_SUBSCRIPTION_EVENTS`, read from the provider's own docs,
+   * plus `pending`, which §73 read off the dashboard.
+   */
+  const STATUS_LABELS = {
+    active: 'Active',
+    pending: 'Awaiting confirmation',
+    past_due: 'Payment overdue',
+    on_hold: 'On hold',
+    paused: 'Paused',
+    cancelled: 'Cancelled',
+    expired: 'Ended',
+    // Not "Failed", which reads as a fault in the subscription. This is the
+    // first payment having been declined, so the subscription never existed.
+    failed: 'Never started',
+  };
+
+  /*
+   * What to DO about it, which is the half the card has never had.
+   *
+   * The card was honest about state and silent about action, and until Phase 1
+   * there was no action to name: a customer told their payment had failed had
+   * nowhere to go. The hosted portal is that somewhere, so the advice points at
+   * the button already on the card rather than minting a second link to the
+   * same place.
+   *
+   * Only where there is something to do and the owner might not know it. §33's
+   * rule: a line shown in every state teaches the eye to skip the one case that
+   * needed it — so `active`, `paused`, `cancelled` and `expired` say nothing,
+   * because nothing is wrong, or the Subscribe button beside it already says
+   * the only thing there is to say.
+   */
+  function billingAdviceHTML(status, event, hasPortal) {
+    /*
+     * The portal is where every one of these is fixed, so a deployment with no
+     * DODO_PORTAL_URL must not be told to press a button that is not there —
+     * the card's own no-portal notice covers that case instead.
+     */
+    const go = hasPortal ? ' Use <strong>Manage subscription</strong> below.' : '';
+    /*
+     * The REQUEST outranks the status, because the status is `active` while it
+     * is pending — that is the whole point of handling the event: it is the
+     * warning before a failure rather than a report of one.
+     *
+     * §51's disregard clause, and for §51's reason: the provider may emit
+     * nothing when the card is updated, so this notice can outlive the fix
+     * until the next subscription event replaces it. A notice that might be
+     * stale has to say so, or it reads as a demand somebody has already met.
+     */
+    if (event === 'subscription.update_payment_method') {
+      return `<p class="settings-hint"><strong>Your provider has asked for a new payment method.</strong> Updating it now is what keeps your subscription running.${go} If you have already done it, you can ignore this.</p>`;
+    }
+    const advice = {
+      past_due: `<strong>A payment did not go through.</strong> Your provider will try again, and updating your card is the quickest fix.${go}`,
+      on_hold: `<strong>Your subscription is on hold.</strong> A payment failed and your provider has stopped retrying — updating your card starts it again.${go}`,
+      failed: '<strong>This subscription never started</strong>, because the first payment did not go through. Nothing was charged, and you can try again whenever you like.',
+      pending: '<strong>Waiting for your provider to confirm this.</strong> It usually takes a few minutes; a bank mandate can take longer.',
+    }[status];
+    return advice ? `<p class="settings-hint">${advice}</p>` : '';
+  }
+
+  /*
    * What the subscription is doing RIGHT NOW, and it always says something.
    *
    * §39's digestStatusHTML is the precedent and the reason: a card whose only
@@ -238,10 +310,18 @@
      * that says nothing at all.
      */
     if (!b.status && !b.subscriptionEvent) {
-      const failed = b.paymentEvent === 'payment.failed';
-      const note = failed
-        ? '<strong>Your last payment attempt did not go through.</strong> Nothing has been charged and no subscription has started. Your provider will say why — try again with another card when you are ready.'
-        : '<strong>A payment was recorded, and your subscription has not been confirmed yet.</strong> This usually resolves on its own within a few minutes.';
+      /*
+       * Three readings, not two. `payment.processing` is a debit in flight, and
+       * reporting it as "a payment was recorded" overstates what happened —
+       * which matters most here, on a FIRST payment, where the difference is
+       * between "your money is moving" and "we have your money". An India
+       * mandate debit can sit in this state for real time (§73).
+       */
+      const note = {
+        'payment.failed': '<strong>Your last payment attempt did not go through.</strong> Nothing has been charged and no subscription has started. Your provider will say why — try again with another card when you are ready.',
+        'payment.processing': '<strong>Your payment is going through.</strong> Nothing has been confirmed yet and no subscription has started — some cards and bank mandates take a few minutes to clear.',
+      }[b.paymentEvent]
+        || '<strong>A payment was recorded, and your subscription has not been confirmed yet.</strong> This usually resolves on its own within a few minutes.';
       const seen = b.updatedAt ? ` <span class="settings-hint">Last heard from your provider ${esc(fmtWhen(b.updatedAt))}.</span>` : '';
       return line(note + seen);
     }
@@ -251,10 +331,13 @@
     const status = String(b.status || String(b.subscriptionEvent || '').replace(/^subscription\./, '')).toLowerCase();
     const willBill = BILLING_STATUSES.has(status);
     const rows = [
-      // `status` is what the provider said and `subscriptionEvent` is what it
-      // called the event; the branch above guarantees at least one is present,
-      // so no placeholder is needed and none should be reintroduced.
-      ['Status', esc(b.status || b.subscriptionEvent)],
+      /*
+       * The LABEL where the status is one we know, and the raw word where it
+       * is not — never both, which would read as a translation nobody asked
+       * for. The branch above guarantees at least one of the two fields is
+       * present, so no placeholder is needed and none should be reintroduced.
+       */
+      ['Status', esc(STATUS_LABELS[status] || b.status || b.subscriptionEvent)],
       b.nextBillingAt && willBill ? ['Next payment', when(b.nextBillingAt)] : null,
       b.pastDueEndsAt ? ['Access until', when(b.pastDueEndsAt)] : null,
       b.updatedAt ? ['Last updated', esc(fmtWhen(b.updatedAt))] : null,
@@ -268,8 +351,15 @@
     const nothingDue = b.nextBillingAt && !willBill
       ? '<p class="settings-hint">No payment is currently scheduled.</p>'
       : '';
+    /*
+     * After `nothingDue`, deliberately: that line explains a row that is
+     * missing, and this one says what to do about why. On an `on_hold` record
+     * the pair reads as a sequence rather than a contradiction — nothing is
+     * scheduled, and here is what restarts it.
+     */
+    const advice = billingAdviceHTML(status, b.subscriptionEvent, Boolean(state.portal));
     return `<div class="record-read">${rows.map(([k, v]) => `
-      <div class="read-row"><div class="read-label">${k}</div><div class="read-value">${v}</div></div>`).join('')}</div>${nothingDue}`;
+      <div class="read-row"><div class="read-label">${k}</div><div class="read-value">${v}</div></div>`).join('')}</div>${nothingDue}${advice}`;
   }
 
   /*

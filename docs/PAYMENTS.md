@@ -1453,23 +1453,23 @@ enforcement lands. So it is a row on *before live mode* rather than a fix now,
 and it needs the same question asked of it as everything else in §8: does the
 provider even send them to this endpoint, or only show them on the dashboard?
 
-**Three events are now SUBSCRIBED on the endpoint and not handled by the
-route**, which is a different and safer state than the families above — they
-will actually arrive. Sixteen are ticked on the dashboard; thirteen are in
+**ONE event is now subscribed on the endpoint and not handled by the route**,
+down from three — a different and safer state than the families above, because
+these actually arrive. Sixteen are ticked on the dashboard; **fifteen** are in
 `BILLING_SUBSCRIPTION_EVENTS` plus `BILLING_PAYMENT_EVENTS`:
 
-| Arrives, ignored | What it means | Worth handling? |
+| | What it means | Where it stands |
 |---|---|---|
-| `payment.processing` | a debit is in flight, not yet settled | **maybe, for India** — a mandate debit can sit here, and the card currently says nothing |
-| `payment.cancelled` | a payment attempt was cancelled | low — the customer already knows |
-| `subscription.update_payment_method` | the provider wants a new card | **maybe** — it is the warning before a `past_due`, and silence is the state §39 keeps having to name |
+| `subscription.update_payment_method` | the provider wants a new card | ✅ **handled** (`CLAUDE.md` §76). It was the warning before a `past_due`, so silence meant the first a customer knew was losing access — and Phase 1's portal is what made it actionable |
+| `payment.processing` | a debit is in flight, not yet settled | ✅ **handled** (§76). The India case was the reason: a mandate debit sits here for real time, and a first payment in flight was being reported as one that had been recorded |
+| `payment.cancelled` | a payment attempt was cancelled | ☐ **still ignored, and deliberately** — the customer cancelled it themselves, so there is nothing to tell them. The only reading worth having would be an abandoned-checkout metric, which is §3's territory and not the card's |
 
-All three answer `200 {received:true, ignored:'unsubscribed event'}` with no
-log line, so nothing is retried and nothing is noisy. **Leave them ticked.**
-Unticking is the worse move in both directions: the provider's docs state that
-deselecting *every* event subscribes you to all of them, and a ticked-but-ignored
-event costs one 2xx while an unticked one has to be remembered later. They are
-a feature decision sitting beside enforcement, not a defect.
+The remaining one answers `200 {received:true, ignored:'unsubscribed event'}`
+with no log line, so nothing is retried and nothing is noisy. **Leave it
+ticked.** Unticking is the worse move in both directions: the provider's docs
+state that deselecting *every* event subscribes you to all of them, and a
+ticked-but-ignored event costs one 2xx while an unticked one has to be
+remembered later.
 
 ### Order to run it in
 

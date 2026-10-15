@@ -5868,7 +5868,13 @@ test.describe('subscribing', () => {
     await expect.poll(() => page.evaluate(() => sessionStorage.getItem('crmb:checkoutPending')), { timeout: 10000 })
       .toBe(null);
     // A read view, not a filled-in form — §36 rule 2, like the mail card.
-    await expect(card.locator('.read-row', { hasText: 'Status' })).toContainText('active');
+    await expect(card.locator('.read-row', { hasText: 'Status' })).toContainText('Active');
+    /*
+     * And NO advice line on a subscription where nothing is wrong. §33's rule:
+     * a line shown in every state teaches the eye to skip the one case that
+     * needed it, which here is the `past_due` and `on_hold` pair below.
+     */
+    await expect(card).not.toContainText(/did not go through|asked for a new payment method/i);
     // The exact day, not merely the year: nextBillingAt is UTC midnight on
     // 13 November, and a local-getter read in New York renders the 12th.
     await expect(card.locator('.read-row', { hasText: 'Next payment' })).toContainText('13 Nov 2026');
@@ -5956,7 +5962,9 @@ test.describe('subscribing', () => {
     await page.goto('/app#/settings');
     const card = page.locator('.card:has(h2:text-is("Subscription"))');
     await expect(card).toBeVisible({ timeout: 20000 });
-    await expect(card.locator('.read-row', { hasText: 'Status' })).toContainText('paused');
+    // "Paused", not `paused`: the row carries the label now, and the provider's
+    // own snake_case appears nowhere on the card.
+    await expect(card.locator('.read-row', { hasText: 'Status' })).toContainText('Paused');
     await expect(card.locator('.read-row', { hasText: 'Next payment' })).toHaveCount(0);
     await expect(card).not.toContainText('13 Nov 2026');
     await expect(card).toContainText(/No payment is currently scheduled/i);
@@ -5964,6 +5972,141 @@ test.describe('subscribing', () => {
     // and a paused subscriber with no control is the dead end the gate would
     // otherwise create.
     await expect(card.locator('#portal-go')).toBeVisible();
+  });
+
+  test('an overdue payment says what to do about it, and points at the portal', async ({ page }) => {
+    /*
+     * The card was honest about state and silent about ACTION, and until the
+     * portal shipped there was no action to name — a customer told their
+     * payment had failed had nowhere to go.
+     *
+     * Three halves, and they fail differently: the provider's snake_case must
+     * be gone, the advice must be present, and it must point at the control
+     * that is actually on the card rather than minting a second link to the
+     * same place. Asserting only the label would pass on a card that renamed
+     * the row and still said nothing.
+     */
+    await onboard(page, { name: 'Overdue Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('checkout-pastdue'));
+    await withBilling(page, {
+      enabled: true,
+      checkout: null,
+      portal: PORTAL,
+      billing: {
+        provider: 'dodo',
+        subscriptionId: 'sub_e2e_pastdue',
+        status: 'past_due',
+        subscriptionEvent: 'subscription.past_due',
+        nextBillingAt: Date.UTC(2026, 10, 13),
+        // The grace-period field, filled here for the first time anywhere:
+        // nothing in production has ever populated it (§74).
+        pastDueEndsAt: Date.UTC(2026, 10, 20),
+        paymentEvent: 'payment.failed',
+        paymentStatus: 'failed',
+        updatedAt: Date.UTC(2026, 9, 13),
+      },
+    });
+
+    await page.goto('/app#/settings');
+    const card = page.locator('.card:has(h2:text-is("Subscription"))');
+    await expect(card).toBeVisible({ timeout: 20000 });
+    await expect(card.locator('.read-row', { hasText: 'Status' })).toContainText('Payment overdue');
+    await expect(card).not.toContainText('past_due');
+    await expect(card).toContainText(/A payment did not go through/i);
+    await expect(card).toContainText(/Manage subscription/);
+    // `past_due` DOES bill, so the next-payment row survives — the suppression
+    // is keyed on whether a charge is coming, not on whether something is wrong.
+    await expect(card.locator('.read-row', { hasText: 'Next payment' })).toContainText('13 Nov 2026');
+    await expect(card.locator('.read-row', { hasText: 'Access until' })).toContainText('20 Nov 2026');
+  });
+
+  test('a request for a new card is shown beside a live subscription, and says it may be stale', async ({ page }) => {
+    /*
+     * The event arrives already — it is ticked on the endpoint — and was being
+     * discarded, so the first a customer knew was losing access. It is a
+     * REQUEST and not a state: the status is still `active`, which is why the
+     * notice has to sit beside a healthy status rather than replace it.
+     *
+     * The disregard clause is asserted because it is load-bearing, not
+     * politeness: the notice is derived from the last subscription event, so if
+     * the provider emits nothing when the card is updated it outlives the fix
+     * until the next event. §51's rule — a notice that might be stale has to
+     * say so, or it reads as a demand somebody has already met.
+     */
+    await onboard(page, { name: 'Newcard Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('checkout-newcard'));
+    await withBilling(page, {
+      enabled: true,
+      checkout: null,
+      portal: PORTAL,
+      billing: {
+        provider: 'dodo',
+        subscriptionId: 'sub_e2e_newcard',
+        status: 'active',
+        subscriptionEvent: 'subscription.update_payment_method',
+        nextBillingAt: Date.UTC(2026, 10, 13),
+        pastDueEndsAt: null,
+        paymentEvent: 'payment.succeeded',
+        paymentStatus: 'succeeded',
+        updatedAt: Date.UTC(2026, 9, 13),
+      },
+    });
+
+    await page.goto('/app#/settings');
+    const card = page.locator('.card:has(h2:text-is("Subscription"))');
+    await expect(card).toBeVisible({ timeout: 20000 });
+    // Still live, and still billing — the request is a warning, not a failure.
+    await expect(card.locator('.read-row', { hasText: 'Status' })).toContainText('Active');
+    await expect(card.locator('.read-row', { hasText: 'Next payment' })).toContainText('13 Nov 2026');
+    await expect(card).toContainText(/asked for a new payment method/i);
+    await expect(card).toContainText(/already done it, you can ignore this/i);
+    await expect(card.locator('#portal-go')).toBeVisible();
+  });
+
+  test('a status we do not recognise shows the provider word, and invents no advice', async ({ page }) => {
+    /*
+     * THE MAP'S SAFETY VALVE, and the reason it is a test rather than a
+     * comment. §73 records what a vocabulary built from one sample costs: one
+     * correct entry and a fallback that fires on everything real. The labels
+     * here come from an enumerated event list, so the risk is not today's
+     * words but tomorrow's — a status the provider adds later must render as
+     * itself rather than as a guess, and must carry no advice at all.
+     *
+     * Checked against the alternative: a `|| 'Unknown'` fallback fails this by
+     * name, which is the same placeholder §73 deleted from this card once.
+     */
+    await onboard(page, { name: 'Futurestatus Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('checkout-future'));
+    await withBilling(page, {
+      enabled: true,
+      checkout: null,
+      portal: PORTAL,
+      billing: {
+        provider: 'dodo',
+        subscriptionId: 'sub_e2e_future',
+        status: 'grace_period_extended',
+        subscriptionEvent: 'subscription.grace_period_extended',
+        nextBillingAt: null,
+        pastDueEndsAt: null,
+        paymentEvent: 'payment.succeeded',
+        paymentStatus: 'succeeded',
+        updatedAt: Date.UTC(2026, 9, 13),
+      },
+    });
+
+    await page.goto('/app#/settings');
+    const card = page.locator('.card:has(h2:text-is("Subscription"))');
+    await expect(card).toBeVisible({ timeout: 20000 });
+    await expect(card.locator('.read-row', { hasText: 'Status' })).toContainText('grace_period_extended');
+    await expect(card).not.toContainText(/unknown/i);
+    await expect(card).not.toContainText(/did not go through|asked for a new payment method|never started/i);
+    /*
+     * An unrecognised status is non-terminal to the server's gate, so it is
+     * manageable and not resubscribable — the two defaults pointing opposite
+     * ways on purpose (§74), seen from the client for the first time.
+     */
+    await expect(card.locator('#portal-go')).toBeVisible();
+    await expect(card.locator('#checkout-go')).toHaveCount(0);
   });
 
   test('a subscriber with no portal is told self-service is not set up, rather than left with nothing', async ({ page }) => {
@@ -5996,7 +6139,7 @@ test.describe('subscribing', () => {
     await page.goto('/app#/settings');
     const card = page.locator('.card:has(h2:text-is("Subscription"))');
     await expect(card).toBeVisible({ timeout: 20000 });
-    await expect(card.locator('.read-row', { hasText: 'Status' })).toContainText('active');
+    await expect(card.locator('.read-row', { hasText: 'Status' })).toContainText('Active');
     await expect(card).toContainText(/not set up on this deployment/i);
     await expect(card).toContainText(/get in touch/i);
     await expect(card.locator('#portal-go')).toHaveCount(0);
@@ -6052,6 +6195,52 @@ test.describe('subscribing', () => {
     // row to show, so the labelled table must be absent entirely.
     await expect(card.locator('.read-label')).toHaveCount(0);
     await expect(card.locator('#checkout-go')).toHaveText(/Subscribe/);
+  });
+
+  test('a first payment still in flight is not reported as money received', async ({ page }) => {
+    /*
+     * The third reading of a payment-only record, where there were two.
+     * `payment.processing` was ticked on the endpoint and discarded by the
+     * route, so an in-flight debit fell to the catch-all — "a payment was
+     * recorded" — which overstates what has happened on the one screen where
+     * the difference is the customer's money.
+     *
+     * It is not a millisecond edge: an India-issued card on an RBI mandate can
+     * sit in this state for real time (§73), which is also why this says
+     * "mandates take a few minutes" rather than implying something is wrong.
+     *
+     * Asserted in BOTH directions, because the failure is a plausible sentence
+     * rather than an error: the in-flight wording must be present AND the
+     * recorded wording must be gone. Checking only the first would pass on a
+     * card that printed both.
+     */
+    await onboard(page, { name: 'Inflight Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('checkout-inflight'));
+    await withBilling(page, {
+      enabled: true,
+      checkout: CHECKOUT,
+      portal: PORTAL,
+      billing: {
+        provider: 'dodo',
+        subscriptionId: null,
+        status: null,
+        subscriptionEvent: null,
+        nextBillingAt: null,
+        pastDueEndsAt: null,
+        paymentEvent: 'payment.processing',
+        paymentStatus: 'processing',
+        updatedAt: Date.now(),
+      },
+    });
+
+    await page.goto('/app#/settings');
+    const card = page.locator('.card:has(h2:text-is("Subscription"))');
+    await expect(card).toBeVisible({ timeout: 20000 });
+    await expect(card).toContainText(/payment is going through/i);
+    await expect(card).toContainText(/nothing has been confirmed yet/i);
+    await expect(card).not.toContainText(/A payment was recorded/i);
+    await expect(card).not.toContainText(/did not go through/i);
+    await expect(card).not.toContainText(/unknown/i);
   });
 
   test('a payment return strips the query, including the email, and lands on Settings', async ({ page }) => {
