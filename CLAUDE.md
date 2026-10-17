@@ -210,6 +210,18 @@ never change, because everything cross-references them.
 | `monthsAgo(now, -n)` is months FORWARD, and the clamp is direction-agnostic | §78 · §44 · §9 |
 | **An assertion that formatted a date and could not see its own mutation** | §78 · §76 · §9 |
 | A `.note` base class that does not exist | §78 · §27 · §66 |
+| **What the provider had already PUBLISHED** — six open rows closed off the docs | §79 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §8 · §72 |
+| A question filed as "ask the vendor" that the vendor had answered in public | §79 · §8 · §29 |
+| **A dispute that cannot be contested at all** — Visa RDR on by default at $100 | §79 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §3 · §5 |
+| Two assumptions checked, one confirmed and one wrong, both "the worst case" | §79 · §21 · §3 |
+| **The payout fee is the biggest line, and lowering the threshold doubles it** | §79 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · §17 |
+| Three grades of evidence for a FEE, and why grade B never gets quoted | §79 · §72 · §17 |
+| A 4% fee hiding inside a ratio that was read as an exchange rate | §79 · §73 · §5 |
+| INR payouts discontinued, so an FX question changed counterparty | §79 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §4 · §5 |
+| **A legal page promising a contact address that is not there** | §79 · §40 · §19 |
+| Account verification gated on the same commit as the price | §79 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7 · §48 |
+| A chargeback that reaches us as an ordinary refund, by design | §79 · §70 · §2 |
+| A blocked apex reported as a DNS failure, and what named the real mechanism | §79 · §64 · §8 |
 | Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
@@ -12468,3 +12480,207 @@ the one that decided it:
   /api/admin/billing-mode`), and the card wants building **with** the thing it
   switches, so the copy can say what flipping it will actually do. Writing that
   copy now means writing it twice.
+
+
+---
+
+## 79. The vendor had already published most of what we were waiting to be told
+
+[`docs/PAYMENTS.md`](docs/PAYMENTS.md) §8 was a ten-row table of things that
+document *"does not know"*, and its own preamble said **"every one of them is
+answered by the same read — the dashboard and the MSA."** That sentence was
+wrong, and the way it was wrong is the reusable part.
+
+**Six rows closed in one afternoon from `docs.dodopayments.com`** — no account,
+no lawyer, no dashboard login. The dispute set-off, the evidence procedure and
+its deadline, the payout schedule and fee, the minimum payout, the
+conversion-fee tiers, the refund-fee treatment, the supported currencies and the
+individual-seller verification requirements are all **published**. They had been
+filed as commercial, commercial had been read as contractual, and contractual
+meant *wait for the MSA*.
+
+> **A question filed under "ask the vendor" is worth one pass of "did the vendor
+> already say" first.** The categories that route a question — commercial,
+> legal, operational — describe who *owns* the answer, not where it is written
+> down.
+
+### Reachability measured, because it decided the shape of the result
+
+```
+www.dodopayments.com/pricing   301 -> https://dodopayments.com/pricing
+dodopayments.com               curl: (56) CONNECT tunnel failed, response 403
+docs.dodopayments.com          reachable
+```
+
+The marketing apex is **proxy-blocked**, which is §64's shape (`paddle.com`, the
+same way) — and `WebFetch` reported it as `ENOTFOUND dodopayments.com` for a
+request to `www`, because www 301s to the apex and the tool names the host it
+failed on rather than the one asked for. Reading that as DNS would have been
+reasonable and wrong; `curl` through the same proxy is what named the mechanism.
+
+**So exactly one thing is still unknown and it is the fee percentage**, which
+that vendor publishes only on the blocked page. §8 is no longer a table of
+unknowns; it is four rows, one of them a single number.
+
+### Three grades for one figure, because a fee is what gets multiplied
+
+§72 established evidence grading for the seller-of-record row. It applies harder
+to a rate, so §5 now carries **A** (read on the docs host, quoted), **B** (the
+vendor's own blog plus one third-party review, agreeing) and **C** (a
+third-party index alone) — and says plainly that grade B is for sizing and never
+for a commitment.
+
+The grade-B rate is **4% + $0.40, +1.5% international, +0.5% subscription**, and
+**every sale this product makes is both of those**, so the figure to size
+against is **6% + $0.40** — about **8.7%** at $15/month against **6.3%** at
+$150/year. That is ~2.4 points, where §5 had guessed *"roughly a point"*,
+because at $15 the fixed $0.40 is 2.7% on its own.
+
+One grade-C figure **corroborates a grade-A one** ($5 per payout under $1,000,
+which the docs state outright), and that is worth noticing without
+over-reading: it raises confidence in that source, not in its other two numbers.
+
+### The payout fee is the largest line at this volume, and the obvious move doubles it
+
+Grade A throughout, so no estimate is involved:
+
+| Payout | $5 as a share |
+|---|---|
+| $50 — the lowest settable threshold | **10%** |
+| $100 — the default | **5%** |
+| $1,000 — where the fee stops | 0.5% |
+
+**Lowering the threshold to get paid sooner doubles the worst fee in the
+stack.** The instinct and the arithmetic point opposite ways, which is the only
+reason this is worth writing down.
+
+### Visa RDR is on by default, and it divides the two prices
+
+*"Visa RDR is enabled by default on all Dodo Payments accounts with a $100 USD
+threshold"*, and a dispute it resolves *"appears as a lost dispute"*.
+
+| | vs the $100 threshold | A dispute is |
+|---|---|---|
+| **$15 monthly** | under | **auto-refunded, auto-lost — no defence stage exists** |
+| **$150 annual** | over | contestable: 10 days, evidence, a decision |
+
+So the evidence rules that closed **in our favour** the same afternoon — 10
+days, PDF/JPG/PNG/ZIP under 5 MB — **do not apply to the monthly price at all.**
+That is the strongest argument for annual billing in that document, and §3 had
+ranked annual first without knowing it existed.
+
+It is also **worse than the worst case §3 assumed**: §3 braced for a threshold
+that punishes losing, and what is actually configured is a mechanism that loses
+on your behalf before you are asked.
+
+### Two answers, pointing opposite ways, and both were assumed
+
+- *"The dispute fee is not refunded, even if you win"* — **against us**, and §3
+  had assumed exactly this, so the assumption is now a fact.
+- *"You decide whether to accept or counter each dispute, and you supply the
+  evidence"* — **for us**, and §3 had assumed this away.
+
+A posture of assuming the worst was right as a posture and wrong as a fact in
+one of the two places it was applied. Recorded because *"we assumed the worst"*
+reads as safe and is still a guess.
+
+### A correction to §5's own arithmetic, and it was hiding in a ratio
+
+§73 measured a USD-based product presenting `$65.00` and `₹6,429.04` — a ratio
+of ~98.9 — and §5 read that as *"a conversion from a USD base"* with an implied
+FX rate. **The adaptive-currency fee is 4% under $500, *"added on top of your
+displayed price and borne by the customer"***, so the ratio is **rate × 1.04**
+and was never an exchange rate. The fee was inside the number.
+
+Two consequences beyond the correction. A **$15 USD** product charges a UK
+customer **$15 plus 4%** on every renewal, as a converted foreign-currency line
+— which is §3's lever 2 working against us, and a cost §5's reversal from GBP to
+USD took without knowing it existed. And **GBP turns out to be both a supported
+presentment currency and one of three payout wallet currencies**, so a
+GBP-priced product with a linked GBP wallet would have **no provider conversion
+at either end**. That does not reverse the price decision — it was taken on
+instruction with its cost stated — but it is a cost that was not on the list.
+
+### INR payouts are discontinued, so the FX column changed counterparty
+
+*"Scheduled payouts do not include an INR balance, and an INR balance does not
+count toward your threshold."* Payouts consolidate through **USD, GBP and EUR**
+wallets only, and a wallet linked as a settlement currency is *"paid out in its
+own currency… Dodo Payments does not convert it and charges no conversion fee."*
+
+**So there is no provider FX spread into INR to go and find.** The conversion
+happens at the seller's Indian bank *"at its own exchange rate"*, plus that
+bank's charges and any SWIFT intermediary and beneficiary fees, none of which
+appear on the payout invoice. §5's blank column is still blank and **it is now a
+question for the bank** — which is a different question, asked of a different
+party, and it is the same for both price rows so it does not affect the monthly
+versus annual comparison the table exists for.
+
+**And §73's measured INR presentment is now a known hazard rather than a
+curiosity:** an India-issued card produces an INR balance that is excluded from
+scheduled payouts and from the threshold, and has to be moved to USD by hand
+less a conversion fee. A stranded balance that looks like a missing payout.
+
+### Verification found three site requirements, and one is a live defect
+
+The individual path is 1–3 business days — Product Information, KYC with a
+government photo ID plus a selfie liveness check, then Bank Verification whose
+*"account holder's name must match your Identity Verification document."* Live
+payments and payouts turn on **separately**.
+
+The half that is ours: the live site *"must be publicly reachable and show
+pricing, Terms of Service, Privacy Policy, a refund and cancellation policy, and
+a contact route."* Measured against `nimbleclerk.com`:
+
+| Required | Have |
+|---|---|
+| Terms of Service | ✅ `/terms` |
+| Privacy Policy | ✅ `/privacy` |
+| **pricing** | ❌ — nothing in this repository names a price, deliberately (§71) |
+| **refund and cancellation policy** | ❌ — the word *refund* is in **no** legal page, though §3's lever 5 is a 14-day promise |
+| **a contact route** | ❌ — `privacy.html` says *"contact us at the address below"* and **there is no address below** |
+
+**That last one is a live defect on a legal page**, and it was found by grepping
+for a payment prerequisite rather than by reading the page — §40's shape, where
+a page promises something the deployment does not deliver and nothing
+contradicts it. Worth fixing on its own merits whatever happens to payments.
+
+The other two are the pricing commit's work anyway, which produces a scheduling
+fact worth knowing early: **verification is gated on the same commit as the
+price**, so its 1–3 days cannot be got out of the way in advance.
+
+### An Ethoca-deflected chargeback is invisible to this deployment
+
+*"Ethoca alerts and deflections never create a dispute"*, so they emit no
+`dispute.*` event at all: an alert refund fires **`refund.succeeded`** and any
+linked cancellation fires *"the usual subscription event"*, while a deflection
+fires **nothing**.
+
+The product behaves correctly — §70's route records the cancellation like any
+other — so this is not a bug. What it means is that **any count of disputes
+taken from our own data is structurally blind to them**, which matters for
+whatever reconciliation gets built. Recorded neutrally: it is ordinary industry
+practice, and
+[`docs/PAYMENTS.md`](docs/PAYMENTS.md) §2's note about the FTC action against a
+comparable MoR was about using the mechanism to *mask* a fraud rate while
+onboarding bad actors, not about the mechanism.
+
+Separately, **seven `dispute.*` events exist and this deployment subscribes to
+none of them.** Not wired here — nothing reads billing state yet — but
+`dispute.lost` on a live subscription means money clawed back, so it belongs
+with enforcement rather than after it.
+
+### Blast radius
+
+**Documentation only.** No code, no served file, no route, no wire change — so
+`CACHE_VERSION` stays `crmbuilder-v67` and the counts do not move, checked
+against the diff rather than assumed (§41's rule for a docs-only change).
+`docs/API.md` needs nothing: no route and no response shape moved, which is the
+check §46 and §54 both say to run instead of reading the route count.
+
+**§27's six user-facing documents need nothing**, and the condition is §78's
+unchanged: nothing is enforced and nothing can be bought, so no user has gained
+a capability. The walk fires with enforcement — except for the **contact route**
+and the **refund policy**, which are now on §7's before-live list as items that
+have to exist before an account can be verified, and the first of which is a
+defect rather than a feature.

@@ -404,12 +404,18 @@ is worth more than the rest combined.
 1. **Annual billing, invoiced, for anything above a single seat.** A bank
    transfer has **no chargeback mechanism at all**. It also removes 11
    transaction fees per year and pulls cash forward, so this points the same
-   way as the margin.
+   way as the margin. **And it is worth more than this list knew — see the RDR
+   finding below, which makes annual the only one of the two prices that can be
+   defended at all.**
 2. **A statement descriptor the customer recognises** — `NIMBLECLERK`, never
    the processor's name. *"I don't recognise this charge"* is the most common
    consumer dispute and it is entirely self-inflicted. **Check where this is
    configured on the provider's side**; on an MoR it is usually their name plus
-   a seller string, and the seller string is the lever.
+   a seller string, and the seller string is the lever. **Searched, 2026-10-17:
+   the documentation does not cover statement text anywhere** — its branding
+   pages are the checkout, the payment link and the invoice, which are three
+   places that are not a card statement (§8). So this lever is a support
+   question, and it is the one to ask first because it is the cheapest.
 3. **A pre-renewal email, 7 days out, naming the amount and carrying the cancel
    link.** For an annual renewal this is the difference between a renewal and a
    dispute. **Note what this deployment cannot do:** it has no outbound email of
@@ -426,10 +432,52 @@ is worth more than the rest combined.
 5. **Refund on request inside 14 days, without argument.** UK and EU consumers
    have statutory cancellation rights for digital services anyway; a refund
    costs the fee and a chargeback costs the amount, the fee, and a mark against
-   a threshold you cannot see.
+   a threshold you cannot see. **Confirmed implementable, 2026-10-17:** the
+   merchant refund window is *"30 days from the payment date (default)"* and
+   after 30 days refunds are not allowed, so 14 days sits inside it with room.
+   Note it is **more generous than the provider's own customer-facing 7 days**,
+   which is the right direction and is a promise we make rather than one they
+   make for us. The cost is not symmetric with a chargeback and the asymmetry
+   is the argument: a refund reverses the tax and charges a **refund fee**,
+   while *"the Payment Fees entry has no reversal"* — so the original
+   transaction fee is kept either way, and the chargeback additionally takes
+   the amount and a dispute fee that is **not** returned on a win.
 
 **Items 2–5 are product decisions, not payment configuration.** They belong in
 whatever ships enforcement, and they are cheaper to build in than to retrofit.
+
+### The RDR finding, which reshapes this whole section
+
+**Visa Rapid Dispute Resolution is enabled by default on every account, with a
+$100 USD threshold**, and a dispute it resolves *"appears as a lost dispute"*
+with an RDR fee in place of the dispute fee. Read against §5's decided prices
+that is not a detail, it is a dividing line:
+
+| | Against the $100 RDR threshold | What a dispute is |
+|---|---|---|
+| **$15 monthly** | under it | **auto-refunded, auto-lost. There is no defence stage** |
+| **$150 annual** | over it | a real dispute: 10 days, evidence, a decision |
+
+So the 10-day window and the evidence rules §8 just closed — the answer that
+came back *in our favour* — **do not apply to the monthly price at all.** For
+monthly, every one of items 2–5 is the entire strategy, because item 1's
+alternative of arguing does not exist. And item 1 gains a second reason on top
+of the eleven removed transaction fees and the removed chargeback mechanism:
+**an annual price is the only one that is above the line where arguing is
+possible.**
+
+**This also fixes the shape of this section's old self-criticism.** The
+2026-10-07 version assumed the worst of a threshold it could not read, and the
+correction below says that was right as a posture and wrong as a fact. The RDR
+default is the opposite case: it is **worse than the worst case that was
+assumed**, because what was assumed was a threshold that punishes you for
+losing, and what is actually configured is a mechanism that loses for you
+before you are asked.
+
+**What it does not do is change the ranking.** Items 2–5 are preventive and
+prevention is what both rows of that table reward. It changes how much item 1
+is worth, and it removes any temptation to build an evidence workflow for a
+$15 subscription.
 
 ---
 
@@ -830,26 +878,97 @@ reverts to the default — which is precisely *"a restore silently reopened
 signups the operator had shut"*, with money attached in whichever direction the
 default points.
 
-### What the fee leaves — NOT computable yet, and deliberately left blank
+### What the fee leaves — THREE of the four columns are now known
 
 The 2026-10-07 version carried a net-rate table computed from Paddle's
-5% + $0.50. **That table is deleted rather than converted**, because converting
-it would mean putting a Dodo fee in this document that nothing here has read —
-which is the same class of error as §17's records-times-a-constant estimate, in
-the one place it would be quoted back.
+5% + $0.50. **That table was deleted rather than converted**, because converting
+it would have meant putting a Dodo fee in this document that nothing here had
+read — the same class of error as §17's records-times-a-constant estimate, in
+the one place it would be quoted back. That discipline stands, and it is why the
+figures below carry a **grade** each:
 
-Fill it in from the dashboard or the MSA, in this shape, and record the date:
+| Grade | Means | Used for |
+|---|---|---|
+| **A** | read on `docs.dodopayments.com` on 2026-10-17, quoted in §8 | arithmetic, and decisions |
+| **B** | the vendor's own blog and one third-party review, agreeing | sizing, never a commitment |
+| **C** | a third-party index only | a prompt to go and check |
 
-| | Gross | Provider fee | Payout fee | FX into INR | Net | Kept |
-|---|---|---|---|---|---|---|
-| Team, monthly | £49 | ? | ? | ? | ? | ? |
-| Team, annual | £490 | ? | ? | ? | ? | ? |
+#### Column 2, the payout fee: grade A, and at this volume it is the big one
 
-**All four middle columns, not just the first.** A net rate that ignores the
-payout fee and the FX spread is wrong in the direction that flatters it, and
-annual billing is worth roughly a point on fees alone before the 11 removed
-dispute opportunities — so the comparison between the two rows is the thing the
-table is for.
+No estimate is needed for this and the result is counter-intuitive. **$5 per
+payout below $1,000, with a default $100 minimum that can be lowered to $50.**
+
+| Payout size | $5 as a share |
+|---|---|
+| $50 (the lowest settable threshold) | **10%** |
+| $100 (the default) | **5%** |
+| $1,000 (where the fee stops) | 0.5% |
+
+So **the instinct to lower the threshold to get paid sooner doubles the worst
+fee in the stack**, and the correct early-stage move is to leave it at $100 or
+raise it. At $15 per workspace that is about seven workspace-months per payout,
+and a bi-monthly cycle that mostly carries forward — *"if your payable balance
+does not meet the threshold, it carries forward"* — which is the right outcome
+rather than a problem to solve.
+
+#### Column 3, FX into INR: grade A, and the column belongs to a different party
+
+**There is no Dodo FX spread to put here.** A wallet linked as a settlement
+currency is *"paid out in its own currency… Dodo Payments does not convert it
+and charges no conversion fee"*, and **INR payouts are discontinued** anyway.
+What remains is the seller's Indian bank converting an inbound USD wire *"at its
+own exchange rate"*, plus that bank's charges and any SWIFT intermediary and
+beneficiary fees — none of which appear on the payout invoice. **So this column
+is a question for the bank** (§4's FIRC and one-year-window territory), and the
+answer is the same for both rows, which means it does not affect the monthly
+versus annual comparison the table exists for.
+
+**One live consequence of the INR discontinuation.** §73 proved an India-issued
+card gets INR presentment, and an INR balance *"does not count toward your
+threshold"* and is not included in scheduled payouts — it has to be moved to USD
+by hand, less a conversion fee. So **an Indian customer creates a stranded
+balance.** Rare for a USD product sold to the UK and EU, and worth knowing
+before it looks like a missing payout.
+
+#### Column 1, the provider fee: grade B, and it is the one blocker left
+
+| | |
+|---|---|
+| Base | **4% + $0.40** per transaction |
+| International | **+1.5%** |
+| Subscription | **+0.5%** |
+
+**Every sale this product makes is both**, so the rate to size against is
+**6% + $0.40**:
+
+| | Gross | Fee (grade B) | Share |
+|---|---|---|---|
+| **monthly** | $15 | $0.90 + $0.40 = **$1.30** | **~8.7%** |
+| **annual** | $150 | $9.00 + $0.40 = **$9.40** | **~6.3%** |
+
+**Annual is worth about 2.4 points on fees alone**, which is more than §5's
+earlier guess of *"roughly a point"* — because at $15 the fixed $0.40 is 2.7% by
+itself. That is before the eleven removed dispute opportunities and before §3's
+RDR finding, which is the larger argument.
+
+**Do not quote these.** Grade B is Dodo's own blog plus one third-party review
+agreeing; the pricing page is unreachable from this session (§8). One grade-C
+index additionally lists **$1 per refund**, **$30 per dispute** and **$5 per
+payout under $1,000** — and the third of those **matches grade A exactly**,
+which is corroboration of that source and not of the other two figures. If $30
+is near right, **a single dispute costs twice what a monthly subscription
+earns**, and §3's RDR finding says that dispute cannot be contested. That is the
+sizing that matters, and it is the reason to read the pricing page rather than a
+reason to believe this paragraph.
+
+#### Column 4, which is new and is not ours to keep
+
+The **adaptive-currency fee** — 4% under $500 — is *"added on top of your
+displayed price and borne by the customer"*. It does not reduce the net, so it
+is not in the table; it raises what a UK customer is charged for a USD-priced
+subscription, which is §3's lever 2 working against us on every renewal. §8 has
+it in full, including that it is inside the ratio this section previously read
+as an FX rate.
 
 ---
 
@@ -1300,17 +1419,45 @@ sessions**, or **set with the price decided and the documents walked**.
 
 ### Before live mode — and most of this is not code
 
-1. **Read the MSA** — **one of its four answers is in (2026-10-17), three are
-   not.** ~~is the provider contractually the seller of record~~ **done**: §2.1
-   and §4.3 appoint it reseller and MoR, §3.1(iv) and §5 put global VAT/Sales
-   Tax on them (§2 has the record, §1's blockquote is resolved). Still wanted
-   from the same document: **the fee**, **the chargeback set-off and
-   per-dispute fee** (and whether the threshold is by value or by count, and
-   whether a *won* dispute still counts — §2's blockquote has the three
-   questions), and **the payout plus FX into INR**. Those are what fill §5's
-   blank table and correct §3; the row that closed does not fill any of it.
-2. **Account Verification.** Live mode exists at signup; live *payments and
-   payouts* turn on after it. Unknown duration and somebody else's timeline.
+1. **~~Read the MSA~~ — mostly DONE, and the documentation did more of it than
+   the contract.** The seller-of-record row closed from the MSA on 2026-10-17
+   (§2.1/§4.3 appoint it reseller and MoR, §3.1(iv)/§5 put global VAT/Sales Tax
+   on them). The three that were still wanted then: **chargeback set-off and the
+   evidence questions are closed** from the provider's own docs, not the
+   contract (§8 — set-off confirmed, the fee kept on a win, evidence allowed
+   with a 10-day deadline), **payout mechanics are closed and the FX column
+   moved to the seller's bank** (§5), and **only the fee percentage is left** —
+   published on a pricing page this session cannot reach, so it is one browser
+   visit rather than a contract read. **Ask for the per-seller dispute rate at
+   the same time**, since that is the one commercial question no page answered.
+2. **Account Verification — 1–3 business days, and THREE of its requirements
+   are things this site does not have.** Live mode exists at signup; live
+   payments and payouts turn on separately, and payouts additionally need the
+   bank form approved plus a Monitoring Review plus compliance review. The
+   individual path is Product Information → **KYC** (government photo ID from an
+   accepted country, plus a selfie liveness check) → **Bank Verification**, whose
+   *"account holder's name must match your Identity Verification document."*
+
+   And the part that is **ours**: the live site *"must be publicly reachable and
+   show pricing, Terms of Service, Privacy Policy, a refund and cancellation
+   policy, and a contact route."* Measured against `nimbleclerk.com` on
+   2026-10-17:
+
+   | Required | Have |
+   |---|---|
+   | Terms of Service | ✅ `/terms` |
+   | Privacy Policy | ✅ `/privacy` |
+   | **pricing** | ❌ — nothing in this repository names a price, deliberately (§71), and `/guide` asserts in a test that it shows no currency figure |
+   | **refund and cancellation policy** | ❌ — the word *refund* appears in **no** legal page. §3's lever 5 is the 14-day promise and it has never been written down anywhere a customer can read it |
+   | **a contact route** | ❌ — and worse than absent: `privacy.html` says *"contact us at the address below"* and **there is no address below** |
+
+   The last one is a **live defect on a legal page**, found here by grepping for
+   a payment prerequisite rather than by reading the page — §40's shape, where a
+   page promises something the deployment does not deliver and nothing
+   contradicts it. It is worth fixing on its own merits whatever happens to
+   payments. The other two are the pricing commit's work anyway (§2.1's twelve
+   files), which means **verification is gated on the same commit as the price**
+   and cannot be started early to get the 1–3 days out of the way.
 3. **One CA session** — §4's five questions, with question 1 now live because
    the account is an individual one. Get the intermediary point in writing.
 4. **File the LUT** for the current financial year if it is not filed.
@@ -1368,19 +1515,46 @@ sessions**, or **set with the price decided and the documents walked**.
 ## 8. What this document does not know
 
 Recorded so the gaps read as checked rather than missed. **The 2026-10-07
-version's open items were all about Paddle and are moot**; these replace them,
-and every one of them is answered by the same read — the dashboard and the MSA.
+version's open items were all about Paddle and are moot**; these replace them.
+
+**Six of them closed on 2026-10-17 from the provider's own documentation**, and
+the sentence above them — *"every one of them is answered by the same read — the
+dashboard and the MSA"* — was **wrong**, which is the reusable part. It assumed
+the open questions were commercial and therefore contractual, so the only
+instruments were a dashboard login and a signed agreement. Most of them were
+**published**: `docs.dodopayments.com` states the dispute set-off, the evidence
+procedure, the payout schedule and fee, the minimum payout, the conversion-fee
+tiers, the refund-fee treatment and the verification requirements outright. The
+read that closed them needed no account and no lawyer. A question filed under
+*"ask the vendor"* is worth one pass of *"did the vendor already say"* first.
+
+**What is still open is narrower and differently shaped: it is the ONE figure
+the vendor publishes only on a page this session cannot reach.** The marketing
+apex is proxy-blocked here — measured, not assumed:
+
+```
+www.dodopayments.com/pricing   301 -> https://dodopayments.com/pricing
+dodopayments.com               curl: (56) CONNECT tunnel failed, response 403
+```
+
+Which is §64's shape exactly (`paddle.com` is blocked the same way), and it is
+why the headline rate below is recorded **by grade of evidence** rather than as
+a figure. §72 established that discipline for the seller-of-record row and it
+applies harder here, because a fee is the number that gets multiplied.
 
 | | Why it is open |
 |---|---|
-| ~~**Whether the provider is contractually the seller of record for our sales**~~ | **CLOSED 2026-10-17 — the only row here that has ever closed, and it was the most important line in this document.** The MSA (dated 2026-02-26) appoints Dodo reseller and Merchant of Record at §2.1/§4.3 and puts global Sales Tax/VAT collection, reporting and remittance on them at §3.1(iv)/§5. §2 carries the sections and the consequences. The two weaker kinds of evidence are left recorded there rather than deleted, because the *order* is the lesson: behaviour (itemised destination tax) could have come from a well-built gateway, a named **Active** account mode was much stronger and still the vendor describing itself, and only the agreement settled it. **Conditional on BYOP staying disabled** — a mode whose own description is *you remain the merchant of record* is on its face outside the appointment that provides the shield |
-| **The fee** | no figure is stated anywhere in this document on purpose. §5's net table is blank rather than estimated |
-| **Payout mechanics into INR, and the FX spread** | the two columns that make a net rate honest (§5), and the thing that decides whether monthly or annual is worth the difference |
-| **Chargeback set-off, the per-dispute fee, and whether a per-seller rate exists** | §3 assumes the worst of all three. §2's blockquote has the three questions to ask, drawn from a comparable MoR's published policy |
-| **Whether GBP presentment is available on this account** | **Narrowed, not closed.** Localised presentment demonstrably works — one USD-based product presented `$65.00` and `₹6,429.04` to two cards (§5) — so the mechanism is confirmed and only GBP specifically is unread. Step 2 of §7 is where it is found out |
+| ~~**Whether the provider is contractually the seller of record for our sales**~~ | **CLOSED 2026-10-17 — the first row here to close, and the most important line in this document.** (It was *"the only row here that has ever closed"* for a few hours, and six more closed the same day — a superlative with a short shelf life, corrected rather than deleted because the claim's own staleness is §29's thesis.) The MSA (dated 2026-02-26) appoints Dodo reseller and Merchant of Record at §2.1/§4.3 and puts global Sales Tax/VAT collection, reporting and remittance on them at §3.1(iv)/§5. §2 carries the sections and the consequences. The two weaker kinds of evidence are left recorded there rather than deleted, because the *order* is the lesson: behaviour (itemised destination tax) could have come from a well-built gateway, a named **Active** account mode was much stronger and still the vendor describing itself, and only the agreement settled it. **Conditional on BYOP staying disabled** — a mode whose own description is *you remain the merchant of record* is on its face outside the appointment that provides the shield |
+| **The fee — the percentage** | **STILL OPEN, and it is the only row that blocks §5's table.** Stated nowhere in the documentation: the payouts page, the payout-structure page and the FAQ each describe the transaction fee and then say *"Refer to the pricing page"*. That page is unreachable from here (above). §5 carries what the weaker sources say, graded |
+| ~~**Payout mechanics into INR, and the FX spread**~~ | **CLOSED as to mechanics, and the FX question MOVED to a different counterparty.** Payouts consolidate through **USD, GBP and EUR wallets only**; **INR native payouts are discontinued** — *"Scheduled payouts do not include an INR balance, and an INR balance does not count toward your threshold."* Default cycle **bi-monthly**, initiated on the **18th and the 4th**; minimum **$100**, lowest settable **$50**, carried forward below it; **payout fee $5 for payouts below $1,000**. A wallet **linked as a settlement currency** is *"paid out in its own currency… Dodo Payments does not convert it and charges no conversion fee."* So **there is no Dodo FX spread into INR to find** — on a linked USD wallet the conversion happens at the seller's Indian bank, *"at its own exchange rate"*, plus that bank's charges and any SWIFT intermediary and beneficiary fees, none of which appear on the payout invoice. The column is still unfillable and **it is now a question for the bank, not the provider** (§4's FIRC/one-year-window territory). §5 has what this does to the net rate, and it is larger than the fee at low volume |
+| ~~**Chargeback set-off, the per-dispute fee, and whether a per-seller rate exists**~~ | **Set-off CLOSED, two of §2's three questions CLOSED, the per-seller rate still open.** *"When a dispute opens, the disputed amount and a dispute fee are deducted from your balance"* — set-off confirmed, and §3 was right to assume it. *"The dispute fee is not refunded, even if you win"* — question 2 answered, and against us. *"You decide whether to accept or counter each dispute, and you supply the evidence"*, **10 days** to respond, PDF/JPG/PNG/ZIP under 5 MB, no links — question 3 answered, and **in our favour**, which §3 had assumed away. Question 1 (by value or by count) **narrows without closing**: the *scheme* thresholds are published with **count floors** a small seller cannot reach — VAMP global at a 1.5% ratio **and ≥1,500** disputes and fraud reports in a month, CEMEA at 2.2% **and ≥150** worth **≥$75,000** — but those are what the provider manages at its own level, not a rate it imposes on one seller. Whether a tighter per-seller rate exists is unread. **The per-dispute fee amount is on the pricing page**, so it shares the row above |
+| ~~**Whether GBP presentment is available on this account**~~ | **CLOSED — yes.** The supported-currency table lists **GBP** for the United Kingdom with a **0.30 GBP** minimum, among ~80 codes. It is also one of the three **payout wallet** currencies, which is the half that matters more and which §5's reversal to USD did not know: a GBP-priced product with a linked GBP wallet has **no conversion at the provider's end at either side of the transaction**. And the mechanism carries a price §5 did not know either — see the next row |
 | **What the India acquirer's merchant name is on the mandate screen** | the authorization page is served by **Cashfree** and reads *"Click here to go to **Business Name** website"* — a literal placeholder, on the one screen where a customer is granting a standing debit. It is the provider's configuration, not ours, so it is a support question rather than a setting; raise it before live mode, because the screen it is on is the one that loses mandates |
-| **Account-verification requirements for an individual seller** | §7's *before live mode* step 2 has an unknown duration, and it gates every live payment |
-| **Whether the statement descriptor is configurable** | §3's lever 2 is the cheapest dispute prevention there is, and on an MoR the seller string may or may not be ours to set |
+| **NEW — the adaptive-currency fee, which nothing here had costed** | **4% under $500, 3% from $500 to $1,500, 2% above**, applied when the customer's currency differs from the product's base currency. *"Added on top of your displayed price and borne by the customer"* by default; a **Fees Inclusive** setting moves it onto the seller, deducted from settlement; *"Fees are not refunded."* So a **$15 USD** product shows a UK customer **$15 plus 4%**, as a recurring surcharge on a converted line — and §3's lever 2 says a foreign-currency line is itself a dispute trigger. This is the cost §5's reversal to USD took without knowing it existed, and it also **corrects §5's own arithmetic**: the `₹6,429.04` against `$65.00` is a ratio of ~98.9 that §5 read as an implied FX rate, and it is **rate × 1.04** — the fee is inside the number |
+| ~~**Account-verification requirements for an individual seller**~~ | **CLOSED, and it found three blockers nobody had connected to payments.** An individual is a *"creator or sole proprietor"* with no company registration; three forms in order — Product Information, **Identity Verification (KYC)** with a government photo ID from an accepted country plus a selfie liveness check, and **Bank Verification** whose *"account holder's name must match your Identity Verification document."* **Typical 1–3 business days**, the ID check *"completes within minutes"*. Live payments and payouts **turn on separately**: payouts additionally need the bank form approved **and** a Monitoring Review **and** compliance review. And the requirement that is ours to fix — see §7 |
+| ~~**Whether the statement descriptor is configurable**~~ | **Still open, but now open WITH evidence rather than unread.** Searched: the supported-currency, payouts, payout-structure, disputes, refunds, verification and FAQ pages carry nothing about statement text. The FAQ's branding entries cover the **checkout page**, **payment links** (logo, brand name, support email) and **invoices** — three places that are not a card statement. So the documentation does not address §3's lever 2 at all, which makes it a support question with a specific wording rather than a page to go and find |
+| **NEW — Visa RDR is ON BY DEFAULT at a $100 threshold, and that reshapes §3** | *"Visa RDR is enabled by default on all Dodo Payments accounts with a $100 USD threshold"*, and *"A Visa RDR fee replaces the dispute fee for these disputes"*; an RDR-resolved dispute *"appears as a lost dispute"*. **So at the $15 monthly price every dispute is auto-refunded and auto-lost with no defence stage**, while the **$150 annual** price is above the threshold and is the only one of the two that can be contested at all. §3 has the consequence; it is the strongest argument for annual billing in this document and §3 reached it without knowing this existed. The RDR and Ethoca fee amounts are on the pricing page |
+| **NEW — an Ethoca-deflected chargeback is INVISIBLE to this deployment** | *"Ethoca alerts and deflections never create a dispute"*, so they emit no `dispute.*` event: an alert refund fires **`refund.succeeded`** and any linked cancellation fires *"the usual subscription event"*, and a deflection fires **no event at all**. The product therefore behaves correctly — §70's route records the cancellation — while **any count of disputes taken from our own data is structurally blind to them.** Recorded neutrally: this is ordinary industry practice and §2's note about the FTC's action against a comparable MoR was about using it to *mask* a fraud rate while onboarding bad actors, not about the tool. What it means here is only that the dispute count visible to us is not the dispute count the schemes see, by design |
 | **Where `MARKETING.md`'s copy has already been published** | §2.1's own open item, and only the owner can answer it |
 | **Softex / STPI applicability** | §4's CA question 3 |
 
@@ -1392,8 +1566,17 @@ test cards, the static-link parameters, and the two CLI tools that cannot test
 verification. **§7 is not merely drivable — it has been driven**, in test mode,
 end to end: a declined payment and a successful one on each of two regions, the
 signature check passing, ten events delivered, and the Settings card reading
-`active` with the next billing date. What that leaves open is this table, and
-every row of it is commercial.
+`active` with the next billing date.
+
+**What that leaves is four rows, and they are no longer all commercial.** One is
+a single published figure behind a blocked page (the fee, and the dispute, RDR
+and Ethoca fee amounts with it); one is a scheme-level question the vendor may
+not impose at all (a per-seller dispute rate); one is a question with no
+documentation and therefore a support ticket (the statement descriptor); and two
+are the owner's alone (`MARKETING.md`'s published copy, and Softex/STPI). **The
+operational mechanics are now known** — set-off, evidence, deadlines, payout
+cycle, payout fee, minimum, conversion tiers, refund treatment, verification —
+and knowing them changed §3 and §5 rather than merely filling a gap.
 
 **And the thing no document here can establish.** §40's rule: *a mechanism that
 hangs off a URL configured somewhere else has a failure mode no test in this
