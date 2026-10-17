@@ -187,9 +187,16 @@ never change, because everything cross-references them.
 | Events that production would see first, and cannot be produced in test mode | §73 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §9 |
 | Why Stripe cannot collect for an Indian seller, and what an MoR sidesteps | §64 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §1 |
 | What an MoR protects you from, and the half it does not | §64 · §72 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §3 |
-| **A claim on a customer-facing card that only the MSA can support** | §72 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §1 · §2 · §40 |
+| **A claim on a customer-facing card that only the MSA can support** — now supported | §72 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §2 · §1 · §40 |
 | **A one-click switch in somebody else's dashboard that would invert the tax position** | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §2 · §1 · §40 |
 | A settings page that narrows a contractual question without closing it | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §2 · §8 · §73 |
+| **Three grades of evidence for one question**, and why only the last one closed it | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §2 · §8 · §73 |
+| One answered row read as a cleared table | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §8 · §7 step 1 · §17 |
+| A chargeback lever that turns out to belong to the provider | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §2 · §3 · §73 |
+| **A currency decision that requires a line of copy** | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · §3 · §45 |
+| **A grandfathering formula whose base inverts its own purpose** | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 |
+| A derived cutoff that can already be in the past, and the floor that is the promise | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2 · §36 · §39 |
+| **The trial's dependency path** — and the branch that needs a credential nothing reads | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2 · §72 · §17 · §71 |
 | Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |

@@ -257,6 +257,16 @@ workspace, up to 5 users, $150 annual, 7-day trial with a card up front** —
 behind a `billingMode` switch that is **`free` until an operator flips it**, so
 nothing is charged on the day this is built.
 
+**And the legal premise is verified rather than assumed, which is the other
+thing that was blocking.** The MSA (dated 2026-02-26, read 2026-10-17) appoints
+Dodo reseller and Merchant of Record and puts global VAT/Sales Tax on them —
+[`PAYMENTS.md`](PAYMENTS.md) §2 has the sections. That matters here because the
+*price* this enforces is tax-inclusive on the customer's side and tax-free on
+ours only while that holds, so **`billingMode: 'paid'` and BYOP being disabled
+are one state, not two** (§7 step 12). It does **not** mean the commercial
+terms are known: the fee, the chargeback set-off and the FX into INR are still
+unread, so nothing here can be sized against a margin.
+
 **The headline finding is that most of this is already shipped.** Verified in
 the source rather than recalled:
 
@@ -280,6 +290,31 @@ suspension system. What actually has to be decided and written:
    `scripts/restore.mjs`** — which is where that list lives, not in
    `server.js`. Missing it means a restore silently reverts the mode, which is
    §17's own recorded failure with money attached.
+
+   **The logic, written out because the two existing levers are the template
+   and one of them is not quite enough** (`server.js:108–175`):
+
+   | | |
+   |---|---|
+   | values | `'free'` · `'paid'` — and `BILLING_MODES` is the allow-list a stored value is checked against, so an unrecognised one falls to the default rather than being trusted |
+   | **default** | **`'free'`**, and this is load-bearing rather than tidy: a deployment that has never set the key must not start charging, and neither must one whose settings read *fails*. `signupMode()`'s `catch` already has exactly this shape — *"a settings read must never be what stops people signing in"* — and here the equivalent is that it must never be what starts a charge |
+   | precedence | stored → `BILLING_MODE` env → `'free'`. §16's rule, so a redeploy cannot undo an operator and the env var only decides for a deployment that never set one |
+   | cache | in-process, invalidate on write, **30s TTL** — the same `SIGNUP_MODE_TTL_MS` constant, because the reason is the same: a multi-instance deployment converges rather than staying wrong |
+   | writer | `setBillingMode(mode, userId)` beside `setSignupMode`, writing `billingMode` + `billingModeSetAt` + `billingModeSetBy` and re-seeding the cache |
+   | route | a `mode-switch` row on the existing Admin → Deployment card, platform-admin only, like the two beside it. `.mode-switch` already matches two rows, so the third needs `:has([data-mode])`-style addressing in any test (§24) |
+
+   **It has a consumer the other two levers do not, and that changes the
+   reader's shape.** `signupMode()` and `orgCreation()` return a *string* and
+   throw the provenance away — nothing asks when the decision was taken. Item 3
+   below needs `billingModeSetAt` on every enforcement check, so either this
+   reader returns `{ mode, setAt }` or there is a second read of the same
+   document on a path that runs per request. One read, returning both.
+
+   **And the cache guard cannot be copied verbatim.** Both existing readers
+   test `if (cache.value && …)`, which is fine for two non-empty strings and
+   wrong the moment the cached thing is an object carrying a `setAt` that may
+   legitimately be `0` or absent. Guard on the *timestamp* of the cache entry,
+   not on the truthiness of what it holds.
 2. **The conflation to settle.** `suspendedAt` is currently an **operator**
    lever with one reason string. If billing writes the same field, an operator
    resuming a storage suspension also clears a billing one, and the reverse.
@@ -299,6 +334,66 @@ suspension system. What actually has to be decided and written:
    touching a row. [`docs/PAYMENTS.md`](PAYMENTS.md) §5 has the reasoning and
    the wording the free-mode card must use, which promises **notice, not
    duration**.
+
+   **The cutoff rule, decided 2026-10-17:**
+
+   ```
+   grandfatheredUntil = org.billingExemptUntil            // stored override, if any
+                     ?? orgs.createdAt + GRANDFATHER_WINDOW   // default, derived
+   ```
+
+   …applied only where `orgs.createdAt < billingModeSetAt`, which is what
+   *"was already here when the switch was flipped"* means. A workspace created
+   afterwards is not grandfathered at all — it gets the trial.
+
+   **The two layers are complementary rather than competing**, and that is
+   worth saying because the formula and the field read like two answers to one
+   question. The formula is the **default**, derived from two timestamps that
+   already exist, so it needs no field and no migration. `billingExemptUntil`
+   is the **override**, which exists because the policy is case-by-case and
+   nothing derivable can say *this* org got eighteen months and *that* one got
+   three. `GRANDFATHER_WINDOW` lives in `platform` beside the mode, so the
+   uniform answer is a number an operator sets at the moment there is
+   information to set it from.
+
+   > **The base is `createdAt`, and that inverts the incentive — flagged, not
+   > silently implemented.** The window runs from each workspace's own signup,
+   > so **the earliest users get the least remaining free time at the switch**:
+   > with a 12-month window and a switch eleven months after launch, the first
+   > signups have one month and somebody who joined yesterday has twelve. The
+   > stated purpose of grandfathering is that *"the people in the free period
+   > are the ones giving feedback"* ([`PAYMENTS.md`](PAYMENTS.md) §5), and this
+   > ordering rewards them last. The alternative is one expression —
+   > `billingModeSetAt + GRANDFATHER_WINDOW`, a uniform window of notice from
+   > the day charging starts — and the per-org override is the mitigation that
+   > makes the chosen base defensible rather than wrong: the inversion is
+   > correctable one workspace at a time, by hand, which is what *case by case*
+   > already means.
+
+   **The sharp edge, and it is a defect rather than a preference.**
+   `createdAt + window` can already be **in the past** on the day the switch is
+   flipped — an org created eighteen months ago, against a twelve-month window,
+   is expired before anybody presses anything. So flipping `billingMode` would
+   **suspend the oldest workspaces instantly, with no notice at all**, which
+   contradicts the one promise the free-mode card makes in item 4: *we will
+   tell you before anything changes*. That is this file's standing failure
+   shape — a state that renders as a working feature right up to the moment it
+   costs somebody their sync.
+
+   So the computed date is **floored**, and the floor is the promise rather
+   than a safety margin:
+
+   ```
+   effectiveUntil = max(grandfatheredUntil, billingModeSetAt + NOTICE_DAYS)
+   ```
+
+   `NOTICE_DAYS` is its own figure in `platform`, not a reuse of the window:
+   they answer different questions (*how long were you free* against *how much
+   warning does anybody get*), and conflating them means shortening the window
+   also shortens the notice. **Nobody loses cloud sync within `NOTICE_DAYS` of
+   the switch, whatever the formula says** — and the enforcement test for that
+   is the one to write first, because it is the only one whose failure is
+   invisible until a real customer is on the wrong side of it.
 4. **The free-mode card**, and its wording is now load-bearing rather than
    incidental. It offers no checkout — which is what retires the test-mode
    Subscribe button §73, §74 and §76 each had to write a paragraph about — and
@@ -311,6 +406,55 @@ suspension system. What actually has to be decided and written:
 5. **The seat cap: one member count in `/api/org/invite`**, plus a refusal
    screen that explains itself (§36 rule 1). Free while no workspace is over
    it.
+6. **The 7-day trial — a dependency path, not a task.** It is in the decided
+   price table and it is the one item here whose cost is **unknown**, because
+   §5's switch was shaped specifically to defer it: *"whether the provider
+   supports a trial on a **static payment link** at all… is unread, and §69's
+   rule is not to guess."* §71 chose that link because `script-src 'self'`
+   forbids the provider's JavaScript (§30 Phase 4), so the question is not
+   whether they offer trials — it is whether they offer them on the one
+   integration shape the CSP leaves us.
+
+   **The path, in the order it resolves:**
+
+   | | |
+   |---|---|
+   | **A — trial configurable on the product** | nothing to build. The static link inherits it, `DODO_PRODUCT_ID` does not change, and the work is a field on their dashboard |
+   | **B — trial needs a Checkout Session** | a server-side API call, so the CSP is not the obstacle — but §71 declined Sessions for a different reason that still holds: a session is created, expires in 24 hours and is single-use, so it needs a round trip and an error path on a screen that currently has neither |
+   | **C — no trial on either** | the price table's *7 days* is not deliverable and the decision moves, which is a pricing question rather than a code one |
+
+   **Branch B reverses §72's own finding, and that is the consequence worth
+   knowing before anybody turns a trial on.** That section established, by
+   grep rather than recall, that **`DODO_API_KEY` is read by no line of
+   `server.js`** — a static link plus HMAC verification uses the provider's API
+   not at all, so the credential surface is one signing secret. A Checkout
+   Session is an authenticated API call. So *"today's credential surface is one
+   signing secret"* is true **until the trial lands on branch B**, at which
+   point §17's rules arrive with it: env-only, never `platform` (it is in every
+   nightly artifact), never `settings` (syncs whole to viewers), and not a
+   meta-doc sibling either, because it does not vary per tenant.
+
+   **Two things to expect in the data whichever branch wins**, because a trial
+   produces states this integration has never seen:
+
+   - **A status that is not in the map.** `STATUS_LABELS` (§76) has no
+     `trialing`, so §76's unrecognised-status path fires — the raw provider
+     word, no advice, and the portal link still offered. That is *safe and
+     ugly*, which is the right failure, and the shape is already proven by the
+     `grace_period_extended` test. Adding the label is one line once the real
+     value is observed; **adding it before is §73's refusal** — one sample is
+     not a vocabulary, and nobody has seen a trial payload.
+   - **A live subscription with no payment event.** Card-up-front means
+     `subscription.active` (or the trial status) arrives with a future
+     `next_billing_date` and **no `payment.succeeded` behind it**. The card
+     renders that correctly today — §70's two clocks are independent precisely
+     so a subscription state does not need a payment to be coherent — so this
+     is a case the existing code already handles rather than one to add.
+
+   **And a trial must never be offered to a grandfathered workspace.** They
+   are already free, so seven days of free is a *downgrade* presented as an
+   offer. The check is the same `effectiveUntil` from item 3, which is why
+   grandfathering is built before the trial rather than beside it.
 
 Two things that belong here and were easy to miss — both still true:
 

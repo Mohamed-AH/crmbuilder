@@ -98,10 +98,12 @@ because nobody is aggregating anything on your behalf.
 > seller of record"*), so the sentence is in front of customers and the MSA is
 > what has to support it.
 >
-> **Narrowed, not closed**: the account is in the provider's
-> *Billing + Payments (Merchant of Record)* mode and the dashboard reports it
-> **Active** — see §2, which also records the one-click switch on that same
-> screen that would put us in Option A.
+> **CONFIRMED 2026-10-17, from the MSA dated 2026-02-26** — §2.1 and §4.3
+> appoint Dodo Payments as reseller and Merchant of Record, and §3.1(iv) with
+> §5 put global Sales Tax / VAT collection, reporting and remittance on them.
+> So this table is the shape we are in, as a contractual fact. §2 records the
+> sections, what they do **not** cover, and the one-click switch on the
+> provider's own settings screen that would put us back in Option A.
 
 ### What Option A would cost on day one, measured rather than assumed
 
@@ -178,11 +180,12 @@ of record*, on a screen whose entire product boundary is drawn by **who the
 merchant of record is**. A gateway does not offer that as a mode; it is the
 thing being switched between.
 
-**It does not close the row, and the standard for that is the row's own**:
-*behaviour cannot answer a contractual question; the MSA can.* A settings page
-is still the provider describing its own service — it can describe it
-accurately while the agreement defines the term more narrowly, or carves out a
-jurisdiction, or makes it conditional on something. So §8's row moves from
+**It did not close the row — the MSA read below did**, and the standard was
+the row's own: *behaviour cannot answer a contractual question; the MSA can.* A
+settings page is still the provider describing its own service — it can
+describe it accurately while the agreement defines the term more narrowly, or
+carves out a jurisdiction, or makes it conditional on something. So §8's row
+moved from
 **unknown** to **strongly indicated, contract text still unread**, and §7's
 step 1 is unchanged.
 
@@ -216,6 +219,64 @@ Three things make it worth a subsection rather than a mention:
 where the rail is chosen rather than left on somebody else's screen — and it is
 step 12 of §7's *before live mode* list, because the one time somebody will be
 clicking around that tab is while switching modes.
+
+**And the MSA below makes the reason stronger than the tax analysis above.**
+The paragraph says enabling BYOP would make §4's split wrong *by our own
+reading*. What the agreement adds is that the shield is **conditional on the
+reseller appointment** — Dodo collects and remits because §2.1/§4.3 appoint it
+the seller of record for these sales. A mode whose own description is *you
+remain the merchant of record* is, on its face, outside that appointment. So
+the risk is not that our analysis changes; it is that the contractual
+protection stops applying, and nothing in the product would say so.
+
+### The MSA is read, and the seller-of-record row is CLOSED
+
+**MSA dated 2026-02-26, read 2026-10-17 by the account holder.** Both dates are
+recorded because terms get amended and a later reader needs to know *which
+version* was checked, not merely that somebody checked. The sections, as
+reported:
+
+| Section | What it establishes |
+|---|---|
+| **2.1 & 4.3** | Dodo Payments is appointed **reseller** and operates as the **Merchant of Record** |
+| **3.1(iv) & 5** | Dodo is responsible for **all** Sales Tax / VAT collection, reporting and remittance, **globally** — which is the thing that keeps §1's foreign-registration thresholds (UK VAT, EU non-Union OSS) off our side |
+| **7.1** | Dodo provides **first-tier support**: buyer-facing invoicing, payment reconciliation and refund requests, handled directly |
+
+**That answers §1's blockquote rather than merely supporting it.** §1 says
+plainly that its two-shape table *"rests on the MoR genuinely being the seller
+of record, which is a contractual fact and not a marketing one"* — and the
+contract is now the source. Option B is the shape we are in, so §4's split
+stands as written and the sentence `js/app.js` prints to customers (*"Dodo
+Payments, who are the seller of record"*) is supported by the agreement rather
+than by a vendor's settings page.
+
+**What it does NOT do, and this is the half most likely to be misread.**
+"The MSA is verified" is one row of §8, not §8. §72 listed **four** MSA
+questions and this answers the first; the fee, the chargeback set-off and
+per-dispute fee, the per-seller threshold, and the payout-plus-FX into INR are
+all still unread, so §3 still *"assumes the worst of all three"* and §5's net
+table is still blank. A reader who takes "legally verified" as a general
+clearance would fill that table from nothing, which is §17's
+records-times-a-constant in the one place it gets quoted back.
+
+**§7.1 has three consequences nobody asked for, and two of them narrow claims
+this document already makes:**
+
+- **§73's `invoice_url` gap is smaller than recorded.** That section calls our
+  screen offering no receipt *"a real gap"*. The provider does buyer-facing
+  invoicing under 7.1, so the customer does get one — from Dodo, reachable
+  through §74's portal link. The gap is that *our* card does not point at it,
+  which is a sentence rather than a feature.
+- **§3's lever 5 is not ours to operate.** That lever is *"14-day no-questions
+  refunds"*, written as a control we hold. Under 7.1 refund requests go to Dodo
+  directly, so the policy may be ours to set and the execution is theirs. Worth
+  correcting rather than leaving, because a dispute plan that counts a lever
+  somebody else pulls is a plan that over-reports its own coverage.
+- **First-tier support means a customer asks Dodo before asking us**, so the
+  Settings card's advice (§76) is the *second* thing they read. It must not
+  contradict what Dodo tells them — which is an argument for the advice staying
+  as general as it is (*use the portal*) rather than naming a remedy the
+  provider might handle differently.
 
 ### What makes this reversible, and why it matters MORE than it did
 
@@ -577,6 +638,45 @@ refusal screen that explains itself (§36's rule 1, not a control that looks
 like it works). It is free to add **now** because no workspace can be over it
 yet; it stops being free the moment one is.
 
+### What the MSA settles about the price, and the one line it requires on screen
+
+**$15 is tax-inclusive from the customer's side and tax-free from ours**, and
+that is contractual rather than observed as of 2026-10-17: §3.1(iv) and §5 of
+the MSA put global Sales Tax / VAT collection, reporting and remittance on the
+provider (§2 has the sections). So the destination tax §73 measured on a real
+checkout — 18% GST itemised on the INR one, `$0.00` on the USD one — is not a
+behaviour that might change; it is the thing they are obliged to do.
+
+**The price therefore depends on BYOP staying disabled.** Not as a tax
+analysis, which §2 already recorded, but as a term: the shield is the reseller
+appointment, and a mode described as *you remain the merchant of record* is on
+its face outside it. §7's step 12.
+
+**And one line of copy is now required, because the currency decision spends a
+chargeback lever.** §5's own reversal paragraph accepts the cost in a sentence:
+*"a foreign-currency line on a card statement is itself a dispute trigger"*
+(§3, lever 2). The mitigation for a lever you have decided to spend is to say
+so before the charge rather than after it:
+
+> Billed in US dollars. If your card is in another currency, your bank
+> converts at their rate and may add a fee.
+
+Three decisions inside that:
+
+- **Shown to everybody, never only to a guessed non-US customer.** We do not
+  know what currency the card is in — `SETTINGS.currency` is the *workspace's*
+  display currency for its own records and §5 above says plainly not to
+  conflate the two. Guessing wrong and hiding it from the UK customer is the
+  failure that matters; showing it to a US customer is a redundant sentence.
+  §45's rule: where the answer is not provable, do not preselect one.
+- **On OUR card, beside the Subscribe button**, because the provider's checkout
+  is not ours to edit and the statement is read a month later. The whole value
+  is that it arrives *before* the click.
+- **It names the bank's fee, not just the conversion.** The dispute is rarely
+  *"this is in dollars"*; it is *"this is £11.73 and I agreed to $15"* plus an
+  unexplained FX charge on the same statement line. Naming both is what makes
+  the figure recognisable, which is the one job §3's lever 2 has.
+
 ### The annual plan is over the India ceiling, and monthly is not
 
 The ₹15,000 mandate ceiling above binds annual and nothing else, and the
@@ -598,6 +698,29 @@ for the market this is aimed at and needs §5's **non-mandate path (invoice plus
 bank transfer)** for an Indian customer, who is plausible precisely because the
 seller is Indian. Two ways out if that ever matters: price annual at **$120**
 (₹14,006 inc. GST, which fits), or invoice it.
+
+**Decided 2026-10-17: invoice it.** The annual price stays **$150** and an
+India-issued card over the ceiling takes a **non-mandate path — invoice plus
+bank transfer** — rather than the same checkout. Re-pricing annual to $120 was
+the alternative and is declined: it would cut the annual price by 20% for
+**every** market to accommodate a mandate rule that applies in one, and it
+would move the two-months-free arithmetic the table above rests on.
+
+Two things make the invoice path cheap rather than a feature:
+
+- **It is the branch §3 already wants.** Lever 1 is annual invoicing precisely
+  because **a bank transfer has no chargeback mechanism at all**. So the
+  customer the ceiling forces off the card rail is the customer whose payment
+  carries the least dispute risk — the constraint and the control point the
+  same way, which is rare enough to write down.
+- **There is nothing to build until somebody asks.** No code reads it: it is an
+  invoice raised by hand and a payment reconciled by hand, against a workspace
+  an operator marks by the same `billingExemptUntil` field grandfathering uses
+  ([`SUBSCRIPTION-UX.md`](SUBSCRIPTION-UX.md) Phase 2, item 3) — a paid-by-other-means
+  workspace and a grandfathered one are the same state to the enforcement
+  check, which is *do not suspend this one until that date*. Noted because the
+  alternative reading is that annual-for-India needs a second payment
+  integration, and it does not.
 
 ### Free now, paid when a switch is flipped
 
@@ -1177,10 +1300,15 @@ sessions**, or **set with the price decided and the documents walked**.
 
 ### Before live mode — and most of this is not code
 
-1. **Read the MSA**, and get four answers: **is the provider contractually the
-   seller of record** (§1's blockquote — everything rests on it), the fee, the
-   chargeback set-off and fee, and the payout plus FX into INR. Fill in §5's
-   blank table and correct §3 from what it says.
+1. **Read the MSA** — **one of its four answers is in (2026-10-17), three are
+   not.** ~~is the provider contractually the seller of record~~ **done**: §2.1
+   and §4.3 appoint it reseller and MoR, §3.1(iv) and §5 put global VAT/Sales
+   Tax on them (§2 has the record, §1's blockquote is resolved). Still wanted
+   from the same document: **the fee**, **the chargeback set-off and
+   per-dispute fee** (and whether the threshold is by value or by count, and
+   whether a *won* dispute still counts — §2's blockquote has the three
+   questions), and **the payout plus FX into INR**. Those are what fill §5's
+   blank table and correct §3; the row that closed does not fill any of it.
 2. **Account Verification.** Live mode exists at signup; live *payments and
    payouts* turn on after it. Unknown duration and somebody else's timeline.
 3. **One CA session** — §4's five questions, with question 1 now live because
@@ -1245,7 +1373,7 @@ and every one of them is answered by the same read — the dashboard and the MSA
 
 | | Why it is open |
 |---|---|
-| **Whether the provider is contractually the seller of record for our sales** | **the most important line in this document**, and **narrowed rather than closed** — see §2. §1's entire VAT escape and §4's whole split depend on it, and `js/app.js` already prints the claim to customers. Two kinds of evidence now point the right way and neither is the contract: the *behaviour* (destination tax computed and itemised per jurisdiction, 18% GST on the INR checkout and `$0.00` sales tax on the USD one), which a well-built gateway could also produce; and the *account mode* — **Billing + Payments (Merchant of Record)**, reported **Active**, the provider's own words being *"becomes the legal seller of record"*. That second one is much stronger, because it is a mode rather than an outcome. It is still **their description of their own service**, so the row stays open: a settings page can be accurate while the agreement defines the term more narrowly or carves out a case. **From the MSA, not from a dashboard** |
+| ~~**Whether the provider is contractually the seller of record for our sales**~~ | **CLOSED 2026-10-17 — the only row here that has ever closed, and it was the most important line in this document.** The MSA (dated 2026-02-26) appoints Dodo reseller and Merchant of Record at §2.1/§4.3 and puts global Sales Tax/VAT collection, reporting and remittance on them at §3.1(iv)/§5. §2 carries the sections and the consequences. The two weaker kinds of evidence are left recorded there rather than deleted, because the *order* is the lesson: behaviour (itemised destination tax) could have come from a well-built gateway, a named **Active** account mode was much stronger and still the vendor describing itself, and only the agreement settled it. **Conditional on BYOP staying disabled** — a mode whose own description is *you remain the merchant of record* is on its face outside the appointment that provides the shield |
 | **The fee** | no figure is stated anywhere in this document on purpose. §5's net table is blank rather than estimated |
 | **Payout mechanics into INR, and the FX spread** | the two columns that make a net rate honest (§5), and the thing that decides whether monthly or annual is worth the difference |
 | **Chargeback set-off, the per-dispute fee, and whether a per-seller rate exists** | §3 assumes the worst of all three. §2's blockquote has the three questions to ask, drawn from a comparable MoR's published policy |
