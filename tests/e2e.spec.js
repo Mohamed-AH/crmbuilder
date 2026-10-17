@@ -2707,6 +2707,59 @@ test.describe('team workspaces', () => {
       expect(page.url()).not.toContain('invite=');
     }).toPass({ timeout: 10000 });
   });
+
+  test('a full team is told so, and is not offered a button that would be refused', async ({ page }) => {
+    /*
+     * The seat usage is INJECTED, per the billing card's precedent (§20, §38):
+     * filling the real cap means five sign-ins and five joins in a browser,
+     * and the arithmetic has seven Node tests in tests/seats.test.mjs. What
+     * only a browser can check is the rendering, which is this.
+     *
+     * §36's rule 1 is the point: the button is WITHHELD rather than disabled
+     * or left to be refused a second later, because a control whose effect
+     * fails reads as unfinished software. The server refuses it regardless
+     * (§14), so a stale page still fails safely — with the server's own
+     * wording, which `openInvite` already renders into the modal.
+     */
+    await onboard(page, { name: 'Full House Ltd' });
+    await signIn(page, uniqueEmail('seatcap'));
+
+    let seats = { cap: 5, members: 3, pending: 2, taken: 5, full: true };
+    await page.route('**/api/org/members', async (route) => {
+      const res = await route.fetch();
+      const body = await res.json();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ...body, seats }),
+      });
+    });
+
+    await page.goto('/app#/settings');
+    const team = page.locator('.card:has(h2:text-is("Team"))');
+    await expect(team).toBeVisible({ timeout: 20000 });
+
+    await expect(team).toContainText(/This workspace is full/i);
+    /*
+     * Pending invites named separately. "5 of 5 taken" to an owner who can
+     * see three colleagues reads as a miscount — the other two are links they
+     * sent and forgot, and revoking one is the cheapest fix they have.
+     */
+    await expect(team).toContainText(/3 of 5 places are taken and 2 more are held by unused invites/i);
+    await expect(team).toContainText(/Revoke one below, or remove someone/i);
+    await expect(team.locator('#invite-btn')).toHaveCount(0);
+
+    /*
+     * And with room it comes back AND names what is left — asserted in the
+     * same test, because an absence proves nothing on its own: a card that
+     * never renders the button would satisfy the half above.
+     */
+    seats = { cap: 5, members: 3, pending: 0, taken: 3, full: false };
+    await page.reload();
+    await expect(team.locator('#invite-btn')).toBeVisible({ timeout: 20000 });
+    await expect(team).toContainText(/room for 2 more/i);
+    await expect(team).not.toContainText(/This workspace is full/i);
+  });
 });
 
 /*

@@ -3589,6 +3589,70 @@ async function checkSignup(email, code, inviteCode) {
 const INVITE_TTL_DAYS = Number(process.env.INVITE_TTL_DAYS || 7);
 const INVITE_REJECTION = 'That invite link is not valid. Ask for a fresh one.';
 
+/*
+ * The seat cap — docs/PAYMENTS.md §5's price table: one workspace, up to five
+ * people. Counted at invite time, never metered: there is no per-seat charge
+ * to meter, and a count is a count.
+ *
+ * NOT gated on `billingMode`, deliberately, and this is the one decision here
+ * worth arguing with. Items 1-3 of Phase 2 all changed no behaviour until an
+ * operator flips the switch, so a reader would expect this to follow. It does
+ * not, because the cap is part of the product's SHAPE rather than part of
+ * charging for it: "up to 5 users" is true of the free period and the paid one
+ * alike, and gating it would mean flipping the switch silently takes away
+ * invites an owner had been able to send the day before. A limit that arrives
+ * with a bill is the worse surprise.
+ *
+ * Env rather than an operator setting in `platform`, which is the other place
+ * it could live. §78 put the grandfather window and the notice days there
+ * because an operator reads them off a dry-run screen before flipping
+ * something irreversible; a seat cap has no such screen, and §16's argument
+ * for a stored lever is about incidents — opening or pausing signups without a
+ * redeploy — which a seat number is not. Say that rather than leaving the
+ * asymmetry to be read as an oversight.
+ *
+ * A PER-ORG override is deliberately not built. It is the obvious next thing
+ * the moment somebody negotiates a sixth seat, and it is §78's
+ * `billingExemptUntil` shape exactly — a nullable number on the org, never a
+ * boolean. Not invented ahead of a customer asking.
+ */
+const SEAT_CAP = Math.max(1, Number(process.env.SEAT_CAP) || 5);
+
+/*
+ * Members plus invites that could still be redeemed.
+ *
+ * Counting members ALONE is the version that looks right and does not work: an
+ * owner one seat short can mint any number of links while under the cap, and
+ * every holder then joins. Each mint passes, the cap is never exceeded at the
+ * moment it is checked, and the workspace ends up over it — a guard that
+ * reports success, which is the shape this codebase keeps finding.
+ *
+ * Counting outstanding invites too makes `members + pending` an invariant that
+ * a join cannot raise: redeeming one moves a seat from `pending` to `members`
+ * and leaves the total alone. Revoking or expiring an invite releases it, and
+ * removing a member releases a seat, so neither direction leaks.
+ *
+ * `listUsers` includes DISABLED accounts, and that is the right count here: a
+ * paused member still occupies a place on the team, is still listed on the
+ * Team screen, and is re-enabled with one click. Excluding them would make the
+ * cap something an owner could walk around by disabling somebody.
+ */
+async function seatUsage(orgId) {
+  const [members, invites] = await Promise.all([
+    store.listUsers(orgId),
+    store.listInvites(orgId),
+  ]);
+  const pending = invites.filter((i) => inviteState(i) === 'valid').length;
+  const used = members.length;
+  return {
+    cap: SEAT_CAP,
+    members: used,
+    pending,
+    taken: used + pending,
+    full: used + pending >= SEAT_CAP,
+  };
+}
+
 function inviteState(invite, now = Date.now()) {
   if (!invite) return 'invalid';
   if (invite.revokedAt) return 'revoked';
@@ -3626,6 +3690,30 @@ function invitingOrg(req, res) {
 app.post('/api/org/invites', requireAuth, requireOrgAdmin, async (req, res) => {
   const orgId = invitingOrg(req, res);
   if (!orgId) return undefined;
+  /*
+   * The cap, refused BEFORE a link exists.
+   *
+   * 409 rather than 403, matching `wouldStrandTeam` on the join route beside
+   * it: this is not a permission the caller lacks — an owner may invite — it
+   * is a state of the workspace that the caller can change. The distinction is
+   * what makes the message actionable rather than a wall.
+   *
+   * The message names the count and the two ways out, and **quotes no price**:
+   * nothing in this repository names one (§71, §29), and the figure a customer
+   * would be comparing against lives on the provider's page. It also names
+   * `pending` separately, because "5 of 5 taken" to an owner who can see only
+   * three colleagues reads as a bug — the other two are links they sent and
+   * forgot, and revoking one is the cheapest fix available to them.
+   */
+  const seats = await seatUsage(orgId);
+  if (seats.full) {
+    return res.status(409).json({
+      error: seats.pending
+        ? `This workspace is full: ${seats.members} of ${seats.cap} places are taken, and ${seats.pending} more ${seats.pending === 1 ? 'is' : 'are'} held by invites nobody has used yet. Revoke one of those below, or remove someone from the team, and you can invite again.`
+        : `This workspace is full: all ${seats.cap} places are taken. Remove someone from the team and you can invite again.`,
+      seats,
+    });
+  }
   // Members join as members. Handing out ownership is a separate, deliberate
   // act an owner performs on someone who is already on the team.
   const invite = {
@@ -3749,6 +3837,43 @@ app.post('/api/org/join', requireAuth, async (req, res) => {
     });
   }
 
+  /*
+   * The cap again, and this one is the authoritative check rather than a
+   * belt-and-braces repeat of the mint.
+   *
+   * Two reasons it has to be here as well. The mint bounds `members+pending`,
+   * which is sound for links minted from now on — and every invite ALREADY in
+   * flight was minted before this cap existed, so a workspace at the cap with
+   * three outstanding links would carry them straight past it. And this is the
+   * only place the member count actually changes, so it is the one place the
+   * bound cannot be outrun by whatever a future route does to invites.
+   *
+   * Counted on MEMBERS alone here, not `taken`: the caller is holding one of
+   * the pending invites, so counting pending would make them collide with
+   * their own seat. The mint is what keeps the total honest.
+   *
+   * THE WORDING IS THE FINDING. The audience is the JOINER, who can do nothing
+   * about any of it — they cannot revoke an invite or remove a member — so the
+   * mint's message would be instructions addressed to the wrong person. §53
+   * records the same shape on a provider's refusal: a message written for one
+   * position in a transaction is wrong when it is shown at another. It names
+   * no count either, because the size of somebody else's team is not the
+   * joiner's business.
+   *
+   * It sits ABOVE the `updateInvite` that spends the code, so a refusal costs
+   * the joiner nothing: `usedAt` stays null, the link stays valid, and it
+   * works the moment room is made. That is what lets the message promise
+   * exactly that instead of telling them to chase a fresh link they do not
+   * need — and it is the ordering to preserve, because refusing *after* the
+   * spend would burn a credential on a failure and strand them for good.
+   */
+  const seats = await seatUsage(org.id);
+  if (seats.members >= seats.cap) {
+    return res.status(409).json({
+      error: 'That team is full, so you cannot be added to it yet. Ask whoever invited you to make room — your link still works once they have.',
+    });
+  }
+
   const fromWs = workspaceIdFor(req.user);
   /*
    * Read the org they are LEAVING before anything moves them.
@@ -3838,6 +3963,19 @@ app.get('/api/org/members', requireAuth, async (req, res) => {
       isYou: u.id === req.user.id,
     })),
     canManage: isOrgOwner(req.user),
+    /*
+     * So the screen can say where the team stands BEFORE somebody presses a
+     * button that will be refused. §36's rule 1 is that a control whose effect
+     * is refused a second later reads as broken software, and the refusal
+     * above is the server deciding while this is the client declining to
+     * offer — §14's split, which is why both exist rather than either alone.
+     *
+     * Returned to EVERY role, not just an owner. A member cannot invite and
+     * does not get the button, but "how many of us can there be" is a fact
+     * about the team they are on rather than an administrative secret, and the
+     * member list beside it already discloses more.
+     */
+    seats: await seatUsage(req.user.orgId),
   });
 });
 

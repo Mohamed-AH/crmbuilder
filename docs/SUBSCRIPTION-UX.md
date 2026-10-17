@@ -455,6 +455,42 @@ suspension system. What actually has to be decided and written:
 5. **The seat cap: one member count in `/api/org/invite`**, plus a refusal
    screen that explains itself (§36 rule 1). Free while no workspace is over
    it.
+
+   ✅ **BUILT** (`CLAUDE.md` §81), and **"one member count" was the part that
+   does not work** — which is the finding rather than a quibble with the
+   wording. Three corrections to this line:
+
+   - **The route is `/api/org/invites`**, plural. Minor, and worth fixing
+     because the singular form is what somebody would grep for.
+   - **A member count alone is bypassable, and the bypass needs no bad
+     intent.** An owner one seat short can mint any number of links — each
+     mint passes, because the cap is not yet exceeded at the moment it is
+     checked — and the team goes over it as they are redeemed. The count is
+     **members plus invites nobody has used yet**, which makes
+     `members + pending` an invariant a join cannot raise.
+   - **It is TWO checks, not one.** The mint's invariant says nothing about
+     links issued *before* the cap existed, and the join is the only place the
+     member count actually changes. The two refusals have **different
+     audiences and therefore different wording**: an owner can revoke an
+     invite or remove somebody, a joiner can do neither, so the mint's message
+     shown at the join would be instructions addressed to the wrong person
+     (§53's shape).
+
+   **Not gated on `billingMode`**, unlike items 1–3, and that asymmetry is
+   deliberate: the cap is part of the product's shape rather than part of
+   charging for it, so gating it would mean flipping the switch silently
+   withdraws invites an owner could send the day before. A limit that arrives
+   with a bill is the worse surprise. `SEAT_CAP` is an env default rather than
+   an operator setting — §78's two figures went into `platform` because an
+   operator reads them off a dry-run screen, and a seat number has none — and
+   **a per-org override is deliberately not built**, though it is the obvious
+   next thing and is `billingExemptUntil`'s shape exactly.
+
+   **"Free while no workspace is over it" held, and the cost landed on the
+   tests instead.** `tests/api.test.mjs` mints seventeen invites into a few
+   orgs, so the production cap refused the seventh and failed six tests in its
+   invite-lifecycle describe; that file now runs with the cap raised and says
+   why, and the cap has its own file with a deliberately small one.
 6. **The 7-day trial — a dependency path, not a task.** It is in the decided
    price table and it is the one item here whose cost is **unknown**, because
    §5's switch was shaped specifically to defer it: *"whether the provider

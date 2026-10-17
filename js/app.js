@@ -4387,6 +4387,10 @@
             canInvite: res.canInvite,
             canManage: team.canManage,
             members: team.members,
+            // Where the team stands against the cap. Rides on the member list
+            // because it is a fact about the team rather than an extra
+            // round trip, and that call is already made for every role.
+            seats: team.seats || null,
             invites: (pending.invites || []).filter((i) => i.state === 'valid'),
           };
         }
@@ -4486,10 +4490,41 @@
                 </li>`).join('')}
             </ul>` : ''}
           ${org.canInvite ? `
+            <!--
+              The button is WITHHELD when the team is full, not disabled and
+              not left to be refused by the server. §36's rule 1: a control
+              whose effect is refused a second later reads as unfinished
+              software, and rule 2's "render it as a value" is why the line
+              underneath says where the team stands rather than greying a
+              button out.
+
+              The server refuses it regardless (§14) — this only declines to
+              offer a question whose answer is already known. A stale page
+              whose button is still there therefore fails safely, with the
+              refusal's own wording, which is the half that would otherwise be
+              untested.
+            -->
+            ${org.seats && org.seats.full ? `
+              <p class="settings-hint"><strong>This workspace is full.</strong> ${
+                /*
+                 * Pending invites are named separately, because "5 of 5" to an
+                 * owner who can see three colleagues reads as a miscount —
+                 * the other seats are links they sent and forgot, and
+                 * revoking one is the cheapest fix they have. Same reasoning
+                 * as the server's message, and the two are deliberately not
+                 * shared: this one sits beside the revoke buttons it refers
+                 * to, and that one has to make sense with no screen at all.
+                 */
+                org.seats.pending
+                  ? `${org.seats.members} of ${org.seats.cap} places are taken and ${org.seats.pending} more ${org.seats.pending === 1 ? 'is' : 'are'} held by unused invites. Revoke one below, or remove someone, to invite again.`
+                  : `All ${org.seats.cap} places are taken. Remove someone from the team to invite again.`
+              }</p>` : `
             <div class="btn-row">
               <button class="btn btn-primary" id="invite-btn">${icon('user', 15)} Invite a colleague</button>
             </div>
-            <p class="settings-hint">An invite is a private link that works once and expires after a week. Send it however you normally reach them.</p>
+            <p class="settings-hint">An invite is a private link that works once and expires after a week. Send it however you normally reach them.${
+              org.seats ? ` This workspace has room for ${org.seats.cap - org.seats.taken} more.` : ''
+            }</p>`}
             ${org.invites && org.invites.length ? `
               <p class="settings-hint"><strong>Unused invites</strong></p>
               <ul class="team-list">

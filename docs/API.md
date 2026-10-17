@@ -337,15 +337,15 @@ gets copied into a handler with the precedence wrong.
 
 ```
 GET    /api/org                     the caller's org
-GET    /api/org/members             anyone on the team; canManage says who may act
+GET    /api/org/members             anyone on the team; canManage says who may act; carries `seats`
 PATCH  /api/org/members/:id         owner only — TEAM_ROLES, never platformAdmin
 DELETE /api/org/members/:id         owner only — removes from the TEAM
 POST   /api/org/leave               self-service exit
 GET    /api/org/invites             owner only
-POST   /api/org/invites             owner only → { code }
+POST   /api/org/invites             owner only → { code }; 409 when the workspace is full
 DELETE /api/org/invites/:code       revoke
 GET    /api/org/invites/:code/preview   unauthenticated
-POST   /api/org/join                { code }
+POST   /api/org/join                { code }; 409 when the team is full
 GET    /api/org/hook                owner only — masked, NEVER the URL
 PUT    /api/org/hook                owner only — { url }; '' removes it
 POST   /api/org/hook/test           owner only — sends one, 6/min per caller
@@ -355,6 +355,47 @@ PUT    /api/org/mail                owner only — { key, from }; '' removes it
 POST   /api/org/mail/send           owner OR member — sends one, 20/min per caller
 GET    /api/org/reminders           owner only — counts + the exact message, sends nothing
 ```
+
+### The seat cap, and why it is two checks
+
+`GET /api/org/members` carries `seats: { cap, members, pending, taken, full }`
+to **every** role — a member cannot invite and still may know how big the team
+can be, and the member list beside it discloses more. `taken` is
+`members + pending`, where `pending` counts invites that could still be
+redeemed.
+
+**Counting members alone does not work**, and that is why `pending` is in the
+total: an owner one seat short could otherwise mint any number of links, each
+mint passing because the cap is not yet exceeded, and the team ends up over it
+once they are redeemed. With `pending` counted, `members + pending` is an
+invariant a join cannot raise — redeeming moves a seat from one column to the
+other — so `members <= cap` always holds. Disabled accounts still count.
+
+**Two refusals, both `409`**, and the pair is deliberate:
+
+| | Checked against | Audience |
+|---|---|---|
+| `POST /api/org/invites` | `taken >= cap` | the **owner**, who can revoke an invite or remove a member — so the message says that, names `pending` separately, and carries `seats` so a screen can redraw without a second call |
+| `POST /api/org/join` | `members >= cap` | the **joiner**, who can do neither — so it says to ask, names no count, and promises the link still works. It is checked on `members` alone because the caller is holding one of the pending invites |
+
+`409` rather than `403`: an owner *may* invite, so this is a state the caller
+can change rather than a permission they lack — the same reading as
+`wouldStrandTeam` on the join route.
+
+The join check is **not** a repeat of the mint. It is the only place the member
+count changes, and it is what catches invites issued *before* the cap existed,
+which the mint's invariant says nothing about. Note the consequence for anyone
+writing a test: under the cap, a full team with a live invite outstanding is
+**unreachable through these routes**, so reaching the join refusal means
+planting an invite in the store.
+
+**The join refusal does not spend the code.** It sits above the write that
+marks the invite used, so the link stays valid and works once room is made —
+which is what its message promises.
+
+Not gated on `billingMode`: the cap is part of the product's shape, not part
+of charging for it. `SEAT_CAP` is the env default; there is no per-org override
+yet. `CLAUDE.md` §81.
 
 **Removing is not deleting.** `DELETE /api/org/members/:id` moves the person to
 a fresh org of their own: account intact, team workspace untouched. Account

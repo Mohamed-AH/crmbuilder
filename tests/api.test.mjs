@@ -216,6 +216,24 @@ function startServer(extraEnv = {}) {
       // redirect the host cannot reach the relaxed path (§38).
       TELEGRAM_API_BASE: `http://127.0.0.1:${TELEGRAM_PORT}`,
       /*
+       * Raised for the suite, for the same reason as the Telegram bound below
+       * and with the same rule about saying so rather than leaving it inferred.
+       *
+       * The real cap is 5, and it counts members PLUS invites nobody has used
+       * yet — which is what stops an owner one seat short minting links until
+       * the team is over it. This file mints seventeen, many of them into one
+       * long-lived org, so the production cap refuses the seventh and
+       * everything after it: measured, it failed six tests in the "invites and
+       * joining" describe with `Cannot read properties of undefined` on a mint
+       * that returned no invite.
+       *
+       * Raised here rather than thinned, because what these tests cover is the
+       * invite LIFECYCLE — valid, expired, revoked, spent, cross-org — and the
+       * cap is a different rule with its own file (tests/seats.test.mjs) and a
+       * deliberately small cap so its arithmetic is visible.
+       */
+      SEAT_CAP: '200',
+      /*
        * Raised for the suite, and worth being explicit about: the lookup's
        * real bound is 12/min, this file drives it about fifteen times in a few
        * seconds from one IP, and the first run of these tests failed with 429s

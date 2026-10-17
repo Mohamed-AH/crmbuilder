@@ -229,6 +229,15 @@ never change, because everything cross-references them.
 | Two nulls that wanted opposite copy, closed with one boolean | §80 · §78 · §73 |
 | **A pinned env var as a test seam**, and the seven tests that named the radius | §80 · §16 · §9 |
 | A precondition guard that caught the author's wrong assumption | §80 · §9 · §34 |
+| **The seat cap** — why "one member count" is the half that does not work | §81 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · §13 |
+| Counting members but not unused invites, and the bypass needing no bad intent | §81 · §9 · §17 |
+| **One rule, two audiences** — the owner may revoke, the joiner may only ask | §81 · §53 · §36 |
+| A refusal placed above the write that spends a bearer credential | §81 · §13 · §70 |
+| A cap deliberately NOT gated on the billing mode, unlike its three siblings | §81 · §78 · §24 |
+| **An invariant that makes its own guard untestable**, and the plant that reaches it | §81 · §12 · §34 |
+| A test that drifted into asserting the ordinary rejection and went green | §81 · §9 · §54 |
+| `invites` is an ARRAY, so a keyed plant is invisible to `.find()` | §81 · §12 · §34 |
+| Seventeen invites in one file, and the cap that refused the seventh | §81 · §38 · §9 |
 | Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
@@ -302,10 +311,10 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**641 Node tests pass, and Playwright is 163** — both **observed** after §80's
-three Node tests and two Playwright ones: Node **641/641, 0 skipped** and
-Playwright **163/163 in 6.5m**. Smoke is **51 local · 0 warnings · 0 failed**,
-also run. (§78's figures were 638 and 161, measured on `c9efdf4`.)
+**648 Node tests pass, and Playwright is 164** — both **observed** after §81's
+seven Node tests and one Playwright one: Node **648/648, 0 skipped** and
+Playwright **164/164 in 6.5m**. Smoke is **51 local · 0 warnings · 0 failed**,
+also run. (§80's figures were 641 and 163; §78's were 638 and 161.)
 
 **That clean Playwright run retires none of the three intermittents**, and the
 reason is the same non-result §71 and §77 both record: none of them fired. It
@@ -565,6 +574,15 @@ you had replaced. Kill **every** match (`kill $(pgrep -f …)`), or confirm with
 `<defunct>` entry is a zombie awaiting reap and is not a running server —
 re-check a second later before concluding anything.
 
+**And `kill $(pgrep -f …)` inside a command that MENTIONS the file kills the
+shell.** That is §28's note arriving through `pgrep` rather than `pkill`: the
+compound command contained `node server.js`, so the pattern matched the shell
+running it, the shell died at that line (exit **144** = 128+16), and the
+confirmation lines after it never ran — leaving the server up and the output
+looking like a clean finish. Both halves of the fix above are therefore wrong
+for this case. **Record the PID in a SEPARATE Bash call and kill it there**,
+which is the only form that cannot match itself.
+
 **Restarting a test server on the same port is not reliable.** `expireInvite()`
 in `api.test.mjs` stops the server, edits `store.json` and starts it again;
 rebinding a port that was listening a millisecond ago races, and on Windows the
@@ -738,6 +756,7 @@ parallel and they each spawn real servers:
 | `mail.test.mjs` | 9800–9850 | 2 capture (9800–9839) + 1 app (9840–9849) |
 | `resilience.test.mjs` | 9900–9950 | 1 |
 | `payments.test.mjs` | 9960–9990 | 2 app (9960–9985 · 9986–9990) |
+| `seats.test.mjs` | 9991–9999 | 1 app, a fresh port per boot (it restarts to plant a store row) |
 
 They used to overlap badly — `api.test.mjs` alone spanned 8300–8899, across
 three other files' ranges. Widen a block and check the neighbours.
@@ -12880,3 +12899,202 @@ nobody can buy — but this commit **does** put a new sentence in front of every
 owner. It needs no document because it is the whole of what there is to say:
 there is no price to describe, no flow to walk through, and no control to
 explain. The walk still fires with enforcement.
+
+
+---
+
+## 81. The seat cap, and "one member count" was the half that does not work
+
+Item 5 of [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2, which
+specified it in eight words: *"one member count in `/api/org/invite`, plus a
+refusal screen that explains itself."* The refusal screen is that. The count is
+not, and the reason is this section.
+
+**`SEAT_CAP`, default 5**, from [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5's price
+table: one workspace, up to five people. Counted, never metered — there is no
+per-seat charge to meter.
+
+### Counting members alone is bypassable, and it needs no bad intent
+
+An owner one seat short mints a link. The check passes: four members against a
+cap of five. They mint another, for the colleague who might also want in. That
+passes too — still four members. Both are redeemed, and the team is at six.
+
+**Every mint was refused correctly and the cap was never exceeded at the moment
+it was checked.** A guard that reports success, which is the shape this file
+keeps collecting.
+
+So the count is **members plus invites nobody has used yet**:
+
+```
+taken = members + pending        (pending = invites whose state is 'valid')
+```
+
+That makes `taken` an invariant a join cannot raise — redeeming an invite moves
+a seat from `pending` to `members` and leaves the total alone — so `members <=
+cap` holds always. Revoking or expiring an invite releases a seat; so does
+removing a member. Neither direction leaks.
+
+**Disabled accounts still hold their seat**, and that is a decision rather than
+an artifact of `listUsers` including them: a paused member is still on the Team
+screen and is re-enabled with one click, so excluding them would make the cap
+something an owner walks around by disabling somebody — a bypass dressed as an
+administrative action.
+
+### It is two checks, and the second one is NOT the first repeated
+
+| | Checked against | Why it exists |
+|---|---|---|
+| `POST /api/org/invites` | `taken >= cap` | so the owner is told **before** they send a link to a colleague |
+| `POST /api/org/join` | `members >= cap` | every invite in flight when this shipped was minted with no cap check, and this is the only place the member count actually changes |
+
+The join check counts **members alone**, not `taken`: the caller is holding one
+of the pending invites, so counting pending would make them collide with their
+own seat. The mint is what keeps the total honest.
+
+### The wording is the finding: one rule, two audiences
+
+The mint's message tells the owner to revoke an invite or remove somebody.
+**The joiner can do neither** — they cannot see the team, let alone administer
+it — so the same sentence shown at the join is instructions addressed to the
+wrong person. §53 records exactly this where a provider's refusal, written for
+the merchant, would have reached a customer.
+
+| | Says |
+|---|---|
+| owner | *"This workspace is full: 3 of 5 places are taken, and 2 more are held by invites nobody has used yet. Revoke one of those below, or remove someone…"* |
+| joiner | *"That team is full, so you cannot be added to it yet. Ask whoever invited you to make room — your link still works once they have."* |
+
+**`pending` is named separately on purpose.** *"5 of 5 taken"* to an owner who
+can see three colleagues reads as a miscount; the other two are links they sent
+and forgot, and revoking one is the cheapest fix available to them.
+
+**The joiner's message names no count**, because the size of somebody else's
+team is not their business — and it promises the link still works, which is
+true only because of the ordering below.
+
+### The refusal must not spend the code, and that is one line's position
+
+The join check sits **above** the `updateInvite` that marks the code used. So a
+refusal costs the joiner nothing: `usedAt` stays null, the link stays valid, and
+it works the moment room is made. Refusing *after* the spend would burn a
+bearer credential (§13) on a failure and strand them permanently, while the
+message promised the opposite.
+
+Asserted directly — the test re-previews the invite after the refusal and then
+redeems it once a member is removed.
+
+### 409, and not 403
+
+An owner **may** invite. This is a state of the workspace they can change, not
+a permission they lack — the same reading `wouldStrandTeam` already uses on the
+join route beside it. The distinction is what makes the message actionable
+rather than a wall, and it is why both messages end with what to do.
+
+### Not gated on `billingMode`, unlike items 1–3
+
+Those three changed no behaviour until an operator flips the switch, so a reader
+would expect this to follow. It does not: **the cap is part of the product's
+shape rather than part of charging for it.** "Up to 5 users" is true of the free
+period and the paid one alike, and gating it would mean flipping to `paid`
+silently withdraws invites an owner could send the day before. **A limit that
+arrives with a bill is the worse surprise.**
+
+Env rather than an operator setting in `platform`, which is the other place it
+could live: §78 put the grandfather window and notice days there because an
+operator reads them off a dry-run screen before flipping something
+irreversible, and a seat number has no such screen. §16's case for a stored
+lever is about **incidents** — opening or pausing signups without a redeploy —
+which a seat cap is not.
+
+**A per-org override is deliberately not built.** It is the obvious next thing
+the moment somebody negotiates a sixth seat, and it is §78's
+`billingExemptUntil` shape exactly: a nullable number on the org, never a
+boolean. Not invented ahead of a customer asking.
+
+### The client declines to offer; the server decides
+
+§14's split. The Team card **withholds** the button when the team is full and
+says where it stands instead — §36's rule 1, because a control whose effect is
+refused a second later reads as unfinished software, and rule 2's *render it as
+a value* is why there is a line rather than a greyed-out button.
+
+A stale page whose button is still there therefore fails **safely**, with the
+server's own wording: `openInvite` already renders `err.message` into the modal
+body, and `api()` in `js/cloud.js` already lifts `body.error` onto the error. So
+the refusal reaches the reader unchanged with no client change at all — which
+is the half that would otherwise have been written and untested.
+
+### The invariant makes the join refusal unreachable, and that is a testing problem
+
+Worth more than the feature. Because `taken <= cap` holds at every mint and a
+join does not change the total, **`members == cap` implies `pending == 0`**: a
+full team cannot be holding a live invite. So the join refusal **cannot be
+reached through the API at all** for links minted under this cap.
+
+Which means it is only reachable the way it will actually happen in
+production — an invite issued **before** the cap existed. The test plants one
+directly in the store (`editStore`, stop–edit–start, because FileStore rewrites
+the whole file on save, §12) and that is a faithful reproduction rather than a
+contrivance: a pre-cap invite *is* a row with no mint-time check behind it.
+
+**The first version of that test passed for the wrong reason**, which is how the
+invariant was found. It tried to construct a full team with a live invite
+through the API, could not, drifted into asserting a `404` on a spent code, and
+went green — testing the ordinary rejection while claiming to test the cap. The
+invariant is now its own test, stated as an assertion, so the next person does
+not spend an hour discovering it the same way.
+
+### Verified
+
+**Seven mutations, each failing by name** (§9):
+
+| Mutation | Fails |
+|---|---|
+| count members only, ignore `pending` | **3** — the hole test, the revoke test, and the invariant test |
+| drop the join-time check | *a PLANTED invite … is refused at the join* |
+| give the joiner the owner's wording | the same test, on the wording |
+| spend the invite before the cap check | the same test, on *the refused invite was spent* |
+| exclude disabled members | *a disabled member still holds their seat* |
+| render the invite button regardless | *a full team is told so…* |
+| drop the "room for N more" line | the same test |
+
+**The blast radius was measured and it was six tests.** `tests/api.test.mjs`
+mints **seventeen** invites, many into one long-lived org, so the production cap
+refused the seventh and everything after — surfacing as
+`Cannot read properties of undefined (reading 'code')` on a mint that returned
+no invite. That file now runs at `SEAT_CAP: 200` with the count and the reason
+in a comment, because what it covers is the invite **lifecycle**. §38's rule
+that *"the tests made the limit looser"* should be visible rather than inferred.
+
+**And a precondition guard caught a wrong assumption for the second commit
+running.** The planted invite did not exist: `invites` is an **array** in the
+file store and `getInvite` is a `.find()` over it, so `raw.invites[CODE] = …`
+set a named property that `.find()` never visits. The plant succeeded, the file
+looked right, and the row was invisible. Caught by the *"the planted invite is
+not valid, so this tests the wrong refusal"* assertion rather than by reading —
+without it, the join refusal would have been asserted against an invalid code
+and passed as the ordinary 404.
+
+### Blast radius
+
+`js/app.js` is in `APP_SHELL`, so `CACHE_VERSION` → **`crmbuilder-v69`**. No new
+served file, so smoke stays **51 local / 56 live** — running it is what proves
+that (§9).
+
+`tests/seats.test.mjs` is new and takes **9991–9999** (§9's table), with a
+**fresh port per boot** because it restarts to plant a store row and §4 records
+that rebinding a port that was listening a millisecond ago races.
+
+**`docs/API.md` gains no route and the count stays 61** — §46's trap for the
+eighth time: `GET /api/org/members` grew a `seats` object, and two routes gained
+a `409` they did not have. Both are contract changes a route count cannot see.
+`DEPLOYMENT.md`'s environment matrix gains `SEAT_CAP`.
+
+**§27's six user-facing documents DO need walking, and this is the first Phase 2
+item where that is true** — a user can now be refused something they could do
+yesterday, which is a capability change rather than a new screen. Not done in
+this commit: items 1–4 deferred the walk to "when enforcement lands", and
+folding one item's worth into that walk now would mean walking the same eight
+files twice. **The cap is the one thing on that list that is already live**, so
+it goes in the walk's first paragraph rather than being discovered during it.
