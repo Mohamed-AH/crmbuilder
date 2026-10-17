@@ -205,6 +205,11 @@ never change, because everything cross-references them.
 | **Two read-only holds on one workspace**, and which reason a customer sees | §78 · §24 · §36 |
 | Why a reason tag fails silently and a second field fails visibly | §78 · §24 · §33 |
 | Planting state nothing writes yet (`editStore`) | §78 · §12 · §34 |
+| **The grandfather cutoff** — the window, the floor, and the per-org override | §78 · [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2 · §44 |
+| **A dry run on a screen that would otherwise be blank** | §78 · §33 · §39 |
+| `monthsAgo(now, -n)` is months FORWARD, and the clamp is direction-agnostic | §78 · §44 · §9 |
+| **An assertion that formatted a date and could not see its own mutation** | §78 · §76 · §9 |
+| A `.note` base class that does not exist | §78 · §27 · §66 |
 | Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
@@ -278,11 +283,12 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**633 Node tests pass, and Playwright is 159 tests** — both observed in this
-session: Node **633/633** after §78's eight, and Playwright **158 of 159**,
-the one failure being §66's intermittent (§78 has the artifact signature and
-the isolation rate). The Playwright figure was measured before §78's item 2,
-which touched no client file.
+**638 Node tests pass, and Playwright is 161 tests** — Node **638/638**
+observed after §78's thirteen. Playwright's last full observation was **158 of
+159** (the failure being §66's intermittent — §78 has the artifact signature
+and the isolation rate); item 3 added two, so the total is 161 and the run
+that measures it is in flight at the time of writing. Run it rather than
+reading this.
 
 **Playwright's honest figure is a RANGE, and §77 is why.** Two full runs there
 gave 156/158 and 157/158, with a **different** test failing in each and all of
@@ -422,7 +428,7 @@ to render *and still navigate*.
 globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v66` — and this line was left at v62 through §74's bump
+(currently `crmbuilder-v67` — and this line was left at v62 through §74's bump
 to v63, which is §29's thesis arriving in §3's own invariant: read `sw.js`,
 never this sentence). Miss the allow-list and it 404s in production
 while working locally from cache.
@@ -12189,8 +12195,9 @@ Five mutations, each failing the test that names it (§9):
 A sixth is honest about itself: the cache-guard change has **no** failing test,
 for the reason given above.
 
-**Counts, all three run:** Node **633/633** (625 → 630 on item 1, → 633 on
-item 2), smoke **51 local**, Playwright **158 of 159**.
+**Counts:** Node **638/638** (625 → 630 on item 1, → 633 on item 2, → 638 on
+item 3), smoke **51 local** through item 2, Playwright **158 of 159** measured
+on item 1.
 
 **Playwright was measured on item 1 and not re-run for item 2**, which changed
 `server.js` and one test file and **no client or served file** — so no E2E
@@ -12312,11 +12319,132 @@ while both hold, and that lifting one does not lift the other — so a mutation
 to either half fails it on its own assertion. A reader checking the mutation
 table should expect one failure per *assertion*, not one per test.
 
-### The admin screen is deliberately not built yet
+### Item 3: the cutoff, and a column that would have been empty where it matters
 
-The route exists and the value is on `/api/admin/platform`; there is no third
-`.mode-switch` row on the Deployment card. Two reasons, and the second is the
-one that decides it:
+12 months and 30 days, decided on instruction, and **operator settings rather
+than constants** — restored with their provenance (§17), because the figures
+are a commercial choice and changing one must not need a deploy. The two
+defaults are in the code and are what an unset or unreadable value falls back
+to; a NaN would otherwise land every window on the epoch.
+
+**No new date helper was needed, and that was measured rather than assumed.**
+`DateRules.monthsAgo(now, -12)` is twelve months **forward**: the clamp that
+stops 31 August minus six months landing on 2 March (§44) is
+direction-agnostic. Driven both ways before it was relied on — 31 Jan +1 → 28
+Feb, 29 Feb +12 → 28 Feb, 31 Aug +6 → 28 Feb. The name reads oddly at the call
+site, which is why the comment says so rather than leaving a reader to wonder
+whether it is a bug.
+
+### The dry run, which is the whole reason the screen is worth having
+
+**The honest version of this feature nearly shipped blank.**
+`billingGraceUntil` returns `null` when `billingMode` has never been
+flipped — correct, and it is what makes the computation safe to ship before
+enforcement — so a column fed straight from it is **empty on every deployment
+that has not started charging, which is every deployment.** The screen whose
+entire job is *look before you flip* would have had nothing on it until after
+the flip.
+
+So the panel computes against `now` when there is no switch date, and carries
+**`graceIsPreview`** beside it. That answers the question an operator actually
+has — *if I flipped it today, who would be affected and when* — and the flag
+is what stops a date reading as a commitment. Two fields rather than one
+nullable date, because a date with no idea whether it is real is §33's figure
+that is correct, adjacent and undecidable.
+
+**`pastGrace` is the number to look at, and zero is what the floor buys.** A
+non-zero means somebody would lose sync with less than the promised notice,
+which is the one outcome the floor exists to prevent — so the card says it in
+words and the *Switch to Paid* confirmation repeats the count, because §21's
+rule is that a destructive control names its cost first.
+
+### Traps
+
+- **§27's invented-class trap, caught by grepping rather than by rendering.**
+  `.note.warn` was what I reached for; `css/style.css` has **no `.note` base
+  class at all** and the only amber box is `.note-restore`. An undefined class
+  renders as an unstyled paragraph that looks deliberate — which is how
+  `.note.warn` shipped meaning nothing in the first place, as that file's own
+  comment records. The restore notice and this warning are the same thing
+  visually, so they share one rule rather than getting a second copy of six
+  declarations (§29).
+- **`DAY_MS` was already declared**, 220 lines up. `node --check` caught it,
+  which is the good case; the bad one is a second constant with a different
+  value.
+- **`DateRules` is required further down the file than the function that uses
+  it.** Safe, because a `const`'s dead zone ends when the declaration runs and
+  every caller here is a request handler — the same shape `platformCache`
+  already has, and it reads as a bug both times, so it is now written down.
+- **`.records-table thead` matches two tables** — Organisations and Accounts.
+  §14's `.toast` trap in a new place, and it fails strict mode rather than
+  asserting the wrong thing, which is the better of the two failures and still
+  not an assertion. Scope to the card.
+- **The exemption is stored as the END of the named day.** A field meaning a
+  day less than it says would be wrong on every screen it appears on.
+
+### The assertion that could not see its own mutation
+
+Worth more than the feature, and it is §76's shape arriving three sections
+later in the same work.
+
+The exemption test asserted the stored value by formatting it:
+
+```js
+assert.equal(new Date(row.graceUntil).toISOString().slice(0, 10), '2030-06-30');
+```
+
+**That reads `2030-06-30` for both the start and the end of that day**, so it
+passed against a mutation storing midnight instead — which silently loses the
+last day of every exemption an operator sets. The test was named for exactly
+the behaviour it could not see.
+
+It asserts **coverage** now — still in force at `23:59:59Z` on the named day,
+and not into the next one — which is the property, rather than a rendering of
+it. Found by running the mutation, not by reading the test: four mutations were
+driven and this was the one that came back green.
+
+### What is deliberately NOT built
+
+**Nothing writes `billingSuspendedAt`.** The computation and the controls
+landed first so an operator can look at who would be affected *before* the
+switch can take sync from anybody — which is what the preview is for, and it
+would be pointless if the same commit also wired enforcement. The sync seam
+reading `billingGraceUntil` is the next step, and it needs one more input the
+others did not: the workspace's **subscription state** from its meta doc (§70),
+because a workspace past its grace date that is *paying* must obviously not be
+held.
+
+### Verified
+
+Four mutations, each failing the test that names it (§9):
+
+| Mutation | Fails |
+|---|---|
+| `graceUntil` fed from the real `setAt`, so no preview | *the billing card previews who would be affected…* |
+| the notice floor dropped | *a workspace older than the window still gets the notice floor* |
+| the per-org override ignored | *a per-org exemption overrides the derived window…* |
+| the exemption stored at the START of the day | the same test — **after** the vacuous assertion above was fixed; it passed before |
+
+### The admin screen is built now, which §78 said it would be
+
+That subsection declined a `billingMode` switch on the grounds that *"a switch
+an operator can press before enforcement exists is a control that looks like
+it does something and does not"*, and that *"the card wants building with the
+thing it switches, so the copy can say what flipping it will actually do."*
+
+Both held. The card exists now because there is something to say: it names the
+window, the floor, how many workspaces would be past grace, and — in the
+confirmation — what switching would cost today. **The control it does not have
+is the one that would still be empty talk**: there is no "suspend the unpaid
+ones" button, because nothing is enforced yet and a button whose effect is
+nothing is the thing that subsection refused.
+
+### ~~The admin screen is deliberately not built yet~~ — built in item 3
+
+**Left standing because the condition it set was met rather than dropped.** The
+route exists and the value is on `/api/admin/platform`; at item 1 there was no
+third `.mode-switch` row on the Deployment card. Two reasons, and the second is
+the one that decided it:
 
 - A switch an operator can press before enforcement exists is a control that
   **looks like it does something and does not** — §36's shape, on the one

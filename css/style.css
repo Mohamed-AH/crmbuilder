@@ -434,13 +434,19 @@ a.stat-card:hover, .stat-card-add:hover { border-color: var(--border-strong); bo
    chip): an alpha-suffixed hex over whatever surface is behind it, so it reads
    correctly in both themes. A solid light background here would have been
    hardcoded into a themed app. */
-.note-restore {
+/* Two uses of one amber box, so one rule rather than a copy: the restore
+   notice and the billing warning are the same thing visually — something an
+   operator has to act on before it stops mattering. A second class with the
+   same six declarations is how they drift apart (§29), and `.note-warn` is
+   what I reached for first and does not exist at all (§27's trap, caught by
+   grepping rather than by rendering). */
+.note-restore, .note-caution {
   margin: 0 0 14px; padding: 11px 13px; max-width: 62ch;
   border: 1px solid #dc680355; border-radius: 8px;
   background: #dc680318; color: var(--text);
   font-size: 13px; line-height: 1.6;
 }
-.note-restore code {
+.note-restore code, .note-caution code {
   padding: 1px 5px; border-radius: 5px; background: var(--surface);
   border: 1px solid var(--border); font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

@@ -46,7 +46,7 @@ const TOKEN = 'backup-drill-token';
  * wrongly and every assertion below passes (§69's rule for the signing
  * fixture).
  */
-const LEVERS = ['signupMode', 'orgCreation', 'billingMode'];
+const LEVERS = ['signupMode', 'orgCreation', 'billingMode', 'grandfatherMonths', 'noticeDays'];
 const LEVER_KEYS = LEVERS.flatMap((k) => [k, `${k}SetAt`, `${k}SetBy`]);
 const MAYA_CANARY = 'CANARY-7Q4X';
 const NADIA_CANARY = 'CANARY-N2M8';
@@ -203,6 +203,15 @@ before(async () => {
     billingMode: 'paid',
     billingModeSetAt: DECIDED_AT,
     billingModeSetBy: 'ops-user-id',
+    // Deliberately NOT the 12/30 defaults: a restore that dropped these would
+    // fall back to them, so seeding the defaults would make the assertion pass
+    // on the bug (§34's fixture-agrees-with-itself shape).
+    grandfatherMonths: 7,
+    grandfatherMonthsSetAt: DECIDED_AT,
+    grandfatherMonthsSetBy: 'ops-user-id',
+    noticeDays: 45,
+    noticeDaysSetAt: DECIDED_AT,
+    noticeDaysSetBy: 'ops-user-id',
     // Runtime state — a restore must NOT, because it belongs to the dead
     // deployment: seeding a fresh one with this carries spent alert steps and
     // another instance's traffic across (§17, §25).
@@ -475,6 +484,16 @@ describe('what a restore brings back, and what it deliberately does not', () => 
      */
     assert.equal(restoredStore.platform?.billingModeSetAt, backup.platform?.billingModeSetAt,
       'billingModeSetAt was dropped — every grandfather window re-dates to the restore');
+    /*
+     * And the two figures the cutoff is computed from. Seeded as 7 and 45
+     * rather than the 12/30 defaults on purpose: a restore that dropped them
+     * falls back to the defaults, so a fixture holding the defaults would pass
+     * against exactly that bug.
+     */
+    assert.equal(restoredStore.platform?.grandfatherMonths, 7,
+      'grandfatherMonths fell back to the default — every window silently re-dated');
+    assert.equal(restoredStore.platform?.noticeDays, 45,
+      'noticeDays fell back to the default — the promised notice silently changed');
   });
 
   /*

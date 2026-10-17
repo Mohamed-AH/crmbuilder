@@ -407,6 +407,11 @@ const Cloud = (() => {
       testAlert: () => api('/api/admin/alerts/test', { method: 'POST', body: '{}' }, TIMEOUT.admin),
       dismissRestoreNotice: () => api('/api/admin/restore-notice/dismiss', { method: 'POST', body: '{}' }, TIMEOUT.admin),
       setOrgCreation: (mode) => api('/api/admin/org-creation', { method: 'PUT', body: JSON.stringify({ mode }) }, TIMEOUT.admin),
+      setBillingMode: (mode) => api('/api/admin/billing-mode', { method: 'PUT', body: JSON.stringify({ mode }) }, TIMEOUT.admin),
+      setBillingWindows: (grandfatherMonths, noticeDays) => api('/api/admin/billing-windows', { method: 'PUT', body: JSON.stringify({ grandfatherMonths, noticeDays }) }, TIMEOUT.admin),
+      // `until` is a YYYY-MM-DD day or null to clear. Sent as given: the
+      // server refuses anything else rather than guessing (§45).
+      setOrgBillingExempt: (id, until) => api(`/api/admin/orgs/${encodeURIComponent(id)}/billing-exempt`, { method: 'POST', body: JSON.stringify({ until }) }, TIMEOUT.admin),
       suspendOrg: (id, suspend, reason) => api(`/api/admin/orgs/${encodeURIComponent(id)}/suspend`, { method: 'POST', body: JSON.stringify({ suspend, reason }) }, TIMEOUT.admin),
       accessRequests: () => api('/api/admin/access-requests', {}, TIMEOUT.admin),
       decideAccessRequest: (email, decision) => api(

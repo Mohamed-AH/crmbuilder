@@ -282,6 +282,83 @@ function readOnlyState(org) {
   return null;
 }
 
+/*
+ * How long a workspace that was already here stays free, and the minimum
+ * notice anybody gets. Two operator decisions (§16's precedence, restored by
+ * scripts/restore.mjs with their provenance) rather than constants, because
+ * the figures are a commercial choice and changing one must not need a deploy.
+ *
+ * Defaults 12 months and 30 days, decided 2026-10-17.
+ */
+const GRANDFATHER_MONTHS_DEFAULT = 12;
+const BILLING_NOTICE_DAYS_DEFAULT = 30;
+
+function billingWindows(settings) {
+  const months = Number(settings && settings.grandfatherMonths);
+  const days = Number(settings && settings.noticeDays);
+  return {
+    // Clamped rather than trusted: these arrive from a stored document and a
+    // restored backup, and a NaN here would make every window land on the
+    // epoch — §39's rule that a clamped read must never throw and must never
+    // produce a silently wrong answer.
+    grandfatherMonths: Number.isFinite(months) && months >= 0 && months <= 120
+      ? Math.round(months) : GRANDFATHER_MONTHS_DEFAULT,
+    noticeDays: Number.isFinite(days) && days >= 0 && days <= 365
+      ? Math.round(days) : BILLING_NOTICE_DAYS_DEFAULT,
+  };
+}
+
+/*
+ * When a workspace stops being free, or null if enforcement does not apply to
+ * it at all. The cutoff rule, and every clause is load-bearing:
+ *
+ *   graceUntil = max( override ?? createdAt + months , switchedAt + notice )
+ *
+ *  - **No switch, no enforcement.** `setAt` of 0 means nobody has ever flipped
+ *    `billingMode`, so there is nothing to be outside of. Returns null, which
+ *    is what makes this safe to ship before the switch is ever used.
+ *  - **The override wins over the derived default**, which is the whole reason
+ *    a field exists: the policy is case-by-case and nothing derivable can say
+ *    this org got eighteen months and that one got three. It also carries the
+ *    invoice-paid-by-bank-transfer case (PAYMENTS.md §5) — to the check, a
+ *    workspace paid by other means and a grandfathered one are the same state.
+ *  - **A workspace created AFTER the switch is not grandfathered**, so with no
+ *    override it returns null and enforcement applies at once. That is the
+ *    trial's job, not this one's.
+ *  - **THE FLOOR IS THE PROMISE, not a safety margin.** `createdAt + months`
+ *    can already be in the past on the day the switch is flipped — an org
+ *    eighteen months old against a twelve-month window is expired before
+ *    anybody presses anything — so without the floor, flipping the switch
+ *    would suspend the oldest workspaces instantly, with no notice at all, and
+ *    the free-mode card promises exactly the opposite. It applies to every
+ *    pre-existing workspace however its base was computed, including one whose
+ *    override is in the past: an operator who wants somebody read-only *now*
+ *    has the suspend lever for that, and conflating the two would make this
+ *    computation the place immediate action happens.
+ *
+ * `monthsAgo(createdAt, -months)` is months FORWARD — the function's clamp is
+ * direction-agnostic and was measured both ways rather than assumed (31 Jan
+ * +1 → 28 Feb, 29 Feb +12 → 28 Feb), so no new helper was added. The name
+ * reads oddly at the call site, which is why this says so.
+ *
+ * `DateRules` is required further down this file than this function sits. That
+ * is safe because nothing calls this during module evaluation — a `const` is
+ * only in its temporal dead zone until the declaration runs, and every caller
+ * here is a request handler. Said rather than left to be rediscovered, because
+ * the same shape already exists for `platformCache` and reads as a bug.
+ */
+function billingGraceUntil(org, billing, windows) {
+  if (!org || !billing || !billing.setAt) return null;
+  const override = Number.isFinite(org.billingExemptUntil) ? org.billingExemptUntil : null;
+  const base = override !== null
+    ? override
+    : (Number(org.createdAt) < billing.setAt
+      ? DateRules.monthsAgo(Number(org.createdAt), -windows.grandfatherMonths)
+      : null);
+  if (base === null) return null;
+  return Math.max(base, billing.setAt + windows.noticeDays * DAY_MS);
+}
+
 async function setBillingMode(mode, userId) {
   const setAt = Date.now();
   await store.updatePlatformSettings({
@@ -6195,6 +6272,71 @@ app.put('/api/admin/billing-mode', requireAuth, requirePlatformAdmin, async (req
   res.json({ ok: true, billingMode: out.mode, billingModeSetAt: out.setAt });
 });
 
+/*
+ * The two figures behind the cutoff. Operator decisions rather than constants
+ * (§16's precedence, restored with provenance), because they are a commercial
+ * choice and changing one must not need a deploy.
+ *
+ * Bounded at both ends rather than merely coerced: 0 is legitimate — "no
+ * grandfathering" and "no notice" are both things an operator may mean — and
+ * the ceilings exist so a typo cannot park every window a century out, which
+ * would read as enforcement silently not working.
+ */
+app.put('/api/admin/billing-windows', requireAuth, requirePlatformAdmin, async (req, res) => {
+  const months = Number(req.body && req.body.grandfatherMonths);
+  const days = Number(req.body && req.body.noticeDays);
+  if (!Number.isFinite(months) || months < 0 || months > 120) {
+    return res.status(400).json({ error: 'grandfatherMonths must be between 0 and 120' });
+  }
+  if (!Number.isFinite(days) || days < 0 || days > 365) {
+    return res.status(400).json({ error: 'noticeDays must be between 0 and 365' });
+  }
+  const at = Date.now();
+  await store.updatePlatformSettings({
+    grandfatherMonths: Math.round(months),
+    grandfatherMonthsSetAt: at,
+    grandfatherMonthsSetBy: req.user.id,
+    noticeDays: Math.round(days),
+    noticeDaysSetAt: at,
+    noticeDaysSetBy: req.user.id,
+  });
+  platformCache = { at: 0, body: null }; // every grace date on the table moves
+  console.log(`Billing windows set to ${Math.round(months)}mo / ${Math.round(days)}d by ${req.user.email}`);
+  res.json({ ok: true, grandfatherMonths: Math.round(months), noticeDays: Math.round(days) });
+});
+
+/*
+ * One workspace's own answer, which is what makes the policy case-by-case.
+ *
+ * `until` is a plain `YYYY-MM-DD` because an operator types and reads it, and
+ * it is stored as the END of that day — "exempt until the 31st" has to include
+ * the 31st, or the field means a day less than it says on every screen it
+ * appears on. `null` clears it and the derived default takes over again.
+ *
+ * It does NOT write `billingSuspendedAt`: this is the grace date, and the hold
+ * is a separate field with a separate control (§78 item 2). An operator who
+ * wants somebody read-only now has the suspend lever.
+ */
+app.post('/api/admin/orgs/:id/billing-exempt', requireAuth, requirePlatformAdmin, async (req, res) => {
+  const org = await store.getOrg(req.params.id);
+  if (!org) return res.status(404).json({ error: 'Organisation not found' });
+  const raw = req.body && req.body.until;
+  if (raw === null || raw === '') {
+    await store.updateOrg(org.id, { billingExemptUntil: null, billingExemptBy: null });
+    platformCache = { at: 0, body: null };
+    console.log(`Billing exemption cleared for ${org.id} by ${req.user.email}`);
+    return res.json({ ok: true, billingExemptUntil: null });
+  }
+  const day = DateRules.parseDay(String(raw));
+  if (day === null) return res.status(400).json({ error: 'until must be YYYY-MM-DD, or null to clear' });
+  // End of the named day, so the date on screen is the last day it covers.
+  const until = day + DAY_MS - 1;
+  await store.updateOrg(org.id, { billingExemptUntil: until, billingExemptBy: req.user.id });
+  platformCache = { at: 0, body: null };
+  console.log(`Billing exemption for ${org.id} set to ${raw} by ${req.user.email}`);
+  res.json({ ok: true, billingExemptUntil: until });
+});
+
 app.put('/api/admin/org-creation', requireAuth, requirePlatformAdmin, async (req, res) => {
   const mode = req.body && req.body.mode;
   if (!ORG_CREATION_MODES.includes(mode)) {
@@ -6469,6 +6611,11 @@ app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, re
     store.getPlatformSettings(),
   ]);
 
+  // Read before the rows are built: every row's grace date is computed from
+  // these two, so one read rather than one per row.
+  const billing = await billingMode();
+  const windows = billingWindows(platformSettings);
+
   const bytesFor = new Map(byOrg.map((o) => [o.orgId, o]));
   const totalBytes = byOrg.reduce((a, o) => a + o.bytes, 0);
   const rows = orgs.map((o) => {
@@ -6487,6 +6634,24 @@ app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, re
        * "suspended" column would make them one fact and lose which (§33).
        */
       billingSuspendedAt: o.billingSuspendedAt || null,
+      /*
+       * The grace date, and the one below it is a PREVIEW when the switch has
+       * never been flipped.
+       *
+       * Without the preview this column is empty on every deployment that has
+       * not started charging — which is every deployment — so the screen whose
+       * job is "look before you flip" would show nothing until after the
+       * flip. Computing against `now` instead answers the question an operator
+       * actually has: *if I flipped it today, who would be affected and when.*
+       *
+       * `graceIsPreview` is what stops that being read as a commitment. Two
+       * fields rather than one nullable date, because a date with no idea
+       * whether it is real is exactly §33's figure that is correct, adjacent
+       * and undecidable.
+       */
+      graceUntil: billingGraceUntil(o, { setAt: billing.setAt || now }, windows),
+      graceIsPreview: !billing.setAt,
+      billingExemptUntil: o.billingExemptUntil || null,
       members: members.length,
       lastActiveAt: members.reduce((a, u) => Math.max(a, u.lastActiveAt || 0), 0),
       records: measured.records,
@@ -6529,6 +6694,22 @@ app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, re
        */
       suspendedOrgs: orgs.filter((o) => o.suspendedAt).length,
       billingSuspendedOrgs: orgs.filter((o) => o.billingSuspendedAt).length,
+      /*
+       * What flipping the switch would cost, today. `pastGrace` is the number
+       * of workspaces whose grace has already run out — zero is the answer an
+       * operator wants to see before flipping, and the notice floor is what
+       * makes zero achievable: a non-zero here means somebody loses sync with
+       * less than the promised notice, which is the one outcome the floor
+       * exists to prevent.
+       *
+       * Counted from the same preview the rows carry, so the number and the
+       * table cannot disagree.
+       */
+      pastGrace: orgs.filter((o) => {
+        const until = billingGraceUntil(o, { setAt: billing.setAt || now }, windows);
+        return until !== null && until < now;
+      }).length,
+      exemptOrgs: orgs.filter((o) => o.billingExemptUntil).length,
       workspaces: usage.workspaces,
       records: usage.records,
       modules: usage.modules,
@@ -6581,7 +6762,7 @@ app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, re
      * It is 0 on a deployment that has never flipped the switch, which the
      * panel reads as "never set" rather than as the epoch.
      */
-    billing: await billingMode(),
+    billing: { ...billing, ...windows },
     // A deployment constant, so it is sent once rather than on every row. The
     // panel needs it to say when reclaimable bytes actually come back.
     tombstoneDays: TOMBSTONE_DAYS,

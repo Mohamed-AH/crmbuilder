@@ -1662,6 +1662,152 @@ describe('suspending an organisation', () => {
       'clearing the operator hold reveals the billing one');
   });
 
+  /*
+   * The grandfathering cutoff, read off the panel because that is where an
+   * operator reads it. The arithmetic itself is driven through the real route
+   * rather than unit-tested in isolation: what can go wrong is not the month
+   * step (DateRules.monthsAgo is already covered five timezones deep) but the
+   * wiring — which base, whose floor, and whether the figure on screen is a
+   * commitment or a preview.
+   */
+  const panelRow = async (srv, admin, orgId) => {
+    const panel = await srv.req('/api/admin/platform?fresh=1', { cookies: admin });
+    assert.equal(panel.status, 200, panel.text);
+    const row = panel.json.orgs.find((o) => o.id === orgId);
+    assert.ok(row, 'the org is missing from the table');
+    return { row, body: panel.json };
+  };
+
+  test('before the switch is ever flipped, the grace date is a PREVIEW and says so', async () => {
+    const { srv, admin, orgId } = await setup();
+    const { row, body } = await panelRow(srv, admin, orgId);
+
+    /*
+     * The half that makes the screen worth having. billingGraceUntil returns
+     * null when nothing has been flipped — correct, and it would leave this
+     * column empty on every deployment, which is every deployment. So the
+     * panel computes against now instead and labels it.
+     */
+    assert.equal(body.billing.mode, 'free', 'nothing is charging yet');
+    assert.ok(row.graceUntil, 'a preview must be shown before the switch, or the screen is blank when it matters');
+    assert.equal(row.graceIsPreview, true, 'and it must not read as a commitment');
+
+    // A workspace created minutes ago: twelve months out, not the 30-day floor.
+    const months = Math.round((row.graceUntil - Date.now()) / 86400000 / 30.4);
+    assert.ok(months >= 11 && months <= 13, `expected ~12 months of grace, got ~${months}`);
+
+    assert.equal(body.counts.pastGrace, 0, 'nobody should be past grace on a fresh deployment');
+    assert.equal(body.billing.grandfatherMonths, 12, 'the decided default');
+    assert.equal(body.billing.noticeDays, 30);
+  });
+
+  /*
+   * The floor, which is the promise rather than a safety margin: a workspace
+   * older than the window is expired the instant the switch is flipped, and
+   * without the floor it would lose sync with no notice at all.
+   */
+  test('a workspace older than the window still gets the notice floor', async () => {
+    const { srv, admin, orgId } = await setup();
+    // Eighteen months old against a twelve-month window.
+    await srv.editStore((data) => {
+      const org = (data.orgs || []).find((o) => o.id === orgId);
+      assert.ok(org, 'the fixture lost the org');
+      org.createdAt = Date.now() - 548 * 86400000;
+    });
+
+    const { row, body } = await panelRow(srv, admin, orgId);
+    const days = Math.round((row.graceUntil - Date.now()) / 86400000);
+    assert.ok(days >= 28 && days <= 31,
+      `an expired window must floor at the notice period, got ${days} days`);
+    assert.equal(body.counts.pastGrace, 0,
+      'the floor is what makes this zero — a non-zero here means somebody loses sync with no notice');
+  });
+
+  test('an operator can set the two figures, and every grace date moves with them', async () => {
+    const { srv, admin, orgId } = await setup();
+    const before = (await panelRow(srv, admin, orgId)).row.graceUntil;
+
+    const set = await srv.req('/api/admin/billing-windows', {
+      method: 'PUT', cookies: admin, body: { grandfatherMonths: 3, noticeDays: 7 },
+    });
+    assert.equal(set.status, 200, set.text);
+
+    const { row, body } = await panelRow(srv, admin, orgId);
+    assert.equal(body.billing.grandfatherMonths, 3);
+    assert.equal(body.billing.noticeDays, 7);
+    assert.ok(row.graceUntil < before,
+      'a shorter window must pull the grace date in — otherwise the setting is decorative');
+
+    // Bounds, because a typo here parks every window out of reach and reads as
+    // enforcement silently not working.
+    assert.equal((await srv.req('/api/admin/billing-windows', {
+      method: 'PUT', cookies: admin, body: { grandfatherMonths: 999, noticeDays: 7 },
+    })).status, 400);
+    assert.equal((await srv.req('/api/admin/billing-windows', {
+      method: 'PUT', cookies: admin, body: { grandfatherMonths: 3, noticeDays: -1 },
+    })).status, 400);
+    // Zero is legitimate on both: "no grandfathering" and "no notice" are
+    // things an operator may mean, so they must not be refused as falsy.
+    assert.equal((await srv.req('/api/admin/billing-windows', {
+      method: 'PUT', cookies: admin, body: { grandfatherMonths: 0, noticeDays: 0 },
+    })).status, 200);
+  });
+
+  test('a per-org exemption overrides the derived window, and clears again', async () => {
+    const { srv, admin, orgId } = await setup();
+    const derived = (await panelRow(srv, admin, orgId)).row.graceUntil;
+
+    const set = await srv.req(`/api/admin/orgs/${orgId}/billing-exempt`, {
+      method: 'POST', cookies: admin, body: { until: '2030-06-30' },
+    });
+    assert.equal(set.status, 200, set.text);
+
+    const { row, body } = await panelRow(srv, admin, orgId);
+    assert.ok(row.graceUntil > derived, 'the override must beat the derived default');
+    /*
+     * Stored as the END of the named day, so the date on screen is the last
+     * day it covers — a field meaning a day less than it says would be wrong
+     * on every screen it appears on.
+     *
+     * ASSERTED AS COVERAGE, not as a formatted date, and the first version of
+     * this got it wrong: `toISOString().slice(0, 10)` reads `2030-06-30` for
+     * BOTH the start and the end of that day, so it passed against a store-at
+     * -midnight mutation that silently loses the last day. §76's shape — an
+     * assertion that cannot see the defect it is named for. What distinguishes
+     * them is whether the exemption is still in force late ON the named day.
+     */
+    assert.ok(row.graceUntil >= Date.parse('2030-06-30T23:59:59Z'),
+      'the exemption must cover the whole of the day it names, not expire at its start');
+    assert.ok(row.graceUntil < Date.parse('2030-07-01T00:00:00Z'),
+      'and must not spill into the next day');
+    assert.equal(body.counts.exemptOrgs, 1);
+
+    // And it clears, with the derived default taking over again.
+    assert.equal((await srv.req(`/api/admin/orgs/${orgId}/billing-exempt`, {
+      method: 'POST', cookies: admin, body: { until: null },
+    })).status, 200);
+    const after = await panelRow(srv, admin, orgId);
+    assert.equal(after.row.billingExemptUntil, null);
+    assert.ok(Math.abs(after.row.graceUntil - derived) < 5000, 'the derived window must come back');
+
+    assert.equal((await srv.req(`/api/admin/orgs/${orgId}/billing-exempt`, {
+      method: 'POST', cookies: admin, body: { until: 'next tuesday' },
+    })).status, 400, 'a date that is not YYYY-MM-DD must be refused, not guessed');
+  });
+
+  test('the cutoff controls are the operator\'s alone', async () => {
+    const { srv, cookies, orgId } = await setup();
+    assert.equal((await srv.req('/api/admin/billing-windows', {
+      method: 'PUT', body: { grandfatherMonths: 1, noticeDays: 1 },
+    })).status, 401);
+    assert.equal((await srv.req('/api/admin/billing-windows', {
+      method: 'PUT', cookies, body: { grandfatherMonths: 1, noticeDays: 1 },
+    })).status, 403);
+    assert.equal((await srv.req(`/api/admin/orgs/${orgId}/billing-exempt`, {
+      method: 'POST', cookies, body: { until: '2030-01-01' },
+    })).status, 403, 'a tenant cannot grant itself an exemption');
+  });
+
   test('the panel reports the two holds separately, and a row says which', async () => {
     const { srv, admin, orgId } = await setup();
     await plantBillingHold(srv, orgId);

@@ -90,7 +90,13 @@ const accessRequests = backup.accessRequests || [];
  * 2), so losing the stamp while keeping the value would re-date every
  * workspace's free window to whenever the restore happened.
  */
-const OPERATOR_DECISIONS = ['signupMode', 'orgCreation', 'billingMode'];
+/*
+ * The two cutoff figures are decisions too, and losing them is the same class
+ * of silent failure: a restore that dropped them would fall back to the 12/30
+ * defaults, which re-dates every grandfather window on the deployment without
+ * anything erroring. Three keys each, derived, so this stays one string apiece.
+ */
+const OPERATOR_DECISIONS = ['signupMode', 'orgCreation', 'billingMode', 'grandfatherMonths', 'noticeDays'];
 const RESTORED_PLATFORM_KEYS = OPERATOR_DECISIONS.flatMap((k) => [k, `${k}SetAt`, `${k}SetBy`]);
 const platform = Object.fromEntries(
   RESTORED_PLATFORM_KEYS

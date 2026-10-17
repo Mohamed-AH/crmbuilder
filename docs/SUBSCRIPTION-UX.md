@@ -352,6 +352,13 @@ suspension system. What actually has to be decided and written:
    the wording the free-mode card must use, which promises **notice, not
    duration**.
 
+   ✅ **BUILT** (`CLAUDE.md` §78) with **12 months and 30 days**, both operator
+   settings rather than constants, and an admin card to watch and control them.
+   **Still nothing writes `billingSuspendedAt`** — the computation and the
+   controls landed first, deliberately, so an operator can look at who would be
+   affected *before* anything can take sync away. That dry run is what the
+   `graceIsPreview` flag exists for.
+
    **The cutoff rule, decided 2026-10-17:**
 
    ```

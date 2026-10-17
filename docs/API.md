@@ -7,7 +7,7 @@
 > and every section here points at the relevant one rather than restating it —
 > one fact, one home (`CLAUDE.md` §27).
 
-61 routes over **seven** boundaries (§5b added three at the domain move; §7
+63 routes over **seven** boundaries (§5b added three at the domain move; §7
 is the payment webhook, which has no session at all). All JSON unless noted.
 All authenticated routes take the session cookie; there is no bearer token
 anywhere except `/api/admin/export`, which is deliberately different
@@ -456,6 +456,8 @@ PATCH/DELETE /api/admin/users/:id
 PUT  /api/admin/signup-mode         { mode }
 PUT  /api/admin/org-creation        { mode }
 PUT  /api/admin/billing-mode        { mode }  free | paid
+PUT  /api/admin/billing-windows     { grandfatherMonths, noticeDays }
+POST /api/admin/orgs/:id/billing-exempt  { until }  YYYY-MM-DD | null
 POST /api/admin/orgs/:id/suspend    { suspended, reason? }
 GET  /api/admin/beta-codes          POST, DELETE /:code
 GET  /api/admin/access-requests     POST /:email/decide
@@ -482,6 +484,25 @@ with no date cannot tell whether a workspace is inside its free window or past
 it. It is **`0` on a deployment that has never flipped the switch** — not
 absent, and not a real-looking date — so "never set" is distinguishable from a
 date somebody set, which is §10's `Number(x) || now` trap in a new place.
+
+**Per-org rows carry `graceUntil`, `graceIsPreview` and `billingExemptUntil`,
+and `counts` has `pastGrace` and `exemptOrgs`.** `graceUntil` is when a
+workspace stops being free, or `null` where enforcement does not apply to it at
+all (a signup after the switch, with no exemption).
+
+**`graceIsPreview` is the field a caller must not ignore.** Before
+`billingMode` has ever been flipped there is nothing to be outside of, so the
+real answer for every workspace is `null` — which would leave the column empty
+on exactly the screen whose job is to be read *before* the decision. So the
+panel computes against **now** instead and flags it: the dates are *what would
+happen if you switched today*, not a commitment. A client rendering the date
+without the flag is making a promise the server did not.
+
+`until` on the exemption is stored as the **end** of the day it names, so the
+date a caller sends back is the last day it covers. `pastGrace` counts
+workspaces whose grace has already run out under that same preview — **zero is
+the answer an operator wants before flipping**, and the notice floor is what
+makes zero achievable.
 
 **The default is `free` and a stored decision beats `BILLING_MODE`**, the same
 precedence as the signup mode (§16). The asymmetry worth knowing as a caller:

@@ -3264,6 +3264,80 @@ test.describe('admin', () => {
     await expect(page.locator('.toast').last()).toContainText('nowhere to go');
   });
 
+  /*
+   * The billing card, which exists to be LOOKED AT before the switch is
+   * flipped — so the assertion that matters most is that it says something
+   * useful while `billingMode` is still `free`, which is every deployment.
+   *
+   * §78's finding: billingGraceUntil returns null when nothing has been
+   * flipped, so a column fed straight from it would be empty on exactly the
+   * screen whose job is "look before you decide". The preview is what fills
+   * it, and the label is what stops it reading as a commitment.
+   */
+  test('the billing card previews who would be affected before anything is flipped', async ({ page }) => {
+    await page.goto('/app');
+    await signIn(page, 'e2e-admin@example.com');
+    await page.goto('/app#/admin');
+
+    const card = page.locator('.card', { has: page.getByRole('heading', { name: 'Billing', exact: true }) });
+    await expect(card).toBeVisible({ timeout: 20000 });
+
+    // Free, and saying what that means rather than only naming the state.
+    await expect(card).toContainText('free');
+    await expect(card).toContainText('No workspace can lose cloud sync');
+    // And the dates below are declared a preview, not a promise.
+    await expect(card).toContainText('preview');
+
+    // The two figures are the decided defaults, and they are controls.
+    await expect(card.locator('#grandfather-months')).toHaveValue('12');
+    await expect(card.locator('#notice-days')).toHaveValue('30');
+
+    /*
+     * The line an operator reads before flipping. Zero past grace is what the
+     * notice floor buys, so this is the assertion that the floor is wired —
+     * not merely that a number renders.
+     */
+    await expect(card).toContainText('No workspace would be past its grace date');
+
+    /*
+     * The table says when each workspace stops being free. Scoped to the
+     * Organisations card: `.records-table thead` matches the Accounts table
+     * too, and an unscoped locator is §14's `.toast` trap in a new place — it
+     * fails strict mode rather than asserting the wrong thing, which is the
+     * better of the two failures and still not an assertion.
+     */
+    const orgCard = page.locator('.card', { has: page.getByRole('heading', { name: 'Organisations', exact: true }) });
+    await expect(orgCard.locator('thead')).toContainText('Free until');
+  });
+
+  test('changing the window moves every grace date, and the figure is not decorative', async ({ page }) => {
+    await page.goto('/app');
+    await signIn(page, 'e2e-admin@example.com');
+    await page.goto('/app#/admin');
+    const card = page.locator('.card', { has: page.getByRole('heading', { name: 'Billing', exact: true }) });
+    await expect(card.locator('#grandfather-months')).toHaveValue('12', { timeout: 20000 });
+
+    const graceBefore = await page.locator('td[data-label="Free until"]').first().innerText();
+
+    await card.locator('#grandfather-months').selectOption('3');
+    await card.locator('#save-billing-windows').click();
+    await expect(page.locator('.toast').last()).toContainText('every grace date has moved');
+
+    // The select keeps the saved value through the re-render…
+    await expect(card.locator('#grandfather-months')).toHaveValue('3');
+    // …and the date in the table actually moved, which is the half that says
+    // the setting reaches the computation rather than only the screen.
+    await expect(page.locator('td[data-label="Free until"]').first())
+      .not.toHaveText(graceBefore, { timeout: 20000 });
+
+    // Put it back, so a later test in this file does not inherit a 3-month
+    // window — the stored decision outlives a restart by design (§16), so it
+    // would outlive this test too.
+    await card.locator('#grandfather-months').selectOption('12');
+    await card.locator('#save-billing-windows').click();
+    await expect(page.locator('.toast').last()).toContainText('every grace date has moved');
+  });
+
   test('the deployment card shows the three meters and who is heaviest', async ({ page }) => {
     await page.goto('/app');
     await signIn(page, 'e2e-admin@example.com');

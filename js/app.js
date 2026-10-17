@@ -643,6 +643,38 @@
     return `<div class="cell-sub" title="${esc(why)}">${pct}% reclaimable</div>`;
   }
 
+  /*
+   * When a workspace stops being free, for the Organisations table.
+   *
+   * Three states rather than a date, because a bare date cannot say which of
+   * them it is and they want different responses:
+   *
+   *  - `—`              enforcement does not apply (a signup after the switch,
+   *                     with no exemption). It is not "free for ever"; it is
+   *                     "the trial and then the plan", so an em dash rather
+   *                     than a reassuring word.
+   *  - a date           when it ends. Marked `by hand` if an operator set it,
+   *                     because that is the one an operator can change here
+   *                     and the derived one moves when the window does.
+   *  - `past` in red    already over. On a free deployment this is a warning
+   *                     about what flipping would do; on a paid one it means
+   *                     sync is held now.
+   *
+   * The whole column is a PREVIEW before the switch has ever been flipped
+   * (§78) — that is said once on the card above rather than on every row,
+   * because a qualifier repeated down a table is what trains the eye to skip
+   * the cell (§33).
+   */
+  function graceCell(o) {
+    if (!o || !o.graceUntil) return '<span class="muted">—</span>';
+    const until = Number(o.graceUntil);
+    const by = o.billingExemptUntil ? ' <span class="cell-sub">by hand</span>' : '';
+    if (until < Date.now()) {
+      return `<span class="pill pill-danger">past</span>${by}`;
+    }
+    return `${esc(fmtDate(dayISOFromMs(until)))}${by}`;
+  }
+
   function fmtCurrency(v) {
     const n = Number(v);
     if (Number.isNaN(n)) return String(v);
@@ -6274,24 +6306,72 @@
           </div>
           <p class="settings-hint">Capping stops <em>new</em> tenants. Colleagues invited to a team that already exists still sign up and join — that is the whole reason this is a separate switch from pausing signups.</p>
         </div>
+        ${platform.billing ? `
+        <div class="card">
+          <div class="card-head"><h2>Billing</h2></div>
+          <p class="settings-hint">
+            This deployment is <strong>${esc(platform.billing.mode)}</strong>.
+            ${platform.billing.mode === 'free'
+    ? 'Nothing is charged and nothing is enforced. No workspace can lose cloud sync while this says free.'
+    : 'Paid plans are active. A workspace past its grace date is read-only for sync — local use and export always continue.'}
+          </p>
+          <div class="mode-switch">
+            <span class="settings-hint" style="margin:0;align-self:center">Plans:</span>
+            ${[['free', 'Free'], ['paid', 'Paid']].map(([value, label]) => `
+              <button class="btn ${platform.billing.mode === value ? 'btn-primary' : ''}" data-billmode="${value}"
+                      ${platform.billing.mode === value ? 'disabled' : ''}>${esc(label)}</button>`).join('')}
+          </div>
+          <p class="settings-hint">Outlives restarts, so <code>BILLING_MODE</code> stops deciding once you set it here. ${platform.billing.setAt ? `Set ${esc(fmtWhen(platform.billing.setAt))} — every grace date below is measured from then.` : 'Never set, so the dates below are a <strong>preview</strong>: what would happen if you switched to Paid today.'}</p>
+
+          <div class="hr"></div>
+          <h3 class="settings-sub">How long people stay free</h3>
+          <div class="csv-format-row">
+            <label>Grandfather window
+              <select class="input csv-format" id="grandfather-months">
+                ${[0, 3, 6, 12, 18, 24].map((m) => `
+                  <option value="${m}" ${platform.billing.grandfatherMonths === m ? 'selected' : ''}>${m === 0 ? 'None' : `${m} months`}</option>`).join('')}
+              </select>
+            </label>
+            <label>Minimum notice
+              <select class="input csv-format" id="notice-days">
+                ${[0, 7, 14, 30, 60, 90].map((d) => `
+                  <option value="${d}" ${platform.billing.noticeDays === d ? 'selected' : ''}>${d === 0 ? 'None' : `${d} days`}</option>`).join('')}
+              </select>
+            </label>
+            <button class="btn" id="save-billing-windows">Save</button>
+          </div>
+          <p class="settings-hint">
+            A workspace that existed before you switch to Paid stays free for <strong>${platform.billing.grandfatherMonths} months from its own signup</strong>.
+            <strong>The notice is a floor on top of that</strong>: nobody loses cloud sync within ${platform.billing.noticeDays} days of the switch, even if their window already ran out — which is what stops the oldest workspaces being cut off the moment you flip it.
+          </p>
+          <p class="${platform.counts.pastGrace ? 'note-caution' : 'settings-hint'}">
+            ${platform.counts.pastGrace
+    ? `<strong>${platform.counts.pastGrace} workspace${platform.counts.pastGrace === 1 ? '' : 's'} would be past grace.</strong> Raise the notice or the window, or give them an exemption below, before switching to Paid.`
+    : 'No workspace would be past its grace date, so switching to Paid takes sync from nobody today.'}
+            ${platform.counts.exemptOrgs ? ` ${platform.counts.exemptOrgs} ha${platform.counts.exemptOrgs === 1 ? 's' : 've'} an exemption set by hand.` : ''}
+          </p>
+        </div>` : ''}
         <div class="card table-card">
           <div class="card-head"><h2>Organisations</h2></div>
           <p class="settings-hint">Heaviest first. Share is of what is actually stored, so one tenant dominating the database is visible without doing the arithmetic. <strong>Reclaimable</strong> is the part that is deleted rows waiting out the ${esc(String(platform.tombstoneDays || 180))}-day retention window — a workspace that is mostly that will shrink on its own, and is not the same problem as one that is genuinely large.</p>
           <div class="table-scroll">
             <table class="records-table">
-              <thead><tr><th>Organisation</th><th>People</th><th>Records</th><th>Stored</th><th>Share</th><th>Last active</th><th>Actions</th></tr></thead>
+              <thead><tr><th>Organisation</th><th>People</th><th>Records</th><th>Stored</th><th>Share</th><th>Free until</th><th>Last active</th><th>Actions</th></tr></thead>
               <tbody>
                 ${platform.orgs.map((o) => `
                   <tr>
-                    <td data-label="Organisation"><strong>${esc(o.name || '—')}</strong>${o.suspendedAt ? ' <span class="pill pill-danger">paused</span>' : ''}</td>
+                    <td data-label="Organisation"><strong>${esc(o.name || '—')}</strong>${o.suspendedAt ? ' <span class="pill pill-danger">paused</span>' : ''}${o.billingSuspendedAt ? ' <span class="pill pill-danger">unpaid</span>' : ''}</td>
                     <td data-label="People" class="td-num">${o.members}</td>
                     <td data-label="Records" class="td-num">${o.records.toLocaleString()}</td>
                     <td data-label="Stored" class="td-num">${fmtBytes(o.bytes)}${reclaimable(o, platform.tombstoneDays || 180)}</td>
                     <td data-label="Share" class="td-num">${o.shareOfData}%</td>
+                    <td data-label="Free until">${graceCell(o)}</td>
                     <td data-label="Last active">${o.lastActiveAt ? fmtWhen(o.lastActiveAt) : '—'}</td>
                     <td data-label="Actions" class="admin-actions">
                       <button class="icon-btn" data-org-suspend="${esc(o.id)}" data-on="${o.suspendedAt ? '0' : '1'}"
                               title="${o.suspendedAt ? 'Let this workspace write again' : 'Pause writes — nothing is deleted'}">${icon(o.suspendedAt ? 'shield-check' : 'ban', 15)}</button>
+                      <button class="icon-btn" data-org-exempt="${esc(o.id)}" data-until="${o.billingExemptUntil ? esc(dayISOFromMs(o.billingExemptUntil)) : ''}"
+                              title="${o.billingExemptUntil ? 'Change or clear when this workspace stops being free' : 'Keep this workspace free until a date you choose'}">${icon('calendar', 15)}</button>
                     </td>
                   </tr>`).join('')}
               </tbody>
@@ -6499,6 +6579,74 @@
       try {
         await Cloud.admin.setOrgCreation(mode);
         toast(mode === 'closed' ? 'New organisations capped' : 'New organisations allowed');
+        renderAdmin();
+      } catch (err) {
+        toast(err.message);
+      }
+    }));
+
+    /*
+     * Switching to Paid is the one control here that can take a working
+     * feature away from somebody, so the confirmation NAMES THE COUNT rather
+     * than asking in the abstract — §21's rule that a destructive control says
+     * its cost first, and §33's that a figure means nothing without what it
+     * qualifies. `pastGrace` is read off the same preview the table shows, so
+     * the number in the dialog is the number on screen.
+     */
+    $$('[data-billmode]').forEach((btn) => btn.addEventListener('click', async () => {
+      const mode = btn.dataset.billmode;
+      const past = (platform && platform.counts && platform.counts.pastGrace) || 0;
+      if (mode === 'paid') {
+        const warning = past
+          ? `\n\n${past} workspace${past === 1 ? '' : 's'} ${past === 1 ? 'is' : 'are'} already past the grace date and would go read-only for sync straight away. Raise the notice or the window, or give them an exemption, if that is not what you mean.`
+          : '\n\nNo workspace is past its grace date, so nobody loses sync today.';
+        if (!confirm(`Switch this deployment to Paid plans?${warning}\n\nNothing is deleted, and local use and export always continue.`)) return;
+      } else if (!confirm('Switch back to Free?\n\nNothing will be charged and no workspace can lose cloud sync while it says Free.')) return;
+      try {
+        await Cloud.admin.setBillingMode(mode);
+        toast(mode === 'paid' ? 'Paid plans active' : 'Back to free — nothing is enforced');
+        renderAdmin();
+      } catch (err) {
+        toast(err.message);
+      }
+    }));
+
+    const windowsBtn = $('#save-billing-windows');
+    if (windowsBtn) windowsBtn.addEventListener('click', async () => {
+      try {
+        await Cloud.admin.setBillingWindows(
+          Number($('#grandfather-months').value),
+          Number($('#notice-days').value),
+        );
+        toast('Saved — every grace date has moved');
+        renderAdmin();
+      } catch (err) {
+        toast(err.message);
+      }
+    });
+
+    /*
+     * The per-org exemption. A prompt rather than a date input, because it is
+     * the rare path and the table is already seven columns wide — and it
+     * pre-fills the current value so changing one is not retyping it.
+     *
+     * An empty answer CLEARS it, which the prompt says, because an operator
+     * who wants the derived window back has no other way to ask for it and
+     * would otherwise type a date to approximate one.
+     */
+    $$('[data-org-exempt]').forEach((btn) => btn.addEventListener('click', async () => {
+      const id = btn.dataset.orgExempt;
+      const now = btn.dataset.until || '';
+      const answer = prompt(
+        'Keep this workspace free until the end of which day?\n\n'
+        + 'YYYY-MM-DD. This beats the usual window, and it is also how you record a workspace paying by invoice rather than by card.\n\n'
+        + 'Leave it empty to clear the exemption and go back to the usual window.',
+        now,
+      );
+      if (answer === null) return;
+      try {
+        await Cloud.admin.setOrgBillingExempt(id, answer.trim() || null);
+        toast(answer.trim() ? 'Exemption set' : 'Exemption cleared');
         renderAdmin();
       } catch (err) {
         toast(err.message);
