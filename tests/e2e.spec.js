@@ -6353,6 +6353,97 @@ test.describe('subscribing', () => {
     await expect(card).not.toContainText(/unknown/i);
   });
 
+  test('free mode promises notice rather than a duration, and offers no checkout', async ({ page }) => {
+    /*
+     * The wording is the test, and it is load-bearing rather than copy.
+     * docs/PAYMENTS.md §5: a card reading "free for early users" with no
+     * qualifier is read as PERMANENT, and the grandfathering decision is
+     * explicitly not a permanent tier — so that phrasing would make, in the
+     * one place a customer quotes back, the promise the decision declines to
+     * make. All three statements here stay true whatever the window is.
+     *
+     * `checkout: null` is what the SERVER sends in free mode, and that gate
+     * has its own test in tests/payments.test.mjs. What this asserts is the
+     * other half: that the card does not go blank when both of its usual
+     * conditions are absent. In free mode there is no link and no record, so
+     * before this the card vanished entirely — §39's state that renders as
+     * nothing, on the question people signing up today are entitled to have
+     * answered.
+     */
+    await onboard(page, { name: 'Early Access Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('checkout-free'));
+    await withBilling(page, {
+      mode: 'free', live: false, enabled: true, checkout: null, portal: null, billing: null,
+    });
+
+    await page.goto('/app#/settings');
+    const card = page.locator('.card:has(h2:text-is("Subscription"))');
+    await expect(card).toBeVisible({ timeout: 20000 });
+
+    await expect(card).toContainText(/free while it is in early access/i);
+    await expect(card).toContainText(/tell you before anything changes/i);
+    await expect(card).toContainText(/not be charged without being asked/i);
+
+    // The phrasing that promises a permanent tier, asserted absent by name.
+    await expect(card).not.toContainText(/free for early users/i);
+    // And no duration anywhere: "for ever", "always", or a number of months.
+    await expect(card).not.toContainText(/for ever|forever|always free/i);
+
+    await expect(card.locator('#checkout-go')).toHaveCount(0);
+    await expect(card.locator('#portal-go')).toHaveCount(0);
+    // No price, same rule as the paid card above (§29).
+    await expect(card).not.toContainText(/[£$€]\s?\d/);
+  });
+
+  test('free mode does not tell a live subscriber they will not be charged', async ({ page }) => {
+    /*
+     * The branch that stops the reassurance being a lie, and it is reachable:
+     * flipping the mode back to `free` does not stop the PROVIDER charging a
+     * live subscription. Only cancelling does, and the portal is the only
+     * control that can — so for this reader the free-mode copy is false and
+     * the ordinary status plus the portal is the honest answer.
+     *
+     * tests/payments.test.mjs asserts the server keeps sending the portal
+     * here, which is the half that would cost money; this is the half that
+     * would cost trust.
+     */
+    await onboard(page, { name: 'Still Paying Ltd', templates: ['Contacts'] });
+    await signIn(page, uniqueEmail('checkout-free-live'));
+    await withBilling(page, {
+      mode: 'free',
+      live: true,
+      enabled: true,
+      checkout: null,
+      portal: PORTAL,
+      billing: {
+        provider: 'dodo',
+        subscriptionId: 'sub_free_mode_live',
+        status: 'active',
+        subscriptionEvent: 'subscription.active',
+        nextBillingAt: Date.UTC(2026, 10, 13, 0, 0, 0),
+        pastDueEndsAt: null,
+        paymentEvent: null,
+        paymentStatus: null,
+        updatedAt: Date.now(),
+      },
+    });
+
+    await page.goto('/app#/settings');
+    const card = page.locator('.card:has(h2:text-is("Subscription"))');
+    await expect(card).toBeVisible({ timeout: 20000 });
+
+    // The promise must be absent — all three clauses, because any one of them
+    // alone is the false reassurance.
+    await expect(card).not.toContainText(/early access/i);
+    await expect(card).not.toContainText(/tell you before anything changes/i);
+    await expect(card).not.toContainText(/not be charged without being asked/i);
+
+    // And what they get instead is the state and the way out of it.
+    await expect(card).toContainText(/Active/);
+    await expect(card.locator('#portal-go')).toHaveText(/Manage subscription/);
+    await expect(card.locator('#checkout-go')).toHaveCount(0);
+  });
+
   test('a payment return strips the query, including the email, and lands on Settings', async ({ page }) => {
     /*
      * REAL, with nothing intercepted — this is the capture code against the

@@ -1451,13 +1451,21 @@ sessions**, or **set with the price decided and the documents walked**.
    | **refund and cancellation policy** | ❌ — the word *refund* appears in **no** legal page. §3's lever 5 is the 14-day promise and it has never been written down anywhere a customer can read it |
    | **a contact route** | ❌ — and worse than absent: `privacy.html` says *"contact us at the address below"* and **there is no address below** |
 
-   The last one is a **live defect on a legal page**, found here by grepping for
-   a payment prerequisite rather than by reading the page — §40's shape, where a
-   page promises something the deployment does not deliver and nothing
-   contradicts it. It is worth fixing on its own merits whatever happens to
-   payments. The other two are the pricing commit's work anyway (§2.1's twelve
-   files), which means **verification is gated on the same commit as the price**
-   and cannot be started early to get the 1–3 days out of the way.
+   The last one is a **live defect on a legal page and it is bigger than this
+   list.** Measured across all five public pages — `privacy.html`, `terms.html`,
+   `guide.html`, `welcome.html`, `index.html` — there is **no `mailto:` and no
+   email address of any kind**, so *"the address below"* is a promise nothing
+   keeps. A privacy notice that tells a data subject to get in touch and gives
+   them no way to is a **compliance** defect in the document that exists for
+   compliance; the same page also offers *"Ask us"* to somebody who cannot
+   delete their own account (§15's stranded last owner), which is the one case
+   where self-service cannot work. **Which address goes on a public page is the
+   owner's decision**, which is why it is flagged rather than fixed — but it is
+   worth doing on its own merits whatever happens to payments.
+
+   The other two are the pricing commit's work anyway (§2.1's twelve files),
+   which means **verification is gated on the same commit as the price** and
+   cannot be started early to get the 1–3 days out of the way.
 3. **One CA session** — §4's five questions, with question 1 now live because
    the account is an individual one. Get the intermediary point in writing.
 4. **File the LUT** for the current financial year if it is not filed.

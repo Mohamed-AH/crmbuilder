@@ -274,6 +274,40 @@
   function billingStatusHTML(state) {
     const line = (text) => `<p class="settings-hint">${text}</p>`;
     /*
+     * FREE MODE, and it comes first on purpose.
+     *
+     * Nothing is on sale, so the enabled warning below it is noise — that one
+     * exists to stop somebody paying into a deployment that cannot record it,
+     * and here there is no checkout to pay through. An operator warning on a
+     * customer's screen, in a state where it cannot apply, is the kind of line
+     * that teaches people to ignore the card (§25's lesson, §33's cell nobody
+     * reads).
+     *
+     * The wording is settled in docs/PAYMENTS.md §5 and is load-bearing
+     * rather than incidental: it promises NOTICE, NOT DURATION. "Free for
+     * early users" with no qualifier is read as permanent, and the
+     * grandfathering decision is explicitly not a permanent tier — so that
+     * phrasing would make, in the one place a customer quotes back, the
+     * promise the decision declines to make. All three statements below stay
+     * true whatever the window turns out to be.
+     *
+     * Gated on `live` as well as the mode, and that is the half worth not
+     * losing: flipping back to free while somebody holds a live subscription
+     * must not tell them they will not be charged. The provider goes on
+     * charging whatever this deployment's mode says, so for them the ordinary
+     * status and the portal are the honest answer and this is a false one. A
+     * cancelled or expired record does fall through to here, which is correct
+     * — they are not being charged, and the portal below still reaches their
+     * invoices.
+     */
+    if (state.mode === 'free' && !state.live) {
+      return `<p class="settings-hint" style="margin-bottom:6px"><strong>Nimble Clerk is free while it is in early access.</strong></p>
+        <ul class="settings-hint" style="margin:0;padding-left:18px">
+          <li>We will tell you before anything changes.</li>
+          <li>You will not be charged without being asked.</li>
+        </ul>`;
+    }
+    /*
      * The deployment cannot receive a confirmation at all, so a payment made
      * now would be taken and never recorded. An operator problem, said out
      * loud rather than shown as "not subscribed" — which is what it would
@@ -4658,7 +4692,7 @@
           <button class="btn btn-primary" id="mail-save">Save email settings</button>
           <p class="settings-hint" style="margin:12px 0 0">The key stays on the server and is never sent to a browser, never shared with your team, and never included in a backup. It is your account with your provider — reminders leave from your address, on your billing, and we never see who you sent one to.</p>
         </div>` : ''}
-        ${authed && org && org.billing && (org.billing.checkout || org.billing.billing) ? `
+        ${authed && org && org.billing && (org.billing.checkout || org.billing.billing || org.billing.mode === 'free') ? `
         <!--
           Subscription.
 
@@ -4668,6 +4702,14 @@
           subscribed must still see its state if the product id is later unset,
           and a deployment that never sells anything shows no card at all
           rather than an empty one explaining itself.
+
+          FREE MODE is the third arm, and it is the one that is NOT an
+          absence. In free mode there is no checkout link and usually no
+          record, so the two conditions above hide the card entirely — and a
+          card that says nothing is exactly §39's state that renders as
+          nothing. The promise this mode makes is the reason the card exists
+          at all here: people are signing up today and are entitled to know
+          what happens when the price arrives.
 
           (No backticks in this comment: it sits inside a template literal, so
           one would close the string — §60's trap, which cost a syntax error

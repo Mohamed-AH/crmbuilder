@@ -14,7 +14,7 @@
  * an internal identifier that happens to contain the old product name, where
  * changing it costs something and buys nothing.
  */
-const CACHE_VERSION = 'crmbuilder-v67';
+const CACHE_VERSION = 'crmbuilder-v68';
 const APP_SHELL = [
   // The app is at /app; `/` is the landing page and is NOT ours (see the
   // navigation branch below). Absolute, because a relative entry would be

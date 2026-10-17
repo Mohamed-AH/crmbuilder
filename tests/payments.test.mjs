@@ -143,6 +143,18 @@ describe('the payment webhook', () => {
         // Share Invite dialog rather than composed from a business id — the
         // test-mode host, which is what a test-mode deployment would hold.
         DODO_PORTAL_URL: 'https://test.customer.dodopayments.com/login/bus_test_crmbuilder',
+        /*
+         * PAID, because `billingMode`'s default is `free` and free mode sends
+         * no checkout link at all — so without this every link assertion in
+         * this file tests the free-mode gate instead of the thing it names.
+         * Measured rather than predicted: adding that gate failed exactly
+         * seven tests here, all of them checkout-link ones.
+         *
+         * This is the env default, not a stored decision, so a test that
+         * flips the stored mode still wins over it (§16's precedence) — which
+         * is what the free-mode tests below rely on, and why they restore it.
+         */
+        BILLING_MODE: 'paid',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -860,6 +872,104 @@ describe('the payment webhook', () => {
     assert.equal(mine.portal, 'https://test.customer.dodopayments.com/login/bus_test_crmbuilder');
   });
 
+  /*
+   * FREE MODE. Three tests, and they share one hazard: the mode is STORED, so
+   * leaving it flipped leaks into every test after them — §16 records exactly
+   * that for the E2E test that changes the signup mode, which restores it in a
+   * `finally`. Each of these does the same.
+   *
+   * The owner here is the FIRST account on this deployment and is therefore a
+   * platformAdmin (§21, §39), which is what lets it reach the admin route at
+   * all. Worth stating: a reader seeing a team owner flip a platform lever
+   * would reasonably think the route's guard was wrong.
+   */
+  async function withFreeMode(fn) {
+    const set = await req('/api/admin/billing-mode', { method: 'PUT', body: { mode: 'free' }, cookies: owner });
+    assert.equal(set.status, 200, `could not flip the mode: ${JSON.stringify(set.json)}`);
+    try {
+      await fn();
+    } finally {
+      await req('/api/admin/billing-mode', { method: 'PUT', body: { mode: 'paid' }, cookies: owner });
+    }
+  }
+
+  test('free mode sends no checkout link, and the gate is on the server', async () => {
+    /*
+     * The entitlement half, and it is the one that matters. In free mode
+     * nothing is on sale, so a workspace holding yesterday's link must not be
+     * able to buy through it — a charge taken in the one mode whose whole
+     * promise is that nobody is charged without being asked.
+     *
+     * A fresh workspace, because the owner's has held a live subscription
+     * since early in this file and `live` would mask the mode as the reason
+     * the link is absent. That conflation is the thing `mode` and `live`
+     * exist to tell apart, so a test that cannot distinguish them proves
+     * nothing about either.
+     */
+    const fresh = jar();
+    await req('/auth/dev', { method: 'POST', body: { email: 'pay-free@team.test' }, cookies: fresh });
+
+    const paid = (await req('/api/org/billing', { cookies: fresh })).json;
+    assert.ok(paid.checkout, 'the baseline is wrong: paid mode sent no link, so the next assertion is vacuous');
+    assert.equal(paid.mode, 'paid');
+
+    await withFreeMode(async () => {
+      const out = (await req('/api/org/billing', { cookies: fresh })).json;
+      assert.equal(out.mode, 'free');
+      assert.equal(out.checkout, null, 'free mode offered a checkout link');
+      assert.equal(out.live, false);
+    });
+
+    // And it comes back, so the flip is a mode rather than a one-way door.
+    assert.ok((await req('/api/org/billing', { cookies: fresh })).json.checkout);
+  });
+
+  test('free mode still reaches the portal of somebody already subscribed', async () => {
+    /*
+     * The asymmetry, and it would cost real money to get wrong. Flipping back
+     * to free does not stop the PROVIDER charging a live subscription — only
+     * cancelling does, and the portal is the only control that can. So
+     * withholding it here would strand a paying customer with a recurring
+     * debit and no way to stop it, which is a dispute that is entirely ours
+     * (PAYMENTS.md §3).
+     *
+     * The owner has to be re-subscribed here rather than inherited. The first
+     * version of this test assumed a live subscription from earlier in the
+     * file and failed on its own precondition — the tests above it drive
+     * `cancelNow()` so they can read a checkout link past §74's gate, so by
+     * this point the owner is cancelled. That guard is the only reason the
+     * wrong assumption was visible rather than passing: a cancelled owner
+     * gets `portal` too, so every assertion below would have been satisfied
+     * for the wrong reason (§9).
+     */
+    await deliver(subscriptionEvent({ status: 'active', at: laterClock() }));
+    await withFreeMode(async () => {
+      const out = await billingNow();
+      assert.equal(out.mode, 'free');
+      assert.equal(out.live, true, 'the owner is not subscribed, so this test is not testing what it says');
+      assert.equal(out.checkout, null, 'a live subscriber was offered a second checkout');
+      assert.equal(
+        out.portal,
+        'https://test.customer.dodopayments.com/login/bus_test_crmbuilder',
+        'free mode took away the only control a live subscriber has',
+      );
+    });
+  });
+
+  test('a stored free decision beats the paid env var', async () => {
+    /*
+     * §16's precedence, on the third lever. The env var here is `paid`, so a
+     * stored `free` winning is the whole assertion — and it is not a
+     * restatement of §78's own precedence test, which drives the admin panel.
+     * This one drives the CUSTOMER-facing route, which is where getting it
+     * backwards would charge somebody an operator had decided not to charge.
+     */
+    await withFreeMode(async () => {
+      assert.equal((await billingNow()).mode, 'free');
+    });
+    assert.equal((await billingNow()).mode, 'paid');
+  });
+
   test('a viewer cannot read the billing status', async () => {
     const out = await req('/api/org/billing', { cookies: viewer });
     assert.equal(out.status, 403);
@@ -959,6 +1069,10 @@ describe('a deployment with no DODO_WEBHOOK_SECRET', () => {
         DODO_PORTAL_URL: 'customer.dodopayments.com/login/bus_1',
         ALLOW_DEV_LOGIN: '1',
         SIGNUP_MODE: 'open',
+        // Paid, for the reason the first server's env gives: this describe's
+        // subject is "nothing to sell" and "cannot confirm a sale", and in
+        // free mode BOTH would be masked by a third absence.
+        BILLING_MODE: 'paid',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -1007,9 +1121,17 @@ describe('a deployment with no DODO_WEBHOOK_SECRET', () => {
      *                    deployment actually is until a price is decided
      *   portal: null     no DODO_PORTAL_URL, so no self-service either
      *
+     *   mode: 'paid'     what this deployment WOULD do, which is a fourth
+     *                    fact and not an absence — in `free` mode the card
+     *                    says something else entirely and offers no checkout
+     *   live: false      nothing is subscribed. The one fact the card cannot
+     *                    derive, because the TERMINAL set lives on the server
+     *                    (§74) and the client would need a second copy of it
+     *
      * The deepEqual is the assertion: it is what catches a key added to this
      * response without a decision, which §46 records as the drift no route
-     * count can see.
+     * count can see. It did exactly that for `mode` and `live` — this is the
+     * only test in the file that failed on them, and it failed by naming both.
      */
     const cookies = jar();
     const res = await fetch(`${BASE2}/auth/dev`, {
@@ -1026,7 +1148,9 @@ describe('a deployment with no DODO_WEBHOOK_SECRET', () => {
     });
     assert.equal(out.status, 200);
     const body = await out.json();
-    assert.deepEqual(body, { enabled: false, checkout: null, portal: null, billing: null });
+    assert.deepEqual(body, {
+      mode: 'paid', live: false, enabled: false, checkout: null, portal: null, billing: null,
+    });
   });
 
   test('a portal URL that is not https is refused at boot, and says so', async () => {

@@ -848,15 +848,18 @@ retired by the next subscription event rather than by anything clearing it.
 
 ### `GET /api/org/billing`
 
-Owner only, 403 otherwise. Returns `{ enabled, checkout, portal, billing }`,
-and the four are deliberately separate because three of them are absences that
-read identically if any is dropped:
+Owner only, 403 otherwise. Returns
+`{ mode, live, enabled, checkout, portal, billing }`, and they are deliberately
+separate because several of them are absences that read identically if any is
+dropped:
 
 | | |
 |---|---|
+| `mode` | `'free'` or `'paid'` — the deployment's billing mode. In `'free'` mode **nothing is on sale**: `checkout` is always `null` and the card says so instead (see below) |
+| `live` | whether this workspace holds a **non-terminal** subscription. The one field a caller cannot derive, because the terminal set lives on the server — without it, `checkout: null` is ambiguous between `'free'` mode and an existing subscription, and those two want opposite copy |
 | `enabled` | the deployment has a webhook secret, so a payment could be **recorded**. False means a payment taken now would leave no trace — an operator fault, not an unsubscribed workspace |
-| `checkout` | the hosted payment link, or `null` when no product is configured (nothing to **sell** yet) **or when this workspace already holds a live subscription** — see the gate below |
-| `portal` | the hosted customer portal, or `null` when none is configured **or when the workspace has no billing record at all**: a workspace that has never paid has no customer record at the provider, so the link would lead to a sign-in page that never emails them anything |
+| `checkout` | the hosted payment link, or `null` when no product is configured (nothing to **sell** yet), **when `mode` is `'free'`**, **or when this workspace already holds a live subscription** — see the gate below |
+| `portal` | the hosted customer portal, or `null` when none is configured **or when the workspace has no billing record at all**: a workspace that has never paid has no customer record at the provider, so the link would lead to a sign-in page that never emails them anything. **Deliberately NOT gated on `mode`** — flipping back to `'free'` does not stop the provider charging a live subscription, so withholding the portal there would strand a paying customer with a recurring debit and no way to cancel it |
 | `billing` | `null` until a webhook event lands |
 
 **The gate on `checkout` is a behaviour change and not a cosmetic one.** A
@@ -873,6 +876,7 @@ which is accepted at this volume and recorded in
 
 A terminal subscription receives **both** links: checkout, because
 resubscribing is allowed, and the portal, because the invoices are still there.
+In `'free'` mode it receives the portal only, for the reason in the table.
 
 The checkout link is a static payment link,
 `https://checkout.dodopayments.com/buy/{product_id}`, carrying four

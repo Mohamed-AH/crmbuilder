@@ -5467,7 +5467,29 @@ app.get('/api/org/billing', requireAuth, requireBillingOwner, async (req, res) =
    */
   const billing = meta.billing && typeof meta.billing === 'object' ? meta.billing : null;
   const live = hasLiveSubscription(billing);
+  /*
+   * The billing mode, because in `free` mode this card says something
+   * different and must offer no checkout at all — which is what retires the
+   * test-mode Subscribe button `CLAUDE.md` §73, §74 and §76 each had to write
+   * a paragraph about.
+   */
+  const { mode } = await billingMode();
   res.json({
+    mode,
+    /*
+     * The one fact the client cannot derive. `hasLiveSubscription` keys on the
+     * TERMINAL set (§74), which lives on the server deliberately so an
+     * unrecognised future status blocks a second purchase rather than selling
+     * one — so a card that needed to know "is anything live here" would have
+     * to carry a second copy of that set, and the copy that goes stale is the
+     * one that decides what a customer is told.
+     *
+     * Without it the card cannot tell its two null-checkout states apart:
+     * `free` mode and an existing live subscription both send no link, and
+     * they want opposite copy. That conflation is the shape this file keeps
+     * finding, so the boolean is cheaper than the ambiguity.
+     */
+    live,
     enabled: Boolean(DODO_WEBHOOK_SECRET),
     /*
      * THE GATE, and it is on the server rather than in the card because this
@@ -5482,13 +5504,28 @@ app.get('/api/org/billing', requireAuth, requireBillingOwner, async (req, res) =
      * Subscribe) and wrong about this one, where the alternative is a dead
      * end for a receipt.
      */
-    checkout: live ? null : checkoutUrl(wsId, req.user.email),
+    /*
+     * `free` joins the gate, and it is on the server for the same reason the
+     * duplicate gate is: a client-side hide is a client-side hide, and the
+     * link is a plain URL anybody can keep. In `free` mode nothing is on sale,
+     * so a workspace that kept yesterday's link must not be able to buy
+     * through it — that would be a charge taken in a mode whose whole promise
+     * is that nobody is charged without being asked.
+     */
+    checkout: mode === 'free' || live ? null : checkoutUrl(wsId, req.user.email),
     /*
      * Offered only once there is something to manage. A workspace that has
      * never paid has no customer record at the provider, so the link leads to
      * a sign-in page that will never email them anything — a control that
      * looks like it works and cannot, which is §36's shape and the one thing
      * this card has already been caught doing twice.
+     *
+     * NOT gated on the mode, and that is the asymmetry that matters: flipping
+     * back to `free` while somebody holds a live subscription must not take
+     * away the only control they have for cancelling it. The provider goes on
+     * charging whatever this deployment's mode says, so withholding the portal
+     * there would strand a paying customer with a recurring debit and no way
+     * to stop it — a dispute that would be entirely ours.
      */
     portal: billing ? DODO_PORTAL_URL || null : null,
     billing: publicBilling(billing),

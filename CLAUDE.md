@@ -222,6 +222,13 @@ never change, because everything cross-references them.
 | Account verification gated on the same commit as the price | §79 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7 · §48 |
 | A chargeback that reaches us as an ordinary refund, by design | §79 · §70 · §2 |
 | A blocked apex reported as a DNS failure, and what named the real mechanism | §79 · §64 · §8 |
+| **The free-mode card** — notice rather than duration, and the button it retires | §80 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · §73 · §76 |
+| A card whose own condition made it vanish in the state it was needed for | §80 · §39 · §71 |
+| **Two opposite calls about one mode** — gate the checkout, never the portal | §80 · §74 · §24 |
+| A reassurance that is false to the one reader actively being charged | §80 · §76 · §36 |
+| Two nulls that wanted opposite copy, closed with one boolean | §80 · §78 · §73 |
+| **A pinned env var as a test seam**, and the seven tests that named the radius | §80 · §16 · §9 |
+| A precondition guard that caught the author's wrong assumption | §80 · §9 · §34 |
 | Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
@@ -295,16 +302,19 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**638 Node tests pass, and Playwright is 161** — both **observed** after §78's
-thirteen Node tests and two Playwright ones: Node **638/638, 0 skipped** and
-Playwright **161/161 in 8.2m**, measured on `c9efdf4`. Smoke is **51 local**,
-also run.
+**641 Node tests pass, and Playwright is 163** — both **observed** after §80's
+three Node tests and two Playwright ones: Node **641/641, 0 skipped** and
+Playwright **163/163 in 6.5m**. Smoke is **51 local · 0 warnings · 0 failed**,
+also run. (§78's figures were 638 and 161, measured on `c9efdf4`.)
 
 **That clean Playwright run retires none of the three intermittents**, and the
-reason is the same non-result §71 and §77 both record: none of them fired.
-§66's *signing out hides the workspace* failed on the item-1 run of this same
-work and passed here, which is what 1-in-3 looks like. Read the next short run
-against §77's table before concluding anything.
+reason is the same non-result §71 and §77 both record: none of them fired. It
+has now happened on three consecutive full runs (§78's two and §80's), which is
+not evidence of a fix — against §66's measured 1-in-3, three clean runs happen
+about 30% of the time. §66's *signing out hides the workspace* failed on the
+item-1 run of this same work and has passed every run since, which is what
+1-in-3 looks like. Read the next short run against §77's table before
+concluding anything.
 
 **Playwright's honest figure is a RANGE, and §77 is why.** Two full runs there
 gave 156/158 and 157/158, with a **different** test failing in each and all of
@@ -542,6 +552,18 @@ reads as success and means nothing. Record the PID with `pgrep -x node`
 the mutation is live (`curl` the thing that should have changed) before
 trusting a figure. Same family as the two notes above and as §47's sweep that
 healed what it was looking for.
+
+**And `pgrep … | head -1` is the same mistake wearing the fix's clothes.**
+Recording the PID after the boot is the rule above, and `head -1` throws it
+away: the pattern matches more than one process, so the recorded PID was
+**6114** when the server was **6117** — `kill` reported success, the smoke run
+had already passed, and the server was still listening afterwards. The symptom
+is the one this section keeps naming: the next boot dies `EADDRINUSE`, the old
+binary keeps answering, and whatever you measure next is the build you thought
+you had replaced. Kill **every** match (`kill $(pgrep -f …)`), or confirm with
+`pgrep -a -x node` and the port afterwards rather than trusting the kill. A
+`<defunct>` entry is a zombie awaiting reap and is not a running server —
+re-check a second later before concluding anything.
 
 **Restarting a test server on the same port is not reliable.** `expireInvite()`
 in `api.test.mjs` stops the server, edits `store.json` and starts it again;
@@ -12640,10 +12662,31 @@ a contact route."* Measured against `nimbleclerk.com`:
 | **refund and cancellation policy** | ❌ — the word *refund* is in **no** legal page, though §3's lever 5 is a 14-day promise |
 | **a contact route** | ❌ — `privacy.html` says *"contact us at the address below"* and **there is no address below** |
 
-**That last one is a live defect on a legal page**, and it was found by grepping
-for a payment prerequisite rather than by reading the page — §40's shape, where
-a page promises something the deployment does not deliver and nothing
-contradicts it. Worth fixing on its own merits whatever happens to payments.
+**That last one is a live defect on a legal page, and it is bigger than a
+payment prerequisite.** Measured across all five public pages — `privacy.html`,
+`terms.html`, `guide.html`, `welcome.html`, `index.html` — there is **no
+`mailto:` and no email address of any kind**, so *"the address below"* is a
+promise nothing anywhere keeps.
+
+A privacy notice that tells a data subject to get in touch and then gives them
+no way to **is a compliance defect in the document that exists for
+compliance**, not merely an untidy sentence. The same page offers *"Ask us"* as
+the route for somebody who cannot delete their own account — the stranded last
+owner of a team (§15's `wouldStrandTeam`) — which is the one case where
+self-service genuinely cannot work, so the people it strands are exactly the
+ones with nowhere to go.
+
+**Not fixed here, and that is a deferral rather than an omission:** which
+address goes on a public page is the owner's decision, and the only address
+this session knows is their personal one. Flagged in §7's before-live list with
+the payment items, and worth doing on its own merits whatever happens to
+payments.
+
+It was found by grepping for a **payment** prerequisite rather than by reading
+the page — §40's shape, where a page promises something the deployment does not
+deliver and nothing contradicts it. §27's walk list has `privacy.html` on it
+and the walk is about what a *change* makes stale; nothing had made this stale,
+because it was wrong from the day it was written.
 
 The other two are the pricing commit's work anyway, which produces a scheduling
 fact worth knowing early: **verification is gated on the same commit as the
@@ -12684,3 +12727,156 @@ a capability. The walk fires with enforcement — except for the **contact route
 and the **refund policy**, which are now on §7's before-live list as items that
 have to exist before an account can be verified, and the first of which is a
 defect rather than a feature.
+
+
+---
+
+## 80. The free-mode card, and the state that rendered as nothing was the card itself
+
+Item 4 of [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2. In
+`billingMode: 'free'` — which is every deployment, because §78 shipped the lever
+defaulting to free and nothing has flipped it — the Subscription card offers no
+checkout and says three things instead:
+
+> **Nimble Clerk is free while it is in early access.**
+> · We will tell you before anything changes.
+> · You will not be charged without being asked.
+
+**The wording is settled in [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 and it is
+load-bearing rather than copy.** *"Free for early users"* with no qualifier is
+read as **permanent**, and the grandfathering decision is explicitly not a
+permanent tier — so that phrasing would make, in the one place a customer quotes
+back, the promise the decision declines to make. These three stay true whatever
+the window turns out to be, which is why they promise **notice, not duration**.
+An E2E assertion names the bad phrasing in a `not.toContainText`, so it cannot
+drift back in.
+
+### This retires a state three sections had to apologise for
+
+§73, §74 and §76 each recorded that `DODO_PRODUCT_ID` is set on production in
+**test mode**, so every workspace owner sees a **Subscribe** button that cannot
+take their money. §73 named two honest states (unset the variable between
+sessions, or do the doc walk, which needs a price) and §76 added a third
+(signups are closed, so only the operator can reach the card).
+
+**Free mode is the fourth and it is the one that is actually true**: nothing is
+on sale, so there is no button, and the card says what *is* the case rather than
+explaining an inconsistency. That is better than all three, and it needed no
+decision about the variable at all.
+
+### The gate is on the server, and the portal deliberately is not
+
+Two opposite calls about the same mode, and the pair is the substance:
+
+| | Gated on `mode === 'free'` | Why |
+|---|---|---|
+| `checkout` | **yes** | §74's reason exactly — *a client-side hide is a client-side hide, and the link is a plain URL anybody can keep.* A workspace holding yesterday's link must not be able to buy through it in the one mode whose promise is that nobody is charged without being asked |
+| `portal` | **no** | flipping back to `free` does **not** stop the provider charging a live subscription. Only cancelling does, and the portal is the only control that can — so withholding it would strand a paying customer with a recurring debit and no way to stop it, which is a dispute that would be entirely ours |
+
+The second one is the half that would cost money, and it is not reachable by
+accident: it needs the mode flipped from `paid` back to `free` while somebody is
+subscribed, which is a legitimate operator action — pausing charging while
+something is wrong is exactly what a reversible lever is for (§24 stage B's
+rule).
+
+### A boolean, because two nulls wanted opposite copy
+
+`checkout: null` now means **either** free mode **or** a live subscription, and
+those want opposite things on screen: the promise in one case, the status and
+the way out of it in the other. That conflation is the shape this file keeps
+finding — §78's two read-only holds, §39's four digest states, §73's
+`Status: unknown` — so it is closed the same way, with the fact made explicit
+rather than inferred.
+
+**`live` is the one field the card cannot derive.** `hasLiveSubscription` keys on
+the **terminal** set (`cancelled`, `expired`, `failed`), which §74 put on the
+server deliberately so an unrecognised future status *blocks* a second purchase
+rather than selling one. A card that re-derived it would carry a second copy of
+that set, and the copy that goes stale is the one deciding what a customer is
+told (§29).
+
+**And the promise must not be shown to a live subscriber**, which is the same
+fact from the customer's side: *you will not be charged* is false to somebody
+actively being charged. A **cancelled or expired** record does fall through to
+the promise, and that is correct — they are not being charged, the statement is
+true, and the portal below still reaches their invoices.
+
+### The card's own condition was the defect
+
+```js
+org.billing && (org.billing.checkout || org.billing.billing)
+```
+
+A checkout link **or** an existing record — and free mode has **neither**. So
+before this the card did not merely say the wrong thing in free mode, it
+**vanished**: §39's state that renders as nothing, on the one question people
+signing up today are entitled to have answered, in a condition written when free
+mode did not exist.
+
+That is why the fix is three places rather than one: the server's gate, the
+status branch, and the condition that decides whether there is a card at all.
+The third is the one no amount of wording would have fixed.
+
+### The free branch comes FIRST, ahead of the enabled warning
+
+§71's *"Payments are not finished being set up here"* exists to stop somebody
+paying into a deployment that cannot record it. In free mode there is no
+checkout to pay through, so that warning cannot apply — and an operator warning
+on a customer's screen, in a state where it is meaningless, is the line that
+teaches people to skip the card (§25's alert fatigue, §33's cell nobody reads).
+
+### Verified
+
+**Five mutations, each failing exactly one test — its own**, which is what says
+the five cover different things rather than one thing five times (§9):
+
+| Mutation | Fails |
+|---|---|
+| drop `mode === 'free'` from the checkout gate | *free mode sends no checkout link, and the gate is on the server* |
+| gate the portal on the mode too | *free mode still reaches the portal of somebody already subscribed* |
+| remove the free branch from `billingStatusHTML` | *free mode promises notice rather than a duration…* |
+| revert the card's condition | the same test — the card is absent entirely |
+| drop `&& !state.live` from the free branch | *free mode does not tell a live subscriber they will not be charged* |
+
+**The blast radius was measured rather than predicted, and it was seven tests.**
+`tests/payments.test.mjs` set no `BILLING_MODE`, so its server ran on the
+**free** default — and adding the gate made every checkout-link assertion in the
+file test the free gate instead of the thing it names. `BILLING_MODE: 'paid'` is
+pinned on both of that file's servers now, with the count in a comment, and the
+free-mode tests flip the **stored** mode over it and restore it in a `finally`
+— §16's precedence used as a test seam, and §16's own rule that a stored mode
+left flipped leaks into everything after it.
+
+**One whole-body `deepEqual` failed and it was the right one to break.** *"with
+nothing to sell there is no checkout link"* asserts the entire response and
+failed naming both new keys — which is what §46 says that assertion is for: a
+key added to a response without a decision is drift no route count can see.
+
+**And a precondition guard caught a wrong assumption of mine.** *"free mode
+still reaches the portal"* was written assuming the owner held a live
+subscription from earlier in the file; the tests above it drive §74's
+`cancelNow()` so they can read a checkout link past the duplicate gate, so by
+that point the owner is **cancelled**. Without the guard every assertion would
+have passed — a cancelled workspace gets `portal` too — so the test would have
+been green and would have proved nothing about the state it names. §9's rule,
+and the reason to assert the precondition rather than the outcome alone.
+
+### Blast radius
+
+`js/app.js` is in `APP_SHELL`, so `CACHE_VERSION` → **`crmbuilder-v68`**. No new
+served file, so smoke stays **51 local / 56 live** — running it is what proves
+that (§9).
+
+**`docs/API.md` gains no route and the count stays 61**, which is §46's trap for
+the seventh time: the number is right and the file read correctly while a
+**response shape** moved underneath it. `mode` and `live` are new, and
+`checkout` is now `null` for a third reason that is not *"nothing is
+configured"*.
+
+**§27's six user-facing documents need nothing, and the condition has finally
+changed rather than been restated.** §78's was *nothing is enforced and nothing
+can be bought*. The second half still holds — free mode offers no checkout, so
+nobody can buy — but this commit **does** put a new sentence in front of every
+owner. It needs no document because it is the whole of what there is to say:
+there is no price to describe, no flow to walk through, and no control to
+explain. The walk still fires with enforcement.

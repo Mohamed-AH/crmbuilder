@@ -427,6 +427,31 @@ suspension system. What actually has to be decided and written:
    decision is explicitly not a permanent tier and that phrasing promises one
    in the place a customer would quote back. §39's standing rule still applies
    underneath: a state that renders as nothing is invisible.
+
+   ✅ **BUILT** (`CLAUDE.md` §80), and three things it needed that are not in
+   the paragraph above:
+
+   - **The checkout gate is on the SERVER**, not in the card. Same reason as
+     the duplicate gate (§74): a client-side hide is a client-side hide, and
+     the link is a plain URL anybody can keep — so a workspace holding
+     yesterday's link must not be able to buy through it in a mode whose whole
+     promise is that nobody is charged without being asked.
+   - **The portal is deliberately NOT gated on the mode.** Flipping back to
+     `free` does not stop the provider charging a live subscription; only
+     cancelling does, and the portal is the only control that can. Withholding
+     it would strand a paying customer with a recurring debit and no way to
+     stop it — a dispute that would be entirely ours
+     ([`PAYMENTS.md`](PAYMENTS.md) §3).
+   - **The promise must not be shown to a live subscriber**, which is the same
+     fact from the customer's side: *you will not be charged* is false to
+     somebody actively being charged. That needed one boolean on the response
+     (`live`), because the terminal set that decides it lives on the server and
+     a card that re-derived it would carry the copy that goes stale.
+
+   **And the card's own condition was the state that renders as nothing.** It
+   asked for a checkout link **or** an existing record, and free mode has
+   neither — so before this the card vanished exactly where the promise needed
+   making.
 5. **The seat cap: one member count in `/api/org/invite`**, plus a refusal
    screen that explains itself (§36 rule 1). Free while no workspace is over
    it.
