@@ -1591,6 +1591,44 @@ sessions**, or **set with the price decided and the documents walked**.
     which value arrives, so nothing is written until one does (§73: one sample
     is not a vocabulary, and this is zero).
 
+14. **Tick the seven `dispute.*` and two `refund.*` events on the webhook
+    endpoint.** The route handles them (`CLAUDE.md` §84) and **an
+    unsubscribed event never arrives however well it would be handled** — the
+    code half and the dashboard half are separate, and this one is nobody's but
+    the operator's.
+
+    `dispute.opened · expired · accepted · cancelled · challenged · won · lost`
+    and `refund.succeeded · failed`. Derive the list rather than trusting this
+    line, which is §73's whole lesson — step 5's typed event list cost a real
+    event and the first derivation written to replace it dropped three more:
+
+    ```sh
+    for n in BILLING_DISPUTE_EVENTS BILLING_REFUND_EVENTS; do
+      sed -n "/const $n = new Set/,/\]);/p" server.js | grep -oE "'[a-z_.]+'"
+    done
+    ```
+
+    **Bounded on the closing bracket, not on a line count**, and that is not
+    fussiness: the first version written here was `grep -A 14`, which runs past
+    the dispute set's own closing bracket and into the refund set, and it
+    reported **nine** dispute events. §73's bug in the opposite direction —
+    there a character class silently matched too little, here a window
+    silently matched too much, and both read as authoritative. Expect **seven**
+    and **two**; the test in `tests/payments.test.mjs` asserts those floors for
+    the same reason.
+
+    **Then check whether a dispute carries `metadata` after all.** §84 tries
+    metadata first for every type precisely because the documentation not
+    listing a field is not the same as the field being absent (§30's rule), and
+    a real dispute body is the only thing that can say. If it does, the
+    payment-id fallback is redundant and that is worth knowing; if it does not,
+    the fallback is the only thing attributing the event and the window size
+    becomes a real number rather than a comfortable one.
+
+    **`payout.*` stays unticked**, deliberately — §9 records that it is where
+    the provider's fee lives and nothing reads it yet, so ticking it now buys
+    log lines and no information.
+
 ---
 
 ## 8. What this document does not know
@@ -1636,6 +1674,7 @@ applies harder here, because a fee is the number that gets multiplied.
 | ~~**Whether the statement descriptor is configurable**~~ | **Still open, but now open WITH evidence rather than unread.** Searched: the supported-currency, payouts, payout-structure, disputes, refunds, verification and FAQ pages carry nothing about statement text. The FAQ's branding entries cover the **checkout page**, **payment links** (logo, brand name, support email) and **invoices** — three places that are not a card statement. So the documentation does not address §3's lever 2 at all, which makes it a support question with a specific wording rather than a page to go and find |
 | **NEW — Visa RDR is ON BY DEFAULT at a $100 threshold, and that reshapes §3** | *"Visa RDR is enabled by default on all Dodo Payments accounts with a $100 USD threshold"*, and *"A Visa RDR fee replaces the dispute fee for these disputes"*; an RDR-resolved dispute *"appears as a lost dispute"*. **So at the $15 monthly price every dispute is auto-refunded and auto-lost with no defence stage**, while the **$150 annual** price is above the threshold and is the only one of the two that can be contested at all. §3 has the consequence; it is the strongest argument for annual billing in this document and §3 reached it without knowing this existed. The RDR and Ethoca fee amounts are on the pricing page |
 | **NEW — an Ethoca-deflected chargeback is INVISIBLE to this deployment** | *"Ethoca alerts and deflections never create a dispute"*, so they emit no `dispute.*` event: an alert refund fires **`refund.succeeded`** and any linked cancellation fires *"the usual subscription event"*, and a deflection fires **no event at all**. The product therefore behaves correctly — §70's route records the cancellation — while **any count of disputes taken from our own data is structurally blind to them.** Recorded neutrally: this is ordinary industry practice and §2's note about the FTC's action against a comparable MoR was about using it to *mask* a fraud rate while onboarding bad actors, not about the tool. What it means here is only that the dispute count visible to us is not the dispute count the schemes see, by design |
+| **NEW — whether the provider CANCELS the subscription on a chargeback** | The one unread fact that `CLAUDE.md` §84's enforcement decision turns on. §3's Ethoca row above says a *linked* cancellation *"fires the usual subscription event"*, which is the only statement anywhere near it — and *where they cancel* is not *whether they always do*. It decides whether a lost dispute needs a mechanism of its own: if they cancel, §83's enforcement already fires through `subscription.cancelled` and adding a second path would mean two things racing to hold one workspace; if they do not, a customer can win back the money and keep sync for ever. **Not producible in test mode**, so it belongs with §9's *events production would see first* rather than with anything drivable, and until it is answered a lost dispute is surfaced and not enforced |
 | **Where `MARKETING.md`'s copy has already been published** | §2.1's own open item, and only the owner can answer it |
 | **Softex / STPI applicability** | §4's CA question 3 |
 
@@ -1649,12 +1688,18 @@ end to end: a declined payment and a successful one on each of two regions, the
 signature check passing, ten events delivered, and the Settings card reading
 `active` with the next billing date.
 
-**What that leaves is four rows, and they are no longer all commercial.** One is
-a single published figure behind a blocked page (the fee, and the dispute, RDR
-and Ethoca fee amounts with it); one is a scheme-level question the vendor may
-not impose at all (a per-seller dispute rate); one is a question with no
-documentation and therefore a support ticket (the statement descriptor); and two
-are the owner's alone (`MARKETING.md`'s published copy, and Softex/STPI). **The
+**What that leaves is seven, and they are no longer all commercial** — counted
+off the table rather than recalled, because the sentence that stood here said
+*four* and then enumerated five while omitting a sixth, which is §29's thesis
+in the paragraph that exists to say what is open. One is a single published
+figure behind a blocked page (the fee, and the dispute, RDR and Ethoca fee
+amounts with it); one is a scheme-level question the vendor may not impose at
+all (a per-seller dispute rate); two are questions with no documentation and
+therefore support tickets (the statement descriptor, and the Cashfree mandate
+screen's placeholder merchant name); one cannot be produced in test mode at all
+(whether a chargeback cancels the subscription — the newest row, and the one a
+product decision is waiting on); and two are the owner's alone
+(`MARKETING.md`'s published copy, and Softex/STPI). **The
 operational mechanics are now known** — set-off, evidence, deadlines, payout
 cycle, payout fee, minimum, conversion tiers, refund treatment, verification —
 and knowing them changed §3 and §5 rather than merely filling a gap.
@@ -2048,6 +2093,40 @@ product in USD for one test so the renewal-failure card is usable, or accept
 that the first real `past_due` in production is the first one anybody sees —
 in which case the Settings card's *Access until* row is the thing to watch.
 
+### The nine dispute and refund events, and what test mode can reach
+
+The route handles seven `dispute.*` and two `refund.*` (`CLAUDE.md` §84). What
+is drivable here is a different question from the eleven above, and it splits
+three ways rather than two:
+
+| | How | Status |
+|---|---|---|
+| **the shapes** | signed payloads at the route | ✅ **done in the suite** — all nine, derived from `server.js` so the list cannot go stale, with the lifecycle and the losing outcomes asserted separately |
+| **the attribution** | a dispute carrying `payment_id` and no metadata | ✅ **done in the suite**, including a dispute against the **first** of three payments, which is the ordinary case rather than the edge one |
+| **a real dispute payload** | ☐ **unread, and possibly unreachable in test mode** | — |
+
+**Whether test mode can raise a dispute at all is not known from here**, and
+§69's rule is not to guess a provider's facilities: the documentation read on
+2026-10-17 covers disputes as a thing that happens and the test cards as a list
+that does not include one for it. So the check is *look for a dispute
+simulation on the test dashboard*, and if there is none, these nine join
+`plan_changed`, `on_hold` and `expired` as events production sees first.
+
+Three things that would be worth reading off a real one, none of which the
+suite can tell us because the suite writes its own fixtures:
+
+- **whether `metadata` is there after all.** §84 tries it first for every
+  type, because the documentation not listing a field is not the same as the
+  field being stated absent (§30's rule). A real body settles it, and it
+  decides whether the payment-id window is the only attribution path or a
+  belt beside a brace.
+- **whether a chargeback cancels the subscription**, which is §8's newest open
+  row and the fact the enforcement decision turns on.
+- **what `dispute_stage` actually carries.** It is stored and surfaced and the
+  only value ever seen is the fixture's own `'dispute'`, so the vocabulary is
+  zero-sample — §73's rule, which is why nothing maps it to customer-facing
+  words.
+
 ### What the dashboard's two facilities each prove, and what neither does
 
 They are not interchangeable and §7 step 9's pass already depends on knowing
@@ -2081,14 +2160,34 @@ thirteen the route knows. All are acknowledged with a 2xx and logged, which is
 unexpected type earns eight retries and a red mark on somebody else's
 dashboard.
 
-**But refund and dispute are not decoration here.** §3 is an entire section
-about chargebacks, and today a customer can dispute a charge, win, and keep
-full access with the Settings card still reading `active` — because nothing
-reads those events. That is **not a bug** while nothing is enforced (§6: no
-code reads `billing` to decide anything), and it becomes one the moment
-enforcement lands. So it is a row on *before live mode* rather than a fix now,
-and it needs the same question asked of it as everything else in §8: does the
-provider even send them to this endpoint, or only show them on the dashboard?
+**~~But refund and dispute are not decoration here.~~ Both are handled now —
+`CLAUDE.md` §84** — and the paragraph that stood here is kept because its
+*reasoning* was right and its *scope* was wrong. It said a customer could
+dispute a charge, win, and keep full access with the card reading `active`,
+that this was not a bug while nothing was enforced, and that it became one the
+moment enforcement landed. Enforcement landed in §83 and the nine events
+landed in §84.
+
+What it got wrong is the size of the job. It read as a subscribe-and-record
+change, and the finding was that **a dispute payload carries no
+`metadata.wsId`** — the provider documents that object without any field
+naming a workspace — so §70's whole attribution path does not apply to it. The
+only link back is `payment_id`, which needed a bounded window of payment ids
+on each workspace's meta doc and a reverse lookup on both stores.
+
+**And a lost dispute still does not suspend anybody, deliberately.** §84 has
+the three reasons; the one that belongs in this document is the middle one:
+§3's RDR finding plus the note below mean the provider may already cancel the
+subscription itself, in which case §83's enforcement fires through the ordinary
+subscription path and a second mechanism would race it. **Whether they cancel
+on every chargeback is UNREAD**, it cannot be produced in test mode, and it is
+the question that decides whether any of this is ever automated — so it is a
+§8 row and an *events production would see first* row, not a code decision.
+
+**The dashboard half is an operator step and is not done.** The route handles
+seven `dispute.*` and two `refund.*`; nothing here can tick them on the
+provider's endpoint, and an unsubscribed event never arrives however well it
+would be handled. That is §7's before-live item 14.
 
 **ONE event is now subscribed on the endpoint and not handled by the route**,
 down from three — a different and safer state than the families above, because

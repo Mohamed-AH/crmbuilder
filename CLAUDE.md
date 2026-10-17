@@ -255,6 +255,15 @@ never change, because everything cross-references them.
 | A guard checked twice, where neither half alone is load-bearing | §83 · §61 · §30 |
 | Why the E2E suite cannot reach the enforcement path at all | §83 · §66 · §9 |
 | A `readOnly` flag that is now computed rather than stored | §83 · §46 · §24 |
+| **Disputes and refunds** — a payload that names no workspace | §84 · §70 · §79 |
+| Why matching the LATEST payment id fails in the ordinary case | §84 · §79 · §73 |
+| A reverse lookup, and the Mongo index deliberately not added | §84 · §24 · §4 |
+| **A fourth clock, and the test that could not see the split** | §84 · §70 · §9 |
+| An unattributable event that is nobody's fault, logged its own way | §84 · §40 · §18 |
+| **A lost dispute does NOT suspend anybody** — surfaced, not enforced | §84 · §83 · §21 |
+| Visa RDR, and a flag that must never be `undefined` | §84 · §79 · §76 |
+| **Two mutations that failed nothing**, on `disputeOpen` and `disputeLost` | §84 · §9 · §34 |
+| Where the provider's FEE lives, and why `payout.*` is unhandled | §84 · §73 · §79 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 |
 | Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
@@ -328,15 +337,14 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**656 Node tests pass, and Playwright is 164** — both **observed** after §83's
-eight Node tests: Node **656/656, 0 skipped** and Playwright **163 of 164**,
-the one failure being §66's intermittent with its recorded signature (§83 has
-the artifact and the isolation runs). Smoke is **51 local · 0 warnings · 0
-failed**, also run. (§81's figures were 648 and 164; §80's were 641 and 163;
+**664 Node tests pass, and Playwright is 164** — both **observed** after §84's
+eight Node tests: Node **664/664, 0 skipped** and Playwright **164/164 in
+6.6m**. Smoke is **51 local · 0 warnings · 0 failed**, also run. (§83's figures
+were 656 and 163-of-164; §81's were 648 and 164; §80's were 641 and 163;
 §78's were 638 and 161.)
 
 **The Node delta is exactly the eight added**, which is the thing worth
-checking rather than the total: 648 → 656 says none was lost, where a figure
+checking rather than the total: 656 → 664 says none was lost, where a figure
 that merely *looks* plausible would not. §74 records what carrying one forward
 costs.
 
@@ -344,8 +352,8 @@ costs.
 reason is the same non-result §71 and §77 both record: none of them fired. That
 happened on three consecutive full runs (§78's two and §80's), which is not
 evidence of a fix — against §66's measured 1-in-3, three clean runs happen
-about 30% of the time, and §83's run then had one. Read the next short run
-against §77's table before concluding anything.
+about 30% of the time, and §83's run then had one while §84's was clean again.
+Read the next short run against §77's table before concluding anything.
 
 **Playwright's honest figure is a RANGE, and §77 is why.** Two full runs there
 gave 156/158 and 157/158, with a **different** test failing in each and all of
@@ -13467,14 +13475,262 @@ which is not — and it fires with the pricing commit.
 
 ### What is still not built
 
-- **Refund and dispute events.** §79 records that seven `dispute.*` families
-  exist and this deployment subscribes to none, so a customer can dispute a
-  charge, win, and keep sync with the card reading `active`. Harmless while
-  nothing was enforced; **it is now the hole**, because enforcement reads a
-  status that a lost dispute does not move.
+- ~~**Refund and dispute events.**~~ **Built in §84, and the hole is narrowed
+  rather than closed.** §79 records that seven `dispute.*` families exist and
+  this deployment subscribes to none, so a customer can dispute a charge, win,
+  and keep sync with the card reading `active`. Nine events are handled now and
+  **a lost dispute still does not hold anybody**, deliberately — §84 has the
+  three reasons and the test that pins the choice. What that section also found
+  is the reason this was not the one-line change it reads as: **a dispute
+  payload carries no `metadata.wsId`**, so §70's whole attribution path does
+  not apply to it.
 - **Anything on screen for the held customer beyond the sync toast.** The
   read-only reason reaches them through the latched toast and the chip (§24,
   §55), and §76's Subscription card already says what to do about an overdue
   payment. What is missing is the two meeting: a workspace held for
   non-payment does not say so on the card, because the card reads the
   provider's status and the hold is derived from it plus a date.
+
+
+---
+
+## 84. A dispute names no workspace, so the payment id is the only way back
+
+§83's own *What is still not built* opened with this and called it **the
+hole**: seven `dispute.*` families existed, this deployment subscribed to none,
+and enforcement reads a status that a lost dispute does not move — so a
+customer could dispute a charge, win it back, and keep sync with the card
+reading `active`. Nine events are handled now, and the hole is **narrowed and
+made visible rather than closed**, which is the decision in this section.
+
+### The mechanism: there is no `metadata.wsId` on a dispute
+
+§70 made `data.metadata.wsId` the attribution path, and it is *as trustworthy
+as the signature* because it rides out on the payment link we built. **A
+dispute payload does not carry it.** The provider documents that object as
+amount, business_id, created_at, currency, dispute_id, payment_id, remarks and
+`is_resolved_by_rdr` — and nothing that names a workspace.
+
+So the only link back is `payment_id`, which means a **reverse lookup**: given
+a payment, which workspace made it. Nothing stored a payment id in a way that
+could answer that — `billingFieldsFor` kept `paymentId`, the latest one, and
+overwrote it on every renewal.
+
+**And matching the latest id is wrong in the ORDINARY case, not an edge one.**
+A chargeback window runs to 120 days, so a monthly subscriber disputing their
+first payment has had three or four since. An implementation that stored one
+id passes a test disputing the most recent payment and fails every real
+dispute — which is why the test disputes the **first of three**.
+
+`billing.paymentIds`: newest first, deduplicated, capped at **12**. Twelve is a
+year of monthly payments, so it covers the window with room; deduplication is
+what makes it twelve *payments* rather than twelve deliveries, since a retry
+carries the same id and this provider retries eight times (§54's cap is the
+precedent, and §17 and §33 are why an unbounded list on a meta doc is not
+free).
+
+**Metadata is still tried first, for every type including disputes.** Cheap,
+and §30's rule: a field the documentation does not list is not the same as a
+field that is stated absent. If a real dispute body turns out to carry one,
+this already uses it and the lookup never runs.
+
+### The reverse lookup, and the index that is deliberately not there
+
+`findWorkspaceByPaymentId` on both stores. FileStore walks `this.s.data` in
+memory — one entry per workspace, nothing worth measuring. MongoStore does
+`findOne({ 'billing.paymentIds': paymentId })` and is **unindexed on purpose**:
+the `data` collection holds one document per workspace, so this scans as many
+documents as there are tenants, which at M0 is nothing — the Organisations
+panel already scans every one of them every 30 seconds (§24) — and it runs once
+per dispute event, which is rare by construction.
+
+Written down because the obvious tidy is to add the index, and §4's TTL notes
+are the warning about doing it casually: Mongo accepts index options it then
+silently ignores, and refuses to change an existing index in place. The
+condition for adding one is a tenant count that makes the scan matter, not a
+preference.
+
+### An unattributable dispute is a real state and gets its own log line
+
+A payment older than the window, or one belonging to another deployment, gives
+`200 { received: true, ignored: 'no workspace' }` and writes nothing. **2xx for
+§70's reason** — a non-2xx is a delivery failure to this provider, so refusing
+an event we deliberately ignore buys eight retries and a red mark on the one
+screen that reports real ones.
+
+It is logged **separately from the no-metadata line**, naming both the payment
+and the dispute id, and that split is the substance rather than tidiness:
+
+| Line | Means | Fix |
+|---|---|---|
+| *carries no usable metadata.wsId* | a payment link was built without `metadata_wsId` | ours, at the other end, and the money has already been taken |
+| *could not be attributed … payment X, dispute Y* | nothing is wrong at the other end | nobody's — the operator looks it up in the provider dashboard |
+
+One wording for both would send whoever reads it to the wrong place. The ids
+are logged because they are the only thing tying the line to the provider's own
+screen, and neither is a credential.
+
+### A fourth clock, and the test that could not see it
+
+`subscriptionAt`, `paymentAt`, `disputeAt`, `refundAt` — each kind newest-wins
+against its own kind and invisible to the others. **A dispute is the case that
+makes §70's split unavoidable rather than tidy**, and the reason is the lateness
+above: under one shared clock a payment landing after a chargeback moves the
+watermark past it, and the **next** dispute event — a stage change, or the
+outcome — is refused as stale. A chargeback that silently never resolves, on
+the one record somebody acts on.
+
+**The first test for it was named for the split and could not see it.** It
+delivered a dispute, then a **renewal** stamped later, then a stale dispute —
+and a subscription event has its own clock under *either* design, so the
+mutation merging disputes into `paymentAt` failed nothing. The comment in
+`server.js` named the wrong event class too, and was corrected with it.
+
+The arrangement that discriminates is three stamps delivered out of order:
+
+```
+t1  dispute.opened       delivered first
+t3  payment.succeeded    delivered second — the latest stamp
+t2  dispute.lost         delivered last, and it sits BETWEEN them
+```
+
+Shared clock: the third is stale against `t3` and dropped. Separate clocks: it
+is newer than `t1` and lands. The old test is kept, renamed for what it
+actually covers — the field partition (`putData` merges top-level keys only, so
+a subscription write must not blank the dispute keys beside it) and the dispute
+clock's own staleness guard.
+
+### A lost dispute does NOT suspend anybody, and that is the decision
+
+The obvious move is to add the losing outcomes to
+`TERMINAL_SUBSCRIPTION_STATUSES`, or make `hasLiveSubscription` false while one
+is outstanding, and §83's enforcement would then take sync away on a
+chargeback. Three reasons not to:
+
+- **A dispute is not a decision.** `dispute.opened` holds funds and can still
+  be won; `dispute.won` returns them. Suspending on `opened` and restoring on
+  `won` is a workspace flickering read-only on the network's timetable, and
+  §24's rule is that a hold is reversible **and customer-visible** — this would
+  be reversible and unexplainable.
+- **The provider may already do it.** §79 records that a linked cancellation
+  *"fires the usual subscription event"*, so where they cancel,
+  `subscription.cancelled` arrives and §83's enforcement already works. Adding
+  a second mechanism on top means two things racing to hold one workspace.
+  **Whether they cancel on every chargeback is UNREAD**, and that is the
+  question to settle before any of this is automated.
+- **§21's rule.** Acting destructively on a guess is worse than reporting, and
+  the report is what nobody had: §79's finding was that a dispute this
+  deployment cannot see is a dispute nobody acts on.
+
+**Pinned by a test rather than left implicit** — *a lost dispute does NOT hold
+the workspace by itself, and that is the decision*. A later commit deciding the
+other way has to rewrite it on purpose, which is the point of it existing. It
+also asserts the dispute **is** on the record, because *not enforced* and *not
+recorded* are the two things this most needs to be told apart: the first is a
+choice and the second would be §79's finding all over again.
+
+That test attributes its dispute the way a real one has to be — a payment
+first, then a dispute carrying `payment_id` and **no** metadata. Handing it a
+`metadata.wsId` would have been two lines shorter and would have driven a path
+no real dispute takes, which is the trap `disputeEvent()` in
+`tests/payments.test.mjs` exists to avoid.
+
+### `disputeByRdr`, and why it is always a boolean
+
+§79 found **Visa RDR enabled by default at a $100 threshold**, auto-refunding
+and *appearing as a lost dispute* — which puts a $15 monthly price entirely
+inside it and means a dispute there has **no defence stage at all**. So the
+flag separates a chargeback that was never contestable from one that went to
+the network and lost, which is the difference between an operator having
+something to do and not.
+
+`billing.disputeByRdr === true` rather than a passthrough, so the reader gets
+`false` and not `undefined` for a dispute that predates the field — an absence
+read as "not RDR" is the wrong default on the price that is entirely RDR.
+
+`disputeOpen` and `disputeLost` are **derived, never stored**, for §76's
+reason: a stored flag has to be cleared by something, and the only honest
+clearer is a later dispute event, which already replaces this one newest-wins
+on its own clock. So the derivation is free and cannot go stale.
+
+### Eleven mutations, and two of them found the tests rather than the code
+
+| Mutation | Fails |
+|---|---|
+| dispute events not in the handled set | **9**, across both files |
+| refund events not in the handled set | *every dispute and refund event the server claims to handle is handled* |
+| metadata only, no payment-id fallback | **6** |
+| **disputes on `paymentAt`** | *a payment landing between two dispute events does not discard the later one* — **and nothing at all before that test existed** |
+| the window keeps only the latest id | **4**, including the old-payment attribution |
+| the window unbounded | *the payment-id window is bounded and deduplicated* |
+| the RDR flag hard-coded false | **4** |
+| every dispute reads as open | **4** |
+| **every dispute reads as lost** | *a dispute that is still running, and one that was WON, are neither of them lost* — **and nothing at all before that test existed** |
+
+**Both gaps are the same shape and it is this file's standing one.** Every
+other test in the file drives `dispute.lost`, where a correct implementation
+and a `!!billing.disputeEvent` one give the same answer — so `disputeLost:
+true` on a dispute that was **won** passed forty-two tests. A confidently
+wrong claim, in the field that says *the money has gone*, on the one screen an
+operator acts from. The lifecycle test walks opened → challenged → won and
+then each of the three losing outcomes separately, because `accepted` (us
+conceding) and `expired` (us not answering in time) are the money gone too and
+only one of the three has the word in its name.
+
+§9's rule earning its keep twice in one pass: **a mutation that fails nothing
+is a finding about the tests**, and reading the tests would not have produced
+either of these — running the mutations did.
+
+**Counts:** Node **656 → 664** (664/664, 0 skipped — exactly the eight added,
+seven in `payments.test.mjs` and one in `enforcement.test.mjs`, which is what
+says none was lost), Playwright **164/164 in 6.6m**, smoke **51 local · 0
+warnings · 0 failed**. All three run.
+
+**The clean Playwright run retires none of the three intermittents** (§2, §77),
+and the reason is the standing non-result: none of them fired. It carries no
+information about this commit either way, because **no client file changed at
+all** and `playwright.config.js` sets no `BILLING_MODE`, so the E2E server
+never delivers a dispute and never reaches any line added here. The run is
+worth having because `server.js` moved; it is not evidence about disputes.
+
+### Blast radius
+
+`server.js` only — no client file, no served file, no new environment
+variable. So `CACHE_VERSION` stays `crmbuilder-v69` and smoke stays **51 local
+/ 56 live**, checked against the diff rather than assumed (§41).
+
+**`docs/API.md` gains no route and the count stays 63** — the tenth time §46's
+trap applies, and the largest widening yet: nine event types that previously
+answered `{ received: true, ignored: 'unsubscribed event' }` now populate seven
+new fields on `GET /api/org/billing`, and the attribution contract itself moved
+(a second resolution path, with a window on the meta doc behind it). Counted
+with `grep -cE "^app\.(get|post|put|patch|delete)\(" server.js`.
+
+**`payout.*` is still unhandled, deliberately**, and it is the family worth
+knowing about: §73 found a payment payload carries **no fee field at all** and
+§79 found `settlement_amount` is byte-identical on a failed payment and a
+successful one — so **revenue cannot be read off payment webhooks**, and a
+payout record is the only place the provider's fee appears. That is a reporting
+feature rather than an entitlement one, which is why it is not in this commit,
+and it is what would fill
+[`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5's blank net-rate table.
+
+**§27's six user-facing documents still need nothing**, and the condition is
+§81's unchanged: nothing can be bought and no deployment is in paid mode. The
+walk still owes two items — §81's seat cap, which is live, and §83's
+enforcement, which is not — and it fires with the pricing commit.
+
+### What is still not built
+
+- **Any screen for a dispute.** The fields are on `GET /api/org/billing` and
+  the Subscription card does not read them. Deliberate for this commit — §76's
+  rule is that a provider's vocabulary needs a decision before it reaches a
+  customer, and the audience question is sharper here than anywhere: a dispute
+  is between the customer and *their bank*, so there is a real argument that
+  the right reader is the operator rather than the owner. That is a decision,
+  not a line of markup.
+- **Whether the provider cancels on a chargeback.** The one unread fact that
+  the enforcement decision above turns on, and a test-mode dispute cannot
+  produce it — which puts it beside [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §9's
+  events that production would see first.
+- **`payout.*`**, above.

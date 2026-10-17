@@ -598,6 +598,23 @@ class FileStore {
   }
   async getData(wsId) { return this.s.data[wsId] || null; }
   async putData(wsId, doc) { this.s.data[wsId] = { ...(this.s.data[wsId] || {}), ...doc }; this.save(); }
+  /*
+   * Which workspace made this payment — the reverse lookup a dispute needs,
+   * because a dispute payload carries no metadata (PAYMENT_ID_HISTORY).
+   *
+   * In memory here, so it is a walk over one entry per workspace and costs
+   * nothing worth measuring. Null when no workspace claims it, which is a
+   * real answer rather than an error: a dispute can legitimately arrive for a
+   * payment older than the window, or from a deployment this is not.
+   */
+  async findWorkspaceByPaymentId(paymentId) {
+    if (!paymentId) return null;
+    for (const [wsId, doc] of Object.entries(this.s.data)) {
+      const ids = doc && doc.billing && Array.isArray(doc.billing.paymentIds) ? doc.billing.paymentIds : [];
+      if (ids.includes(paymentId)) return wsId;
+    }
+    return null;
+  }
   async stripSnapshot(wsId) {
     const doc = this.s.data[wsId];
     if (!doc) return;
@@ -1078,6 +1095,29 @@ class MongoStore {
   }
   async getData(wsId) { return this.data.findOne({ wsId }, { projection: { _id: 0 } }); }
   async putData(wsId, doc) { await this.data.updateOne({ wsId }, { $set: doc }, { upsert: true }); }
+  /*
+   * The same reverse lookup as the file store's, in one query.
+   *
+   * DELIBERATELY UNINDEXED, and that is a judgement about scale rather than
+   * an oversight. The `data` collection holds one document per workspace, so
+   * this is a scan of as many documents as there are tenants — nothing at M0,
+   * where the Organisations panel already scans every one of them per 30
+   * seconds (§24). Disputes are rare by construction and this runs once per
+   * dispute event.
+   *
+   * An index on `billing.paymentIds` is what to add if the tenant count ever
+   * makes that false, and §4's TTL-index notes are the warning about doing it
+   * casually: Mongo accepts options it then ignores, and refuses to change an
+   * existing index in place.
+   */
+  async findWorkspaceByPaymentId(paymentId) {
+    if (!paymentId) return null;
+    const doc = await this.data.findOne(
+      { 'billing.paymentIds': paymentId },
+      { projection: { _id: 0, wsId: 1 } },
+    );
+    return doc ? doc.wsId : null;
+  }
   async stripSnapshot(wsId) {
     await this.data.updateOne({ wsId }, { $unset: { modules: '', records: '' } });
   }
@@ -5198,6 +5238,83 @@ const BILLING_PAYMENT_EVENTS = new Set([
 ]);
 
 /*
+ * Money going back out, which until now this deployment could not see at all.
+ *
+ * §79 recorded seven `dispute.*` families nobody subscribed to, and called it
+ * harmless while nothing was enforced. §83 enforced, so it stopped being
+ * harmless: a customer could dispute a charge, win, and keep cloud sync with
+ * the card reading `active`, because nothing a chargeback does moves the
+ * subscription status enforcement reads.
+ *
+ * All nine names are the provider's own enum, read off their create-webhook
+ * reference rather than guessed — §69's rule, and §79's lesson that the thing
+ * filed as "ask the vendor" is usually published. `refund.succeeded` was the
+ * only one §79 had quoted; `refund.failed` is its sibling and there are
+ * exactly two.
+ */
+const BILLING_DISPUTE_EVENTS = new Set([
+  'dispute.opened',
+  'dispute.challenged',
+  'dispute.accepted',
+  'dispute.cancelled',
+  'dispute.expired',
+  'dispute.won',
+  'dispute.lost',
+]);
+
+const BILLING_REFUND_EVENTS = new Set([
+  'refund.succeeded',
+  'refund.failed',
+]);
+
+/*
+ * The dispute outcomes where the money has gone back to the cardholder, in
+ * the provider's own words: `dispute.accepted` is "the funds are returned to
+ * the cardholder", `dispute.lost` the same, and `dispute.expired` "typically
+ * resolves against you".
+ *
+ * `expired` is in the set on the strength of "typically", which is a hedge
+ * rather than a guarantee — and it is in rather than out because of which way
+ * the two errors fall. Treating a recovered payment as lost shows an operator
+ * a dispute to look at that turns out to be fine; treating a lost one as
+ * recovered shows them nothing, and §79's whole finding is that a dispute
+ * this deployment cannot see is a dispute nobody acts on.
+ *
+ * NOT a terminal-subscription set and deliberately not wired to one — see
+ * `publicBilling` and §84 for why a lost dispute does not suspend anybody by
+ * itself.
+ */
+const DISPUTE_LOST_EVENTS = new Set([
+  'dispute.accepted',
+  'dispute.expired',
+  'dispute.lost',
+]);
+
+/*
+ * How many recent payment ids a workspace keeps, and the only reason it keeps
+ * any: a DISPUTE PAYLOAD CARRIES NO `metadata`.
+ *
+ * Every other event here is attributed by `metadata.wsId`, which rides out on
+ * the checkout link and comes back inside the signed body (§70). The dispute
+ * object is documented with `amount`, `business_id`, `created_at`, `currency`,
+ * `dispute_id`, `payment_id`, `remarks` and `is_resolved_by_rdr` — and no
+ * metadata, so there is nothing on it that names a workspace directly. The
+ * payment id is the only link back, which means the workspace has to be found
+ * by it.
+ *
+ * Matching the single latest `paymentId` would fail in the ordinary case
+ * rather than an exotic one: a card scheme's chargeback window runs to 120
+ * days, so a monthly subscriber disputing their first payment has had three
+ * or four since. Twelve is a year of monthly payments, which covers that
+ * window several times over for ~360 bytes on the meta doc.
+ *
+ * Bounded for §54's reason, on a document that syncs nothing but still shares
+ * a 512 MB tier (§17, §33): unbounded growth keyed to a customer's own
+ * activity is the shape that is fine for a year and then is not.
+ */
+const PAYMENT_ID_HISTORY = 12;
+
+/*
  * Which statuses mean a subscription is OVER. Everything else is live.
  *
  * Written as the TERMINAL set rather than the live one, and that is the
@@ -5343,11 +5460,71 @@ function billingFieldsFor(type, data) {
       pastDueEndsAt: isoOrNull(data.past_due_ends_at),
     };
   }
+  if (BILLING_DISPUTE_EVENTS.has(type)) {
+    return {
+      disputeEvent: type,
+      disputeId: String(data.dispute_id || '') || null,
+      // The payment the dispute is against, which is NOT necessarily the last
+      // payment this workspace made — see PAYMENT_ID_HISTORY.
+      disputedPaymentId: String(data.payment_id || '') || null,
+      disputeStatus: String(data.dispute_status || '') || null,
+      disputeStage: String(data.dispute_stage || '') || null,
+      /*
+       * `is_resolved_by_rdr` is the one dispute field that changes what an
+       * operator should DO, which is why it is here and `amount` is not.
+       *
+       * §79 found Visa RDR enabled by default at a $100 threshold, and that a
+       * dispute it resolves "appears as a lost dispute". Their dispute webhook
+       * reports exactly that: `dispute.lost` with this flag true. So the flag
+       * separates a chargeback that was never contestable — auto-refunded, no
+       * defence stage, nothing anybody could have done — from one that went
+       * to the network and was lost. Without it the two are one line in a log
+       * and an operator learns nothing from either.
+       */
+      disputeByRdr: data.is_resolved_by_rdr === true,
+    };
+  }
+  if (BILLING_REFUND_EVENTS.has(type)) {
+    return {
+      refundEvent: type,
+      refundId: String(data.refund_id || '') || null,
+      refundedPaymentId: String(data.payment_id || '') || null,
+      refundStatus: String(data.status || '') || null,
+    };
+  }
   return {
     paymentEvent: type,
     paymentId: String(data.payment_id || '') || null,
     paymentStatus: String(data.status || '') || null,
   };
+}
+
+/*
+ * Which clock guards which fields. Four, for §70's reason rather than four
+ * times over: a payment event stamped a second later must not decide a
+ * subscription's staleness, and the same holds for a dispute arriving months
+ * after the payment it is about. Each kind is newest-wins against its own
+ * kind and invisible to the others.
+ *
+ * A dispute is the case that makes this unavoidable rather than tidy, and the
+ * event that would collide with it is a PAYMENT rather than a renewal — which
+ * is what the first version of this comment said, and it was naming the wrong
+ * class. Subscriptions already have their own clock, so a renewal cannot
+ * touch a dispute under any of these designs; the mutation that puts disputes
+ * on `paymentAt` therefore failed nothing until a test was written for the
+ * real collision.
+ *
+ * That collision: disputes arrive late by nature, so with one shared clock a
+ * payment landing after a chargeback moves the watermark past it, and the
+ * NEXT dispute event — a stage change, or the same dispute being redelivered
+ * — is discarded as stale. A dispute dropped because a renewal succeeded
+ * afterwards is the one direction that costs money.
+ */
+function billingClockKey(type) {
+  if (BILLING_SUBSCRIPTION_EVENTS.has(type)) return 'subscriptionAt';
+  if (BILLING_DISPUTE_EVENTS.has(type)) return 'disputeAt';
+  if (BILLING_REFUND_EVENTS.has(type)) return 'refundAt';
+  return 'paymentAt';
 }
 
 /*
@@ -5372,9 +5549,25 @@ async function applyBillingEvent(wsId, type, data, at) {
   const meta = (await store.getData(wsId)) || {};
   const prior = meta.billing && typeof meta.billing === 'object' ? meta.billing : {};
 
-  const clockKey = BILLING_SUBSCRIPTION_EVENTS.has(type) ? 'subscriptionAt' : 'paymentAt';
+  const clockKey = billingClockKey(type);
   const was = Number(prior[clockKey]);
   if (Number.isFinite(was) && at < was) return { applied: false, reason: 'stale' };
+
+  /*
+   * The recent-payment-id list, which exists only so a dispute can be
+   * attributed (PAYMENT_ID_HISTORY). Newest first, deduplicated, capped.
+   *
+   * Written from the id on the event rather than from the stored `paymentId`,
+   * because this has to record every payment that happened and the stored one
+   * is only ever the latest. A retry carries the same id and is deduplicated
+   * rather than counted twice, which is what keeps the window twelve
+   * PAYMENTS rather than twelve deliveries.
+   */
+  let paymentIds = Array.isArray(prior.paymentIds) ? prior.paymentIds : [];
+  if (BILLING_PAYMENT_EVENTS.has(type)) {
+    const id = String(data.payment_id || '');
+    if (id) paymentIds = [id, ...paymentIds.filter((p) => p !== id)].slice(0, PAYMENT_ID_HISTORY);
+  }
 
   /*
    * putData merges TOP-LEVEL keys only — `{ billing }` replaces the whole
@@ -5385,6 +5578,7 @@ async function applyBillingEvent(wsId, type, data, at) {
   const billing = {
     ...prior,
     ...billingFieldsFor(type, data),
+    ...(paymentIds.length ? { paymentIds } : {}),
     [clockKey]: at,
     provider: 'dodo',
     updatedAt: Date.now(),
@@ -5411,8 +5605,61 @@ function publicBilling(billing) {
     pastDueEndsAt: billing.pastDueEndsAt || null,
     paymentEvent: billing.paymentEvent || null,
     paymentStatus: billing.paymentStatus || null,
+    /*
+     * The dispute state, and A LOST DISPUTE DOES NOT SUSPEND ANYBODY BY
+     * ITSELF. That is the decision in this commit, so it is written where the
+     * next reader will be standing.
+     *
+     * The obvious move is to add the lost outcomes to
+     * TERMINAL_SUBSCRIPTION_STATUSES, or to make `hasLiveSubscription` false
+     * while one is outstanding, and §83's enforcement would then take sync
+     * away on a chargeback. Three reasons not to:
+     *
+     * - A DISPUTE IS NOT A DECISION. `dispute.opened` holds funds and can
+     *   still be won; `dispute.won` returns them. Suspending on `opened` and
+     *   restoring on `won` is a workspace flickering read-only on somebody
+     *   else's timetable, and §24's rule is that a hold is reversible AND
+     *   customer-visible — this would be reversible and unexplainable.
+     * - THE PROVIDER MAY ALREADY DO IT. §79 records that a linked
+     *   cancellation "fires the usual subscription event", so for the cases
+     *   where they cancel, `subscription.cancelled` arrives and §83's
+     *   enforcement already works — and adding a second mechanism on top
+     *   would mean two things racing to hold the same workspace. Whether they
+     *   cancel on every chargeback is UNREAD, and that is the question to
+     *   settle before any of this is automated.
+     * - §21's rule. Acting destructively on a guess is worse than reporting,
+     *   and the report is what nobody had: §79's finding was that a dispute
+     *   this deployment cannot see is a dispute nobody acts on.
+     *
+     * So this is surfaced and not enforced, which leaves §83's hole OPEN and
+     * VISIBLE rather than closed. Said plainly, because "disputes are handled
+     * now" would read as closed.
+     */
+    disputeEvent: billing.disputeEvent || null,
+    disputeStatus: billing.disputeStatus || null,
+    disputeStage: billing.disputeStage || null,
+    disputeByRdr: billing.disputeByRdr === true,
+    disputeOpen: isDisputeOpen(billing),
+    disputeLost: DISPUTE_LOST_EVENTS.has(billing.disputeEvent),
+    refundEvent: billing.refundEvent || null,
+    refundStatus: billing.refundStatus || null,
     updatedAt: billing.updatedAt || null,
   };
+}
+
+/*
+ * Whether a dispute is still running, which is a different question from
+ * whether one was lost and wants different words on screen: one is "somebody
+ * is deciding", the other is "the money has gone".
+ *
+ * Derived from the last dispute event rather than stored, for §76's reason:
+ * a stored flag has to be cleared by something, and the only honest clearer
+ * is a later dispute event — which already replaces this one, newest-wins on
+ * its own clock. So the derivation is free and cannot go stale.
+ */
+function isDisputeOpen(billing) {
+  if (!billing || !billing.disputeEvent) return false;
+  return billing.disputeEvent === 'dispute.opened' || billing.disputeEvent === 'dispute.challenged';
 }
 
 /*
@@ -5466,7 +5713,10 @@ app.post('/api/payments/dodo', async (req, res) => {
 
   const type = String((event && event.type) || '');
   const data = event && event.data && typeof event.data === 'object' ? event.data : {};
-  const known = BILLING_SUBSCRIPTION_EVENTS.has(type) || BILLING_PAYMENT_EVENTS.has(type);
+  const known = BILLING_SUBSCRIPTION_EVENTS.has(type)
+    || BILLING_PAYMENT_EVENTS.has(type)
+    || BILLING_DISPUTE_EVENTS.has(type)
+    || BILLING_REFUND_EVENTS.has(type);
   if (!known) return res.json({ received: true, ignored: 'unsubscribed event' });
 
   const at = eventClock(event.timestamp);
@@ -5476,15 +5726,48 @@ app.post('/api/payments/dodo', async (req, res) => {
   }
 
   const meta = data.metadata && typeof data.metadata === 'object' ? data.metadata : {};
-  const wsId = String(meta.wsId || '');
+  let wsId = String(meta.wsId || '');
+
+  /*
+   * TWO WAYS TO ATTRIBUTE AN EVENT, and the second exists because a dispute
+   * payload has no `metadata` to carry the first.
+   *
+   * Metadata is tried for every event type, including disputes and refunds —
+   * cheap, and the provider's documentation not listing a field is not the
+   * same as the field being absent (§30's rule about absence versus a stated
+   * false). If a real dispute body turns out to carry it, this already uses
+   * it and the lookup below never runs.
+   *
+   * Otherwise the payment id is the only link back to a workspace, which is
+   * what PAYMENT_ID_HISTORY is for.
+   */
+  if ((!wsId || !WSID_PATTERN.test(wsId))
+    && (BILLING_DISPUTE_EVENTS.has(type) || BILLING_REFUND_EVENTS.has(type))) {
+    const found = await store.findWorkspaceByPaymentId(String(data.payment_id || ''));
+    if (found) wsId = found;
+  }
+
   if (!wsId || !WSID_PATTERN.test(wsId)) {
     /*
      * Loud, because the fix is at the other end: a payment link built without
      * `metadata_wsId` produces events nothing can attribute, and the money has
      * already been taken by the time anybody notices. Named rather than
      * counted, so a single bad link is traceable.
+     *
+     * A DISPUTE REACHING HERE IS A DIFFERENT PROBLEM and gets its own line,
+     * because nothing is wrong at the other end: it means the payment is
+     * older than the window, or belongs to another deployment. The money has
+     * gone back either way, so the id is logged — it is the only thing that
+     * ties this to the provider's own dashboard, which is where an operator
+     * has to go next.
      */
-    console.warn(`Payment webhook ${check.id} (${type}) carries no usable metadata.wsId — ignoring it.`);
+    if (BILLING_DISPUTE_EVENTS.has(type) || BILLING_REFUND_EVENTS.has(type)) {
+      console.warn(`Payment webhook ${check.id} (${type}) could not be attributed to a workspace: `
+        + `payment ${String(data.payment_id || '(none)')}, dispute ${String(data.dispute_id || '(none)')}. `
+        + 'Look it up in the provider dashboard.');
+    } else {
+      console.warn(`Payment webhook ${check.id} (${type}) carries no usable metadata.wsId — ignoring it.`);
+    }
     return res.json({ received: true, ignored: 'no workspace' });
   }
 

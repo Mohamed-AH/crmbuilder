@@ -572,12 +572,25 @@ describe('the payment webhook', () => {
      * It matters more than it looks: their docs state that DESELECTING every
      * event subscribes you to all of them, so an endpoint receiving the whole
      * catalogue is one misconfigured checkbox away.
+     *
+     * THIS EXAMPLE USED TO BE `dispute.opened`, and §84 subscribing to it
+     * failed this test immediately — which is the good kind of failure and
+     * worth recording rather than just fixing. A test that names a member of
+     * the complement of a set is a test whose premise expires the moment the
+     * set grows, and this one said so loudly instead of passing on a
+     * now-false claim.
+     *
+     * `license_key.created` is from the provider's own 48-value enum and is a
+     * product this app does not sell, so it is a long way from the next thing
+     * anybody subscribes to. `payout.success` would have been the wrong
+     * choice for exactly that reason: §73 and §79 both name the payout record
+     * as the only place the fee can be read, so it is a candidate.
      */
     const out = await deliver({
       business_id: 'bus_test_crmbuilder',
-      type: 'dispute.opened',
+      type: 'license_key.created',
       timestamp: '2026-10-13T16:00:00Z',
-      data: { payload_type: 'Dispute', metadata: { wsId } },
+      data: { payload_type: 'LicenseKey', metadata: { wsId } },
     });
     assert.equal(out.status, 200);
     assert.equal(out.json.ignored, 'unsubscribed event');
@@ -994,6 +1007,324 @@ describe('the payment webhook', () => {
     });
     assert.equal(push.status, 200);
     assert.deepEqual(await billingNow(), before, 'a settings write erased the billing record');
+  });
+
+  /* ------------------------------------------------------------------ *
+   * Money going back out — disputes and refunds (§84)
+   * ------------------------------------------------------------------ */
+
+  function disputeEvent(overrides = {}) {
+    const { at, type, metadata, ...rest } = overrides;
+    return {
+      business_id: 'bus_test_crmbuilder',
+      type: type || 'dispute.opened',
+      timestamp: at || laterClock(),
+      data: {
+        payload_type: 'Dispute',
+        dispute_id: 'dis_0001',
+        payment_id: 'pay_disputed_0001',
+        dispute_status: 'dispute_opened',
+        dispute_stage: 'dispute',
+        amount: '6500',
+        currency: 'USD',
+        /*
+         * NO `metadata` BY DEFAULT, and that is the fixture's whole point. The
+         * provider's dispute object is documented with amount, business_id,
+         * created_at, currency, dispute_id, payment_id, remarks and
+         * is_resolved_by_rdr — and nothing that names a workspace. A fixture
+         * that helpfully added one would test a path no real dispute takes.
+         */
+        ...(metadata ? { metadata } : {}),
+        ...rest,
+      },
+    };
+  }
+
+  test('every dispute and refund event the server claims to handle is handled', async () => {
+    /*
+     * Derived from server.js for §73's reason, which that section earned the
+     * hard way: the §7 runbook typed seven of eleven subscription events and
+     * cost a real one, and the first derivation written to replace it dropped
+     * three more to a regex that stopped at an underscore.
+     *
+     * Two sets here rather than one, because they are two sets in the server
+     * and a single regex over both would pass while covering either.
+     */
+    const source = await readFile(join(ROOT, 'server.js'), 'utf8');
+    const read = (name) => {
+      const block = source.match(new RegExp(`const ${name} = new Set\\(\\[([^\\]]*)\\]`));
+      assert.ok(block, `could not find ${name} in server.js`);
+      const found = [...block[1].matchAll(/'([a-z_.]+)'/g)].map((m) => m[1]);
+      assert.ok(found.length, `${name} derived nothing — the regex matched no quoted names`);
+      return found;
+    };
+
+    const disputes = read('BILLING_DISPUTE_EVENTS');
+    const refunds = read('BILLING_REFUND_EVENTS');
+    // Floors, so a regex that silently matched less cannot make the loop
+    // below vacuous (§34). These are the provider's own enum counts.
+    assert.equal(disputes.length, 7, `derived ${disputes.length} dispute events: ${disputes}`);
+    assert.equal(refunds.length, 2, `derived ${refunds.length} refund events: ${refunds}`);
+    assert.ok(disputes.includes('dispute.lost'), 'the derivation missed a known dispute event');
+
+    for (const type of disputes) {
+      const res = await deliver(disputeEvent({ type, metadata: { wsId } }));
+      assert.deepEqual(res.json, { received: true, applied: true }, `${type} was not applied`);
+      const { billing } = await billingNow();
+      assert.equal(billing.disputeEvent, type, `${type} was not recorded`);
+    }
+    for (const type of refunds) {
+      const res = await deliver({
+        business_id: 'bus_test_crmbuilder',
+        type,
+        timestamp: laterClock(),
+        data: { payload_type: 'Refund', refund_id: 'ref_0001', payment_id: 'pay_refunded_0001', status: 'succeeded', metadata: { wsId } },
+      });
+      assert.deepEqual(res.json, { received: true, applied: true }, `${type} was not applied`);
+      assert.equal((await billingNow()).billing.refundEvent, type, `${type} was not recorded`);
+    }
+  });
+
+  test('a dispute that is still running, and one that was WON, are neither of them lost', async () => {
+    /*
+     * The two derived flags, walked through a lifecycle, and this test exists
+     * because the mutation pass found both of them untested in the direction
+     * that matters.
+     *
+     * `disputeOpen` and `disputeLost` answer different questions —
+     * "somebody is deciding" against "the money has gone" — and every other
+     * test here drives `dispute.lost`, where both a correct implementation
+     * and a `!!billing.disputeEvent` one give the same answer. So
+     * `disputeLost: true` on a dispute that was WON passed the whole file: a
+     * confidently wrong claim, in the one field an operator would act on.
+     *
+     * Reaching the *won* state needs three deliveries rather than one, which
+     * is why this is a walk: `dispute.won` on its own would pin the flag and
+     * say nothing about the open state preceding it.
+     */
+    const stages = [
+      ['dispute.opened', { open: true, lost: false }],
+      ['dispute.challenged', { open: true, lost: false }],
+      ['dispute.won', { open: false, lost: false }],
+    ];
+    for (const [type, want] of stages) {
+      const res = await deliver(disputeEvent({ type, dispute_id: 'dis_lifecycle', metadata: { wsId } }));
+      assert.deepEqual(res.json, { received: true, applied: true }, `${type} was not applied`);
+      const { billing } = await billingNow();
+      assert.equal(billing.disputeEvent, type);
+      assert.equal(billing.disputeOpen, want.open, `${type} reported disputeOpen ${billing.disputeOpen}`);
+      assert.equal(billing.disputeLost, want.lost, `${type} reported disputeLost ${billing.disputeLost}`);
+    }
+
+    /*
+     * And the three losing outcomes, each on its own, because they are three
+     * separate provider states and only one of them has the word in its name.
+     * `accepted` is us conceding and `expired` is us not answering in time —
+     * both are the money gone, and a set that held only `dispute.lost` would
+     * report them as nothing having happened.
+     */
+    for (const type of ['dispute.accepted', 'dispute.expired', 'dispute.lost']) {
+      const res = await deliver(disputeEvent({ type, dispute_id: 'dis_lifecycle', metadata: { wsId } }));
+      assert.equal(res.json.applied, true, `${type} was not applied`);
+      const { billing } = await billingNow();
+      assert.equal(billing.disputeLost, true, `${type} did not read as lost`);
+      assert.equal(billing.disputeOpen, false, `${type} still reads as open`);
+    }
+  });
+
+  test('a dispute carrying no metadata is attributed by its payment id — including an OLD payment', async () => {
+    /*
+     * THE MECHANISM THIS COMMIT EXISTS FOR. A dispute payload names no
+     * workspace, so the only link back is the payment id, and matching the
+     * single latest payment would fail in the ORDINARY case: a chargeback
+     * window runs to 120 days, so a monthly subscriber disputing their first
+     * payment has had three or four since.
+     *
+     * So this disputes the FIRST of three payments, not the last. A version
+     * that stored only the latest id passes a test that disputes the latest
+     * one and fails this.
+     */
+    const first = `pay_window_${Date.now()}_1`;
+    for (const id of [first, 'pay_window_2', 'pay_window_3']) {
+      const res = await deliver({
+        business_id: 'bus_test_crmbuilder',
+        type: 'payment.succeeded',
+        timestamp: laterClock(),
+        data: { payload_type: 'Payment', payment_id: id, status: 'succeeded', metadata: { wsId } },
+      });
+      assert.deepEqual(res.json, { received: true, applied: true }, `seeding ${id} failed`);
+    }
+    assert.equal((await billingNow()).billing.paymentEvent, 'payment.succeeded');
+
+    const res = await deliver(disputeEvent({
+      type: 'dispute.lost',
+      dispute_id: 'dis_old_payment',
+      payment_id: first,
+      dispute_status: 'dispute_lost',
+      is_resolved_by_rdr: true,
+    }));
+    assert.deepEqual(res.json, { received: true, applied: true }, `an unattributed dispute: ${res.text}`);
+
+    const { billing } = await billingNow();
+    assert.equal(billing.disputeEvent, 'dispute.lost');
+    assert.equal(billing.disputeStatus, 'dispute_lost');
+    assert.equal(billing.disputeLost, true, 'a lost dispute must be readable as lost');
+    assert.equal(billing.disputeOpen, false);
+    /*
+     * §79 found Visa RDR on by default at a $100 threshold, auto-refunding and
+     * appearing as a lost dispute. This flag is what separates a chargeback
+     * that was never contestable from one that went to the network and lost —
+     * the difference between an operator having something to do and not.
+     */
+    assert.equal(billing.disputeByRdr, true, 'the RDR flag must survive to the reader');
+  });
+
+  test('a dispute for a payment nobody claims is acknowledged, and recorded nowhere', async () => {
+    /*
+     * A real state rather than an error: the payment can be older than the
+     * window, or belong to another deployment entirely. It must still be a
+     * 2xx — a non-2xx is a delivery failure to this provider and buys eight
+     * retries and a red mark on the one screen that reports real ones (§70).
+     */
+    const before = await billingNow();
+    const res = await deliver(disputeEvent({
+      type: 'dispute.opened',
+      dispute_id: 'dis_orphan',
+      payment_id: 'pay_never_seen_here',
+    }));
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.json, { received: true, ignored: 'no workspace' });
+    assert.deepEqual(await billingNow(), before, 'an unattributable dispute wrote something');
+  });
+
+  test('a subscription event leaves the dispute fields alone, and an older dispute cannot win', async () => {
+    /*
+     * TWO PROPERTIES, NEITHER OF WHICH IS THE CLOCK SPLIT. Worth saying so,
+     * because the first version of this test was named for the split and
+     * could not see it: a subscription event has its own clock under either
+     * design, so pitting a dispute against a renewal proves nothing about
+     * whether disputes share `paymentAt`. The mutation that merges them
+     * passed here. The real collision is dispute against PAYMENT, and it is
+     * the test below.
+     *
+     * What this does cover: the field partition (a subscription write must
+     * not blank the dispute keys beside it — §70's `putData` merges
+     * top-level keys only), and the dispute clock's own staleness guard in
+     * the direction §70's cancellation already pins for subscriptions.
+     */
+    const disputed = await deliver(disputeEvent({
+      type: 'dispute.lost', dispute_id: 'dis_clock', payment_id: 'pay_window_2', dispute_status: 'dispute_lost',
+    }));
+    assert.equal(disputed.json.applied, true, disputed.text);
+
+    // A renewal stamped LATER. It must not touch the dispute fields.
+    const renewal = await deliver(subscriptionEvent({ type: 'subscription.renewed', status: 'active', at: laterClock() }));
+    assert.equal(renewal.json.applied, true);
+
+    const after = await billingNow();
+    assert.equal(after.billing.disputeEvent, 'dispute.lost', 'a renewal erased the dispute');
+    assert.equal(after.billing.status, 'active', 'the renewal did not land');
+
+    /*
+     * And the guard in the other direction: a redelivery of an OLDER dispute
+     * must not overwrite the newer one. Same rule as §70's cancellation,
+     * on the clock this commit added.
+     */
+    const stale = await deliver(disputeEvent({
+      type: 'dispute.opened',
+      dispute_id: 'dis_stale',
+      payment_id: 'pay_window_2',
+      dispute_status: 'dispute_opened',
+      at: '2026-01-01T00:00:00Z',
+    }));
+    assert.deepEqual(stale.json, { received: true, applied: false, reason: 'stale' });
+    assert.equal((await billingNow()).billing.disputeEvent, 'dispute.lost', 'a stale dispute won');
+  });
+
+  test('a payment landing between two dispute events does not discard the later one', async () => {
+    /*
+     * THE COLLISION THE FOURTH CLOCK EXISTS FOR, and the only arrangement
+     * that can see it. Three stamps, delivered out of order on purpose:
+     *
+     *   t1  dispute.opened        delivered first
+     *   t3  payment.succeeded     delivered second — the LATEST stamp
+     *   t2  dispute.lost          delivered last, and it sits BETWEEN them
+     *
+     * Under one shared clock the second delivery moves the watermark to t3,
+     * so the chargeback outcome at t2 is refused as stale and the workspace
+     * is left reading `dispute_opened` for ever — a dispute that silently
+     * never resolves, which is the one direction that costs money. Under
+     * separate clocks t2 is newer than t1 and lands.
+     *
+     * The ordering is not contrived: disputes arrive late by nature (§79's
+     * 120-day window), so a renewal between two dispute events is the
+     * ORDINARY case for a monthly subscriber, not an edge one.
+     */
+    const t1 = laterClock();
+    const t2 = laterClock();
+    const t3 = laterClock();
+
+    const opened = await deliver(disputeEvent({
+      type: 'dispute.opened',
+      dispute_id: 'dis_between',
+      payment_id: 'pay_window_2',
+      dispute_status: 'dispute_opened',
+      at: t1,
+    }));
+    assert.equal(opened.json.applied, true, opened.text);
+
+    const paid = await deliver({
+      business_id: 'bus_test_crmbuilder',
+      type: 'payment.succeeded',
+      timestamp: t3,
+      data: { payload_type: 'Payment', payment_id: 'pay_between', status: 'succeeded', metadata: { wsId } },
+    });
+    assert.equal(paid.json.applied, true, paid.text);
+
+    const lost = await deliver(disputeEvent({
+      type: 'dispute.lost',
+      dispute_id: 'dis_between',
+      payment_id: 'pay_window_2',
+      dispute_status: 'dispute_lost',
+      at: t2,
+    }));
+    assert.deepEqual(lost.json, { received: true, applied: true },
+      `a payment stamped later discarded the dispute outcome behind it: ${lost.text}`);
+
+    const { billing } = await billingNow();
+    assert.equal(billing.disputeEvent, 'dispute.lost', 'the dispute outcome did not land');
+    assert.equal(billing.disputeStatus, 'dispute_lost');
+    assert.equal(billing.disputeLost, true);
+    assert.equal(billing.disputeOpen, false, 'the workspace is still reading an open dispute');
+    // And the payment half is untouched by the dispute that followed it.
+    assert.equal(billing.paymentEvent, 'payment.succeeded');
+  });
+
+  test('the payment-id window is bounded and deduplicated', async () => {
+    /*
+     * It is the one list on this document that grows with a customer's own
+     * activity, on a meta doc that shares a 512 MB tier (§17, §33) — so
+     * "costs nothing" is the kind of claim that quietly stops holding, and
+     * §54's cap is the precedent.
+     *
+     * Deduplication is what keeps the window twelve PAYMENTS rather than
+     * twelve deliveries: a retry carries the same id, and this provider
+     * retries eight times.
+     */
+    for (let i = 0; i < 15; i += 1) {
+      await deliver({
+        business_id: 'bus_test_crmbuilder',
+        type: 'payment.succeeded',
+        timestamp: laterClock(),
+        data: { payload_type: 'Payment', payment_id: 'pay_cap_repeat', status: 'succeeded', metadata: { wsId } },
+      });
+    }
+    const raw = JSON.parse(await readFile(join(dataDir, 'store.json'), 'utf8'));
+    const ids = raw.data[wsId].billing.paymentIds;
+    assert.ok(Array.isArray(ids), 'the window is not an array');
+    assert.ok(ids.length <= 12, `the window is unbounded: ${ids.length} ids`);
+    assert.equal(ids.filter((p) => p === 'pay_cap_repeat').length, 1, 'a retried payment was counted twice');
+    assert.equal(ids[0], 'pay_cap_repeat', 'the window is not newest-first');
   });
 
   test('the admin export carries billing, unlike the mail key beside it', async () => {

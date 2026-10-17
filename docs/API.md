@@ -855,10 +855,31 @@ the provider's fault.
 | `webhook-signature` | one or more space-separated `v1,<base64>` entries; any `v1` match passes |
 
 Body: `{ business_id, type, timestamp, data }`, where `data` is the resource
-itself plus a `payload_type`. The workspace is read from
-`data.metadata.wsId`, which rides out on the payment link as
-`metadata_wsId` and is therefore as trustworthy as the signature — and is
-coerced and shape-checked anyway.
+itself plus a `payload_type`.
+
+**Which workspace an event belongs to is resolved two ways, and the second
+exists because disputes carry no metadata.** First `data.metadata.wsId`, which
+rides out on the payment link as `metadata_wsId` and is therefore as
+trustworthy as the signature — coerced and shape-checked anyway. Subscription
+and payment payloads carry it. **A dispute payload does not**: the provider
+documents the dispute object as amount, business_id, created_at, currency,
+dispute_id, payment_id, remarks and `is_resolved_by_rdr`, and nothing that
+names a workspace. So for `dispute.*` and `refund.*` the route falls back to
+**`data.payment_id`**, matched against a bounded window of payment ids kept on
+each workspace's meta doc (`billing.paymentIds`, newest first, capped at 12 and
+deduplicated).
+
+A window rather than the latest id, and that is the ordinary case rather than
+caution: a chargeback window runs to 120 days, so a monthly subscriber
+disputing their first payment has had three or four since. An
+implementation matching only the most recent id passes a test that disputes
+the most recent payment and fails every real one.
+
+A dispute whose payment is older than the window, or belongs to another
+deployment, answers `200 { received: true, ignored: 'no workspace' }` and
+writes nothing — a real state, not an error, and it gets its own log line
+naming both the payment and the dispute id, because it is the one unattributed
+event an operator may have to reconcile by hand.
 
 **Status codes, and every one of them is a decision:**
 
@@ -881,10 +902,17 @@ stays one small write — see §70.
 
 **Ordering is the correctness mechanism, not the `webhook-id`.** Events are
 not strictly ordered and each payload carries current state, so an event
-older than the stored one is discarded. Subscription facts and payment facts
-carry **separate clocks**, so a payment cannot decide a subscription's status.
+older than the stored one is discarded.
 
-**No route and no response shape moved, and two value DOMAINS widened** —
+**There are FOUR clocks** — `subscriptionAt`, `paymentAt`, `disputeAt`,
+`refundAt` — and each kind is newest-wins against its own kind and invisible to
+the others. A dispute is the case that makes that unavoidable rather than tidy:
+disputes arrive late by nature, so under one shared clock a payment landing
+after a chargeback moves the watermark past it and the **next** dispute event
+— a stage change, or the outcome — is discarded as stale. A chargeback that
+silently never resolves is the one direction that costs money.
+
+**No route and no response shape moved, and the value DOMAINS widened** —
 which is the thing to check rather than the route count (§46). The route now
 handles `subscription.update_payment_method` and `payment.processing`, both of
 which it previously answered `{ received: true, ignored: 'unsubscribed event' }`.
@@ -893,6 +921,20 @@ below sees a value it has not seen before, and
 `subscription.update_payment_method` is the one that needs reading carefully: it
 is a **request, not a state**, so it arrives alongside `status: "active"` and is
 retired by the next subscription event rather than by anything clearing it.
+
+It also handles the **seven `dispute.*` events** (`opened`, `expired`,
+`accepted`, `cancelled`, `challenged`, `won`, `lost`) and **two `refund.*`**
+(`succeeded`, `failed`), which previously answered
+`{ received: true, ignored: 'unsubscribed event' }` and now populate the
+`dispute*` and `refund*` fields below. Three of the seven —
+`accepted`, `expired`, `lost` — are the losing outcomes and set `disputeLost`.
+
+`payout.*` is still unhandled, deliberately, and it is the one worth knowing
+about: `CLAUDE.md` §73 and §79 both record that a payment payload carries **no
+fee field at all** and that `settlement_amount` is identical on a failed
+payment and a successful one, so a payout record is the only place the
+provider's fee can be read. That is a reporting feature rather than an
+entitlement one, so it is not wired here.
 
 ### `GET /api/org/billing`
 
@@ -965,8 +1007,35 @@ means loading the provider's JavaScript, which `script-src 'self'` refuses
 (`CLAUDE.md` §30 Phase 4), so the inline and overlay integrations are ruled out
 by a constraint rather than a preference.
 
+**The `billing` object**, when one exists. Every field is `null` until an event
+of its kind lands, so a caller must not read an absence as a state:
+
+| | |
+|---|---|
+| `status`, `subscriptionEvent`, `subscriptionId` | the subscription half. `status` is the provider's own vocabulary: `pending`, `active`, `past_due`, `on_hold`, `paused`, `cancelled`, `failed`, `expired` |
+| `nextBillingAt`, `pastDueEndsAt` | ISO days, or `null`. **`nextBillingAt` survives a cancellation** on the provider's payload, so a caller showing it must gate on `status` rather than on its presence |
+| `paymentEvent`, `paymentStatus` | the payment half, on its own clock |
+| `disputeEvent`, `disputeStatus`, `disputeStage` | the last dispute event and the provider's words for it |
+| `disputeByRdr` | **always a boolean**, never null. True when the provider resolved it through Visa RDR, which auto-refunds and reports as a loss — so it separates a chargeback that was never contestable from one that went to the network and lost. §79 found RDR on by default at a $100 threshold, which puts a $15 monthly price entirely inside it |
+| `disputeOpen` | **derived, not stored** — true for `dispute.opened` and `dispute.challenged`. A stored flag would need clearing, and the only honest clearer is a later dispute event, which already replaces this one |
+| `disputeLost` | derived — true for `accepted`, `expired`, `lost` |
+| `refundEvent`, `refundStatus` | the refund half, on its own clock |
+| `updatedAt` | when any of the four last moved |
+
+**A lost dispute does not suspend anybody**, and that is a decision rather than
+an omission: a dispute is not a decision (`opened` can still be won), the
+provider may already cancel the subscription itself, and §83's enforcement
+then fires through the ordinary subscription path. Disputes are **surfaced and
+not enforced**, which leaves that hole open and visible. The reasoning is in
+full beside `publicBilling` in `server.js`.
+
+`billing.paymentIds` is **not returned**. It is the internal attribution
+window described above and tells a client nothing.
+
 The stored record carries **no customer identity** — no email, no name, no
-address — because the meta doc is in every nightly backup artifact. It is
+address — because the meta doc is in every nightly backup artifact. The
+dispute and payment payloads both carry plenty (`card_last_four`,
+`card_holder_name`, a full billing address), and none of it is stored. It is
 also **not redacted on export**, unlike `hook` and `mail`: a restore that
 dropped it would silently un-subscribe every paying customer.
 

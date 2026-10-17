@@ -26,10 +26,16 @@
 > `billingMode === 'paid'` and every deployment is `free`, so nothing moved for
 > any user. What remains before money changes hands is not in this document:
 > the price copy and `TERMS_VERSION` ([`PAYMENTS.md`](PAYMENTS.md) §7's
-> before-live list), the §27 walk that now owes two items, and the
-> **refund and dispute events** — §79 records seven `dispute.*` families this
-> deployment subscribes to none of, which is harmless until the moment a
-> status decides whether somebody can write.
+> before-live list) and the §27 walk that now owes two items.
+>
+> **The refund and dispute events listed here as remaining are handled** —
+> `CLAUDE.md` §84, nine of them. What is left of that item is not code: the
+> events have to be **ticked on the provider's endpoint** (§7's before-live
+> item 14, since an unsubscribed event never arrives however well it would be
+> handled), and **a lost dispute deliberately does not hold anybody** until
+> §8's newest open row is answered — whether the provider cancels the
+> subscription on a chargeback, which cannot be produced in test mode and
+> decides whether a second holding mechanism would race the one §83 built.
 >
 > It was written before any code so the decisions were visible and arguable,
 > which is §48's and §64's precedent: the question to ask is *when* a thing can
@@ -271,7 +277,8 @@ Three pieces:
 
 **What it did NOT do**, so the omissions read as decided: `payment.cancelled`
 is still ignored on purpose (the customer cancelled it themselves), and refund
-and dispute events are still unhandled — see Phase 2, where they belong.
+and dispute events were still unhandled at that point — **handled since, in
+§84**, which is where the reasoning for *recorded but not enforced* lives.
 
 ### Phase 2 — enforcement · **UNBLOCKED 2026-10-17**, and smaller than it looked
 
@@ -625,12 +632,25 @@ suspension system. What actually has to be decided and written:
 
 Two things that belong here and were easy to miss — both still true:
 
-- **Refund and dispute events are not handled**, so today a customer can
-  dispute a charge, win, and keep full access with the card reading `active`.
-  Harmless while nothing is enforced; **a hole the moment the switch is
-  flipped**, which is now a date rather than a hypothetical. And it needs the
-  §8 question asked first: does the provider even deliver those families to an
-  endpoint, or only show them on the dashboard?
+- ~~**Refund and dispute events are not handled**~~ — **built in §84, and the
+  shape of the fix was not the shape of the problem.** The paragraph here read
+  as subscribe-and-record; what it needed was a second attribution path,
+  because **a dispute payload carries no `metadata.wsId`** and §70's whole
+  path depends on one. The resolution is `payment_id` against a bounded window
+  of payment ids on the meta doc, with a reverse lookup on both stores.
+
+  Its §8 question — *does the provider even deliver those families to an
+  endpoint* — is answered in the only way that matters here: they are in the
+  catalogue and the endpoint must be **subscribed** to them, which is §7's
+  before-live item 14 and the operator's rather than ours.
+
+  **And the hole this named is narrowed, not closed.** A lost dispute is
+  surfaced and deliberately does not hold the workspace: a dispute is not a
+  decision (`opened` can still be won), the provider may already cancel the
+  subscription itself — in which case §83's enforcement already fires and a
+  second mechanism would race it — and §21's rule is that acting
+  destructively on a guess is worse than reporting. A test pins that choice so
+  reversing it has to be deliberate.
 - **A grace period is a product decision**, and `past_due_ends_at` is the field
   for it — the one field in the inventory nothing has ever filled (§9), though
   §76's fixture populated it for the first time. **Use the provider's window

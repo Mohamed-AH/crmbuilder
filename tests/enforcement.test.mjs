@@ -364,6 +364,78 @@ describe('the billing hold', () => {
     assert.equal(freed.json.pushed, 1, 'the one record in the push must have landed');
   });
 
+  test('a lost dispute does NOT hold the workspace by itself, and that is the decision', async () => {
+    /*
+     * §83 left this hole open and §84 made it VISIBLE rather than closing it,
+     * so this test pins the choice rather than a behaviour nobody argued for.
+     * If a later commit decides a chargeback should take sync away, this is
+     * the test that has to be rewritten on purpose — which is the point of it
+     * existing.
+     *
+     * Three reasons, from `publicBilling`'s own comment: a dispute is not a
+     * decision (`opened` can still be won, and a workspace flickering
+     * read-only on the network's timetable is reversible-but-unexplainable,
+     * against §24's rule); the provider may already cancel the subscription
+     * itself, in which case §83's enforcement already works and a second
+     * mechanism would race it; and §21's rule that acting destructively on a
+     * guess is worse than reporting.
+     */
+    await setMode('paid');
+    await setWindows(0, 0);
+    await deliver(subscriptionEvent({ status: 'active' }));
+    assert.equal((await push()).json.readOnly, undefined, 'precondition: a paying workspace must be writable');
+
+    /*
+     * The dispute is attributed the way a real one has to be: a payment
+     * first, so its id is in the window, then a dispute carrying
+     * `payment_id` and NO metadata. Handing the dispute a `metadata.wsId`
+     * would have been shorter and would have driven a path no real dispute
+     * takes — the same trap `disputeEvent()` in `tests/payments.test.mjs`
+     * exists to avoid.
+     */
+    const paid = await deliver({
+      business_id: 'bus_test_crmbuilder',
+      type: 'payment.succeeded',
+      timestamp: laterClock(),
+      data: {
+        payload_type: 'Payment',
+        payment_id: 'pay_enforce_0001',
+        status: 'succeeded',
+        metadata: { wsId },
+      },
+    });
+    assert.equal(paid.json.applied, true, `the payment was not recorded: ${JSON.stringify(paid.json)}`);
+
+    const lost = await deliver({
+      business_id: 'bus_test_crmbuilder',
+      type: 'dispute.lost',
+      timestamp: laterClock(),
+      data: {
+        payload_type: 'Dispute',
+        dispute_id: 'dis_enforce_0001',
+        payment_id: 'pay_enforce_0001',
+        dispute_status: 'dispute_lost',
+        is_resolved_by_rdr: true,
+      },
+    });
+    assert.equal(lost.json.applied, true, `the dispute was not recorded: ${JSON.stringify(lost.json)}`);
+
+    const res = await push();
+    assert.equal(res.json.readOnly, undefined, `a lost dispute held the workspace: ${res.text}`);
+    assert.equal(res.json.pushed, 1, 'the one record in the push must have landed');
+
+    /*
+     * And it IS on the record — asserted here rather than taken on trust,
+     * because "not enforced" and "not recorded" are the two things this
+     * commit most needs to be told apart. The first is a decision; the second
+     * would be §79's finding all over again.
+     */
+    const billing = (await req('/api/org/billing', { cookies: owner })).json.billing;
+    assert.equal(billing.disputeEvent, 'dispute.lost');
+    assert.equal(billing.disputeLost, true);
+    assert.equal(billing.disputeByRdr, true);
+  });
+
   /* ------------------------------------------------------------------ *
    * The two precedence rules
    * ------------------------------------------------------------------ */
