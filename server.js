@@ -229,6 +229,59 @@ async function billingMode() {
   return value;
 }
 
+/*
+ * Why a workspace is read-only, if it is. One decision, so the sync seam and
+ * the operator panel cannot disagree about it.
+ *
+ * TWO INDEPENDENT HOLDS, which is the whole of this: `suspendedAt` is the
+ * operator lever (§24 stage B) and `billingSuspendedAt` is set by enforcement.
+ * Reusing one field for both was the obvious shape and is the bug — an
+ * operator resuming a storage pause would clear a billing hold, and a payment
+ * would clear a storage pause, each silently and in a direction nobody asked
+ * for. Separate fields make that impossible rather than merely discouraged,
+ * and the write sites each touch only their own keys.
+ *
+ * THE OPERATOR REASON WINS WHEN BOTH ARE SET, and that is not arbitrary. A
+ * billing hold has an action the customer can take; an operator hold does
+ * not. Showing "your payment is overdue — pay to restore sync" while a
+ * storage pause is also in force tells somebody to pay and leaves them
+ * read-only afterwards, which is the worst outcome available here: money
+ * taken, nothing restored, and a dispute that is entirely our fault (§3).
+ * Clearing the operator hold then reveals the billing one, which is correct —
+ * they were always two reasons, and the customer now sees the one they can
+ * act on.
+ *
+ * Returns null when the workspace is writable, so a caller reads it as a
+ * hold rather than having to compare two timestamps itself.
+ */
+function readOnlyState(org) {
+  if (!org) return null;
+  if (org.suspendedAt) {
+    return {
+      kind: 'operator',
+      reason: org.suspendedReason || 'This workspace is paused. Nothing has been deleted.',
+    };
+  }
+  if (org.billingSuspendedAt) {
+    /*
+     * Not an operator-typed string: this one is ours to word once, because
+     * nobody types it per workspace and it is the only read-only message that
+     * has to tell somebody what to DO (§76's rule for the billing card, on
+     * the one surface that reaches them while they are typing).
+     *
+     * It says sync rather than "your data", because nothing is deleted and
+     * local use continues — the §5/§36 promise, and the sentence a customer
+     * will quote back if it is wrong.
+     */
+    return {
+      kind: 'billing',
+      reason: 'Cloud sync is paused while this workspace\'s subscription is inactive. '
+        + 'Nothing has been deleted, and you can keep working on this device and export at any time.',
+    };
+  }
+  return null;
+}
+
 async function setBillingMode(mode, userId) {
   const setAt = Date.now();
   await store.updatePlatformSettings({
@@ -3200,12 +3253,13 @@ app.post('/api/sync', requireAuth, async (req, res) => {
    * remove a workspace (§5), and suspension has to be one undo away.
    */
   const org = req.user.orgId ? await store.getOrg(req.user.orgId) : null;
-  if (org && org.suspendedAt) {
+  const hold = readOnlyState(org);
+  if (hold) {
     const out = await pullChanges(req.user, since, { modules: new Set(), records: new Set() });
     return res.json({
       ...out,
       readOnly: true,
-      readOnlyReason: org.suspendedReason || 'This workspace is paused. Nothing has been deleted.',
+      readOnlyReason: hold.reason,
     });
   }
 
@@ -6157,6 +6211,10 @@ app.put('/api/admin/org-creation', requireAuth, requirePlatformAdmin, async (req
  * This is a reversible read-only state, and the wording everywhere has to say
  * so — it sits one word from account deletion and a decade of data apart, the
  * same care §15 needed for removing a member. Nothing here touches a workspace.
+ *
+ * It writes `suspendedAt` and NOT `billingSuspendedAt` — two independent
+ * holds, so resuming here cannot clear a billing one and vice versa. See
+ * readOnlyState().
  */
 app.post('/api/admin/orgs/:id/suspend', requireAuth, requirePlatformAdmin, async (req, res) => {
   const org = await store.getOrg(req.params.id);
@@ -6421,6 +6479,14 @@ app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, re
       name: o.name,
       createdAt: o.createdAt,
       suspendedAt: o.suspendedAt || null,
+      /*
+       * Reported separately rather than folded into the line above, because
+       * the two holds want opposite responses from whoever is reading the
+       * table: one of them this operator did and can undo, the other is
+       * enforcement and undoes itself when the customer pays. A single
+       * "suspended" column would make them one fact and lose which (§33).
+       */
+      billingSuspendedAt: o.billingSuspendedAt || null,
       members: members.length,
       lastActiveAt: members.reduce((a, u) => Math.max(a, u.lastActiveAt || 0), 0),
       records: measured.records,
@@ -6451,7 +6517,18 @@ app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, re
       users: users.length,
       orgs: orgs.length,
       disabled: users.filter((u) => u.disabled).length,
+      /*
+       * Two figures, for the same reason the rows carry two fields. An
+       * operator reading "3 paused" needs to know how many of those they did
+       * — because that is the number they can act on, and the other number is
+       * one that resolves itself. Counting both together is §33's conflated
+       * figure: adjacent, correct, and useless for deciding anything.
+       *
+       * They can overlap: a workspace with both holds counts in each, and
+       * that is the honest answer rather than a total that adds up.
+       */
       suspendedOrgs: orgs.filter((o) => o.suspendedAt).length,
+      billingSuspendedOrgs: orgs.filter((o) => o.billingSuspendedAt).length,
       workspaces: usage.workspaces,
       records: usage.records,
       modules: usage.modules,

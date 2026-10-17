@@ -202,6 +202,9 @@ never change, because everything cross-references them.
 | A default that must never be what starts a charge | §78 · §16 · §17 |
 | A stamp that must survive a restart, or every window re-dates | §78 · §17 · §10 |
 | A list the code derived and the test typed by hand | §78 · §29 · §69 |
+| **Two read-only holds on one workspace**, and which reason a customer sees | §78 · §24 · §36 |
+| Why a reason tag fails silently and a second field fails visibly | §78 · §24 · §33 |
+| Planting state nothing writes yet (`editStore`) | §78 · §12 · §34 |
 | Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
@@ -275,10 +278,11 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**630 Node tests pass, and Playwright is 159 tests** — both observed in this
-session: Node **630/630** after §78's five, and Playwright **158 of 159** on
-the same run, the one failure being §66's intermittent (§78 has the artifact
-signature and the isolation rate).
+**633 Node tests pass, and Playwright is 159 tests** — both observed in this
+session: Node **633/633** after §78's eight, and Playwright **158 of 159**,
+the one failure being §66's intermittent (§78 has the artifact signature and
+the isolation rate). The Playwright figure was measured before §78's item 2,
+which touched no client file.
 
 **Playwright's honest figure is a RANGE, and §77 is why.** Two full runs there
 gave 156/158 and 157/158, with a **different** test failing in each and all of
@@ -12185,8 +12189,14 @@ Five mutations, each failing the test that names it (§9):
 A sixth is honest about itself: the cache-guard change has **no** failing test,
 for the reason given above.
 
-**Counts, all three run:** Node **630/630** (625 → 630 — four lever tests and
-one backup test), smoke **51 local**, Playwright **158 of 159**.
+**Counts, all three run:** Node **633/633** (625 → 630 on item 1, → 633 on
+item 2), smoke **51 local**, Playwright **158 of 159**.
+
+**Playwright was measured on item 1 and not re-run for item 2**, which changed
+`server.js` and one test file and **no client or served file** — so no E2E
+assertion can see it, and the one that reads `/api/admin/platform` (§33) reads
+keys that were added rather than moved. Stated rather than implied, because an
+unchanged count is otherwise indistinguishable from an unchanged claim (§73).
 
 **The one failure is §66's intermittent and the exoneration here is stronger
 than §77's.** Same test — *signing out hides the workspace* — and the artifact
@@ -12227,6 +12237,80 @@ enforced and nothing can be bought**: the lever changes no behaviour, and
 lands, which is the same commit that makes
 [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1's twelve-file list
 fire and bumps `TERMS_VERSION`.
+
+### Item 2: two holds, because one field fails silently
+
+The conflation §24 stage B left open: `suspendedAt` is an **operator** lever
+with a typed reason, and billing needs the same read-only behaviour. Settled as
+**a separate field** — `billingSuspendedAt` — on instruction, and the reason
+the two options are not equivalent is that **they fail in different
+directions**:
+
+| | Cost |
+|---|---|
+| separate field | an operator reads two values to know why a workspace is read-only. A mistake is **visible** |
+| a reason tag on the one field | one field, but a billing resume clears a storage pause **silently** unless every caller checks the tag |
+
+§24's own rule is that suspension is *reversible and customer-visible*, and a
+tag makes the reversal depend on a check somebody can forget. The write sites
+each touch only their own keys, so the independence is structural rather than
+remembered.
+
+**The operator reason wins when both are set, and that was not obvious going
+in.** A billing hold has an action the customer can take; an operator hold does
+not. So naming the billing cause while a storage pause is also in force tells
+somebody to pay and leaves them read-only afterwards — **money taken, nothing
+restored**, which is the worst outcome available here and a dispute that is
+entirely ours (§3). Lifting the operator hold then reveals the billing one,
+which is correct: they were always two reasons, and the customer now sees the
+one they can act on.
+
+**One `readOnlyState(org)`**, so the sync seam and the panel cannot disagree.
+It returns `null` for a writable workspace rather than a flag, so a caller
+reads a hold rather than comparing two timestamps itself — which is what stops
+the next reader checking one field and not the other.
+
+**The billing message is ours to word once**, unlike the operator's typed
+string: nobody types it per workspace, and it is the only read-only message
+that has to say what is still *possible*. It names the cause, that nothing is
+deleted, and that local use and export continue (§5, §36) — a message naming
+only what stopped would be accurate and would read as data loss. The test
+asserts all three clauses, because the wording **is** the behaviour on this
+one.
+
+**The panel reports two fields and two counts.** An operator reading *"3
+paused"* needs to know how many they did, because that is the number they can
+act on and the other resolves itself when somebody pays. One total would be
+§33's conflated figure — correct, adjacent, and useless for deciding anything.
+The counts **can overlap** and deliberately do not sum.
+
+**Nothing writes `billingSuspendedAt` yet.** Item 3's cutoff is what will, so
+this landed with no behaviour change — same as item 1, and the same reason:
+the read path is what the later items depend on, and the decision is in the
+precedence rather than in the plumbing.
+
+**Planted directly in the test, which needed a new helper.** `editStore()` on
+the boot harness stops the server, edits `store.json` and starts it again —
+FileStore keeps the whole store in memory and rewrites the file on every save,
+so an edit under a running server is clobbered by its next write (§12), which
+is exactly what `moveToOrg()` in `api.test.mjs` already does.
+
+#### Verified
+
+Four mutations, each failing by name (§9):
+
+| Mutation | Fails |
+|---|---|
+| the billing hold is not read at all | **2** — *a billing hold pauses writes on its own* and the conflation test |
+| billing checked **first**, so its reason wins | the conflation test, on the with-both-holds assertion |
+| the operator resume also clears `billingSuspendedAt` | the conflation test, on the after-resume assertion |
+| one conflated `suspendedOrgs` count | *the panel reports the two holds separately* |
+
+The middle two both fail the same test, which is **expected rather than
+sloppy**: that test asserts both halves of the conflation — which reason shows
+while both hold, and that lifting one does not lift the other — so a mutation
+to either half fails it on its own assertion. A reader checking the mutation
+table should expect one failure per *assertion*, not one per test.
 
 ### The admin screen is deliberately not built yet
 

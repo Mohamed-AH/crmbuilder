@@ -90,6 +90,24 @@ async function boot({ signupMode = 'code', adminEmails = '', backupToken = '', w
     // only observable there — a webhook that could never be delivered has to
     // say so somewhere, and the saying is the behaviour under test.
     log: () => log,
+    /*
+     * Plant state nothing writes yet, the only way that is safe to.
+     *
+     * FileStore keeps the whole store in memory and rewrites the file on every
+     * save, so an edit under a running server is clobbered by its next write
+     * (§12). Stop, edit, start — which is exactly what moveToOrg() in
+     * api.test.mjs does and for the same reason.
+     *
+     * `edit` receives the parsed store and mutates it in place.
+     */
+    async editStore(edit) {
+      await stop({ keepData: true });
+      const file = join(dir, 'store.json');
+      const data = JSON.parse(await readFile(file, 'utf8'));
+      edit(data);
+      await writeFile(file, JSON.stringify(data));
+      await start();
+    },
     // Restart against the same data on a different setting: the only way to
     // ask what happens to an account that was created before the door closed.
     async setMode(next) {
@@ -1551,6 +1569,119 @@ describe('suspending an organisation', () => {
     assert.equal((await srv.req(`/api/admin/orgs/${orgId}/suspend`, {
       method: 'POST', cookies, body: { suspend: true },
     })).status, 403, 'a tenant cannot pause anyone, least of all somebody else');
+  });
+
+  /*
+   * The two holds, which are two fields on purpose (Phase 2 item 2).
+   *
+   * `billingSuspendedAt` is planted directly here because nothing writes it
+   * yet — enforcement is a later item — and the thing under test is the READ
+   * path: whether either hold pauses writes, which reason is shown when both
+   * are set, and that clearing one does not clear the other.
+   */
+  const plantBillingHold = (srv, orgId, at = Date.now()) =>
+    srv.editStore((data) => {
+      const org = (data.orgs || []).find((o) => o.id === orgId);
+      assert.ok(org, 'the fixture lost the org — the test below would be hollow');
+      org.billingSuspendedAt = at;
+    });
+
+  test('a billing hold pauses writes on its own, and says what is still possible', async () => {
+    const { srv, cookies, orgId } = await setup();
+    await plantBillingHold(srv, orgId);
+
+    const push = await srv.req('/api/sync', {
+      method: 'POST',
+      cookies,
+      body: { since: 0, records: [{ id: 'rb', updatedAt: Date.now(), doc: { moduleId: 'm', data: { name: 'During billing' } } }] },
+    });
+    assert.equal(push.status, 200, 'a state to render, never an error');
+    assert.equal(push.json.readOnly, true, 'a billing hold must pause the push');
+    assert.ok(!push.json.records.some((r) => r.id === 'rb'), 'the push must be refused');
+
+    /*
+     * The wording is asserted because it is the only read-only message that
+     * has to tell somebody what they can still DO — §36's rule that a
+     * restricted state must not read as a broken product, and §5/§36's promise
+     * that local use and export survive. A message naming only what stopped
+     * would be accurate and would read as data loss.
+     */
+    assert.match(push.json.readOnlyReason, /subscription is inactive/i, 'it has to name the cause');
+    assert.match(push.json.readOnlyReason, /Nothing has been deleted/i);
+    assert.match(push.json.readOnlyReason, /export/i, 'and what is still possible');
+
+    // Not a lockout, same as the operator hold.
+    assert.equal((await srv.signUp('heavy@tenant.test')).status, 200);
+    // And the pull still works, which is what makes it read-only rather than off.
+    const kept = await srv.req('/api/sync?since=0', { cookies });
+    assert.ok(kept.json.records.some((r) => r.id === 'r1'), 'existing records must survive');
+  });
+
+  /*
+   * The conflation this item exists to close, asserted in the direction that
+   * costs money: an operator resuming their own pause must NOT hand back
+   * cloud sync to a workspace that has not paid.
+   */
+  test('resuming an operator pause does not clear a billing hold', async () => {
+    const { srv, admin, cookies, orgId } = await setup();
+    await srv.req(`/api/admin/orgs/${orgId}/suspend`, {
+      method: 'POST', cookies: admin, body: { suspend: true, reason: 'Storage review' },
+    });
+    await plantBillingHold(srv, orgId);
+
+    /*
+     * Both holds are in force, and the OPERATOR reason is what is shown. A
+     * billing hold has an action the customer can take and an operator hold
+     * does not, so naming the billing one here would tell somebody to pay and
+     * leave them read-only afterwards — money taken, nothing restored.
+     */
+    const both = await srv.req('/api/sync', {
+      method: 'POST',
+      cookies,
+      body: { since: 0, records: [{ id: 'rx', updatedAt: Date.now(), doc: { moduleId: 'm', data: { name: 'x' } } }] },
+    });
+    assert.equal(both.json.readOnly, true);
+    assert.match(both.json.readOnlyReason, /Storage review/,
+      'with both holds set, the reason must be the one the customer cannot act on');
+    assert.doesNotMatch(both.json.readOnlyReason, /subscription/i,
+      'never tell somebody to pay while something else also holds them read-only');
+
+    // The operator lets their own pause go.
+    await srv.req(`/api/admin/orgs/${orgId}/suspend`, { method: 'POST', cookies: admin, body: { suspend: false } });
+
+    const after = await srv.req('/api/sync', {
+      method: 'POST',
+      cookies,
+      body: { since: 0, records: [{ id: 'ry', updatedAt: Date.now(), doc: { moduleId: 'm', data: { name: 'y' } } }] },
+    });
+    assert.equal(after.json.readOnly, true,
+      'resuming the operator pause must not restore sync to an unpaid workspace');
+    assert.ok(!after.json.records.some((r) => r.id === 'ry'), 'and the write still must not land');
+    // …and now they see the reason they CAN act on.
+    assert.match(after.json.readOnlyReason, /subscription is inactive/i,
+      'clearing the operator hold reveals the billing one');
+  });
+
+  test('the panel reports the two holds separately, and a row says which', async () => {
+    const { srv, admin, orgId } = await setup();
+    await plantBillingHold(srv, orgId);
+
+    const panel = await srv.req('/api/admin/platform?fresh=1', { cookies: admin });
+    assert.equal(panel.status, 200, panel.text);
+    const row = panel.json.orgs.find((o) => o.id === orgId);
+    assert.ok(row, 'the org is missing from the table');
+    assert.ok(row.billingSuspendedAt, 'the row must say a billing hold is in force');
+    assert.equal(row.suspendedAt, null, 'and must not report an operator pause nobody made');
+
+    /*
+     * Two counts, because they want opposite responses: one is the number this
+     * operator did and can undo, the other resolves itself when somebody pays.
+     * A single total would be §33's conflated figure — correct, adjacent and
+     * useless for deciding anything.
+     */
+    assert.equal(panel.json.counts.billingSuspendedOrgs, 1);
+    assert.equal(panel.json.counts.suspendedOrgs, 0,
+      'a billing hold must not inflate the count of pauses an operator made');
   });
 });
 

@@ -315,11 +315,28 @@ suspension system. What actually has to be decided and written:
    wrong the moment the cached thing is an object carrying a `setAt` that may
    legitimately be `0` or absent. Guard on the *timestamp* of the cache entry,
    not on the truthiness of what it holds.
-2. **The conflation to settle.** `suspendedAt` is currently an **operator**
-   lever with one reason string. If billing writes the same field, an operator
-   resuming a storage suspension also clears a billing one, and the reverse.
-   Either a separate field or a reason tag — a decision, not a detail, and the
-   wording is customer-visible either way.
+2. **The conflation — settled 2026-10-17: a SEPARATE FIELD.** ✅ **BUILT**
+   (`CLAUDE.md` §78). `suspendedAt` stays the **operator** lever with its typed
+   reason; `billingSuspendedAt` is the enforcement hold. The alternative was a
+   reason tag on the one field, and the two fail differently: with a separate
+   field an operator reads two values to know why a workspace is read-only,
+   which is a **visible** cost, while a tag makes a billing resume clear a
+   storage pause **silently** unless every caller remembers to check it. §24's
+   rule is that suspension is reversible and customer-visible, and a tag makes
+   the reversal depend on a check somebody can forget.
+
+   **The operator reason wins when both are set**, which is the part that was
+   not obvious going in: a billing hold has an action the customer can take and
+   an operator hold does not, so naming the billing cause while a storage pause
+   is also in force tells somebody to pay and leaves them read-only afterwards
+   — money taken, nothing restored, and a dispute that is entirely ours (§3).
+   Lifting the operator hold then reveals the billing one, which is correct.
+
+   One `readOnlyState(org)` makes the decision, so the sync seam and the panel
+   cannot disagree about it, and the panel reports the two holds as two fields
+   and two counts (§33: one total would be correct, adjacent and useless).
+   **Nothing writes `billingSuspendedAt` yet** — that is item 3's cutoff
+   feeding it, so this landed with no behaviour change, like item 1.
 3. **Grandfathering — decided, and it DOES need a field.** The policy
    (2026-10-17): **no permanent free tier, possibly around a year, per org,
    decided when the switch is flipped.** *"Needs no new field"* stood here and

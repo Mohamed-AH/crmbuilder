@@ -289,6 +289,21 @@ A suspended org still **pulls**. Only the push is refused, with `readOnly` and
 push** — doing so marks the rows as sent, and resuming the org would restore
 writing having silently lost everything typed during the pause.
 
+**There are TWO independent holds, and a caller cannot tell them apart.**
+`suspendedAt` is the operator lever and `billingSuspendedAt` is set by
+enforcement; either one produces `readOnly: true`, and clearing one does not
+clear the other. So **a client must treat a refused push as refused until the
+server stops refusing it** rather than inferring that a resolved cause means
+writes are back — a workspace can have both holds, and the second survives the
+first being lifted.
+
+**`readOnlyReason` is a string to display, never a code to branch on.** When
+both holds are set it carries the **operator's** reason, because that is the
+one the customer cannot act on: naming the billing cause while a storage pause
+is also in force tells somebody to pay and leaves them read-only afterwards.
+The value domain therefore widened without the shape changing, which is the
+kind of move a route count cannot show (`CLAUDE.md` §46).
+
 ---
 
 ## 3. Roles
@@ -450,6 +465,14 @@ POST /api/admin/reminders/run       force one reminder pass now
 POST /api/admin/restore-notice/dismiss
 GET  /api/admin/export              ← Bearer token, NOT a session
 ```
+
+**Per-org rows carry `suspendedAt` AND `billingSuspendedAt`, and `counts` has
+`suspendedOrgs` beside `billingSuspendedOrgs`.** Two fields and two figures
+rather than one of each, because they want opposite responses from whoever is
+reading: one is a pause this operator made and can undo, the other is
+enforcement and lifts itself when the customer pays. The counts **can
+overlap** — a workspace with both holds appears in each — so they do not sum to
+a total, which is the honest answer rather than a figure that adds up.
 
 **`/api/admin/platform` carries `billing: { mode, setAt }`**, which is the
 third operator lever beside the two `PUT`s above and the one place the live
