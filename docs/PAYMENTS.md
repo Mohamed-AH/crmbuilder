@@ -615,28 +615,87 @@ Why this shape rather than simply not setting a price yet:
 - **It retires a state three sections had to apologise for.** §73, §74 and §76
   each recorded that `DODO_PRODUCT_ID` is set on production in **test mode**,
   so every workspace owner sees a Subscribe button that cannot take their
-  money. In `free` mode the card says *free while in early access* and offers
-  **no checkout** — which is true, and is a better answer than any of the three
-  honest states §76 listed.
+  money. In `free` mode the card offers **no checkout** — which is true, and is
+  a better answer than any of the three honest states §76 listed. Its exact
+  wording is settled below and is not incidental: it promises **notice, not
+  duration**.
 - **It is reversible and it is visible**, which is the same pair §24 stage B
   insists on for suspension.
 
-**Grandfathering needs no new field, and the key that makes it work is one
-§17 already forces you to store.** An operator decision is **three** keys, not
-one — the value plus `<name>SetAt` and `<name>SetBy` — and §17 records the
-first version of that list missing the provenance pair. So `billingModeSetAt`
-exists for the audit trail, and `orgs.createdAt` already exists on every org
-(`server.js:1124`, and it is already published on `/api/org`). An org whose
-`createdAt` precedes `billingModeSetAt` **was already here when the switch was
-flipped**, and that comparison is the whole mechanism.
+**Telling who was here first needs no new field, and the key that makes it work
+is one §17 already forces you to store.** An operator decision is **three**
+keys, not one — the value plus `<name>SetAt` and `<name>SetBy` — and §17
+records the first version of that list missing the provenance pair. So
+`billingModeSetAt` exists for the audit trail, and `orgs.createdAt` already
+exists on every org (`server.js:1124`, and it is already published on
+`/api/org`). An org whose `createdAt` precedes `billingModeSetAt` **was already
+here when the switch was flipped**, and that comparison needs nothing added.
 
-> **The policy is a one-line decision on top of it and is NOT settled**:
-> grandfather early signups for ever, for a stated window, or not at all. The
-> recommendation is **for ever, and say so out loud** — the people in the free
-> period are the ones giving feedback, and billing them abruptly is the worst
-> version of this. It costs little while the cohort is small, and it is the
-> kind of promise that cannot be withdrawn, so it should be made deliberately
-> or not at all.
+### Grandfathering: decided 2026-10-17, and it is NOT "for ever"
+
+> **No permanent free tier. Possibly around a year. Per org, decided when the
+> switch is flipped.**
+
+**The recommendation that stood here was *for ever, and say so out loud*, and
+it is overruled.** Left visible rather than deleted, per §21's treatment,
+because the *reasoning* against it is the half worth keeping: a promise that
+cannot be withdrawn should be made deliberately or not at all — and the
+decision is not to make it. The cohort being small is an argument for being
+generous, not an argument for being permanent, and the first version of this
+section conflated the two.
+
+**The engineering consequence is the substance, and it reverses the heading
+above.** *"Needs no new field"* was true of a **rule** — one blanket policy,
+derived from two timestamps that already exist. A **case-by-case** answer is
+per-org state, and per-org state has to be **stored**: nothing derivable can
+say *this* org got eighteen months and *that* one got three.
+
+**So there is a field, and it must be a nullable DATE, never a boolean.** This
+is the part to get right, because the obvious shape is wrong in a way that is
+invisible:
+
+| | |
+|---|---|
+| `billingExempt: true` | **re-creates "free for ever" by accident.** Nothing expires it, nothing reports it, and the decision just taken is unexpressible — there is no way to say *a year*. §70's *a field that survives the state it names* |
+| `billingExemptUntil: <day> \| null` | an answer with an end on it. `null` means **the ordinary rules apply**, not *exempt* — §74's rule about which way an unrecognised value should default, and here the safe direction is "bills like everybody else" |
+
+**And the default at switch time is a WINDOW, not a per-row write.** The check
+reads: a stored date wins; otherwise, if `createdAt < billingModeSetAt`, apply
+a grandfather window held in `platform` beside the mode itself. Three things
+fall out of that and each is worth having:
+
+- **No migration.** §12's rule is that a boot migration is idempotent and never
+  deletes, and writing a date onto every pre-existing org would be a legitimate
+  one — but it would also bake the window in, so changing *one year* to *six
+  months* would mean a second migration over rows an operator had since edited
+  by hand.
+- **The uniform answer is changeable without touching a row**, which is what
+  makes "we will decide later" affordable: the window is a number set at the
+  moment there is information to set it from.
+- **"For ever" is not expressible**, which is now a property of the design
+  rather than a thing somebody has to remember. The default is a *length* and
+  the override is a *date*; neither has an infinite value.
+
+**The one thing that CANNOT be deferred is what we say now.** People are
+signing up today, and a card reading *free for early users* is read as
+permanent — so it would make the promise the decision above declines to make,
+in the one place a customer would quote back. The free-mode card has to promise
+**notice, not duration**:
+
+> free while Nimble Clerk is in early access · we will tell you before anything
+> changes · you will not be charged without being asked
+
+All three are true and stay true whatever the window turns out to be. The third
+is free: card-up-front applies to signups **after** the switch, so nobody
+already here can be charged by it. And notice-before-change is the promise that
+actually decides whether somebody puts their business's data in — which is the
+same trade §47's rule describes for `guide.html`, a capability and its limit in
+one breath.
+
+**When it becomes visible to customers is already fixed**: flipping the switch
+bumps `TERMS_VERSION`, which re-prompts everybody (§41, and §7's step 10). That
+prompt is the moment each existing workspace learns its answer, so the
+per-org dates want setting **before** it rather than after.
 
 **The trap when this is built, and it is §17's exact failure.**
 `OPERATOR_DECISIONS` is in **`scripts/restore.mjs`, not in `server.js`** —
@@ -1138,8 +1197,11 @@ sessions**, or **set with the price decided and the documents walked**.
    describes, in the other direction, and says nothing.
 6. **Answer §2.4's six product decisions** — quotas, non-payment, export when
    suspended, the signup gate, where plan state lives, and what happens to
-   everybody currently on the free beta. Grandfathering is a decision; making
-   it silently is not.
+   everybody currently on the free beta. **Grandfathering is settled in
+   principle** (§5: no permanent tier, possibly around a year, per org) and
+   what is left here is two numbers and a list — the default window, and which
+   workspaces get longer. Set the per-org dates **before** step 10's
+   `TERMS_VERSION` bump, since that prompt is where each one learns its answer.
 7. **Build enforcement** (§6) under §24 stage B's suspension rules. ~~and the
    customer-portal link (§3 lever 4)~~ — **the portal link is built**
    (`CLAUDE.md` §74), so what is left here is enforcement, and the

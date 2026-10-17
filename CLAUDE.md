@@ -169,7 +169,9 @@ never change, because everything cross-references them.
 | A grep that reports "binary file matches" and prints no line | §77 · §73 |
 | **The price, the seat cap, and the free/paid switch** | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2 · §64 |
 | Why enforcement was mostly already shipped | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2 · §24 · §36 |
-| Grandfathering with no new field, off a key §17 forces you to store | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · §17 · §16 |
+| Grandfathering with no new field, off a key §17 forces you to store — **and why case-by-case needs one after all** | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · §17 · §16 |
+| **A boolean exemption that re-creates "for ever" by accident** | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · §70 · §74 |
+| Promising notice rather than a duration, in the one place it gets quoted back | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · §47 · §41 |
 | **A test that read a whitelisted projection could not see the leak behind it** | §76 · §70 · §38 · §9 |
 | **Saying what to DO about a billing state**, and the phase that made it possible | §76 · §74 · [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) |
 | A provider's vocabulary on a customer's screen — and when a map is safe to write | §76 · §73 · §45 |

@@ -285,15 +285,29 @@ suspension system. What actually has to be decided and written:
    resuming a storage suspension also clears a billing one, and the reverse.
    Either a separate field or a reason tag — a decision, not a detail, and the
    wording is customer-visible either way.
-3. **Grandfathering, which needs no new field.** `orgs.createdAt` already
-   exists (`server.js:1124`) and `billingModeSetAt` exists because §17 forces
-   the provenance pair. An org created before the switch was flipped was
-   already here. The *policy* on top of that — for ever, for a window, or not
-   at all — is still open; the recommendation is **for ever, stated out loud**.
-4. **The free-mode card.** It must say *free while in early access* and offer
-   no checkout. §39's standing rule: a state that renders as nothing is
-   invisible, and this is also what retires the test-mode Subscribe button
-   §73, §74 and §76 each had to write a paragraph about.
+3. **Grandfathering — decided, and it DOES need a field.** The policy
+   (2026-10-17): **no permanent free tier, possibly around a year, per org,
+   decided when the switch is flipped.** *"Needs no new field"* stood here and
+   was true of a blanket rule — `orgs.createdAt` (`server.js:1124`) against
+   `billingModeSetAt` says who was already here, and both already exist. A
+   **case-by-case** answer is per-org state and has to be stored. So:
+   `billingExemptUntil: <day> | null` on the org — **a nullable date, never a
+   boolean**, because an `exempt: true` re-creates *free for ever* by accident
+   and cannot express *a year* — plus a default **window length** in `platform`
+   beside the mode, applied when the date is null and `createdAt` precedes the
+   switch. No migration, and the uniform answer stays changeable without
+   touching a row. [`docs/PAYMENTS.md`](PAYMENTS.md) §5 has the reasoning and
+   the wording the free-mode card must use, which promises **notice, not
+   duration**.
+4. **The free-mode card**, and its wording is now load-bearing rather than
+   incidental. It offers no checkout — which is what retires the test-mode
+   Subscribe button §73, §74 and §76 each had to write a paragraph about — and
+   it says three things: free while in early access, **we will tell you before
+   anything changes**, and you will not be charged without being asked. It must
+   **not** say *free for early users* with no qualifier, because item 3's
+   decision is explicitly not a permanent tier and that phrasing promises one
+   in the place a customer would quote back. §39's standing rule still applies
+   underneath: a state that renders as nothing is invisible.
 5. **The seat cap: one member count in `/api/org/invite`**, plus a refusal
    screen that explains itself (§36 rule 1). Free while no workspace is over
    it.

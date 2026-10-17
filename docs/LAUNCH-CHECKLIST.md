@@ -992,7 +992,7 @@ before re-deciding.
 | **Can they still get their data out when suspended?** | §36: export stays for every role, deliberately — *"reading the workspace and taking a copy of it is the job"*. A customer who stops paying and cannot export is the worst version of this product |
 | **Does the signup gate change?** `SIGNUP_MODE` / beta codes / access requests | §16, §20. A paid signup is a fourth path through `canCreateAccount()`, and §16's bypass **order** is a security property |
 | **Where does plan state live?** | On the **org**, beside `suspendedAt` — not on the user. The workspace belongs to the org (§5), so the thing being paid for is the org |
-| **What about the free tier that exists today?** | Everyone currently using it agreed to terms saying there is no payment. Grandfathering is a decision; making it silently is not |
+| **What about the free tier that exists today?** | **Decided 2026-10-17: no permanent free tier, possibly around a year, per org, decided when the switch is flipped.** Everyone currently using it agreed to terms saying there is no payment, so the answer has to reach them through the `TERMS_VERSION` re-prompt rather than arrive as a charge. [`docs/PAYMENTS.md`](PAYMENTS.md) §5 has the mechanism — a nullable **date** per org, never a boolean, plus a default window — and the wording the free-mode card must use, which promises notice rather than duration |
 
 ## 2.5 Docs to walk (§27's list, in full)
 
