@@ -696,7 +696,7 @@ MONGODB_URI= DATA_DIR=./data/drill PORT=9521 ALLOW_DEV_LOGIN=1 node server.js
 
 ```
 Storage: file (set MONGODB_URI for MongoDB)
-CRM Builder running on http://localhost:9521 (port 9521)
+Nimble Clerk running on http://localhost:9521 (port 9521)
 Google OAuth: disabled · Dev login: enabled
 ```
 
@@ -763,7 +763,7 @@ soon as the drill is done. The `.gpg` is less urgent and should go too.
 
 #### What a successful drill has proved
 
-- The artifact parses, and is a CRM Builder backup rather than an error page.
+- The artifact parses, and is a Nimble Clerk backup rather than an error page.
 - Every collection came back at full count, verified against the file on disk.
 - A real server boots on it.
 - **Your own records are in your own workspace** — the thing counts cannot show.
@@ -993,7 +993,7 @@ are created. Take a final backup before changing anything else.
 
 ---
 
-**Thanks for trying CRM Builder.**
+**Thanks for trying Nimble Clerk.**
 
 It is a CRM you build yourself: pick the modules you need, add your own fields,
 and use it from your phone or laptop. It works offline and installs like an app.

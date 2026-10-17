@@ -1,4 +1,4 @@
-# CRM Builder
+# Nimble Clerk
 
 A **modular CRM builder for small businesses** — an installable, offline-first **Progressive Web App** with optional accounts and cloud sync. Pick the modules your business needs (Contacts, Companies, Deals, Tasks, Leads, Notes, Renewals) or build your own modules with custom fields. Deploys free on Render + MongoDB Atlas.
 

@@ -1,4 +1,4 @@
-# CRM Builder — working notes
+# Nimble Clerk — working notes
 
 Context for anyone (human or agent) picking this up mid-stream. Read this
 before changing code; it records decisions and traps that are not obvious from
@@ -164,6 +164,12 @@ never change, because everything cross-references them.
 | A field that survives the state it names (`paused_at`) | §74 · §9 |
 | A comment that had promised an assertion nobody wrote | §74 · §46 · §14 |
 | **A test count carried forward and read as measured** | §74 · §2 · §29 · §9 |
+| **The product is Nimble Clerk** — and three identifiers that must not follow it | §77 · §58 · §34 · §47 |
+| An internal identifier that happens to contain the old product name | §77 · §34 · §29 |
+| A grep that reports "binary file matches" and prints no line | §77 · §73 |
+| **The price, the seat cap, and the free/paid switch** | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2 · §64 |
+| Why enforcement was mostly already shipped | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2 · §24 · §36 |
+| Grandfathering with no new field, off a key §17 forces you to store | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · §17 · §16 |
 | **A test that read a whitelisted projection could not see the leak behind it** | §76 · §70 · §38 · §9 |
 | **Saying what to DO about a billing state**, and the phase that made it possible | §76 · §74 · [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) |
 | A provider's vocabulary on a customer's screen — and when a map is safe to write | §76 · §73 · §45 |
@@ -251,8 +257,19 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**625 Node tests pass and Playwright ran 158 of 158** — both observed in this
-session, not carried forward. §76 added two Node and four Playwright.
+**625 Node tests pass, and Playwright is 158 tests with an intermittent
+failure** — both observed in this session, not carried forward. §76 added two
+Node and four Playwright.
+
+**Playwright's honest figure is a RANGE, and §77 is why.** Two full runs there
+gave 156/158 and 157/158, with a **different** test failing in each and all of
+them passing in isolation. Three are now in that family: §66's *signing out
+hides the workspace* (measured 1-in-3), §54's *an owner invites, and the
+colleague joins* (2-in-4), and — new, recorded there — *the reminder count is
+the number the due-date filter shows*. So a clean 158 happens and does not
+mean they are fixed; a 157 does not mean something broke. Pin neither number:
+run it, and read which test failed against §77's table before concluding
+anything.
 
 **158 of 158 does NOT mean §66's intermittent is fixed.** *Signing out hides
 the workspace* simply did not fire on this run; §71 fired it, and six passes
@@ -382,7 +399,7 @@ to render *and still navigate*.
 globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v64` — and this line was left at v62 through §74's bump
+(currently `crmbuilder-v65` — and this line was left at v62 through §74's bump
 to v63, which is §29's thesis arriving in §3's own invariant: read `sw.js`,
 never this sentence). Miss the allow-list and it 404s in production
 while working locally from cache.
@@ -8028,14 +8045,23 @@ Counts: Node **498**, Playwright **126 → 127**, smoke **46** locally.
 | `guide.html`, `product-tour.html` | **nothing**, and this is a decision: the landing page links *out* to both, and a link back from a page somebody was sent directly is circular |
 | `docs/API.md` | nothing — no route, no wire shape, and it does not list public pages |
 
-### One thing deliberately not decided
+### One thing deliberately not decided — ~~and still open~~ **DECIDED in §77**
 
-**The product is still called CRM Builder.** The domain is `nimbleclerk.com`,
-and a landing page is exactly where a brand name would live — but renaming is a
-real decision that touches the manifest, `terms.html`, `TERMS_VERSION` (§41),
-every document and the app itself. It is not something to do silently while
-building a page. The wordmark sits in one place in `welcome.html` and in the
-manifest; if the name changes, those are the two starts.
+**~~The product is still called CRM Builder.~~** The domain is
+`nimbleclerk.com`, and a landing page is exactly where a brand name would live
+— but renaming is a real decision that touches the manifest, `terms.html`,
+`TERMS_VERSION` (§41), every document and the app itself. It is not something
+to do silently while building a page. The wordmark sits in one place in
+`welcome.html` and in the manifest; if the name changes, those are the two
+starts.
+
+> **It is **Nimble Clerk** as of 2026-10-17 — §77.** The paragraph above is
+> left standing because its *list* was the useful part and it was incomplete
+> in one way worth knowing: the wordmark is in **four** places in
+> `welcome.html`, not one, and the two starts it names are two of eighty-four
+> occurrences. What it got right is that this is a decision rather than a
+> find-and-replace, and §77 records the three places where a replace would
+> have broken something.
 
 
 ---
@@ -11837,3 +11863,144 @@ bounded by a decision rather than by nobody having looked. It stops being
 defensible the moment signups open, which is where
 [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7's *before live mode* list already has
 it.
+
+
+---
+
+## 77. The product is Nimble Clerk, and three identifiers that must NOT follow it
+
+§58 left this open — *"renaming is a real decision that touches the manifest,
+`terms.html`, `TERMS_VERSION` (§41), every document and the app itself"* — and
+it was right that it is a decision rather than a find-and-replace. **84
+occurrences, not the 29 I first reported**: `grep -c` counts matching *lines*,
+and `server.js:2735` carries two on one line. A count that reads as an
+occurrence count and is a line count is §33's shape in a measuring tool.
+
+### The three that stay `crmbuilder`, and each would fail silently
+
+This is the whole reason a blanket replace was wrong.
+
+| Identifier | What a rename would do |
+|---|---|
+| **`payload.app === 'crmbuilder'`** (`js/app.js`, `scripts/restore.mjs`) | a **format sentinel written inside every backup file anybody already holds**. Renaming it stops every existing export importing — completely, and during a recovery, which is the one moment that cannot absorb it |
+| **`MONGODB_DB \|\| 'crmbuilder'`** (`server.js` ×2, `restore.mjs`) | the **database name**. A deployment that does not set `MONGODB_DB` — the documented default — comes up against an empty database: a working app over no data, nothing in the log. §34 records that exact trap costing an afternoon on the seed fixture |
+| **`CACHE_VERSION = 'crmbuilder-vNN'`** (`sw.js`) | a cache key nobody sees but devtools. `activate` evicts every key that is not the current one, so renaming the prefix evicts exactly what bumping the number already evicts — while making every `crmbuilder-vNN` reference in this file read as a different scheme |
+
+The shared property is worth naming: **an internal identifier that happens to
+contain the old product name is not a product-name occurrence.** The first two
+are load-bearing on data that already exists outside the repository; the third
+is pure churn. All three carry a comment at the site saying so, because the
+next reader tidying for consistency is exactly who breaks them.
+
+The *messages* beside the first two are renamed, which is why those two words
+now sit on **opposite sides of one comparison** — `payload.app !== 'crmbuilder'`
+raising *"not a Nimble Clerk backup"*. That reads like a bug and is the fix.
+
+### The pair that had to move together, proven rather than assumed
+
+`docs/manual.html`'s `<title>` is asserted as **live page content** by
+`tests/smoke.mjs:492` (§47's reachability check) and again by
+`tests/e2e.spec.js:4050`. Move the page without the assertions and the live
+audit goes red; move the assertions without the page and they pass on a title
+nobody serves.
+
+Driven rather than reasoned about: renaming the title alone gives
+**`50 passed · 1 failed`** and `✗ the shareable pages are reachable —
+/docs/manual.html (served something else)`. The check names the page, which is
+what makes it survivable.
+
+### A grep that reports "binary file matches" and prints no line
+
+`scripts/inspect.mjs` contains **one NUL byte** — deliberate, a composite
+`Map`-key separator (`` `${orgId}\x00${dead|live}` ``), so two orgs cannot
+collide on a concatenation. Not corruption, and it is left alone.
+
+The consequence is for the *verification* step, not the code: `file` calls that
+script `data`, and **`grep -rn` prints `Binary file … matches` with no line
+number** — so a post-rename sweep can report a match it cannot locate, or a
+careless `grep -l` sweep can be read as clean. The rename ran through Python on
+**bytes** for that reason, and the final sweep used `grep -ran`. §73's lesson
+in a new place: a derivation that is wrong in the same direction as the thing
+it replaced looks authoritative.
+
+### What was left saying the old name, on purpose
+
+Five occurrences survive and every one is a record rather than a reference:
+
+- **`CLAUDE.md:5816`** quotes what a poisoned page *actually rendered*
+  (`"CRM Builder Dashboard"`) during §47's probe. Renaming an observation
+  falsifies it.
+- **§58's own paragraph**, struck through in place with the resolution beside
+  it (§46's treatment) rather than rewritten — its *list* was the useful part,
+  and it was incomplete in one way worth knowing: the wordmark is in **four**
+  places in `welcome.html`, not one.
+- **§63's docs-walk table** (×2) records the link text *as §63 left it*.
+  Rewriting it would claim §63 renamed something it did not.
+- **`docs/archive/UK-LAUNCH.md`** — the frozen tier (§29). Not touched.
+
+### One product decision I made and am flagging rather than burying
+
+`js/app.js:1488` and `index.html:24,29` are **not the product name**: they are
+the fallback for `SETTINGS.businessName`, so the sidebar shows the
+*customer's* business and ours appears only when they have not named one. It
+now reads **Nimble Clerk**, which is the consistent reading of "fix the stale
+name" — but putting our brand where their business name goes is a different
+choice from a page title, and **"My workspace" is arguably the better
+fallback.** Changing it is one string in two files.
+
+### Verified
+
+Node **625/625**, smoke **51 local** — both unchanged, which is the point: a
+rename should move no count. Playwright is the one that needs stating
+honestly.
+
+**Two full runs, and a different test failed in each:**
+
+| Run | Failed |
+|---|---|
+| 1 (8.5m) | *an owner invites, and the colleague joins* · *the reminder count is the number the due-date filter shows* |
+| 2 (7.6m) | *signing out hides the workspace* — and **both of run 1's passed** |
+
+**A different test each run, all passing in isolation, is §32's signature** —
+and §32's cause is not available: `data/e2e` is cleared per run (120K before,
+596K after), and the timings are not monotonic (8.5 then 7.6, against §76's
+6.3). Two of the three are already recorded intermittents — §66's sign-out at
+1-in-3 and §54's invite journey at 2-in-4. The **reminder parity** test is a
+*new* member of that family and is recorded as one here; §55 had it failing
+only for a real bug, since fixed and pinned.
+
+**What can be said about causation, and what cannot.** The rename substitutes
+strings in titles, copy and comments and touches no control flow; every
+failure was *element not found* on a record row or a filter control, with no
+product string in any assertion; and the one behavioural change — the
+`businessName` fallback — was not even in play, since the failing snapshot
+showed the workspace's own name, *Lumen Studio*. Isolation runs with and
+without the rename both pass, so **isolation does not discriminate here and
+proving innocence would take many more full runs than this change is worth.**
+That is the honest state rather than a clean bill.
+
+The suite is slower than §76 measured (7.6–8.5m against 6.3m) with no tests
+added. Not monotonic, so not §32, and string substitution cannot cause it —
+container load is the likely reading and it is recorded rather than
+investigated.
+
+### Blast radius
+
+`index.html`, `js/app.js`, `css/style.css`, `manifest.webmanifest` and `sw.js`
+are all in `APP_SHELL`, so `CACHE_VERSION` → **`crmbuilder-v65`** (prefix
+deliberately unchanged, above). No new served file, so smoke stays **51 local /
+56 live**.
+
+**`manifest.webmanifest`'s `name` and `short_name` label the INSTALLED app**,
+and an existing install keeps the old label until it is reinstalled — free
+today because there are no users, which is §63's argument for doing structural
+work now rather than at the announcement.
+
+**§27's walk is the one thing this does NOT complete.** `terms.html` and
+`privacy.html` have the product renamed in their titles, back links and
+footers — but `terms.html` still scopes itself to *"the free beta at this
+address"* and still says data loss is possible, which is **pricing** prose and
+belongs to the commit that sets a price, together with the `TERMS_VERSION`
+bump that re-prompts everybody (§41). Renaming that framing now would be two
+half-changes to one paragraph. `docs/API.md` needs nothing: no route, no wire
+shape.

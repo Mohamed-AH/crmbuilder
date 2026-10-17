@@ -1,9 +1,9 @@
-# CRM Builder — User Guide
+# Nimble Clerk — User Guide
 
 > **Current reference · end users.** Verified against the code 2026-08-26.
 > Mirrored by [manual.html](manual.html) — change both, and diff the prose, not the headings.
 
-Everything you can do in CRM Builder, in the order you're likely to need it.
+Everything you can do in Nimble Clerk, in the order you're likely to need it.
 If you've used Salesforce, HubSpot or Pipedrive, most of this will feel
 familiar — the difference is that you decide what the CRM tracks, not the vendor.
 
@@ -45,7 +45,7 @@ Callbacks rather than Leads and Opportunities, build those instead.
 
 ## 2. Your first five minutes
 
-When you open CRM Builder for the first time you'll see the setup screen.
+When you open Nimble Clerk for the first time you'll see the setup screen.
 
 1. **Enter your business name and currency.** Currency controls how every money
    field is displayed across the app. You can change both later.
@@ -339,9 +339,9 @@ list in Excel, Numbers or Google Sheets.
 
 1. In your spreadsheet, make sure **the first row contains column headings**,
    then export or save as **CSV**.
-2. In CRM Builder, open the module you want to import into and click the
+2. In Nimble Clerk, open the module you want to import into and click the
    **upload** icon in the header.
-3. CRM Builder shows a **mapping screen**: every column in your file, a sample
+3. Nimble Clerk shows a **mapping screen**: every column in your file, a sample
    value from it, and where it should go. Columns whose names resemble your
    fields are matched automatically — check them.
 4. For each remaining column choose either an existing field, **skip this
@@ -620,7 +620,7 @@ services; both have a free tier that is ample for chasing invoices.
    rather than as anything wrong with the key.
 3. **Create an API key** in their dashboard, with permission to send. Copy it
    the moment it is shown; neither service will show it to you twice.
-4. **In CRM Builder, open Settings → Sending reminders by email.** Paste the
+4. **In Nimble Clerk, open Settings → Sending reminders by email.** Paste the
    key, and type the address reminders should come from — it has to be at the
    domain you verified in step 2. Save.
 5. **Send one to yourself.** Open an overdue record, press *Chase by email*,
@@ -721,7 +721,7 @@ Four things worth knowing:
 
 ## 10. Accounts, sync and multiple devices
 
-CRM Builder works fully without an account — everything is stored on the device
+Nimble Clerk works fully without an account — everything is stored on the device
 you're using. Signing in adds sync.
 
 **To sign in:** click **Sign in to sync** at the bottom of the sidebar and
@@ -759,7 +759,7 @@ Sync also sends only what changed, so an edit costs the same whether your
 workspace has fifty records or fifty thousand.
 
 **Anything you do before signing in stays on the device until you say
-otherwise.** The first time you sign in, CRM Builder asks once what to do with
+otherwise.** The first time you sign in, Nimble Clerk asks once what to do with
 it — bring it into your account, or leave it where it is. Nothing you typed is
 ever discarded without being asked.
 
@@ -849,7 +849,7 @@ so the samples disappear from your other devices too.
 
 ## 11. Working offline and installing the app
 
-CRM Builder is a Progressive Web App, so you can install it like a native app:
+Nimble Clerk is a Progressive Web App, so you can install it like a native app:
 
 - **Desktop (Chrome/Edge):** the install icon in the address bar, or
   Settings → *Install on this device*.

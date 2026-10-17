@@ -1,6 +1,6 @@
-# Deploying CRM Builder
+# Deploying Nimble Clerk
 
-CRM Builder deploys as a single Node web service. This guide covers the
+Nimble Clerk deploys as a single Node web service. This guide covers the
 recommended free stack: **Render (free tier) + MongoDB Atlas (free tier) +
 Google OAuth**. Total cost: $0.
 
@@ -141,7 +141,7 @@ which means a mistake at step 3 is recoverable — right up until it isn't.
 ## 2. Google OAuth credentials
 
 1. Go to [console.cloud.google.com/apis/credentials](https://console.cloud.google.com/apis/credentials), create a project.
-2. Configure the **OAuth consent screen** (External, app name "CRM Builder", add your email; publishing status "Testing" is fine to start — add your users as test users, or publish for open signup).
+2. Configure the **OAuth consent screen** (External, app name "Nimble Clerk", add your email; publishing status "Testing" is fine to start — add your users as test users, or publish for open signup).
 3. Create **Credentials → OAuth client ID → Web application**:
    - Authorized JavaScript origins: `https://<your-app>.onrender.com`
    - Authorized redirect URIs: `https://<your-app>.onrender.com/auth/google/callback`
@@ -213,7 +213,7 @@ and set the env vars above plus `NODE_ENV=production` and a random `SESSION_SECR
    > It also means these two steps are worth running in this order on a
    > browser you do not mind clearing.
 3. Sign in with Google, create a module, then open the site in a private window and sign in again — your workspace should sync down.
-4. Install it: browser menu → *Install CRM Builder* (desktop) or *Add to Home Screen* (mobile).
+4. Install it: browser menu → *Install Nimble Clerk* (desktop) or *Add to Home Screen* (mobile).
 5. Run the audit from a machine that can reach the URL:
    `BASE_URL=https://<your-app>.onrender.com npm run test:smoke`
 6. `https://<your-app>.onrender.com/CLAUDE.md` should be **404**, with exactly

@@ -1,9 +1,9 @@
 ---
 name: verify
-description: How to run and extend the CRM Builder test suite, and how to drive the app by hand.
+description: How to run and extend the Nimble Clerk test suite, and how to drive the app by hand.
 ---
 
-# Verifying CRM Builder
+# Verifying Nimble Clerk
 
 Node/Express server (`server.js`) serving a static PWA plus auth/sync/admin APIs.
 There is a real test suite — **check the relevant part of it before

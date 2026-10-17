@@ -245,7 +245,7 @@ const store = uri
   : await loadFile(dataDir);
 
 /* --------------------------------------------------------------- report */
-console.log(`\n${bold('CRM Builder — database inspection')}`);
+console.log(`\n${bold('Nimble Clerk — database inspection')}`);
 const source = uri
   ? `mongodb → ${String(uri).replace(/^.*@/, '').replace(/[/?].*$/, '')}${envFile ? ` ${dim('(from .env)')}` : ''}`
   : `file store → ${dataDir}`;

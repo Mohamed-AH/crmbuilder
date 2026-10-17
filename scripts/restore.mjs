@@ -26,8 +26,13 @@ if (!file) {
 }
 
 const backup = JSON.parse(await readFile(file, 'utf8'));
+// `'crmbuilder'` is a FORMAT SENTINEL stored inside every artifact already on
+// disk, and renaming it with the product would make every existing backup
+// unrestorable — during a recovery, which is the one moment that cannot absorb
+// it. The product became Nimble Clerk; the file format did not. The message is
+// safe to rename, and that is why the two words differ across one comparison.
 if (backup.app !== 'crmbuilder' || backup.kind !== 'backup') {
-  console.error(`${file} is not a CRM Builder backup.`);
+  console.error(`${file} is not a Nimble Clerk backup.`);
   process.exit(1);
 }
 

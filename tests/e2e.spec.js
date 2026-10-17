@@ -4016,7 +4016,7 @@ test.describe('settings', () => {
     await expect(page.locator('tr:has-text("Added after the backup")')).toHaveCount(0);
   });
 
-  test('rejects a file that is not a CRM Builder backup', async ({ page }) => {
+  test('rejects a file that is not a Nimble Clerk backup', async ({ page }) => {
     await onboard(page);
     await page.goto('/app#/settings');
     await page.setInputFiles('#import-file', {
@@ -4047,7 +4047,7 @@ test.describe('pages that are not the app', () => {
   for (const [path, title] of [
     ['/welcome', 'CRM shaped like'],
     ['/guide', 'What you can do'],
-    ['/docs/manual.html', 'CRM Builder Manual'],
+    ['/docs/manual.html', 'Nimble Clerk Manual'],
     ['/docs/product-tour.html', 'Build Your Own CRM'],
   ]) {
     test(`${path} renders itself with the service worker installed, and does not poison the shell`, async ({ page }) => {

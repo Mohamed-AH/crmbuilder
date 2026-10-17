@@ -1,6 +1,6 @@
 {
-  "name": "CRM Builder",
-  "short_name": "CRM Builder",
+  "name": "Nimble Clerk",
+  "short_name": "Nimble Clerk",
   "description": "Build your own modular CRM for your small business. Pick the modules you need, add custom fields, sync across devices, and work offline.",
   "start_url": "/app",
   "scope": "/app",

@@ -1,5 +1,5 @@
 /*
- * app.js — routing, views, and interactions for CRM Builder.
+ * app.js — routing, views, and interactions for Nimble Clerk.
  * Depends on DB (db.js), TEMPLATES (templates.js), icon() (icons.js), Cloud (cloud.js).
  */
 /* global DB, TEMPLATES, icon, LUCIDE, Cloud, Scope, DSAR */
@@ -1485,8 +1485,8 @@
     const signinBtn = $('#signin-btn');
     if (signinBtn) signinBtn.addEventListener('click', () => openSignIn());
 
-    $('#workspace-name').textContent = SETTINGS.businessName || 'CRM Builder';
-    $('#workspace-name-mini').textContent = SETTINGS.businessName || 'CRM Builder';
+    $('#workspace-name').textContent = SETTINGS.businessName || 'Nimble Clerk';
+    $('#workspace-name-mini').textContent = SETTINGS.businessName || 'Nimble Clerk';
   }
 
   Cloud.onStatus(() => {
@@ -4379,7 +4379,7 @@
             </div>` : Cloud.me.serverAvailable ? `
             <p class="settings-hint">You're not signed in. Data is saved on this device (with a local backup copy). Sign in to sync it to your account and use it on other devices.</p>
             <button class="btn btn-primary" id="settings-signin">${icon('log-in', 15)} Sign in</button>` : `
-            <p class="settings-hint">This copy of CRM Builder is running without a server — everything is stored on this device. Deploy with the included server (see DEPLOYMENT.md) to enable accounts and sync.</p>`}
+            <p class="settings-hint">This copy of Nimble Clerk is running without a server — everything is stored on this device. Deploy with the included server (see DEPLOYMENT.md) to enable accounts and sync.</p>`}
         </div>
         ${authed && org ? `
         <div class="card">
@@ -5976,8 +5976,18 @@
       toast('That file is not valid JSON');
       return;
     }
+    /*
+     * `'crmbuilder'` is a FORMAT SENTINEL and must never be renamed with the
+     * product. It is written inside every backup file anybody already holds,
+     * so changing it here — or in the three writers above — stops every
+     * existing export importing, silently and completely. The product became
+     * Nimble Clerk; the file format did not.
+     *
+     * The MESSAGE is safe to rename, which is why these two words sit on
+     * opposite sides of one comparison.
+     */
     if (payload.app !== 'crmbuilder' || !Array.isArray(payload.modules) || !Array.isArray(payload.records)) {
-      toast('That does not look like a CRM Builder backup');
+      toast('That does not look like a Nimble Clerk backup');
       return;
     }
     const choice = await askHowToRestore(payload);
@@ -6635,7 +6645,7 @@
   window.addEventListener('appinstalled', () => {
     deferredInstall = null;
     $('#install-btn').classList.add('hidden');
-    toast('CRM Builder installed');
+    toast('Nimble Clerk installed');
   });
 
   function updateOnlineBadge() {

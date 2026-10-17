@@ -1,10 +1,20 @@
 /*
- * sw.js — offline-first service worker for CRM Builder.
+ * sw.js — offline-first service worker for Nimble Clerk.
  * App shell is precached; same-origin static requests are cache-first.
  * API/auth requests are network-only (never cached).
  * Bump CACHE_VERSION whenever any precached asset changes.
  */
-const CACHE_VERSION = 'crmbuilder-v64';
+/*
+ * The `crmbuilder-` prefix is deliberately NOT renamed with the product. It is
+ * a cache key, visible only in devtools, and `activate` evicts every cache
+ * whose key is not the current one — so renaming the prefix would evict
+ * exactly what bumping the number already evicts, while making every
+ * `crmbuilder-vNN` reference in CLAUDE.md read as a different scheme. Same
+ * class as the backup format sentinel and the default database name (§77):
+ * an internal identifier that happens to contain the old product name, where
+ * changing it costs something and buys nothing.
+ */
+const CACHE_VERSION = 'crmbuilder-v65';
 const APP_SHELL = [
   // The app is at /app; `/` is the landing page and is NOT ours (see the
   // navigation branch below). Absolute, because a relative entry would be

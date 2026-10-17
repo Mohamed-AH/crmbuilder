@@ -3,7 +3,7 @@
 > **Current reference · whoever rolls this out.** Verified against the code 2026-08-26.
 > Internal: not served publicly.
 
-For whoever is rolling CRM Builder out to a business — an internal admin, a
+For whoever is rolling Nimble Clerk out to a business — an internal admin, a
 consultant, or an agency setting it up for a client. The goal is a customer
 who is *using* the CRM within a week, not one who has merely been given a login.
 

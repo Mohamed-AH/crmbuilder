@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
- * smoke.mjs — deployment health audit for any CRM Builder instance.
+ * smoke.mjs — deployment health audit for any Nimble Clerk instance.
  *
  *   node tests/smoke.mjs                                   # localhost:8321
  *   BASE_URL=https://your-app.onrender.com node tests/smoke.mjs
@@ -69,7 +69,7 @@ async function check(name, fn) {
   }
 }
 
-console.log(`\n${c.bold}CRM Builder — deployment smoke test${c.off}`);
+console.log(`\n${c.bold}Nimble Clerk — deployment smoke test${c.off}`);
 console.log(`${c.dim}target: ${BASE}${c.off}\n`);
 
 // ---------------------------------------------------------------- reachability
@@ -489,7 +489,7 @@ await check('sync model', async () => {
  * be in somebody's inbox.
  */
 await check('the shareable pages are reachable', async () => {
-  const pages = [['/welcome', 'A CRM shaped like'], ['/guide', 'What you can do'], ['/docs/manual.html', 'CRM Builder Manual'], ['/docs/product-tour.html', 'Build Your Own CRM']];
+  const pages = [['/welcome', 'A CRM shaped like'], ['/guide', 'What you can do'], ['/docs/manual.html', 'Nimble Clerk Manual'], ['/docs/product-tour.html', 'Build Your Own CRM']];
   const broken = [];
   for (const [path, marker] of pages) {
     const { res, err } = await get(path);

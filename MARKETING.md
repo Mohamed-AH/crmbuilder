@@ -1,4 +1,4 @@
-# CRM Builder — Marketing Copy
+# Nimble Clerk — Marketing Copy
 
 Positioning: **the CRM you build, not the CRM you settle for.**
 One-liner: *Build the exact CRM your business needs in 5 minutes — no code, no per-seat fees, works offline.*
@@ -19,7 +19,7 @@ enterprise sales teams, then stripped down and rented back to you at $25 per
 seat per month. You end up paying for pipelines you don't run and fields you
 never fill.
 
-**CRM Builder flips the model.** Pick the modules your business actually uses
+**Nimble Clerk flips the model.** Pick the modules your business actually uses
 — Contacts, Deals, Tasks, Leads — or build your own in minutes: Projects,
 Job Sites, Equipment, Bookings, anything. Add the exact fields you need,
 from currency and dropdowns to links between modules. Get a drag-and-drop
@@ -56,7 +56,7 @@ the instance, the branding conversation, and the invoice.
 You don't need "sales enablement." You need to remember who ordered what,
 who hasn't paid, and who to follow up with on Tuesday.
 
-CRM Builder is the simplest way to organize your hustle: pick what you want
+Nimble Clerk is the simplest way to organize your hustle: pick what you want
 to track — customers, orders, gigs, leads — and it builds your personal CRM
 around it. Add it to your home screen like an app. Use it on the bus, at the
 market, mid-flight: everything is saved on your phone and syncs when you're
@@ -87,7 +87,7 @@ Free and open. Here's how it works 🧵
 **2/**
 Most CRM setup flows: 45 minutes of "what's your sales motion?"
 
-CRM Builder: pick the blocks your business runs on.
+Nimble Clerk: pick the blocks your business runs on.
 
 📇 Contacts · 🤝 Deals · ✅ Tasks · 🎯 Leads · 🏢 Companies
 
@@ -129,8 +129,8 @@ It should mean software that fits YOUR business.
 
 - Your plumbing business doesn't have a "sales funnel." It has jobs, quotes, and callbacks. Build a CRM with exactly those three modules in 5 minutes: [link]
 - Hot take: the best CRM for a 4-person business isn't Salesforce with 90% of it turned off. It's 4 modules you picked yourself.
-- I watched a bakery owner track wholesale clients in WhatsApp scrollback. Built her a CRM in 6 minutes with CRM Builder. She dragged her first deal to "Won" that afternoon.
-- Free CRM stack for your small business: Render free tier + MongoDB Atlas free tier + CRM Builder. $0/month, installable, offline-first, your data. [link]
+- I watched a bakery owner track wholesale clients in WhatsApp scrollback. Built her a CRM in 6 minutes with Nimble Clerk. She dragged her first deal to "Won" that afternoon.
+- Free CRM stack for your small business: Render free tier + MongoDB Atlas free tier + Nimble Clerk. $0/month, installable, offline-first, your data. [link]
 
 ---
 
@@ -146,7 +146,7 @@ A 5-person business signs up for a big-name CRM. They use 3 features. They pay f
 
 The problem was never discipline. The problem is that generic CRMs force your business into *their* data model.
 
-So we built **CRM Builder** — an open, modular CRM that small businesses assemble themselves:
+So we built **Nimble Clerk** — an open, modular CRM that small businesses assemble themselves:
 
 → Pick modules from a gallery (Contacts, Deals, Tasks, Leads…) or create your own — Projects, Equipment, Bookings — with custom fields, in minutes
 → Get a drag-and-drop pipeline on any dropdown field, in your own currency
@@ -169,7 +169,7 @@ What module would your business build first? 👇
 
 The honest answer: the smallest one that matches how you already work.
 
-That's why CRM Builder starts with a question no CRM asks: *what do you want to track?*
+That's why Nimble Clerk starts with a question no CRM asks: *what do you want to track?*
 
 Modules, not features. Your fields, not ours. Offline-first, free-tier hosting, your database.
 

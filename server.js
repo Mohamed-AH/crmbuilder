@@ -1,5 +1,5 @@
 /*
- * server.js — CRM Builder backend.
+ * server.js — Nimble Clerk backend.
  *
  * Serves the static PWA and provides:
  *   - Google OAuth sign-in (JWT httpOnly cookie sessions)
@@ -596,6 +596,13 @@ class MongoStore {
     const { MongoClient } = require('mongodb');
     this.client = new MongoClient(this.uri);
     await this.client.connect();
+    /*
+     * `'crmbuilder'` is the DATABASE NAME and must never be renamed with the
+     * product. A deployment that does not set MONGODB_DB — which is the
+     * documented default — would come up against an empty database, with a
+     * working app over no data and nothing in the log to say why (§34's trap,
+     * which already cost an afternoon on the seed fixture).
+     */
     const db = this.client.db(process.env.MONGODB_DB || 'crmbuilder');
     this.users = db.collection('users');
     this.data = db.collection('data');
@@ -2732,7 +2739,7 @@ async function evaluateAlerts({ force = false } = {}) {
 
 function notifyAlerts(fired) {
   if (!FEEDBACK_WEBHOOK_URL) return;
-  const head = fired.length === 1 ? 'CRM Builder alert' : `CRM Builder — ${fired.length} alerts`;
+  const head = fired.length === 1 ? 'Nimble Clerk alert' : `Nimble Clerk — ${fired.length} alerts`;
   const lines = fired.map((f) => `• ${f.text}`);
   const req = webhookRequest(FEEDBACK_WEBHOOK_URL, {
     rich: [`**${head}**`, ...lines].join('\n'),
@@ -6718,7 +6725,7 @@ app.use((err, req, res, _next) => {
     process.exit(1);
   }
   app.listen(PORT, () => {
-    console.log(`CRM Builder running on ${APP_URL} (port ${PORT})`);
+    console.log(`Nimble Clerk running on ${APP_URL} (port ${PORT})`);
     console.log(`Google OAuth: ${GOOGLE_CLIENT_ID ? 'enabled' : 'disabled'} · Dev login: ${DEV_LOGIN ? 'enabled' : 'disabled'}`);
   });
 })();
