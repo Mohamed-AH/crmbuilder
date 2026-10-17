@@ -238,6 +238,15 @@ never change, because everything cross-references them.
 | A test that drifted into asserting the ordinary rejection and went green | §81 · §9 · §54 |
 | `invites` is an ARRAY, so a keyed plant is invisible to `.find()` | §81 · §12 · §34 |
 | Seventeen invites in one file, and the cap that refused the seventh | §81 · §38 · §9 |
+| **The 7-day trial** — a dashboard field, and the half that is inference | §82 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · §7 item 13 |
+| A dependency deferred for a year that turned out to be a settings form | §82 · §79 · §64 |
+| **A status that was never going to exist**, and a refusal that was right early | §82 · §76 · §73 |
+| A trial indistinguishable from a subscription in everything we store | §82 · §70 · §29 |
+| A prediction whose premise was wrong and whose conclusion held | §82 · §70 · §9 |
+| An all-or-nothing product field, and a rule that needs a second product | §82 · §78 · §71 |
+| Another one-click dashboard switch that inverts a written decision | §82 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §2 · §40 |
+| A per-product lock keyed on email, beside a cap that refused that key | §82 · §81 · §74 |
+| **Zero samples, so nothing is written** — the contingency and its one test | §82 · §73 · §76 |
 | Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
@@ -13098,3 +13107,156 @@ this commit: items 1–4 deferred the walk to "when enforcement lands", and
 folding one item's worth into that walk now would mean walking the same eight
 files twice. **The cap is the one thing on that list that is already live**, so
 it goes in the walk's first paragraph rather than being discovered during it.
+
+
+---
+
+## 82. The trial was a dashboard field, and one of its three predictions held
+
+Item 6 of [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2, which
+that document called *"a dependency path, not a task"* — the only Phase 2 item
+whose cost was unknown, because §71's static payment link is the one
+integration shape `script-src 'self'` leaves us (§30 Phase 4) and nobody had
+read whether a trial reaches it.
+
+**It is branch A: the trial is a field on the product's price, and there is
+nothing to build.** `Trial Period Days` on their pricing form, 0 to disable,
+with an optional `Trial Amount` beside it — *"Paid trials are configured on the
+product's price, not per subscription or per checkout session."* So §5's switch
+deferred a dependency that was a dashboard setting all along, and the price
+table's *7 days* is deliverable.
+
+**§79's lesson again, one item later.** That section's finding was that *a
+question filed under "ask the vendor" is worth one pass of "did the vendor
+already say" first*. This one was filed under "unread, and §69's rule is not to
+guess" — correct about the guessing, and the reading took four pages.
+
+### The one half that is inference, and it is the half that would reverse this
+
+**The static link's documented query-parameter list contains no trial entry.**
+That is what makes the product field the *only* mechanism that can reach a
+`/buy/{id}` link — and it is also why the link honouring it is not quotable.
+The single first-party sentence tying the two together is about a **paid**
+trial's amount: *"The trial amount is taxed and included in checkout
+calculations and payment link pricing."* Every trial example on all four pages
+is a **checkout session**.
+
+So whether a *free* trial's period renders on a static link is a sixty-second
+test-mode check, which this session cannot run (§8) and which is item 13 of
+[`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7's before-live list with both outcomes
+named. **If it does not render, this is branch B** — a Checkout Session, which
+brings `DODO_API_KEY` and §17's credential rules with it and reverses §72's
+measured *"today's credential surface is one signing secret"*.
+
+Recorded as inference rather than smoothed over, because the difference between
+*documented* and *very likely* is the difference between shipping a price and
+discovering at the checkout that nobody gets a trial.
+
+### Two of the three data predictions were wrong, and the third's premise was
+
+The item named three things to expect. **One held.** Worth keeping as a set,
+because a prediction that is wrong in a *useful* direction is the argument for
+writing predictions down at all.
+
+- **"A status that is not in the map" — NO, and there was never going to be
+  one.** *"The subscription object has no trial status field"*, and the
+  documented list is `pending · active · past_due · on_hold · paused ·
+  cancelled · failed · expired` — every one of which `STATUS_LABELS` already
+  carries, because §76 took them from the tails of
+  `BILLING_SUBSCRIPTION_EVENTS` rather than from sightings. So §76's
+  unrecognised-status path **does not fire**, and §73's refusal to add a
+  `trialing` label before seeing a real value was right for a better reason
+  than caution: there is no such value to see.
+
+  **The consequence is the finding: a trial is indistinguishable from an
+  ordinary subscription in everything we store.** Their own detection method
+  is *"exactly one payment with a `total_amount` of 0"* — a read of the
+  subscription's **payments**, which is an API call we do not make and do not
+  hold a credential for. The alternative they offer, *"check whether
+  `next_billing_date` is still within the trial window"*, needs the trial
+  length, which lives in their dashboard and would be a second copy of it here
+  (§29). So the card cannot say *"your trial ends on X"*, and that is a limit
+  with a named cost rather than an omission.
+
+- **"A live subscription with no payment event" — probably not, and the
+  conclusion survives anyway.** The detection method above means a free trial
+  **does** produce a payment record, of zero; whether it is *delivered* as a
+  webhook is unstated. Either way the card is coherent, for exactly the reason
+  the prediction gave — §70's two clocks are independent, so a subscription
+  state needs no payment behind it. A premise that was wrong and a conclusion
+  that was right, which is worth distinguishing rather than scoring as a hit.
+
+- **"A trial must never be offered to a grandfathered workspace" — not
+  implementable on branch A, and the framing was the problem rather than the
+  offer.** The trial lives on the product and the link carries no trial
+  parameter, so it is **all-or-nothing per product**: withholding it from one
+  workspace needs a second product and a second `DODO_PRODUCT_ID`.
+
+  And functionally the trial is *better* for them — seven days before the first
+  charge rather than none — so it is not the downgrade that item called it.
+  What reads badly is *"start your 7-day free trial"* shown to somebody with
+  eleven months of free left. **The copy is ours and the trial is not**, and
+  there is no trial copy anywhere today, so this becomes a constraint on
+  whatever the pricing commit writes rather than a check to code.
+
+### The hazard is a checkbox, and it is §2's one-click class again
+
+*Start the trial without a card* (`trial_payment_method_optional`) sits on the
+same pricing screen. Ticking it means a subscription starts with **no payment
+method** and the trial ends with nothing to charge — and nothing in this
+repository would know, because nothing here knows the trial exists at all.
+
+That is the class [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §2 already records for
+the BYOP switch: **a one-click setting in somebody else's dashboard that
+inverts a decision taken in a document.** The price table says *card up front*,
+so the box stays off — and a `Trial Amount` would keep the card requirement on
+regardless, since *"A paid trial always requires a card."* It is on §7's
+before-live list beside the live-product steps, because the trial is a product
+field and therefore **does not survive copying the product to live mode.**
+
+### A per-product trial lock keyed on email, next to a seat cap that refused one
+
+Their misuse control records a redemption *"at trial activation, so a customer
+who cancels the same day has still consumed their trial"*, and *"Existing
+customers are backfilled from historical trials by email."*
+
+**§74 established that email is not an identity even to them** — *"Checkout can
+create a new customer record for a returning email"* is their own sentence, and
+it is why the duplicate-subscription gate keys on `wsId`. So this control is
+weaker than it sounds, by the vendor's own admission one page over. It does not
+matter here: it is their control over their product, it runs independently of
+our gate, and neither needs the other. Recorded because §81 made the opposite
+call about the same identifier for the same stated reason, and the symmetry is
+what makes the trade legible.
+
+### The contingency this leaves, and why nothing is written for it
+
+If a trialing subscription reports **`pending`** rather than `active`, the card
+is wrong in three places at once: `BILLING_STATUSES` is `active` + `past_due`,
+so the next-payment row is suppressed, *"No payment is currently scheduled"*
+appears in its place, and §76's advice line adds *"Waiting for your provider to
+confirm this"* — to somebody on day two of a trial whose end date is sitting in
+the record. Status reads *Awaiting confirmation*.
+
+**Nothing is changed for it.** `pending` legitimately means two different
+things and the card cannot tell them apart from what we store, so which fix is
+right depends on which value arrives — and §73's rule is that one sample is not
+a vocabulary. This is **zero** samples. It is the second row of §7's item 13,
+so the one test that resolves branch A/B resolves this in the same run.
+
+### Blast radius
+
+**Documentation only.** No code, no served file, no route, no wire change, no
+new environment variable — so `CACHE_VERSION` stays `crmbuilder-v69`, the
+counts do not move, and `DEPLOYMENT.md` needs nothing. Checked against the diff
+rather than assumed (§41's rule for a docs-only change).
+
+`docs/API.md` needs nothing: no route and no response shape moved, which is the
+check §46 and §54 both say to run instead of reading the route count.
+
+**§27's six user-facing documents need nothing from this commit**, and the
+condition is §81's rather than §80's: nothing can be bought, so no user has
+gained a capability. §81's walk is still owed and still deferred to the
+enforcement commit, and **the trial now has a line waiting in it** — a trial is
+the first thing a user reads on a pricing page, and it is a sentence rather than
+a section because there is no screen for it on our side.

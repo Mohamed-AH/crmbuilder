@@ -8,6 +8,18 @@
 > ([`PAYMENTS.md`](PAYMENTS.md) §5) and most of the enforcement turned out to
 > be shipped already, so that section is rewritten; Phase 3 is untouched.
 >
+> **All six of Phase 2's items are now closed, and that is NOT the same as
+> enforcement being built.** Items 1–5 shipped (`CLAUDE.md` §78 for the lever,
+> the two holds and the cutoff · §80 for the free-mode card · §81 for the seat
+> cap) and item 6 **resolved to nothing to build** (§82 — the trial is a field
+> on the provider's dashboard). What remains is the thing the list never had an
+> item for: **nothing writes `billingSuspendedAt`.** The computation, the
+> controls and the dry-run screen all exist; the trigger that reads
+> `billingGraceUntil` and places the hold does not, and it needs one input
+> items 1–3 did not — the workspace's **subscription state** from its meta doc
+> (§70), because a workspace past its grace date that *is* paying must not be
+> held. Six ✅s should not be read as a deployment that can charge.
+>
 > It was written before any code so the decisions were visible and arguable,
 > which is §48's and §64's precedent: the question to ask is *when* a thing can
 > hurt you, and put the check there. This lives in `docs/` (the maintained
@@ -491,8 +503,67 @@ suspension system. What actually has to be decided and written:
    orgs, so the production cap refused the seventh and failed six tests in its
    invite-lifecycle describe; that file now runs with the cap raised and says
    why, and the cap has its own file with a deliberately small one.
-6. **The 7-day trial — a dependency path, not a task.** It is in the decided
-   price table and it is the one item here whose cost is **unknown**, because
+6. ✅ **The 7-day trial — RESOLVED 2026-10-17, and it is branch A: nothing to
+   build.** The trial is a field on the product's price in the provider's
+   dashboard, the static link's documented query parameters contain no trial
+   entry so that field is the *only* mechanism that can reach it, and
+   [`PAYMENTS.md`](PAYMENTS.md) §5 carries the quoted sources. The dependency
+   path below is kept because it is what made the answer cheap; what it got
+   wrong is recorded under it, and that is the part worth reading.
+
+   **One thing is inference rather than documented**, and it is the thing that
+   would move this to branch B: the only first-party sentence tying a trial to
+   a payment link is about a *paid* trial's **amount** — *"The trial amount is
+   taxed and included in checkout calculations and payment link pricing"* — so
+   whether a **free** trial's period renders on a `/buy/{id}` link is a
+   sixty-second test-mode check this session cannot run (§8). It is item 13 of
+   `PAYMENTS.md` §7's before-live list, with both outcomes named.
+
+   **Two of this item's three predictions were wrong, and the third was wrong
+   in its premise.**
+
+   - **"A status that is not in the map" — NO.** There is no trial status at
+     all: *"The subscription object has no trial status field"*, and the
+     documented list is `pending · active · past_due · on_hold · paused ·
+     cancelled · failed · expired`, every one of which `STATUS_LABELS` already
+     carries. So §76's unrecognised-status path **does not fire**, and §73's
+     refusal to add a label before seeing a real value was not merely prudent
+     — there was never going to be a value. **A trial is indistinguishable
+     from an ordinary subscription in everything we store**, which is the
+     claim that matters and needs no guess about which value arrives.
+   - **"A live subscription with no payment event" — probably not.** The
+     documented way to detect a free trial is *"exactly one payment with a
+     `total_amount` of 0"*, so a payment record **does** exist; whether it is
+     delivered as a webhook is unstated. The conclusion survives its own
+     premise being wrong, for the reason it gave: §70's two clocks are
+     independent, so the card is coherent either way.
+   - **"A trial must never be offered to a grandfathered workspace" — not
+     implementable on branch A, and the framing was the problem rather than
+     the offer.** The trial lives on the product and the link carries no trial
+     parameter, so it is **all-or-nothing per product**: withholding it from
+     one workspace needs a second product and a second `DODO_PRODUCT_ID`.
+     Functionally the trial is *better* for a grandfathered workspace — seven
+     days before the first charge rather than none — so it is not a downgrade.
+     What reads badly is *"start your 7-day free trial"* shown to somebody
+     with eleven months of free left. **The copy is ours and the trial is
+     not**, and there is no trial copy anywhere today, so this becomes a
+     constraint on whatever the pricing commit writes rather than a check to
+     code.
+
+   **And the one hazard is a checkbox, not a line of code.** *Start the trial
+   without a card* sits on the same pricing screen, mapping to the API field
+   `trial_payment_method_optional`, and ticking it means a subscription starts
+   with no payment
+   method and the trial ends with nothing to charge — the class `PAYMENTS.md`
+   §2 already records for the BYOP switch: a one-click dashboard setting that
+   inverts a decision taken in a document. The price table says *card up
+   front*.
+
+   ---
+
+   **The dependency path as it stood, kept because it is what made the answer
+   cheap.** It is in the decided price table and it is the one item here whose
+   cost is **unknown**, because
    §5's switch was shaped specifically to defer it: *"whether the provider
    supports a trial on a **static payment link** at all… is unread, and §69's
    rule is not to guess."* §71 chose that link because `script-src 'self'`

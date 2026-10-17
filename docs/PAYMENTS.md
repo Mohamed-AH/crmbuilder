@@ -658,7 +658,7 @@ tier, and it is materially cheaper than any row here.
 |---|---|
 | **Price** | **$15 / month per workspace**, up to **5 users** |
 | **Annual** | **$150** — two months free |
-| **Trial** | 7 days, **card up front**, and not live yet — see the switch below |
+| **Trial** | 7 days, **card up front** — deliverable, and it is a field on their dashboard rather than code. See below |
 | **Tiers** | one. Premium tiers deferred until there is a user base to segment |
 | **Non-payment** | cloud sync pauses. Local use and export continue |
 
@@ -680,11 +680,53 @@ with free alternatives and is the hardest cohort to support per pound") applies
 starting high, so this is a deliberate land-grab rather than a sized margin,
 and the margin cannot be computed at all until the fee table below is filled.
 
-**The seat cap is 5, and it is one check at invite time** — not metering. §5
-above already records the shape: a member count in `/api/org/invite`, plus a
-refusal screen that explains itself (§36's rule 1, not a control that looks
-like it works). It is free to add **now** because no workspace can be over it
-yet; it stops being free the moment one is.
+**The seat cap is 5, and ~~it is one check at invite time~~ — BUILT, and it is
+two.** Not metering, and the shape above was right about the refusal screen
+(§36's rule 1, not a control that looks like it works) and wrong about the
+count: a member count alone is bypassable by minting two links while one seat
+is free, so the cap counts **members plus unused invites**, and the join route
+needs its own check for every invite that was in flight when it shipped.
+`CLAUDE.md` §81 has it. It was free to add because no workspace was over it;
+it stops being free the moment one is.
+
+### The trial is a product field, and ONE checkbox would undo "card up front"
+
+**Resolved 2026-10-17 from the provider's own documentation, and it is branch A
+of [`SUBSCRIPTION-UX.md`](SUBSCRIPTION-UX.md) item 6: nothing to build here.**
+
+| Read first-party | |
+|---|---|
+| where it lives | *"Set **Trial Period Days** in the product's pricing section (use `0` to disable)"*, range 0–10,000 |
+| paid trials | *"Paid trials are configured on the product's price, not per subscription or per checkout session"* |
+| the card question | *"A free trial has its own **Start the trial without a card** checkbox"* · *"A paid trial always requires a card"* |
+| the status question | *"The subscription object has no trial status field"* — and the documented status list is `pending · active · past_due · on_hold · paused · cancelled · failed · expired`, with **no trial value in it** |
+| detecting one | *"if there is exactly one payment with a `total_amount` of 0, the subscription is in trial"* — a read of the subscription's **payments**, so an API call |
+| misuse | *"Redemptions are recorded at trial activation, so a customer who cancels the same day has still consumed their trial"*, and *"Existing customers are backfilled from historical trials by email"* |
+
+**The static link's documented query parameters contain no trial entry**, so
+the product field is the *only* mechanism that can reach the one integration
+shape the CSP leaves us (§71). The single sentence tying the two together is
+about a paid trial's amount — *"The trial amount is taxed and included in
+checkout calculations and payment link pricing"* — so **whether a free trial's
+period renders on a `/buy/{id}` link is inference rather than documented.**
+That is a sixty-second test-mode check, not an open question: set the field,
+open the link, read whether it says nothing is due today. It is item 13 of the
+before-live list in §7 because this session can reach neither host (§8).
+
+**The checkbox is the thing to get wrong.** *Start the trial without a card*
+is one click on the same pricing screen, and ticking it means a subscription
+starts with no payment method and the trial ends with nothing to charge — the
+exact class §2 already records for the BYOP switch: **a one-click dashboard
+setting that inverts a decision taken here.** The table above says *card up
+front*; the box stays off, and a **Trial Amount** would keep the card
+requirement on anyway.
+
+**Their misuse control is keyed on email, which §74 established is not an
+identity even to them** — *"Checkout can create a new customer record for a
+returning email"* is their own sentence, and it is why the duplicate gate keys
+on `wsId` instead. So trial-redemption blocking is weaker than it sounds. It
+does not matter much: it is **their** control over **their** product, it runs
+independently of our gate, and neither needs the other.
 
 ### What the MSA settles about the price, and the one line it requires on screen
 
@@ -781,8 +823,12 @@ Why this shape rather than simply not setting a price yet:
 
 - **It defers the one unresearched dependency.** Whether the provider supports
   a trial on a **static payment link** at all — §71 chose that link because the
-  CSP forbids their JavaScript — is unread, and §69's rule is not to guess. In
-  `free` mode nothing about the trial has to be settled to ship.
+  CSP forbids their JavaScript — ~~is unread, and §69's rule is not to guess~~.
+  **Read on 2026-10-17, and it is a product field** (above), so the deferral
+  was never the only thing standing between here and a trial. The reason to
+  keep the switch is unchanged: in `free` mode nothing about the trial has to
+  be settled to ship, and the setting lives in somebody else's dashboard
+  either way.
 - **It retires a state three sections had to apologise for.** §73, §74 and §76
   each recorded that `DODO_PRODUCT_ID` is set on production in **test mode**,
   so every workspace owner sees a Subscribe button that cannot take their
@@ -1478,6 +1524,13 @@ sessions**, or **set with the price decided and the documents walked**.
    customers to a portal where they have no account. All four move together: a
    live product id left pointing at the test host fails exactly as step 7
    describes, in the other direction, and says nothing.
+
+   **The trial is a field on the product, so it does not survive the copy
+   unless you set it** (§5): **Trial Period Days = 7**, **Trial Amount** empty,
+   and ***Start the trial without a card* left OFF**. Nothing in this
+   repository knows the trial exists, so a live product created without it
+   charges the first payment immediately and the only thing that would say so
+   is a customer's card statement.
 6. **Answer §2.4's six product decisions** — quotas, non-payment, export when
    suspended, the signup gate, where plan state lives, and what happens to
    everybody currently on the free beta. **Grandfathering is settled in
@@ -1517,6 +1570,26 @@ sessions**, or **set with the price decided and the documents walked**.
     A — so one click there owes UK VAT from the first sale, and nothing in this
     repository would change or notice. It is on this list because the one
     occasion somebody will be clicking around that tab is while doing step 5.
+13. **Run a test-mode trial once, and read TWO things off the card.** §5
+    establishes the trial is a product field and that the static link carrying
+    it is inference rather than documented; this is the check that settles it,
+    and it answers a second question nothing else can.
+
+    Set **Trial Period Days = 7** on the test product, open the static link,
+    and subscribe with an India test card (§7 step 10 — the card region has to
+    match the checkout currency).
+
+    | Read | Says |
+    |---|---|
+    | the checkout page | whether it shows the trial and nothing due today. **If it does not, the trial is branch B** — a Checkout Session, which brings `DODO_API_KEY` and §17's credential rules with it (`CLAUDE.md` §72 recorded the surface as one signing secret, and this is what would reverse that) |
+    | `GET /api/org/billing`, and the Settings card | **which status a trialing subscription reports.** `active` → nothing to do. **`pending` → a decision**, because `BILLING_STATUSES` is `active` + `past_due`, so the card would suppress the next-payment row, say *"No payment is currently scheduled"* and add *"Waiting for your provider to confirm this"* — to somebody on day 2 of a trial whose end date is in the record |
+
+    The second row is why this is a step rather than a glance. There is **no
+    trial status in the provider's vocabulary**, so the card cannot tell a
+    trial from an ordinary subscription from anything we store — and `pending`
+    legitimately means two different things. Which fix is right depends on
+    which value arrives, so nothing is written until one does (§73: one sample
+    is not a vocabulary, and this is zero).
 
 ---
 
@@ -2111,6 +2184,20 @@ and knowing which tier a number came from is part of checking it.
   **No fee, payout or chargeback figure was found there**, which is §8.
 - The signature scheme is **[Standard Webhooks](https://www.standardwebhooks.com/)**,
   which is what makes `lib/webhook-verify.js` portable.
+- **The trial research (2026-10-17)** is first-party and page-by-page rather
+  than from the bundle, because the bundle's trial material is what §5's first
+  reading had already produced and it did not settle the question:
+  [Subscriptions](https://docs.dodopayments.com/features/subscription) (the
+  product field, paid trials, the card checkbox, *"The subscription object has
+  no trial status field"*, and the detection method),
+  [Products](https://docs.dodopayments.com/features/products) (*"Trial days"*
+  and *"Trial amount"* on the pricing form),
+  [Integration Guide](https://docs.dodopayments.com/developer-resources/integration-guide)
+  (the static link's full parameter list, which contains **no** trial entry)
+  and [Subscription Integration Guide](https://docs.dodopayments.com/developer-resources/subscription-integration-guide).
+  Every trial example in those pages is a **checkout session**, which is why
+  the free-trial-on-a-static-link half is inference and is a test rather than
+  a citation.
 
 **Regulatory and professional**
 
