@@ -36,6 +36,18 @@ const SRC = `http://127.0.0.1:${SRC_PORT}`;
 const DST = `http://127.0.0.1:${DST_PORT}`;
 
 const TOKEN = 'backup-drill-token';
+/*
+ * The operator levers, named once. `scripts/restore.mjs` derives its restore
+ * allow-list from its own `OPERATOR_DECISIONS` for the reason §17 records — a
+ * lever added later should be one string, not three — and this file had the
+ * same list typed by hand in two assertions, which is the half of that lesson
+ * the fixture did not learn. Deliberately NOT imported from restore.mjs: the
+ * test must be able to disagree with the thing it is testing, or the two agree
+ * wrongly and every assertion below passes (§69's rule for the signing
+ * fixture).
+ */
+const LEVERS = ['signupMode', 'orgCreation', 'billingMode'];
+const LEVER_KEYS = LEVERS.flatMap((k) => [k, `${k}SetAt`, `${k}SetBy`]);
 const MAYA_CANARY = 'CANARY-7Q4X';
 const NADIA_CANARY = 'CANARY-N2M8';
 // Invite and beta codes are bearer credentials too (§13, §16) — an unspent
@@ -165,18 +177,32 @@ before(async () => {
    * fixture and the allow-list shared one wrong assumption. Found by restoring
    * a real artifact from the live deployment.
    *
-   * If a lever is ever added, seed all three of its keys here.
+   * If a lever is ever added, seed all three of its keys here — and `LEVERS`
+   * below is what makes that one line rather than three, in three places. The
+   * two key lists this file used to type by hand are derived from it now, for
+   * the same reason `OPERATOR_DECISIONS` in restore.mjs is: a list written
+   * twice is a list that goes stale in exactly one of its copies, and the copy
+   * that goes stale is the assertion rather than the code.
    */
   const DECIDED_AT = 1756000000000;
   store.platform = {
     // Operator decisions, with the provenance the server really writes.
-    // A restore must bring back all six.
+    // A restore must bring back all NINE.
     signupMode: 'closed',
     signupModeSetAt: DECIDED_AT,
     signupModeSetBy: 'ops-user-id',
     orgCreation: 'closed',
     orgCreationSetAt: DECIDED_AT,
     orgCreationSetBy: 'ops-user-id',
+    /*
+     * The third lever, and the one where a dropped key costs money in both
+     * directions: reverting to `free` bills nobody and suspends nobody,
+     * silently, and losing `billingModeSetAt` while keeping the value re-dates
+     * every workspace's grandfather window to whenever the restore happened.
+     */
+    billingMode: 'paid',
+    billingModeSetAt: DECIDED_AT,
+    billingModeSetBy: 'ops-user-id',
     // Runtime state — a restore must NOT, because it belongs to the dead
     // deployment: seeding a fresh one with this carries spent alert steps and
     // another instance's traffic across (§17, §25).
@@ -271,7 +297,7 @@ before(async () => {
    */
   const sourceStore = JSON.parse(readFileSync(storeFile, 'utf8'));
   assert.equal(sourceStore.accessRequests?.length, 1, 'the source lost the approved request — the gap tests would be hollow');
-  for (const key of ['signupMode', 'signupModeSetAt', 'signupModeSetBy', 'orgCreation', 'orgCreationSetAt', 'orgCreationSetBy']) {
+  for (const key of LEVER_KEYS) {
     assert.notEqual(sourceStore.platform?.[key], undefined, `the source lost platform.${key} — the tests below would be hollow`);
   }
   assert.equal(sourceStore.platform?.egressBytes !== undefined, true, 'the source lost its runtime counters');
@@ -429,6 +455,29 @@ describe('what a restore brings back, and what it deliberately does not', () => 
   });
 
   /*
+   * The billing lever, asserted on its own rather than folded into the test
+   * above, because its failure is not the same failure. A dropped signupMode
+   * reopens a door; a dropped billingMode reverts a paying deployment to
+   * `free`, where the enforcement check reads the default — so nobody is
+   * suspended, nobody is billed, nothing errors, and the only symptom is that
+   * revenue stopped. §17's no-op-that-reports-success with money attached.
+   */
+  test('the billing mode survives the round trip, with the date it was set', () => {
+    assert.equal(backup.platform?.billingMode, 'paid', 'the export dropped the billing mode');
+    assert.equal(restoredStore.platform?.billingMode, 'paid',
+      'billingMode did not come back — a paying deployment restores as free, silently');
+    /*
+     * The stamp matters more here than as provenance: the grandfathering
+     * cutoff is computed against `billingModeSetAt`, so a restore that kept
+     * the value and lost the date would re-date every workspace's free window
+     * to whenever the recovery happened — and every one of them would look
+     * newly grandfathered.
+     */
+    assert.equal(restoredStore.platform?.billingModeSetAt, backup.platform?.billingModeSetAt,
+      'billingModeSetAt was dropped — every grandfather window re-dates to the restore');
+  });
+
+  /*
    * The provenance, asserted separately because it is a different failure: the
    * lever comes back and the record of who pulled it does not. Losing that is
    * not data loss you would notice — it is an audit trail missing at exactly
@@ -438,7 +487,7 @@ describe('what a restore brings back, and what it deliberately does not', () => 
    * in this file and fails only here.
    */
   test('who set an operator decision, and when, comes back with it', () => {
-    for (const key of ['signupMode', 'orgCreation']) {
+    for (const key of LEVERS) {
       assert.equal(
         restoredStore.platform?.[`${key}SetAt`],
         backup.platform?.[`${key}SetAt`],

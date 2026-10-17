@@ -197,6 +197,11 @@ never change, because everything cross-references them.
 | **A grandfathering formula whose base inverts its own purpose** | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 |
 | A derived cutoff that can already be in the past, and the floor that is the promise | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2 · §36 · §39 |
 | **The trial's dependency path** — and the branch that needs a credential nothing reads | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2 · §72 · §17 · §71 |
+| **The billing lever** — the third operator switch, and what it does NOT do yet | §78 · §16 · [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2 |
+| **A 30-second cache that has eaten three buttons** | §78 · §24 · §40 |
+| A default that must never be what starts a charge | §78 · §16 · §17 |
+| A stamp that must survive a restart, or every window re-dates | §78 · §17 · §10 |
+| A list the code derived and the test typed by hand | §78 · §29 · §69 |
 | Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
@@ -12049,3 +12054,171 @@ belongs to the commit that sets a price, together with the `TERMS_VERSION`
 bump that re-prompts everybody (§41). Renaming that framing now would be two
 half-changes to one paragraph. `docs/API.md` needs nothing: no route, no wire
 shape.
+
+
+---
+
+## 78. The billing lever, and a 30-second cache that has now eaten three buttons
+
+Phase 2 item 1 of [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md): the
+third operator lever, beside `signupMode` and `orgCreation`. **Nothing is
+enforced and nothing charges** — flipping to `paid` changes no behaviour at
+all, because the checks that will read it are items 2–5. That is the point of
+building it first: every later item needs the switch *and* the date it was
+flipped, and neither existed.
+
+**The legal premise is verified rather than assumed, which is what unblocked
+this.** The MSA (dated 2026-02-26, read 2026-10-17) appoints the provider
+reseller and Merchant of Record and puts global VAT/Sales Tax on them —
+[`docs/PAYMENTS.md`](docs/PAYMENTS.md) §2 has the sections, and §8's row is the
+only one in that table that has ever closed. **One row, not the table**: the
+fee, the chargeback set-off and the FX into INR are still unread, so nothing
+here can be sized against a margin.
+
+### Two departures from the template, both forced by a consumer it does not have
+
+`signupMode()` and `orgCreation()` (`server.js:108–175`) are the pattern, and
+copying them exactly would have been wrong twice:
+
+- **It returns `{ mode, setAt }`, not a string.** Those two readers discard the
+  provenance because nothing asks when the decision was taken. The
+  grandfathering cutoff asks on **every enforcement check** — *"was this
+  workspace already here when the switch was flipped"* is a comparison against
+  `billingModeSetAt` — so the alternative is a second read of the same document
+  on a per-request path.
+- **The cache guard tests the entry's own timestamp**, not the truthiness of
+  what it holds. Both existing readers do `if (cache.value && …)`, which is
+  correct for a non-empty string and wrong for an object whose interesting
+  field may legitimately be `0`.
+
+  **That one has no failing test, and saying so is the point.** An object is
+  always truthy once set, so the two guards behave identically *today* —
+  measured, not assumed. It is the same status as §52's `redactKey` and §30's
+  `UNSAFE_KEYS`: a guarantee made local rather than emergent, so the next
+  person who makes `value` a bare string again does not get a cache that
+  silently never caches.
+
+### The default is load-bearing in the opposite direction from its sibling
+
+`signupMode()`'s `catch` carries the rule in its own words — *"a settings read
+must never be what stops people signing in"* — and the mirror image is what
+decides this one: **a settings read must never be what starts a charge.** So
+the catch returns the deployment default, and the default cannot be `paid`.
+
+An unrecognised value falls to `free` from **both** directions — a stored one
+and `BILLING_MODE` alike — so this lever can never report a mode nobody chose.
+`signupMode` defaults to `code` because a wrong guess there refuses a signup,
+which is visible and recoverable; a wrong guess here either charges people who
+were promised free or silently stops charging people who agreed to pay, and
+both are invisible from inside the deployment.
+
+### The defect the test found, and it is the third time
+
+The panel body is cached 30s because `usageByOrg()` scans (§24, §33), and it
+carries this value — so `setBillingMode` invalidating its *own* cache was not
+enough. An operator flips the switch, re-reads the panel, sees the old mode and
+concludes the button did nothing.
+
+**§24 records this for suspend/resume and §40 for dismissing the restore
+notice.** Both say it in almost these words — §40's is *"or the panel goes on
+showing the line for another 30 seconds and the button reads as having done
+nothing"* — and I walked into it anyway, which is worth recording as a property
+of the cache rather than of the reader: **anything written that the panel also
+displays needs `platformCache` invalidated at the write site**, and nothing
+structural enforces it.
+
+What caught it is the shape of the assertion rather than diligence: the test
+reads the live value back **through `/api/admin/platform`** instead of
+asserting the writer returned 200. A test that checked the response would have
+passed on the bug, which is §9's rule and §71's `pending`-note gap in a new
+place.
+
+### `OPERATOR_DECISIONS`, and the money going both ways
+
+One string in `scripts/restore.mjs` (§17's list, which is **not** in
+`server.js`). The failure it prevents is worse than the signup one it sits
+beside: a restore that dropped `billingMode` reverts a paying deployment to
+`free`, where every enforcement check reads the default — so **nobody is
+suspended, nobody is billed, nothing errors, and the only symptom is that
+revenue stopped.** §17's no-op-that-reports-success with money attached.
+
+And `billingModeSetAt` is not merely provenance here. The grandfather cutoff is
+computed against it, so keeping the value and losing the stamp would **re-date
+every workspace's free window to whenever the recovery happened** — every
+tenant newly grandfathered, silently. That is asserted on its own rather than
+folded into the existing provenance loop, because it is a different failure
+with a different blast radius.
+
+**The same reasoning applies to a restart**, which is why the persistence test
+asserts the stamp is the *same* one rather than merely present: a reader that
+re-stamped on read would push every window forward by the uptime, so on a free
+tier that spins down daily the window would never expire at all. The mutation
+for that fails by name.
+
+### §29's lesson arriving in the fixture rather than the code
+
+`tests/backup.test.mjs` had `['signupMode', 'orgCreation']` **typed by hand in
+two assertions** and the three keys of each seeded by hand in a third place —
+while `restore.mjs` beside it derives its allow-list from one array precisely
+so *"a third lever added later is one string here, not three"*. The code had
+learned the lesson and the test had not, which is the direction that hurts:
+the copy that goes stale is the assertion, and a stale assertion passes.
+
+One `LEVERS` constant, with `LEVER_KEYS` derived from it. **Deliberately not
+imported from `restore.mjs`** — §69's rule for the signing fixture: a test that
+shares its list with the thing it tests cannot disagree with it, so the two
+would agree wrongly and every assertion in the file would pass.
+
+### Verified
+
+Five mutations, each failing the test that names it (§9):
+
+| Mutation | Fails |
+|---|---|
+| default `'paid'` | **3 of 4** — the default, the env-follow and the guard test all read it |
+| the env var wins over the stored decision | *a billing decision survives a restart…* |
+| `setAt` re-stamped on read | the same test, on the stamp rather than the mode |
+| `platformCache` not invalidated | *a deployment that has never set one is free…* — **this is how the defect above was found** |
+| `billingMode` out of `OPERATOR_DECISIONS` | **2** backup tests, by name |
+
+A sixth is honest about itself: the cache-guard change has **no** failing test,
+for the reason given above.
+
+### Blast radius
+
+`server.js`, `scripts/restore.mjs` and two test files. **No client file, no
+served file**, so `CACHE_VERSION` stays `crmbuilder-v66` and smoke stays
+**51 local / 56 live** — checked against the diff rather than assumed (§41).
+
+`docs/API.md` gains the route and the count moves **60 → 61**, counted with
+`grep -cE "^app\.(get|post|put|patch|delete)\(" server.js` rather than
+incremented by hand. It also gains the `billing: { mode, setAt }` shape on
+`/api/admin/platform`, including the rule that `setAt` is **`0` rather than
+absent** on a deployment that never flipped the switch — §10's
+`Number(x) || now` trap, which a caller comparing an absent value against a
+timestamp would hit as NaN-shaped silence. `DEPLOYMENT.md` gains `BILLING_MODE`
+with the precedence note, because the variable is the *default* and not the
+live value, and a reader looking there for what the deployment is doing is
+looking in the wrong place.
+
+**§27's six user-facing documents need nothing, and the condition is finally a
+clean one.** Not *"there is no price"* — there is one — but **nothing is
+enforced and nothing can be bought**: the lever changes no behaviour, and
+`billingMode` is `free` on every deployment. The walk happens when enforcement
+lands, which is the same commit that makes
+[`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1's twelve-file list
+fire and bumps `TERMS_VERSION`.
+
+### The admin screen is deliberately not built yet
+
+The route exists and the value is on `/api/admin/platform`; there is no third
+`.mode-switch` row on the Deployment card. Two reasons, and the second is the
+one that decides it:
+
+- A switch an operator can press before enforcement exists is a control that
+  **looks like it does something and does not** — §36's shape, on the one
+  screen where the operator needs to trust what they see.
+- It is one `curl` away for the person who needs it now (`PUT
+  /api/admin/billing-mode`), and the card wants building **with** the thing it
+  switches, so the copy can say what flipping it will actually do. Writing that
+  copy now means writing it twice.

@@ -7,7 +7,7 @@
 > and every section here points at the relevant one rather than restating it —
 > one fact, one home (`CLAUDE.md` §27).
 
-60 routes over **seven** boundaries (§5b added three at the domain move; §7
+61 routes over **seven** boundaries (§5b added three at the domain move; §7
 is the payment webhook, which has no session at all). All JSON unless noted.
 All authenticated routes take the session cookie; there is no bearer token
 anywhere except `/api/admin/export`, which is deliberately different
@@ -440,6 +440,7 @@ GET  /api/admin/users               scoped by req.scopeOrgId
 PATCH/DELETE /api/admin/users/:id
 PUT  /api/admin/signup-mode         { mode }
 PUT  /api/admin/org-creation        { mode }
+PUT  /api/admin/billing-mode        { mode }  free | paid
 POST /api/admin/orgs/:id/suspend    { suspended, reason? }
 GET  /api/admin/beta-codes          POST, DELETE /:code
 GET  /api/admin/access-requests     POST /:email/decide
@@ -449,6 +450,20 @@ POST /api/admin/reminders/run       force one reminder pass now
 POST /api/admin/restore-notice/dismiss
 GET  /api/admin/export              ← Bearer token, NOT a session
 ```
+
+**`/api/admin/platform` carries `billing: { mode, setAt }`**, which is the
+third operator lever beside the two `PUT`s above and the one place the live
+value is readable. **Both halves**, deliberately: `setAt` is what every
+grandfathering computation is relative to, so a caller reading `mode: 'paid'`
+with no date cannot tell whether a workspace is inside its free window or past
+it. It is **`0` on a deployment that has never flipped the switch** — not
+absent, and not a real-looking date — so "never set" is distinguishable from a
+date somebody set, which is §10's `Number(x) || now` trap in a new place.
+
+**The default is `free` and a stored decision beats `BILLING_MODE`**, the same
+precedence as the signup mode (§16). The asymmetry worth knowing as a caller:
+an unrecognised stored *or* environment value falls to `free` rather than being
+trusted, so this route can never report a mode nobody chose.
 
 **The export is `version: 3`.** The number is informational — `restore.mjs`
 tolerates an older body rather than branching on it — and says which shape the

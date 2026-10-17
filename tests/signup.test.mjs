@@ -1062,6 +1062,109 @@ describe('signup mode from the admin panel', () => {
 });
 
 /*
+ * The third operator lever: whether this deployment charges.
+ *
+ * Same shape and same precedence as the two above, and tested here rather than
+ * in payments.test.mjs for that reason — what is under test is the LEVER, not
+ * the billing integration. The enforcement that reads it is Phase 2's later
+ * items; nothing here suspends anybody.
+ *
+ * The default is the half worth asserting hardest. `signupMode` defaults to
+ * `code` because a wrong guess there refuses a signup, which is visible and
+ * recoverable. A wrong guess here either charges people who were promised free
+ * or silently stops charging people who agreed to pay, and both are invisible
+ * from inside the deployment.
+ */
+describe('billing mode from the admin panel', () => {
+  const setBilling = (srv, cookies, mode) =>
+    srv.req('/api/admin/billing-mode', { method: 'PUT', cookies, body: { mode } });
+  const liveBilling = async (srv, cookies) =>
+    (await srv.req('/api/admin/platform', { cookies })).json.billing;
+
+  test('a deployment that has never set one is free, and says when it was set', async () => {
+    const srv = await boot({ adminEmails: 'bill-default@operator.test' });
+    const admin = await adminOf(srv, 'bill-default@operator.test');
+
+    const before = await liveBilling(srv, admin);
+    assert.equal(before.mode, 'free', 'a deployment that never decided must not be charging');
+    /*
+     * Zero rather than absent, and the panel reads it as "never set" rather
+     * than as the epoch. It matters because every grandfathering computation is
+     * relative to this stamp: a date nobody set has to be distinguishable from
+     * a date somebody set, and `undefined` compared against a timestamp is
+     * NaN-shaped silence (§10's `Number(x) || now` trap in a new place).
+     */
+    assert.equal(before.setAt, 0, 'an unset switch must report 0, not a real-looking date');
+
+    const out = await setBilling(srv, admin, 'paid');
+    assert.equal(out.status, 200);
+    const after = await liveBilling(srv, admin);
+    assert.equal(after.mode, 'paid', 'the panel decision must take effect at once');
+    assert.ok(after.setAt > 0, 'flipping the switch must stamp when it happened');
+  });
+
+  /*
+   * §16's rule, and the reason it is not merely consistency: a redeploy that
+   * reverted this would stop a paying deployment charging, with no error and
+   * nothing on any screen — §17's no-op-that-reports-success, with revenue.
+   */
+  test('a billing decision survives a restart, and BILLING_MODE does not undo it', async () => {
+    const srv = await boot({
+      adminEmails: 'bill-persist@operator.test',
+      env: { BILLING_MODE: 'free' },
+    });
+    const admin = await adminOf(srv, 'bill-persist@operator.test');
+    await setBilling(srv, admin, 'paid');
+    const setAt = (await liveBilling(srv, admin)).setAt;
+
+    // Restart with BILLING_MODE=free still in the environment, as a redeploy
+    // would. `env` is re-read on every start, so it really is still set.
+    await srv.setMode('code');
+
+    const after = await liveBilling(srv, admin);
+    assert.equal(after.mode, 'paid', 'the panel decision must outlive a redeploy');
+    /*
+     * And the stamp has to be the SAME one, not a fresh one. A restart that
+     * re-stamped would move every workspace's grandfather window forward by
+     * however long the deployment had been up — the window would never expire
+     * on a service that restarts, which on a free tier is daily.
+     */
+    assert.equal(after.setAt, setAt, 'a restart must not re-date the decision');
+  });
+
+  test('a deployment that never set one follows its environment', async () => {
+    const paid = await boot({ adminEmails: 'bill-env@operator.test', env: { BILLING_MODE: 'paid' } });
+    const admin = await adminOf(paid, 'bill-env@operator.test');
+    assert.equal((await liveBilling(paid, admin)).mode, 'paid');
+
+    const junk = await boot({ adminEmails: 'bill-junk@operator.test', env: { BILLING_MODE: 'banana' } });
+    const junkAdmin = await adminOf(junk, 'bill-junk@operator.test');
+    assert.equal((await liveBilling(junk, junkAdmin)).mode, 'free',
+      'an unrecognised BILLING_MODE must fall to free, never be trusted');
+  });
+
+  test('only the platform operator can change it, and only to a real mode', async () => {
+    const srv = await boot({ signupMode: 'open', adminEmails: 'bill-guard@operator.test' });
+    const admin = await adminOf(srv, 'bill-guard@operator.test');
+    const ordinary = (await srv.signUp('bill-ordinary@tester.test')).setCookie;
+
+    assert.equal((await srv.req('/api/admin/billing-mode', { method: 'PUT', body: { mode: 'paid' } })).status, 401);
+    assert.equal((await setBilling(srv, ordinary, 'paid')).status, 403);
+    assert.equal((await setBilling(srv, admin, 'banana')).status, 400);
+    assert.equal((await setBilling(srv, admin, '')).status, 400);
+    /*
+     * An object rather than a string, which is the one shape a `.includes()`
+     * check lets through if it is ever loosened — §30's Phase 2 rule about a
+     * JSON body being the only place a non-string gets in.
+     */
+    assert.equal((await setBilling(srv, admin, { $ne: null })).status, 400);
+
+    // None of that moved it.
+    assert.equal((await liveBilling(srv, admin)).mode, 'free');
+  });
+});
+
+/*
  * Who ends up administering a new deployment.
  *
  * "The first account ever becomes a platform admin" is a bootstrap: minting a

@@ -80,7 +80,17 @@ const accessRequests = backup.accessRequests || [];
  * here, not three. A lever that does not follow the convention simply gets its
  * value restored and no provenance, which is the allow-list failing closed.
  */
-const OPERATOR_DECISIONS = ['signupMode', 'orgCreation'];
+/*
+ * `billingMode` is the third, and it is the one where getting this wrong costs
+ * money in both directions. A restore that dropped it would revert a paying
+ * deployment to `free` — every enforcement check reads the default, so nobody
+ * is suspended and nobody is billed, silently, until somebody notices revenue
+ * stopped. And `billingModeSetAt` is not merely provenance here: the
+ * grandfathering cutoff is computed against it (docs/SUBSCRIPTION-UX.md Phase
+ * 2), so losing the stamp while keeping the value would re-date every
+ * workspace's free window to whenever the restore happened.
+ */
+const OPERATOR_DECISIONS = ['signupMode', 'orgCreation', 'billingMode'];
 const RESTORED_PLATFORM_KEYS = OPERATOR_DECISIONS.flatMap((k) => [k, `${k}SetAt`, `${k}SetBy`]);
 const platform = Object.fromEntries(
   RESTORED_PLATFORM_KEYS

@@ -173,6 +173,72 @@ async function setSignupMode(mode, userId) {
   signupModeCache = { value: mode, at: Date.now() };
   return mode;
 }
+
+/*
+ * Whether this deployment charges for anything. The third operator lever,
+ * beside the two above and with the same precedence rule (§16): a panel
+ * decision beats the environment and survives a redeploy.
+ *
+ * THE DEFAULT IS 'free' AND THAT IS LOAD-BEARING, not tidiness. A deployment
+ * that has never set the key must not start charging, and neither must one
+ * whose settings read FAILS — signupMode() above carries the same shape for
+ * the opposite direction ("a settings read must never be what stops people
+ * signing in"), and here the equivalent is that it must never be what starts
+ * a charge. So the catch below returns the default rather than rethrowing, and
+ * the default cannot be 'paid'.
+ *
+ * TWO DEPARTURES from the two readers above, both forced by a consumer they
+ * do not have:
+ *
+ *  1. It returns { mode, setAt } rather than a string. The grandfathering
+ *     cutoff needs `billingModeSetAt` on every enforcement check — "was this
+ *     workspace already here when the switch was flipped" is a comparison
+ *     against that stamp — and the alternative is a second read of the same
+ *     document on a per-request path.
+ *  2. The cache guard tests the entry's own timestamp, not the truthiness of
+ *     what it holds. Both readers above do `if (cache.value && …)`, which is
+ *     correct for a non-empty string and WRONG here: a deployment that has
+ *     never flipped the switch has setAt 0, and an object is always truthy
+ *     while the thing that matters inside it is not.
+ */
+const BILLING_MODES = ['free', 'paid'];
+const BILLING_MODE_DEFAULT = BILLING_MODES.includes(process.env.BILLING_MODE)
+  ? process.env.BILLING_MODE
+  : 'free';
+
+let billingModeCache = { value: null, at: 0 };
+
+async function billingMode() {
+  const now = Date.now();
+  if (billingModeCache.at && now - billingModeCache.at < SIGNUP_MODE_TTL_MS) {
+    return billingModeCache.value;
+  }
+  let settings = {};
+  try {
+    settings = await store.getPlatformSettings();
+  } catch (err) {
+    // Never the thing that starts a charge: fall back to the deployment
+    // default, which is 'free' unless an operator named otherwise.
+    console.warn('Could not read the billing mode, using the deployment default:', err.message);
+  }
+  const value = {
+    mode: BILLING_MODES.includes(settings.billingMode) ? settings.billingMode : BILLING_MODE_DEFAULT,
+    setAt: Number.isFinite(settings.billingModeSetAt) ? settings.billingModeSetAt : 0,
+  };
+  billingModeCache = { value, at: now };
+  return value;
+}
+
+async function setBillingMode(mode, userId) {
+  const setAt = Date.now();
+  await store.updatePlatformSettings({
+    billingMode: mode,
+    billingModeSetAt: setAt,
+    billingModeSetBy: userId,
+  });
+  billingModeCache = { value: { mode, setAt }, at: setAt };
+  return { mode, setAt };
+}
 // Every refusal says the same thing, for the same reason invites do: a
 // different answer for "wrong" and "spent" is a way to find out which codes
 // exist.
@@ -6041,6 +6107,40 @@ app.put('/api/admin/signup-mode', requireAuth, requirePlatformAdmin, async (req,
   res.json({ ok: true, signupMode: mode });
 });
 
+/*
+ * Whether this deployment charges. Platform admin only, like its two
+ * siblings, and the one lever here that can take a working feature away from
+ * a paying-or-not customer — so it is deliberately the same shape as them
+ * rather than something cleverer: one value, stored, logged, reversible.
+ *
+ * Flipping to 'paid' is NOT the same act as enforcing, and nothing here
+ * suspends anybody: enforcement reads this and the per-workspace grandfather
+ * date together (docs/SUBSCRIPTION-UX.md Phase 2), so the switch landing
+ * before the rest of Phase 2 leaves the deployment exactly as it is.
+ */
+app.put('/api/admin/billing-mode', requireAuth, requirePlatformAdmin, async (req, res) => {
+  const mode = req.body && req.body.mode;
+  if (!BILLING_MODES.includes(mode)) {
+    return res.status(400).json({ error: `Mode must be one of: ${BILLING_MODES.join(', ')}` });
+  }
+  const out = await setBillingMode(mode, req.user.id);
+  /*
+   * The panel body is cached 30s because usageByOrg() scans, and it carries
+   * this value — so without the invalidation an operator flips the switch,
+   * sees the old mode, and reads the button as having done nothing.
+   *
+   * §24 records this for suspend/resume and §40 for dismissing the restore
+   * notice; the test below is what caught it happening a third time, which is
+   * the argument for a test that reads the live value through the real route
+   * rather than asserting the writer returned 200.
+   */
+  platformCache = { at: 0, body: null };
+  // The one log line that matters most in this file: it is the moment a
+  // deployment starts or stops charging, and the row keeps only the latest.
+  console.log(`Billing mode set to "${mode}" by ${req.user.email}`);
+  res.json({ ok: true, billingMode: out.mode, billingModeSetAt: out.setAt });
+});
+
 app.put('/api/admin/org-creation', requireAuth, requirePlatformAdmin, async (req, res) => {
   const mode = req.body && req.body.mode;
   if (!ORG_CREATION_MODES.includes(mode)) {
@@ -6394,6 +6494,17 @@ app.get('/api/admin/platform', requireAuth, requirePlatformAdmin, async (req, re
     restoreNotice: platformSettings.restoreNotice || null,
     orgs: rows,
     orgCreation: await orgCreation(),
+    /*
+     * Both halves, because the panel needs to say more than which mode it is
+     * in. `setAt` is what every grandfathering computation is relative to, so
+     * an operator reading "paid" with no date cannot tell whether a workspace
+     * is inside its free window or past it — §39's state that renders as
+     * nothing, on the screen that exists so this is visible.
+     *
+     * It is 0 on a deployment that has never flipped the switch, which the
+     * panel reads as "never set" rather than as the epoch.
+     */
+    billing: await billingMode(),
     // A deployment constant, so it is sent once rather than on every row. The
     // panel needs it to say when reclaimable bytes actually come back.
     tombstoneDays: TOMBSTONE_DAYS,
