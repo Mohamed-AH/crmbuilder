@@ -8,17 +8,28 @@
 > ([`PAYMENTS.md`](PAYMENTS.md) §5) and most of the enforcement turned out to
 > be shipped already, so that section is rewritten; Phase 3 is untouched.
 >
-> **All six of Phase 2's items are now closed, and that is NOT the same as
-> enforcement being built.** Items 1–5 shipped (`CLAUDE.md` §78 for the lever,
-> the two holds and the cutoff · §80 for the free-mode card · §81 for the seat
-> cap) and item 6 **resolved to nothing to build** (§82 — the trial is a field
-> on the provider's dashboard). What remains is the thing the list never had an
-> item for: **nothing writes `billingSuspendedAt`.** The computation, the
-> controls and the dry-run screen all exist; the trigger that reads
-> `billingGraceUntil` and places the hold does not, and it needs one input
-> items 1–3 did not — the workspace's **subscription state** from its meta doc
-> (§70), because a workspace past its grace date that *is* paying must not be
-> held. Six ✅s should not be read as a deployment that can charge.
+> **PHASE 2 IS COMPLETE as of 2026-10-17, enforcement included.** Items 1–5
+> shipped (`CLAUDE.md` §78 for the lever, the two holds and the cutoff · §80
+> for the free-mode card · §81 for the seat cap), item 6 **resolved to nothing
+> to build** (§82 — the trial is a field on the provider's dashboard), and the
+> trigger the list never had an item for is built in **§83**: `POST /api/sync`
+> refuses the push of a workspace past its grace window with no live
+> subscription.
+>
+> **It is DERIVED rather than scheduled, so `billingSuspendedAt` is still not
+> written** — §83 has the reasoning, and the short version is that §40's dead
+> `/health` ping would have meant a hold that is never *lifted* for a customer
+> who has paid. That field keeps its place as the operator's own manual
+> billing hold; §78's "set by enforcement" is corrected there.
+>
+> **Still not a deployment that can charge.** Enforcement is gated on
+> `billingMode === 'paid'` and every deployment is `free`, so nothing moved for
+> any user. What remains before money changes hands is not in this document:
+> the price copy and `TERMS_VERSION` ([`PAYMENTS.md`](PAYMENTS.md) §7's
+> before-live list), the §27 walk that now owes two items, and the
+> **refund and dispute events** — §79 records seven `dispute.*` families this
+> deployment subscribes to none of, which is harmless until the moment a
+> status decides whether somebody can write.
 >
 > It was written before any code so the decisions were visible and arguable,
 > which is §48's and §64's precedent: the question to ask is *when* a thing can

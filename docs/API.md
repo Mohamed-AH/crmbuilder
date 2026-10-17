@@ -237,7 +237,7 @@ nothing else; a client can only ever record `drafted`.
   "cursor": 1750000000123,       // feed this back as `since`
   "pushed": 4,
   "rejected": { "modules": [...], "records": [...] },  // only when non-empty
-  "readOnly": true,                                    // only when suspended
+  "readOnly": true,                                    // only when held (three causes — see Suspension)
   "readOnlyReason": "…"
 }
 ```
@@ -289,13 +289,20 @@ A suspended org still **pulls**. Only the push is refused, with `readOnly` and
 push** — doing so marks the rows as sent, and resuming the org would restore
 writing having silently lost everything typed during the pause.
 
-**There are TWO independent holds, and a caller cannot tell them apart.**
-`suspendedAt` is the operator lever and `billingSuspendedAt` is set by
-enforcement; either one produces `readOnly: true`, and clearing one does not
-clear the other. So **a client must treat a refused push as refused until the
-server stops refusing it** rather than inferring that a resolved cause means
-writes are back — a workspace can have both holds, and the second survives the
-first being lifted.
+**There are THREE ways to be held, and a caller cannot tell them apart.**
+`suspendedAt` is the operator lever, `billingSuspendedAt` is a per-workspace
+billing hold an operator sets by hand, and the third is **computed per
+request**: a workspace past its grace window with no live subscription, while
+the deployment is in `paid` mode (`CLAUDE.md` §83). Any of the three produces
+`readOnly: true`, and clearing one does not clear the others. So **a client
+must treat a refused push as refused until the server stops refusing it**
+rather than inferring that a resolved cause means writes are back.
+
+**The third one is not stored anywhere**, which matters to a caller in one
+direction only: it can appear and disappear with no write to the organisation
+behind it, so a client that was reading `readOnly` as "an operator did
+something" is now wrong about why. It also means **paying releases the
+workspace on the very next push** rather than at some later pass.
 
 **`readOnlyReason` is a string to display, never a code to branch on.** When
 both holds are set it carries the **operator's** reason, because that is the

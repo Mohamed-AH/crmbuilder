@@ -247,6 +247,14 @@ never change, because everything cross-references them.
 | Another one-click dashboard switch that inverts a written decision | §82 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §2 · §40 |
 | A per-product lock keyed on email, beside a cap that refused that key | §82 · §81 · §74 |
 | **Zero samples, so nothing is written** — the contingency and its one test | §82 · §73 · §76 |
+| **Enforcement** — the hold, and why it is derived rather than scheduled | §83 · §78 · §40 |
+| A hold that is never LIFTED is worse than one never placed | §83 · §40 · §78 |
+| **An environment variable that would take sync away with no notice** | §83 · §78 · §80 |
+| A signup held before it could reach a checkout button | §83 · §16 · §71 |
+| **Two vacuous tests, and the mutations are what said so** | §83 · §9 · §78 |
+| A guard checked twice, where neither half alone is load-bearing | §83 · §61 · §30 |
+| Why the E2E suite cannot reach the enforcement path at all | §83 · §66 · §9 |
+| A `readOnly` flag that is now computed rather than stored | §83 · §46 · §24 |
 | Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
@@ -320,19 +328,24 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**648 Node tests pass, and Playwright is 164** — both **observed** after §81's
-seven Node tests and one Playwright one: Node **648/648, 0 skipped** and
-Playwright **164/164 in 6.5m**. Smoke is **51 local · 0 warnings · 0 failed**,
-also run. (§80's figures were 641 and 163; §78's were 638 and 161.)
+**656 Node tests pass, and Playwright is 164** — both **observed** after §83's
+eight Node tests: Node **656/656, 0 skipped** and Playwright **163 of 164**,
+the one failure being §66's intermittent with its recorded signature (§83 has
+the artifact and the isolation runs). Smoke is **51 local · 0 warnings · 0
+failed**, also run. (§81's figures were 648 and 164; §80's were 641 and 163;
+§78's were 638 and 161.)
 
-**That clean Playwright run retires none of the three intermittents**, and the
-reason is the same non-result §71 and §77 both record: none of them fired. It
-has now happened on three consecutive full runs (§78's two and §80's), which is
-not evidence of a fix — against §66's measured 1-in-3, three clean runs happen
-about 30% of the time. §66's *signing out hides the workspace* failed on the
-item-1 run of this same work and has passed every run since, which is what
-1-in-3 looks like. Read the next short run against §77's table before
-concluding anything.
+**The Node delta is exactly the eight added**, which is the thing worth
+checking rather than the total: 648 → 656 says none was lost, where a figure
+that merely *looks* plausible would not. §74 records what carrying one forward
+costs.
+
+**A clean Playwright run retires none of the three intermittents**, and the
+reason is the same non-result §71 and §77 both record: none of them fired. That
+happened on three consecutive full runs (§78's two and §80's), which is not
+evidence of a fix — against §66's measured 1-in-3, three clean runs happen
+about 30% of the time, and §83's run then had one. Read the next short run
+against §77's table before concluding anything.
 
 **Playwright's honest figure is a RANGE, and §77 is why.** Two full runs there
 gave 156/158 and 157/158, with a **different** test failing in each and all of
@@ -766,6 +779,7 @@ parallel and they each spawn real servers:
 | `resilience.test.mjs` | 9900–9950 | 1 |
 | `payments.test.mjs` | 9960–9990 | 2 app (9960–9985 · 9986–9990) |
 | `seats.test.mjs` | 9991–9999 | 1 app, a fresh port per boot (it restarts to plant a store row) |
+| `enforcement.test.mjs` | 9000–9099 | 1 app, a fresh port per boot (it restarts to plant store rows) — carved from the unclaimed 8961–9299 gap, so it borders no block |
 
 They used to overlap badly — `api.test.mjs` alone spanned 8300–8899, across
 three other files' ranges. Widen a block and check the neighbours.
@@ -12480,9 +12494,9 @@ and not into the next one — which is the property, rather than a rendering of
 it. Found by running the mutation, not by reading the test: four mutations were
 driven and this was the one that came back green.
 
-### What is deliberately NOT built
+### ~~What is deliberately NOT built~~ — built in §83, and differently
 
-**Nothing writes `billingSuspendedAt`.** The computation and the controls
+**~~Nothing writes `billingSuspendedAt`.~~** The computation and the controls
 landed first so an operator can look at who would be affected *before* the
 switch can take sync from anybody — which is what the preview is for, and it
 would be pointless if the same commit also wired enforcement. The sync seam
@@ -12490,6 +12504,17 @@ reading `billingGraceUntil` is the next step, and it needs one more input the
 others did not: the workspace's **subscription state** from its meta doc (§70),
 because a workspace past its grace date that is *paying* must obviously not be
 held.
+
+> **§83 built the seam check and the subscription read exactly as predicted,
+> and NOTHING writes `billingSuspendedAt` after all.** The hold is derived per
+> request: §40's `/health` ping having never fired for weeks makes a stored
+> hold one that is never *lifted* for a customer who has paid, which is this
+> section's own "money taken, nothing restored" from the other end. So this
+> section's other claim — that the field is *"set by enforcement"*, which it
+> also says at `readOnlyState` — is the one that did not survive. The field
+> keeps its place as the operator's manual billing hold and as what the panel
+> counts. Left standing because the prediction about the *inputs* was right
+> and only the storage was wrong.
 
 ### Verified
 
@@ -13260,3 +13285,196 @@ gained a capability. §81's walk is still owed and still deferred to the
 enforcement commit, and **the trial now has a line waiting in it** — a trial is
 the first thing a user reads on a pricing page, and it is a sentence rather than
 a section because there is no screen for it on our side.
+
+
+---
+
+## 83. Enforcement, and a hold that is derived rather than scheduled
+
+The thing [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2 never had
+an item for, and §78 ended by naming: items 1–5 built the lever, the two holds,
+the cutoff, the free-mode card and the seat cap, and **nothing wrote
+`billingSuspendedAt`.** `POST /api/sync` now refuses the push of a workspace
+that is past its grace window with no live subscription.
+
+**Nothing changes on any deployment today.** It is gated on `billingMode` being
+`paid`, and every deployment is `free` (§80) — so this landed the way items 1–5
+did, with the mechanism in place and no behaviour moved.
+
+### The open question was where it runs, and the code answered it
+
+§78 left two candidates: a scheduled pass on the `/health` ping, beside §25's
+alerts and §39's digest, or a check at the sync seam. Reading the seam settled
+it, because `readOnlyState(org)` is **already called there**, with the org in
+hand and the refusal path built and tested (§24 stage B).
+
+**So the hold is DERIVED at the point of use and `billingSuspendedAt` is not
+written at all.** Two reasons, and the second is the one that decided it:
+
+- **§40 records the `/health` ping having never once fired for weeks**,
+  invisibly to every test in this repository. A digest that does not arrive is
+  a missed nudge. A hold that is never *placed* means somebody keeps sync they
+  stopped paying for — and a hold that is never *lifted* means a customer who
+  has **paid** stays read-only until a pass that may be dead runs again. That
+  is §78's own *"money taken, nothing restored"*, arrived at from the other
+  end, and it is the worse half by a distance.
+- **A derived answer cannot be stale.** Paying releases the workspace on its
+  very next push, with nothing scheduled in between to go wrong. That has its
+  own test, because it is the whole argument for the shape.
+
+**§78's claim that `billingSuspendedAt` is "set by enforcement" is therefore
+corrected rather than implemented.** The field keeps its place as the
+*operator's* own per-workspace billing hold and as what the panel counts; the
+automatic hold is a function, every time. Both reach the same branch of
+`readOnlyState`, so the customer-facing message and the precedence are written
+once and cannot drift apart.
+
+**The cost is stated rather than discovered:** a workspace nobody syncs is
+never evaluated, so this is not a report. §78's `graceUntil` / `pastGrace`
+preview is what answers *who would be affected*, and it reads the same two
+helpers this does.
+
+### Free mode costs nothing, and that is why the seam can afford it
+
+This is the hottest authenticated route in the app, so the ordering matters.
+`billingMode()` is cached in-process on the same TTL as the signup lever, so a
+deployment that is not charging pays **one map lookup** and reads neither the
+platform document nor the meta doc.
+
+In paid mode it is two extra reads on the push path. `pullChanges` reads the
+meta doc again a few lines down, so the second one is **genuinely an extra read
+rather than a shared one** — said plainly instead of implying it is free,
+because the honest figure is what a later reader needs.
+
+### The finding: an environment variable must never take somebody's sync away
+
+`billingMode()` returns `setAt: 0` for the **env** path (§78), and
+`billingGraceUntil` needs that date to compute any window at all — so with
+`BILLING_MODE=paid` set and no panel flip behind it, every workspace falls to
+the no-window branch and would be held **the instant the variable was set**. No
+notice, nothing on screen beforehand, and §80's free-mode card promising
+exactly the opposite.
+
+So an env-only `paid` enforces nothing, and says so in the code. §78's rule is
+that *a settings read must never be what starts a charge*; this is its sibling,
+and it is the same asymmetry one step further on.
+
+### A workspace created AFTER the flip, which the plan did not cover
+
+`billingGraceUntil` returns `null` there — no grandfather window, by design,
+because they signed up knowing. It is tempting to read `null` as *no free
+period, hold immediately*, and that would make a fresh signup read-only
+**before they had reached a checkout button**, since nothing in this product
+gates signup on payment.
+
+They get the notice floor counted from their own `createdAt` instead: the same
+number of days everybody else is promised, from when they arrived.
+Conservative in the direction every other decision in this area chose, and it
+means **no reachable path holds a workspace with no notice at all.**
+
+### Two of the eight tests were vacuous, and the mutations are what said so
+
+Both of the guards above — the ones that are findings rather than plumbing —
+had tests that passed with the guard removed. §9's rule earning its keep twice
+in one file, and the second is §78's shape exactly: an assertion that cannot
+see its own mutation.
+
+| | Why it passed on the bug |
+|---|---|
+| *an environment-only paid mode holds nobody* | the workspace was seconds old, so with the guard gone it fell to the no-window branch and was **saved by the notice floor** — thirty days in the future, so not held, so green. It plants a two-year-old `createdAt` and zero windows now, which leaves the guard as the only thing between that push and a refusal |
+| *a workspace created after the switch gets the notice floor* | ageing `createdAt` carried the org **out** of the branch under test: `billingGraceUntil` keys on `createdAt < setAt`, so an aged workspace becomes *grandfathered*, where a zero-month window plus a thirty-day floor puts its grace date a month in the future. Correctly not held, by a path the test does not name. The plant moves `setAt` back too, and **asserts the ordering it depends on** |
+
+### The mode is checked twice, and neither check alone is load-bearing
+
+Measured rather than reasoned: dropping the seam's `billing.mode === 'paid'`
+fails **nothing**, because `billingHoldApplies` guards itself; dropping the
+function's guard fails **nothing**, because the seam short-circuits. Dropping
+**both** fails *free mode holds nobody*.
+
+That is §61's `Content-Length` finding in a new place — safety that holds for
+two independent reasons, where a mutation of either half proves nothing. Kept
+rather than tidied into one, because they are there for different jobs: the
+seam's is the cost (no reads in free mode) and the function's is correctness
+standing alone. Written down because a reader running one mutation would
+conclude the check was dead code.
+
+### Verified
+
+Nine mutations. Each of the seven below fails the test that names it, and the
+two mode-check halves are the pair above.
+
+| Mutation | Fails |
+|---|---|
+| both mode checks dropped | *free mode holds nobody, however old the workspace and however unpaid* |
+| the `!billing.setAt` guard dropped | *an environment-only paid mode holds nobody…* |
+| `hasLiveSubscription` ignored | *a live subscription is never held…* and *paying releases the hold…* |
+| the no-window branch returns true | *a workspace created after the switch…* |
+| `readOnlyState` does not read the derived hold | **5** of the 8 |
+| the billing reason wins over the operator's | *the operator hold wins…, and lifting it reveals the billing one* |
+| `billingExemptUntil` ignored | *a per-org exemption holds the workspace writable past the window* |
+
+**Counts:** Node **648 → 656** (656/656, 0 skipped — exactly the eight added,
+which is what says none was lost), Playwright **163 of 164**, smoke **51
+local**. All three run.
+
+**The one Playwright failure is §66's intermittent, and the exoneration is as
+strong as §78's by a different route.** Same test — *signing out hides the
+workspace* — and the artifact carries §66's recorded signature: `heading
+"Settings"` still rendered after `goto('/app#/')`, with `No modules yet` and
+`Sign in to sync` in the sidebar. 3 of 3 in isolation afterwards at 7.9s each,
+against §66's recorded 8.3s passing runs, so it is not newly deterministic.
+
+§78 could claim structural innocence because it contained no client file. This
+commit contains none either — but it does touch the sync route, so that is not
+the argument. The argument is that **`playwright.config.js` sets no
+`BILLING_MODE`**, so the E2E server runs in free mode and the seam's
+`billing.mode === 'paid'` is false on every push in the entire suite:
+`billingHoldApplies` is never called, and the only added line that executes is
+`readOnlyState(org, false)`, whose branch is byte-identical to before. Checked
+rather than asserted.
+
+### Blast radius
+
+`server.js` only — no client file, no served file, no new environment
+variable. So `CACHE_VERSION` stays `crmbuilder-v69` and smoke stays **51 local
+/ 56 live**, checked against the diff rather than assumed (§41).
+
+`tests/enforcement.test.mjs` is new and takes **9000–9099** (§9's table), one
+app server with a fresh port per boot because it restarts to plant store rows
+(§4). The block is carved from the unclaimed 8961–9299 gap with margin on both
+sides, since §9's own rule is that widening a block means checking the
+neighbours and this one touches none.
+
+**`docs/API.md` gains a line and no route** — §46's trap for the ninth time:
+the count stays **63** and the file reads correctly, while `POST /api/sync` can
+now answer `readOnly` for a reason that is **computed per request** rather than
+stored on the organisation. A caller that was treating that flag as "an
+operator did something" is now wrong about why.
+
+**And 63 is worth stating because I reached for 61.** §78's and §81's blast-radius
+notes say 60 → 61 and "stays 61", which were true when written; the live figure
+is 63 and `docs/API.md` already carries it, so the document is right and the
+recollection was wrong. §29's rule in the direction that is easy to miss —
+counted with
+`grep -cE "^app\.(get|post|put|patch|delete)\(" server.js` rather than read off
+an earlier section, which is the whole reason that command is written down.
+
+**§27's six user-facing documents still need nothing from this commit**, and
+the condition is unchanged from §81's: nothing can be bought and no deployment
+is in paid mode, so no user has gained or lost a capability. **That walk now
+owes two items rather than one** — §81's seat cap, which is live, and this,
+which is not — and it fires with the pricing commit.
+
+### What is still not built
+
+- **Refund and dispute events.** §79 records that seven `dispute.*` families
+  exist and this deployment subscribes to none, so a customer can dispute a
+  charge, win, and keep sync with the card reading `active`. Harmless while
+  nothing was enforced; **it is now the hole**, because enforcement reads a
+  status that a lost dispute does not move.
+- **Anything on screen for the held customer beyond the sync toast.** The
+  read-only reason reaches them through the latched toast and the chip (§24,
+  §55), and §76's Subscription card already says what to do about an overdue
+  payment. What is missing is the two meeting: a workspace held for
+  non-payment does not say so on the card, because the card reads the
+  provider's status and the hold is derived from it plus a date.

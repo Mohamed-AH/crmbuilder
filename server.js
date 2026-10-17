@@ -233,8 +233,10 @@ async function billingMode() {
  * Why a workspace is read-only, if it is. One decision, so the sync seam and
  * the operator panel cannot disagree about it.
  *
- * TWO INDEPENDENT HOLDS, which is the whole of this: `suspendedAt` is the
- * operator lever (§24 stage B) and `billingSuspendedAt` is set by enforcement.
+ * TWO INDEPENDENT STORED HOLDS, which is the whole of this — a third cause,
+ * the derived one, is the `billingHeld` argument below: `suspendedAt` is the
+ * operator lever (§24 stage B) and `billingSuspendedAt` is a per-workspace
+ * billing hold an operator can set by hand.
  * Reusing one field for both was the obvious shape and is the bug — an
  * operator resuming a storage pause would clear a billing hold, and a payment
  * would clear a storage pause, each silently and in a direction nobody asked
@@ -253,8 +255,16 @@ async function billingMode() {
  *
  * Returns null when the workspace is writable, so a caller reads it as a
  * hold rather than having to compare two timestamps itself.
+ *
+ * `billingHeld` is the DERIVED hold (`billingHoldApplies`), passed in rather
+ * than computed here because it needs the platform mode, the meta doc and the
+ * windows — three reads this function has no business doing, on a path where
+ * the caller already holds all of them. §78 said `billingSuspendedAt` would be
+ * "set by enforcement"; it is not, and that function's comment says why. The
+ * two reach the same branch, so the message and the precedence below are
+ * written once and cannot drift apart.
  */
-function readOnlyState(org) {
+function readOnlyState(org, billingHeld = false) {
   if (!org) return null;
   if (org.suspendedAt) {
     return {
@@ -262,7 +272,7 @@ function readOnlyState(org) {
       reason: org.suspendedReason || 'This workspace is paused. Nothing has been deleted.',
     };
   }
-  if (org.billingSuspendedAt) {
+  if (org.billingSuspendedAt || billingHeld) {
     /*
      * Not an operator-typed string: this one is ours to word once, because
      * nobody types it per workspace and it is the only read-only message that
@@ -357,6 +367,69 @@ function billingGraceUntil(org, billing, windows) {
       : null);
   if (base === null) return null;
   return Math.max(base, billing.setAt + windows.noticeDays * DAY_MS);
+}
+
+/*
+ * Whether cloud sync is on hold for non-payment. DERIVED at the point of use,
+ * and that is the decision rather than an implementation detail.
+ *
+ * The obvious shape was a scheduled pass that writes `billingSuspendedAt`,
+ * beside §25's alerts and §39's digest on the `/health` ping. It is the wrong
+ * shape here, for a reason this file already paid for twice:
+ *
+ * - §40 records that ping having never once fired for weeks, invisibly to
+ *   every test in this repository. A digest that does not arrive is a missed
+ *   nudge; a hold that is never PLACED means somebody keeps sync they stopped
+ *   paying for, and — far worse — a hold that is never LIFTED means a customer
+ *   who has paid stays read-only until a pass that may be dead runs again.
+ *   That is §78's own "money taken, nothing restored", arrived at from the
+ *   other end.
+ * - A derived answer cannot be stale. Paying releases the workspace on its
+ *   very next push, with nothing in between to go wrong.
+ *
+ * So `billingSuspendedAt` is NOT written by this, and §78's claim that it is
+ * "set by enforcement" is corrected at `readOnlyState` rather than here. It
+ * keeps its place as the operator's own per-workspace billing hold and as
+ * what the panel counts; the automatic hold is this function, every time.
+ *
+ * THE COST, stated rather than discovered: a workspace nobody syncs is never
+ * evaluated, so this is not a report. The panel's `graceUntil`/`pastGrace`
+ * preview (§78) is the thing that answers "who would be affected", and it
+ * reads the same two helpers this does.
+ */
+function billingHoldApplies(org, billing, meta, windows, now = Date.now()) {
+  if (!org || !billing || billing.mode !== 'paid') return false;
+  /*
+   * A `paid` mode with no flip date is an environment variable rather than a
+   * panel decision (§78: `billingMode()` returns setAt 0 for the env path),
+   * and `billingGraceUntil` needs that date to compute any notice at all. So
+   * every workspace would land in the no-window branch below and be held the
+   * instant the variable was set — no notice, nothing on screen beforehand,
+   * which is the exact outcome §78's floor exists to prevent and the opposite
+   * of what the free-mode card promises (§80).
+   *
+   * Enforcing nothing is the only safe reading: §78's rule is that a settings
+   * read must never be what starts a charge, and this is its sibling — an
+   * environment variable must never be what takes somebody's sync away.
+   */
+  if (!billing.setAt) return false;
+  // Paying is the whole point, so it is checked before any date arithmetic.
+  if (hasLiveSubscription(meta && meta.billing)) return false;
+  const until = billingGraceUntil(org, billing, windows);
+  /*
+   * `null` here means no grandfather window applies — a workspace created
+   * AFTER the switch was flipped, with no per-org override. It is tempting to
+   * read that as "no free period, hold immediately", and that would make a
+   * fresh signup read-only before they had reached a checkout button, since
+   * nothing in this product gates signup on payment.
+   *
+   * So they get the notice floor from their own creation instead: the same
+   * number of days everybody else is promised, counted from when they
+   * arrived. Conservative in the direction every other decision in this area
+   * chose, and it means no reachable path holds a workspace with no notice.
+   */
+  if (until === null) return now > Number(org.createdAt) + windows.noticeDays * DAY_MS;
+  return now > until;
 }
 
 async function setBillingMode(mode, userId) {
@@ -3330,7 +3403,29 @@ app.post('/api/sync', requireAuth, async (req, res) => {
    * remove a workspace (§5), and suspension has to be one undo away.
    */
   const org = req.user.orgId ? await store.getOrg(req.user.orgId) : null;
-  const hold = readOnlyState(org);
+  /*
+   * ENFORCEMENT, and it is here rather than on a schedule — `billingHoldApplies`
+   * carries the reasoning, and this is the half that makes it cheap.
+   *
+   * Free mode does NO extra work at all: `billingMode()` is cached in-process
+   * with the same TTL as the signup lever, so a deployment that is not
+   * charging pays one map lookup and reads neither the platform document nor
+   * the meta doc. That matters because this is the hottest authenticated route
+   * in the app and every deployment is in free mode today (§80).
+   *
+   * In paid mode it is two reads on the push path. `pullChanges` reads the
+   * meta doc again a few lines down, so the second one is genuinely an extra
+   * read rather than a shared one — said plainly instead of implying it is
+   * free, because the honest figure is what a later reader needs.
+   */
+  let billingHeld = false;
+  const billing = await billingMode();
+  if (billing.mode === 'paid' && org) {
+    const platformSettings = await store.getPlatformSettings().catch(() => ({}));
+    const meta = (await store.getData(workspaceIdFor(req.user))) || {};
+    billingHeld = billingHoldApplies(org, billing, meta, billingWindows(platformSettings));
+  }
+  const hold = readOnlyState(org, billingHeld);
   if (hold) {
     const out = await pullChanges(req.user, since, { modules: new Set(), records: new Set() });
     return res.json({
