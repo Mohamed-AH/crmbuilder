@@ -275,9 +275,10 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**625 Node tests pass, and Playwright is 159 tests** — Playwright **observed
-159/159 in 7.9m** in this session, Node observed at 625 before §77's fallback
-commit, which added one Playwright test and no Node one.
+**630 Node tests pass, and Playwright is 159 tests** — both observed in this
+session: Node **630/630** after §78's five, and Playwright **158 of 159** on
+the same run, the one failure being §66's intermittent (§78 has the artifact
+signature and the isolation rate).
 
 **Playwright's honest figure is a RANGE, and §77 is why.** Two full runs there
 gave 156/158 and 157/158, with a **different** test failing in each and all of
@@ -12183,6 +12184,24 @@ Five mutations, each failing the test that names it (§9):
 
 A sixth is honest about itself: the cache-guard change has **no** failing test,
 for the reason given above.
+
+**Counts, all three run:** Node **630/630** (625 → 630 — four lever tests and
+one backup test), smoke **51 local**, Playwright **158 of 159**.
+
+**The one failure is §66's intermittent and the exoneration here is stronger
+than §77's.** Same test — *signing out hides the workspace* — and the artifact
+carries §66's own recorded signature: `heading "Settings"` still rendered after
+the navigation, with `No modules yet` and `Sign in to sync` beneath it.
+Measured afterwards at **1 fail then 4 passes in isolation**, so it is not
+newly deterministic.
+
+§77 had to admit that *"isolation does not discriminate here"*, because a
+rename touches strings the app renders. This commit cannot be the cause at
+all: **neither of its two commits contains a client or served file** — checked
+with `git diff --name-only`, not asserted — so a client-side sign-out race has
+no path to it. That is the difference between *probably unrelated* and
+*structurally unrelated*, and it is worth the sentence because the next clean
+run will not retire the test either (§2).
 
 ### Blast radius
 
