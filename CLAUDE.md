@@ -263,25 +263,25 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**625 Node tests pass, and Playwright is 158 tests with an intermittent
-failure** — both observed in this session, not carried forward. §76 added two
-Node and four Playwright.
+**625 Node tests pass, and Playwright is 159 tests** — Playwright **observed
+159/159 in 7.9m** in this session, Node observed at 625 before §77's fallback
+commit, which added one Playwright test and no Node one.
 
 **Playwright's honest figure is a RANGE, and §77 is why.** Two full runs there
 gave 156/158 and 157/158, with a **different** test failing in each and all of
-them passing in isolation. Three are now in that family: §66's *signing out
-hides the workspace* (measured 1-in-3), §54's *an owner invites, and the
-colleague joins* (2-in-4), and — new, recorded there — *the reminder count is
-the number the due-date filter shows*. So a clean 158 happens and does not
-mean they are fixed; a 157 does not mean something broke. Pin neither number:
-run it, and read which test failed against §77's table before concluding
-anything.
+them passing in isolation. Three are in that family: §66's *signing out hides
+the workspace* (measured 1-in-3), §54's *an owner invites, and the colleague
+joins* (2-in-4), and *the reminder count is the number the due-date filter
+shows*. So a clean run happens and does not mean they are fixed; one short does
+not mean something broke. Pin neither number: run it, and read which test
+failed against §77's table before concluding anything.
 
-**158 of 158 does NOT mean §66's intermittent is fixed.** *Signing out hides
-the workspace* simply did not fire on this run; §71 fired it, and six passes
-in isolation afterwards did not re-measure its rate either (against 1-in-3,
-six clean runs happen about 9% of the time). It is a known-open test that
-passes most of the time. §54 records it as intermittent, §66 records what was
+**A full pass does NOT mean §66's intermittent is fixed**, and the 159/159
+above is the third clean run to prove the point rather than retire it. *Signing
+out hides the workspace* simply did not fire; §71 fired it, and six passes in
+isolation afterwards did not re-measure its rate either (against 1-in-3, six
+clean runs happen about 9% of the time). It is a known-open test that passes
+most of the time. §54 records it as intermittent, §66 records what was
 established and the artifact to start from, §71 records an occurrence.
 
 **And the 616 that stood here was short by 2.** §74's five new tests take 618
@@ -11978,6 +11978,13 @@ fallback.** ~~Changing it is one string in two files.~~
 > markup over HTTP now (`page.request.get('/app')`), and each file's mutation
 > fails on its own half. §9's rule, earned again — and §34's shape, a test
 > agreeing with itself.
+>
+> **Verified**: Playwright **159/159 in 7.9m**, which is the full run
+> `CACHE_VERSION` earns as shared surface (§9) and which also measures the
+> suite's new total; the `boot` describe 6/6; both mutations failing by name;
+> smoke **51 local**. Node not re-run and not claimed — nothing server-side
+> moved. **The clean run retires none of the three intermittents** (§2):
+> none fired, which is the same non-result §71 recorded.
 
 ### Verified
 
