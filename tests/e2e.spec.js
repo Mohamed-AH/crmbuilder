@@ -285,6 +285,42 @@ test.describe('boot', () => {
     await page.click('#record-save');
     await expect(page.locator('tr:has-text("Local Only Contact")')).toBeVisible();
   });
+
+  /*
+   * The fallback workspace name, which NOTHING had ever driven: `onboard()`
+   * always fills a business name, so all 158 tests saw a named workspace and
+   * the empty-name path was unguarded on a string every first-run user reads.
+   *
+   * It is the customer's business name slot, so the fallback must not be the
+   * product name (§77 set it to one and flagged it as an open decision).
+   *
+   * THE STATIC VALUE IS READ OVER HTTP, not off the rendered page, and the
+   * first version of this test got that wrong in a way that passed. index.html
+   * ships the string twice as the pre-paint value and app.js overwrites it on
+   * the first render — so `toHaveText` auto-retries right past the static one
+   * and was asserting the SAME render as the assertion at the foot. Measured:
+   * reverting index.html alone left the test green. A mismatch between the two
+   * copies renders as the sidebar flickering from one string to the other, so
+   * the served markup has to be checked as markup.
+   */
+  test('a workspace with no business name reads as the reader\'s own, not as the product', async ({ page }) => {
+    // The pre-paint value, as served — independent of any render.
+    const shell = await (await page.request.get('/app')).text();
+    expect(shell).toContain('id="workspace-name-mini">My workspace<');
+    expect(shell).toContain('id="workspace-name">My workspace<');
+
+    await page.goto('/app');
+    await expect(page.locator('.template-card').first()).toBeVisible();
+
+    // Onboard with the name field deliberately left blank.
+    await page.click('#onboard-create');
+    await expect(page.locator('#nav-modules .nav-link').first()).toBeVisible();
+
+    // After the render that applies SETTINGS.businessName || fallback.
+    await expect(page.locator('#workspace-name')).toHaveText('My workspace');
+    await expect(page.locator('#workspace-name-mini')).toHaveText('My workspace');
+    await expect(page.locator('#workspace-name')).not.toContainText('Nimble Clerk');
+  });
 });
 
 // --- core CRM --------------------------------------------------------------

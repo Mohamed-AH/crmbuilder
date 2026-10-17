@@ -1485,8 +1485,23 @@
     const signinBtn = $('#signin-btn');
     if (signinBtn) signinBtn.addEventListener('click', () => openSignIn());
 
-    $('#workspace-name').textContent = SETTINGS.businessName || 'Nimble Clerk';
-    $('#workspace-name-mini').textContent = SETTINGS.businessName || 'Nimble Clerk';
+    /*
+     * This slot is the CUSTOMER's business name, not ours, so the fallback is
+     * "My workspace" rather than the product name — §77 set it to the product
+     * during the rename and flagged it as a decision rather than a find, which
+     * is what this resolves. Putting our brand where their business goes reads
+     * as unconfigured software on the one line a new user looks at first, and
+     * it is wrong in the one place it is most visible: a sidebar headed
+     * "Nimble Clerk" beside a nav full of their own modules.
+     *
+     * It is reachable on two ordinary paths, which is why it is not cosmetic:
+     * the onboarding name field can simply be left blank (line ~2083 trims it
+     * to ''), and discarding sample data resets the seeded name to '' (~6805).
+     * `index.html` carries the same string twice as the pre-paint value, so
+     * all four move together or the sidebar flickers from one to the other.
+     */
+    $('#workspace-name').textContent = SETTINGS.businessName || 'My workspace';
+    $('#workspace-name-mini').textContent = SETTINGS.businessName || 'My workspace';
   }
 
   Cloud.onStatus(() => {

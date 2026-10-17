@@ -166,6 +166,8 @@ never change, because everything cross-references them.
 | **A test count carried forward and read as measured** | §74 · §2 · §29 · §9 |
 | **The product is Nimble Clerk** — and three identifiers that must not follow it | §77 · §58 · §34 · §47 |
 | An internal identifier that happens to contain the old product name | §77 · §34 · §29 |
+| **Our brand in the slot meant for the customer's own name** | §77 · §36 · §3 |
+| A pre-paint string and its render, and a test that could only see one | §77 · §9 · §34 |
 | A grep that reports "binary file matches" and prints no line | §77 · §73 |
 | **The price, the seat cap, and the free/paid switch** | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2 · §64 |
 | Why enforcement was mostly already shipped | [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2 · §24 · §36 |
@@ -403,7 +405,7 @@ to render *and still navigate*.
 globals.
 Adding a file means updating `index.html`, `sw.js` APP_SHELL, **the server's
 allow-list (§28)** and the smoke test's `ASSETS`, and bumping `CACHE_VERSION`
-(currently `crmbuilder-v65` — and this line was left at v62 through §74's bump
+(currently `crmbuilder-v66` — and this line was left at v62 through §74's bump
 to v63, which is §29's thesis arriving in §3's own invariant: read `sw.js`,
 never this sentence). Miss the allow-list and it 404s in production
 while working locally from cache.
@@ -11950,7 +11952,32 @@ the fallback for `SETTINGS.businessName`, so the sidebar shows the
 now reads **Nimble Clerk**, which is the consistent reading of "fix the stale
 name" — but putting our brand where their business name goes is a different
 choice from a page title, and **"My workspace" is arguably the better
-fallback.** Changing it is one string in two files.
+fallback.** ~~Changing it is one string in two files.~~
+
+> **Decided: "My workspace" (2026-10-17), and it was FOUR strings in two
+> files, not one in two.** `index.html` ships the fallback twice as the
+> pre-paint value and `js/app.js` applies it twice on render, so all four move
+> together or the sidebar flickers from one to the other on a cold load — which
+> §3's paint-first invariant makes a visible frame rather than a theoretical
+> one. Same undercount as the rename's own "29 occurrences" (above): a count
+> taken from where the decision *is* rather than from where the string is.
+>
+> **And the path was untested on 158 tests**, which is why this was worth more
+> than a string swap. `onboard()` always fills a business name, so every test
+> saw a named workspace and the fallback was unguarded — on two ordinary
+> paths: the onboarding name field can simply be left blank (it is `.trim()`ed
+> to `''`), and discarding sample data resets the seeded name to `''`. §60's
+> finding in a new place: **an untested path does not have to be new to be
+> wrong.**
+>
+> **The first version of the regression test passed on half the bug.** It read
+> the pre-paint value off the *rendered page*, and `toHaveText` auto-retries —
+> so it polled after `app.js` had already overwritten the static string and was
+> asserting the same render as the assertion at the foot. Measured, not
+> reasoned: reverting `index.html` alone left it **green**. It reads the served
+> markup over HTTP now (`page.request.get('/app')`), and each file's mutation
+> fails on its own half. §9's rule, earned again — and §34's shape, a test
+> agreeing with itself.
 
 ### Verified
 
