@@ -97,6 +97,11 @@ because nobody is aggregating anything on your behalf.
 > prints the claim on the Subscription card (*"Dodo Payments, who are the
 > seller of record"*), so the sentence is in front of customers and the MSA is
 > what has to support it.
+>
+> **Narrowed, not closed**: the account is in the provider's
+> *Billing + Payments (Merchant of Record)* mode and the dashboard reports it
+> **Active** — see §2, which also records the one-click switch on that same
+> screen that would put us in Option A.
 
 ### What Option A would cost on day one, measured rather than assumed
 
@@ -144,12 +149,73 @@ their documentation end to end (2026-10-13, `docs.dodopayments.com`):
 | | |
 |---|---|
 | **Answered** | the *engineering* surface. Standard Webhooks signing, the two-mode separation, the retry schedule, the event list, the payload shape, the test cards, the static-link parameters. All first-party, specific, and — the half that matters — **drivable end to end in test mode before a customer exists**, which §7 is |
-| **Not answered** | the *economics*. Fee, payout into INR, FX spread, chargeback set-off, per-seller chargeback threshold, MoR contractual status. **None of these is in this document as a number**, deliberately, and §8 lists each one |
+| **Not answered** | the *economics*. Fee, payout into INR, FX spread, chargeback set-off, per-seller chargeback threshold, and — **narrowed since, see below** — MoR contractual status. **None of these is in this document as a number**, deliberately, and §8 lists each one |
 
 So the honest statement of where this stands is: **the integration is verified
 and the commercial terms are unread.** That is a materially better position
 than the table assumed and a materially worse one than "chosen". The MSA read
 in §7's *before live mode* list is what closes it, and it is not optional.
+
+### The account IS in MoR mode, and the dashboard says so in those words
+
+Read off the provider's own *Settings → Payment providers* tab (2026-10-17,
+test mode) — a screen this document had never seen:
+
+> **Billing + Payments (Merchant of Record)** — **Active**
+> *"Dodo Payments becomes the legal seller of record — we handle global taxes,
+> compliance, fraud, and payouts."*
+> VAT/GST collected & remitted for you · chargeback liability & PCI handled by
+> Dodo · 40+ payment methods · built-in fraud protection
+
+**This is materially stronger than the behavioural evidence §8's row already
+carries**, and the difference is worth stating rather than quietly upgrading
+that row. What was observed there was 18% GST itemised on an INR checkout and
+`$0.00` sales tax on a USD one — correct behaviour, and behaviour a
+well-implemented *gateway* could produce just as easily. What this is instead:
+a **named account mode**,
+reported **Active**, described in the provider's own words as *the legal seller
+of record*, on a screen whose entire product boundary is drawn by **who the
+merchant of record is**. A gateway does not offer that as a mode; it is the
+thing being switched between.
+
+**It does not close the row, and the standard for that is the row's own**:
+*behaviour cannot answer a contractual question; the MSA can.* A settings page
+is still the provider describing its own service — it can describe it
+accurately while the agreement defines the term more narrowly, or carves out a
+jurisdiction, or makes it conditional on something. So §8's row moves from
+**unknown** to **strongly indicated, contract text still unread**, and §7's
+step 1 is unchanged.
+
+### And the same screen carries a one-click switch that would invert §1
+
+Beside the Active row sits **Bring Your Own Processor** (Beta), with a
+**Configure** button and the description *"Full control — you remain the
+merchant of record."*
+
+Read that last clause against §1's table: **you remain the merchant of record**
+is **Option A**, the shape this entire document exists to avoid. Enabling it
+would mean UK VAT from the first sale, non-Union OSS from the first euro, two
+foreign registrations and quarterly filings — §4's split wrong on every row,
+and the sentence `js/app.js` prints to customers false.
+
+Three things make it worth a subsection rather than a mention:
+
+- **The affordance points at the dangerous one.** The safe mode is already
+  Active and has no button. The mode that breaks §1 is the only thing on that
+  screen you can press.
+- **It is account-level, so nothing here would change and no test here could
+  see it.** §40's rule arriving at a toggle rather than a URL: the webhook
+  would keep verifying, the card would keep rendering, the suite would stay
+  green, and the first symptom would be a tax position discovered months later.
+- **It is labelled a feature, and *"full control"* reads as the grown-up
+  option.** For a seller who cannot register for UK VAT without wanting to, it
+  is the exact opposite — and that framing is the reason to write the warning
+  down rather than assume nobody would click it.
+
+**Nothing to build.** It is a *do not touch* item, which is why it is recorded
+where the rail is chosen rather than left on somebody else's screen — and it is
+step 12 of §7's *before live mode* list, because the one time somebody will be
+clicking around that tab is while switching modes.
 
 ### What makes this reversible, and why it matters MORE than it did
 
@@ -1099,6 +1165,13 @@ sessions**, or **set with the price decided and the documents walked**.
     obliged to open. §39's push-versus-pull split is the shape of the answer —
     the *Error rate (24h)* column is the pull half and exists; the push half
     does not, and nothing in this repository can see the failure either.
+12. **Do NOT enable Bring Your Own Processor**, and confirm *Settings → Payment
+    providers* still reports **Billing + Payments (Merchant of Record)** as
+    **Active** after the live-mode switch. §2 has the reasoning: BYOP's own
+    description is *"you remain the merchant of record"*, which is §1's Option
+    A — so one click there owes UK VAT from the first sale, and nothing in this
+    repository would change or notice. It is on this list because the one
+    occasion somebody will be clicking around that tab is while doing step 5.
 
 ---
 
@@ -1110,7 +1183,7 @@ and every one of them is answered by the same read — the dashboard and the MSA
 
 | | Why it is open |
 |---|---|
-| **Whether the provider is contractually the seller of record for our sales** | **the most important line in this document**, and still open after two real payments. §1's entire VAT escape and §4's whole split depend on it, and `js/app.js` already prints the claim to customers. A gateway that markets itself with MoR language would leave us owing UK VAT from the first sale. The *behaviour* now points the right way — destination tax computed and itemised per jurisdiction, 18% GST on the INR checkout and `$0.00` sales tax on the USD one — but **that is evidence about their implementation, not about who the contract says sold the thing.** From the MSA, not from a checkout page |
+| **Whether the provider is contractually the seller of record for our sales** | **the most important line in this document**, and **narrowed rather than closed** — see §2. §1's entire VAT escape and §4's whole split depend on it, and `js/app.js` already prints the claim to customers. Two kinds of evidence now point the right way and neither is the contract: the *behaviour* (destination tax computed and itemised per jurisdiction, 18% GST on the INR checkout and `$0.00` sales tax on the USD one), which a well-built gateway could also produce; and the *account mode* — **Billing + Payments (Merchant of Record)**, reported **Active**, the provider's own words being *"becomes the legal seller of record"*. That second one is much stronger, because it is a mode rather than an outcome. It is still **their description of their own service**, so the row stays open: a settings page can be accurate while the agreement defines the term more narrowly or carves out a case. **From the MSA, not from a dashboard** |
 | **The fee** | no figure is stated anywhere in this document on purpose. §5's net table is blank rather than estimated |
 | **Payout mechanics into INR, and the FX spread** | the two columns that make a net rate honest (§5), and the thing that decides whether monthly or annual is worth the difference |
 | **Chargeback set-off, the per-dispute fee, and whether a per-seller rate exists** | §3 assumes the worst of all three. §2's blockquote has the three questions to ask, drawn from a comparable MoR's published policy |
