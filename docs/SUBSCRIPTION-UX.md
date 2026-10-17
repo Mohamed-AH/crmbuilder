@@ -3,8 +3,10 @@
 > **Status: a plan, and PHASES 0, 1 AND 1.5 ARE NOW BUILT** — `CLAUDE.md` §74
 > is the record of what shipped for the first two and of the three places this
 > document was wrong or over-specified; §76 is Phase 1.5, which this document
-> did not contain and which is argued for in its own section below. Phases 2
-> and 3 are untouched, and Phase 2 is still blocked on a price (§64).
+> did not contain and which is argued for in its own section below.
+> **Phase 2 is UNBLOCKED as of 2026-10-17** — the price is decided
+> ([`PAYMENTS.md`](PAYMENTS.md) §5) and most of the enforcement turned out to
+> be shipped already, so that section is rewritten; Phase 3 is untouched.
 >
 > It was written before any code so the decisions were visible and arguable,
 > which is §48's and §64's precedent: the question to ask is *when* a thing can
@@ -248,20 +250,70 @@ Three pieces:
 is still ignored on purpose (the customer cancelled it themselves), and refund
 and dispute events are still unhandled — see Phase 2, where they belong.
 
-### Phase 2 — enforcement · *blocked on pricing (§64)*
+### Phase 2 — enforcement · **UNBLOCKED 2026-10-17**, and smaller than it looked
 
-Nothing reads `billing` to decide what a workspace may do. This cannot be
-built before a price exists, and when it lands it is §24 stage B's suspension
-rules: read-only sync, reversible, nothing deleted, **never** reaching
-`deleteAccount()` (§5, §15), with **export open to every role** (§36).
+The price is decided ([`PAYMENTS.md`](PAYMENTS.md) §5): **$15/month per
+workspace, up to 5 users, $150 annual, 7-day trial with a card up front** —
+behind a `billingMode` switch that is **`free` until an operator flips it**, so
+nothing is charged on the day this is built.
 
-Two things that belong here and are easy to miss:
+**The headline finding is that most of this is already shipped.** Verified in
+the source rather than recalled:
+
+| What non-payment has to do | Where it already is |
+|---|---|
+| pause cloud sync | `server.js:3130` — refuses the **push** on a suspended org |
+| still let them read | the same branch still serves the **pull** |
+| say why, on screen | `readOnlyReason`, surfaced by `js/app.js:1317` and latched so a debounced push cannot repeat it |
+| not lose what they typed while paused | `js/cloud.js:213` — the push watermark advances **only** when the push was accepted. §24 stage B records this as the bug that would have silently discarded everything typed during a pause |
+| keep local use working | nothing to do — the app is offline-first (§3) |
+| keep export open | nothing to do — §36 keeps it open to every role, deliberately |
+| never delete anything | `deleteAccount()` is unreachable from here (§5, §15) |
+
+So Phase 2 is **wiring, a trigger and some wording** — not building a
+suspension system. What actually has to be decided and written:
+
+1. **`billingMode` as an operator lever**, beside `signupMode` and
+   `orgCreation` in the `platform` document, with §16's precedence rule (a
+   panel decision beats the environment and survives a redeploy). Three keys,
+   not one, and **one string added to `OPERATOR_DECISIONS` in
+   `scripts/restore.mjs`** — which is where that list lives, not in
+   `server.js`. Missing it means a restore silently reverts the mode, which is
+   §17's own recorded failure with money attached.
+2. **The conflation to settle.** `suspendedAt` is currently an **operator**
+   lever with one reason string. If billing writes the same field, an operator
+   resuming a storage suspension also clears a billing one, and the reverse.
+   Either a separate field or a reason tag — a decision, not a detail, and the
+   wording is customer-visible either way.
+3. **Grandfathering, which needs no new field.** `orgs.createdAt` already
+   exists (`server.js:1124`) and `billingModeSetAt` exists because §17 forces
+   the provenance pair. An org created before the switch was flipped was
+   already here. The *policy* on top of that — for ever, for a window, or not
+   at all — is still open; the recommendation is **for ever, stated out loud**.
+4. **The free-mode card.** It must say *free while in early access* and offer
+   no checkout. §39's standing rule: a state that renders as nothing is
+   invisible, and this is also what retires the test-mode Subscribe button
+   §73, §74 and §76 each had to write a paragraph about.
+5. **The seat cap: one member count in `/api/org/invite`**, plus a refusal
+   screen that explains itself (§36 rule 1). Free while no workspace is over
+   it.
+
+Two things that belong here and were easy to miss — both still true:
 
 - **Refund and dispute events are not handled**, so today a customer can
   dispute a charge, win, and keep full access with the card reading `active`.
-  Harmless while nothing is enforced; a hole the moment it is not.
+  Harmless while nothing is enforced; **a hole the moment the switch is
+  flipped**, which is now a date rather than a hypothetical. And it needs the
+  §8 question asked first: does the provider even deliver those families to an
+  endpoint, or only show them on the dashboard?
 - **A grace period is a product decision**, and `past_due_ends_at` is the field
-  for it — the one field in the inventory nothing has ever filled (§9).
+  for it — the one field in the inventory nothing has ever filled (§9), though
+  §76's fixture populated it for the first time. **Use the provider's window
+  rather than adding ours**: their dunning already sets that date and the
+  card's *Access until* row already renders it, so a second window on top
+  means two dates that disagree. Reminders are theirs too — §52/§53's mail is
+  BYOK on the **tenant's** credential, so billing notices on it would send on
+  their domain and their reputation.
 
 ### Phase 3 — reconcile and communicate · *after live*
 

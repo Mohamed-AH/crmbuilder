@@ -378,7 +378,13 @@ because the workspace belongs to the org. What is built stores it on the
 workspace meta document instead (§6); that is a difference to settle when
 enforcement lands, not a bug.
 
-### Currency: GBP primary. Decided.
+### ~~Currency: GBP primary. Decided.~~ — REVERSED 2026-10-17, to USD
+
+> **The price below is `$15`, so this section's own decision no longer holds.**
+> Left standing rather than rewritten, because the reasoning is what a reader
+> needs in order to reverse it back: the dispute-trigger argument is still
+> true, it is simply being paid rather than avoided. The reversal and its cost
+> are recorded with the price.
 
 The market is UK and Europe. `£19` reads as a price; `$22.80` reads as a
 conversion, and a foreign-currency line on a card statement is itself a dispute
@@ -467,10 +473,114 @@ Per-workspace, the same revenue arrives at a number that reads as generous:
 Two of the three beat the per-seat incumbents on total cost for a real team,
 which is the argument `MARKETING.md` was always making, with a price attached.
 
-**None of these numbers is decided.** They are a starting point sized against
-the comparison table above, and the thing to revisit first is whether **Solo**
-should exist at all — a one-person tier at £19 competes with free alternatives
-and is the hardest cohort to support per pound.
+**That three-tier table is NOT what was chosen, and it is left standing because
+the comparison above is what sized it.** The decision is below, it is a single
+tier, and it is materially cheaper than any row here.
+
+### Decided, 2026-10-17
+
+| | |
+|---|---|
+| **Price** | **$15 / month per workspace**, up to **5 users** |
+| **Annual** | **$150** — two months free |
+| **Trial** | 7 days, **card up front**, and not live yet — see the switch below |
+| **Tiers** | one. Premium tiers deferred until there is a user base to segment |
+| **Non-payment** | cloud sync pauses. Local use and export continue |
+
+**$15 reverses this section's own "GBP primary. Decided."** Taken on
+instruction with the cost stated first, so it reads as a reversal rather than
+as drift: £15 would be ≈$19, so a dollar price is ~27% less revenue per
+workspace, and §3's lever 2 is that a **foreign-currency line on a card
+statement is itself a dispute trigger** — which is the half that is not about
+revenue. A UK customer sees a converted figure. That is accepted; the lever it
+spends is preventive, and the levers that remain (descriptor, pre-renewal
+notice, two-click cancel, 14-day refunds) are untouched.
+
+**Against the table above it is not a small undercut.** Five users on Zoho
+Standard is $70/month and on Capsule Starter $105; the same team here is $15.
+That is the argument `MARKETING.md` was always making, and it is now also the
+risk in the other direction — §5's own warning about **Solo at £19** ("competes
+with free alternatives and is the hardest cohort to support per pound") applies
+*more* at $15 with five people on it, not less. Raising a price is harder than
+starting high, so this is a deliberate land-grab rather than a sized margin,
+and the margin cannot be computed at all until the fee table below is filled.
+
+**The seat cap is 5, and it is one check at invite time** — not metering. §5
+above already records the shape: a member count in `/api/org/invite`, plus a
+refusal screen that explains itself (§36's rule 1, not a control that looks
+like it works). It is free to add **now** because no workspace can be over it
+yet; it stops being free the moment one is.
+
+### The annual plan is over the India ceiling, and monthly is not
+
+The ₹15,000 mandate ceiling above binds annual and nothing else, and the
+arithmetic is worth having written down rather than re-derived:
+
+| | USD | INR at the measured 98.91 | + 18% GST | vs ₹15,000 |
+|---|---|---|---|---|
+| monthly | $15 | ₹1,484 | **₹1,751** | fine, 8.6× under |
+| **annual** | **$150** | ₹14,837 | **₹17,507** | **over by ₹2,507** |
+
+**The GST is the half that tips it.** ₹14,837 alone would fit; the debit is
+base + destination tax, which §73 measured on a real checkout ($65 base →
+₹6,429.04 presented → ₹7,586 debited). So the usable ceiling is ≈**$128 per
+debit**, not the ≈$150 the pre-tax rate suggests.
+
+**Only an India-issued card is affected** — the ceiling is an RBI rule about
+mandates, not about us, and a UK or EU card has no equivalent. So annual works
+for the market this is aimed at and needs §5's **non-mandate path (invoice plus
+bank transfer)** for an Indian customer, who is plausible precisely because the
+seller is Indian. Two ways out if that ever matters: price annual at **$120**
+(₹14,006 inc. GST, which fits), or invoice it.
+
+### Free now, paid when a switch is flipped
+
+**Nothing is charged yet, and that is a stored operator decision rather than
+an unset variable.** `billingMode: 'free' | 'paid'` sits in the `platform`
+document beside `signupMode` and `orgCreation`, with their precedence rule
+(§16): **a panel decision beats the environment and survives a redeploy.**
+
+Why this shape rather than simply not setting a price yet:
+
+- **It defers the one unresearched dependency.** Whether the provider supports
+  a trial on a **static payment link** at all — §71 chose that link because the
+  CSP forbids their JavaScript — is unread, and §69's rule is not to guess. In
+  `free` mode nothing about the trial has to be settled to ship.
+- **It retires a state three sections had to apologise for.** §73, §74 and §76
+  each recorded that `DODO_PRODUCT_ID` is set on production in **test mode**,
+  so every workspace owner sees a Subscribe button that cannot take their
+  money. In `free` mode the card says *free while in early access* and offers
+  **no checkout** — which is true, and is a better answer than any of the three
+  honest states §76 listed.
+- **It is reversible and it is visible**, which is the same pair §24 stage B
+  insists on for suspension.
+
+**Grandfathering needs no new field, and the key that makes it work is one
+§17 already forces you to store.** An operator decision is **three** keys, not
+one — the value plus `<name>SetAt` and `<name>SetBy` — and §17 records the
+first version of that list missing the provenance pair. So `billingModeSetAt`
+exists for the audit trail, and `orgs.createdAt` already exists on every org
+(`server.js:1124`, and it is already published on `/api/org`). An org whose
+`createdAt` precedes `billingModeSetAt` **was already here when the switch was
+flipped**, and that comparison is the whole mechanism.
+
+> **The policy is a one-line decision on top of it and is NOT settled**:
+> grandfather early signups for ever, for a stated window, or not at all. The
+> recommendation is **for ever, and say so out loud** — the people in the free
+> period are the ones giving feedback, and billing them abruptly is the worst
+> version of this. It costs little while the cohort is small, and it is the
+> kind of promise that cannot be withdrawn, so it should be made deliberately
+> or not at all.
+
+**The trap when this is built, and it is §17's exact failure.**
+`OPERATOR_DECISIONS` is in **`scripts/restore.mjs`, not in `server.js`** —
+checked, not recalled. So `billingMode` has to be added in *two* files: its
+own `setBillingMode` beside `setSignupMode` (`server.js:167`, three keys plus
+the cache invalidation §16 needs for a multi-instance deployment), **and** one
+string in that list. Miss the second and a restore silently drops the mode and
+reverts to the default — which is precisely *"a restore silently reopened
+signups the operator had shut"*, with money attached in whichever direction the
+default points.
 
 ### What the fee leaves — NOT computable yet, and deliberately left blank
 
