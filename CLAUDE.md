@@ -283,12 +283,16 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**638 Node tests pass, and Playwright is 161 tests** — Node **638/638**
-observed after §78's thirteen. Playwright's last full observation was **158 of
-159** (the failure being §66's intermittent — §78 has the artifact signature
-and the isolation rate); item 3 added two, so the total is 161 and the run
-that measures it is in flight at the time of writing. Run it rather than
-reading this.
+**638 Node tests pass, and Playwright is 161** — both **observed** after §78's
+thirteen Node tests and two Playwright ones: Node **638/638, 0 skipped** and
+Playwright **161/161 in 8.2m**, measured on `c9efdf4`. Smoke is **51 local**,
+also run.
+
+**That clean Playwright run retires none of the three intermittents**, and the
+reason is the same non-result §71 and §77 both record: none of them fired.
+§66's *signing out hides the workspace* failed on the item-1 run of this same
+work and passed here, which is what 1-in-3 looks like. Read the next short run
+against §77's table before concluding anything.
 
 **Playwright's honest figure is a RANGE, and §77 is why.** Two full runs there
 gave 156/158 and 157/158, with a **different** test failing in each and all of
@@ -12195,15 +12199,26 @@ Five mutations, each failing the test that names it (§9):
 A sixth is honest about itself: the cache-guard change has **no** failing test,
 for the reason given above.
 
-**Counts:** Node **638/638** (625 → 630 on item 1, → 633 on item 2, → 638 on
-item 3), smoke **51 local** through item 2, Playwright **158 of 159** measured
-on item 1.
+**Counts:** Node **638/638, 0 skipped** (625 → 630 on item 1, → 633 on item 2,
+→ 638 on item 3), Playwright **161/161 in 8.2m** (159 → 161 on item 3), smoke
+**51 local** — all three run on `c9efdf4`, which is the commit item 3's own
+message declined to claim them for. §9's rule working as written: the message
+said the run was in flight and did not print a number, and the number arrived
+afterwards.
 
 **Playwright was measured on item 1 and not re-run for item 2**, which changed
 `server.js` and one test file and **no client or served file** — so no E2E
 assertion can see it, and the one that reads `/api/admin/platform` (§33) reads
 keys that were added rather than moved. Stated rather than implied, because an
 unchanged count is otherwise indistinguishable from an unchanged claim (§73).
+Item 3 touched `js/app.js` and `css/style.css`, so it earned the full run.
+
+**And that run is what breaks the "structurally unrelated" claim above for
+item 3 only.** Items 1 and 2 contained no client or served file, so §66's
+intermittent had no path to them — stronger than §77, which had to concede
+that isolation does not discriminate. Item 3 adds an admin card and CSS, so it
+does not get that exoneration. What it gets instead is the ordinary one: 161 of
+161 passed, including the sign-out journey.
 
 **The one failure is §66's intermittent and the exoneration here is stronger
 than §77's.** Same test — *signing out hides the workspace* — and the artifact
