@@ -1517,6 +1517,14 @@ sessions**, or **set with the price decided and the documents walked**.
    have no app) or to somebody whose account is already gone. `CLAUDE.md` §85
    has the rest, including the sentence this forced on §40's roster.
 
+   **The roster's mail row is named too, 2026-10-19: `ImprovMX`** — and the
+   finding is that it **forwards rather than holds**, so naming it alone would
+   have put one recipient on the list in the wrong role and left the inbox
+   behind it unmentioned. That is §40's omission rebuilt by the commit closing
+   it, which is why the page names both hops. §85 has it. Recorded here because
+   §85 had deferred this to *"§7's before-live list"* and **no such item was
+   ever written** — the pointer read as having filed the task.
+
    The other two are the pricing commit's work anyway (§2.1's twelve files),
    which means **verification is gated on the same commit as the price** and
    cannot be started early to get the 1–3 days out of the way.

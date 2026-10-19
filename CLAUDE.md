@@ -268,6 +268,7 @@ never change, because everything cross-references them.
 | A page that says to contact us, and the guard that travels with the promise | §85 · §9 · §50 |
 | **Publishing an address created a recipient** §40's sentence excluded | §85 · §40 · §38 |
 | A mail host deliberately not named, and whose item that is | §85 · §69 · §38 |
+| **A forwarder named as a holder** — one recipient, listed in the wrong role | §85 · §40 · §29 |
 | **A terms bump that re-prompts everybody, twice, on purpose** | §85 · §41 · §53 · §77 |
 | Why `Report a problem` is the wrong route for a rights request | §85 · §18 · §15 |
 | **The dispute and refund events are ticked** — 25 carried, 24 handled | §85 · §84 · §73 |
@@ -13826,10 +13827,44 @@ mail for the domain, and §69's rule is not to guess a provider; §38 records a
 first draft asserting backups *"are encrypted"* before they were, caught before
 the commit. A wrong provider named in a privacy notice is that failure in the
 one document where it is least affordable. The sentence is true without it, and
-**naming it is the owner's one outstanding item here** — on §7's before-live
-list, because a roster that names Render, Atlas, Google, GitHub, Telegram,
+**naming it is the owner's one outstanding item here** — ~~on §7's before-live
+list~~, because a roster that names Render, Atlas, Google, GitHub, Telegram,
 Resend and Postmark and then says "whoever hosts our mail" is honest but
 visibly unfinished.
+
+> **It is ImprovMX, answered 2026-10-19 — and naming it alone would have
+> rebuilt §40's omission.** ImprovMX is a **forwarder**: it holds no mailbox,
+> it relays mail for the domain into an inbox somewhere else. So *"held by
+> ImprovMX"* would have named the one party in the chain that does **not** hold
+> the message and left the one that does unmentioned — which is precisely
+> §40's failure (GitHub, then Telegram), rebuilt by the commit closing it. The
+> page names **both hops**, and the destination provider is still unnamed
+> because that one genuinely is unknown here and §69's rule has not moved.
+>
+> **A disclosure can be incomplete in two different ways**, and this section
+> only had the first in view: a recipient *missing* from the list, and a
+> recipient *listed in the wrong role*. The second reads better than the
+> first, which is what makes it worse.
+>
+> **And the before-live item this pointed at was never written.** `§7`'s list
+> has item 2's contact-route row ticked and item 9 is about adding *Dodo* to
+> the roster; no item anywhere says "name the mail host". So the sentence above
+> deferred a task to a place that did not carry it — §29's thesis in the one
+> direction it is hardest to notice, since a pointer to a second place reads as
+> having filed the thing. Closing it now is what makes the gap moot rather than
+> a dangling reference; the strike-through is there so the next reader does not
+> go looking for a list entry that never existed.
+>
+> **The guard's wording assertion had to move with the page, and it was right
+> to break.** The completeness test asserted `/hosts our mail/i`, which is the
+> sentence this replaced — §46's trap, except the usual version is a line that
+> still *reads* correctly while what it describes has moved. Here the test
+> failed loudly, which is the better failure, and it is why the replacement
+> asserts on the **paragraph** and on **both hops** rather than on the body
+> and one name: `toContainText('ImprovMX')` against the whole body is the
+> count-says-nothing shape this section already records, since the name would
+> satisfy it from inside a sentence that had dropped the forwarding. It now
+> goes stale if the provider changes, which is the point.
 
 ### The version pair moved, and that re-prompts everybody
 

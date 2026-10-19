@@ -4454,7 +4454,27 @@ test('the privacy page does not claim a completeness that email breaks', async (
    */
   await expect(page.locator('body')).toContainText('complete list of what the app sends');
   await expect(page.locator('body')).not.toContainText('That is the complete list.');
-  await expect(page.locator('body')).toContainText(/hosts our mail/i);
+
+  /*
+   * The mailbox disclosure, asserted on the PARAGRAPH rather than the body, and
+   * on BOTH hops. ImprovMX forwards mail for the domain — it does not store a
+   * mailbox — so a sentence naming it alone would say the message rests with
+   * the one party that does not hold it, which is §40's omission rebuilt by
+   * tidying. `/forward/` is what pins the second hop.
+   *
+   * Body-wide `toContainText` would be the count-says-nothing shape this
+   * file's own CONTACT_PROMISES was rewritten to escape: "ImprovMX" anywhere
+   * on the page would satisfy it, including in a sentence that had dropped the
+   * forwarding.
+   *
+   * This DOES go stale if the mail provider changes, and that is the point:
+   * §40's sentence has been false twice, both times because the roster stopped
+   * matching what the deployment actually does.
+   */
+  const mailRoute = page.locator('p').filter({ hasText: /If you email us/i });
+  await expect(mailRoute, 'the privacy page stopped disclosing the mail route').toHaveCount(1);
+  await expect(mailRoute).toContainText(/ImprovMX/i);
+  await expect(mailRoute, 'ImprovMX forwards rather than holds — name both hops').toContainText(/forward/i);
 });
 
 /*
