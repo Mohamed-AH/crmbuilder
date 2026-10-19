@@ -264,6 +264,13 @@ never change, because everything cross-references them.
 | Visa RDR, and a flag that must never be `undefined` | §84 · §79 · §76 |
 | **Two mutations that failed nothing**, on `disputeOpen` and `disputeLost` | §84 · §9 · §34 |
 | Where the provider's FEE lives, and why `payout.*` is unhandled | §84 · §73 · §79 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 |
+| **A contact address** — three promises, and the route that needed no account | §85 · §79 · §20 |
+| A page that says to contact us, and the guard that travels with the promise | §85 · §9 · §50 |
+| **Publishing an address created a recipient** §40's sentence excluded | §85 · §40 · §38 |
+| A mail host deliberately not named, and whose item that is | §85 · §69 · §38 |
+| **A terms bump that re-prompts everybody, twice, on purpose** | §85 · §41 · §53 · §77 |
+| Why `Report a problem` is the wrong route for a rights request | §85 · §18 · §15 |
+| **The dispute and refund events are ticked** — 25 carried, 24 handled | §85 · §84 · §73 |
 | Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
@@ -337,16 +344,19 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**664 Node tests pass, and Playwright is 164** — both **observed** after §84's
-eight Node tests: Node **664/664, 0 skipped** and Playwright **164/164 in
-6.6m**. Smoke is **51 local · 0 warnings · 0 failed**, also run. (§83's figures
-were 656 and 163-of-164; §81's were 648 and 164; §80's were 641 and 163;
-§78's were 638 and 161.)
+**664 Node tests pass, and Playwright is 167** — both **observed** after §85's
+three Playwright tests: Node **664/664, 0 skipped** and Playwright **166 of
+167 in 8.8m**, the one failure being §54's intermittent, which §85 discriminated
+against its own `TERMS_VERSION` bump rather than reading the name and moving on.
+Smoke is **51 local · 0 warnings · 0 failed**, also run. (§84's figures were 664
+and 164/164; §83's were 656 and 163-of-164; §81's were 648 and 164; §80's were
+641 and 163; §78's were 638 and 161.)
 
-**The Node delta is exactly the eight added**, which is the thing worth
-checking rather than the total: 656 → 664 says none was lost, where a figure
-that merely *looks* plausible would not. §74 records what carrying one forward
-costs.
+**Node unchanged is the informative figure here**, not a null one: §85 bumped
+`TERMS_VERSION`, and 664/664 is what says §41's tests are version-agnostic
+rather than pinning a date. **A delta is still the thing to check** rather than
+the total — 656 → 664 across §84 says none was lost, where a figure that merely
+*looks* plausible would not. §74 records what carrying one forward costs.
 
 **A clean Playwright run retires none of the three intermittents**, and the
 reason is the same non-result §71 and §77 both record: none of them fired. That
@@ -13734,3 +13744,238 @@ enforcement, which is not — and it fires with the pricing commit.
   produce it — which puts it beside [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §9's
   events that production would see first.
 - **`payout.*`**, above.
+
+
+---
+
+## 85. A page that says to contact us, and three promises with nothing behind them
+
+`contact@nimbleclerk.com`, on `/privacy` twice and `/terms` once. §79 found the
+defect by grepping the five public pages for a **payment** prerequisite and
+getting no `mailto:` and no address of any kind, while `privacy.html` said
+*"contact us at the address below"* with nothing below it. It flagged rather
+than fixed, because **which address goes on a public page is the owner's
+decision** — that was the right call and the address is now chosen.
+
+### It was three promises, and the measurement found one
+
+§79 measured the pointer with nothing under it. Walking the pages to fix it
+found two more, both in the document §79 did not look at:
+
+| Promise | Where | Had |
+|---|---|---|
+| *"contact us at the address below"* | `privacy.html`, the rights list | nothing below it — §79's finding |
+| *"ask, and we will talk about what that would take"* | `terms.html`, the closing callout | **no contact section at all** |
+| *"on request: we will help you answer an access, correction or deletion request"* | `terms.html`, the DSAR clause | the same nothing |
+
+So the contractual document promised a route **twice** and named no way to
+reach the other party. Fixing only the measured half would have been this
+file's standing shape — the half somebody looked at, closed, with the half
+nobody looked at left open beside it.
+
+### The route it DID offer was worse than absent
+
+`privacy.html`'s Contact section read *"use **Report a problem** in the app, or
+contact the person who invited you to the beta."*
+
+**`/api/feedback` is `requireAuth`** — checked, not assumed — so the first route
+is unavailable to exactly the people who need one:
+
+- somebody whose access request was **declined**. §20 stores their address, so
+  we hold personal data about them, and they have no app to report a problem
+  in;
+- somebody whose account is **already deleted** and wants it confirmed;
+- the **stranded last owner** (§15's `wouldStrandTeam`), which the *"Ask us"*
+  bullet names as its own reason for existing — the one case where
+  self-service genuinely cannot work, so the people it strands are the ones
+  with nowhere else to go.
+
+And *"contact the person who invited you"* was never a route to the controller
+at all. It is gone rather than demoted: a data subject exercising a right
+against us cannot discharge it by emailing another customer.
+
+The in-app route is **kept and re-aimed** rather than dropped, because for the
+one thing it is good at it is genuinely better: a bug report carries the
+version and the recent console errors (§18), which an email cannot, and §18's
+whitelist is why the page can still say we see only the address and the message.
+So the ordering is the fix — the address first, for everybody, and *Report a
+problem* named for the signed-in reader with something broken.
+
+### Publishing an address created a recipient, which §40's sentence excluded
+
+`privacy.html` closed with **"That is the complete list."** — the exact
+sentence §40 records as having been false twice, first omitting GitHub and then
+Telegram, both caught by looking at what the deployment does rather than at
+what the code could do.
+
+An address is a **third** such recipient: whoever hosts the mailbox holds
+whatever somebody writes to it, and they were not on the list. This time the
+commit publishing the address would have been the one making the sentence
+false, which is the first chance anybody has had to get in front of it rather
+than behind it.
+
+**Scoped rather than padded.** The claim is now *"the complete list of what the
+app sends anywhere"*, with the mailbox disclosed beside it — because it is
+true: nothing in the app sends anything there, and a reader who emails us chose
+that route. Listing a mail host among the sub-processors the *app* uses would
+imply the app feeds it, which is §40's own objection to putting UptimeRobot
+beside Telegram.
+
+**And the host is deliberately not named.** I do not know which provider hosts
+mail for the domain, and §69's rule is not to guess a provider; §38 records a
+first draft asserting backups *"are encrypted"* before they were, caught before
+the commit. A wrong provider named in a privacy notice is that failure in the
+one document where it is least affordable. The sentence is true without it, and
+**naming it is the owner's one outstanding item here** — on §7's before-live
+list, because a roster that names Render, Atlas, Google, GitHub, Telegram,
+Resend and Postmark and then says "whoever hosts our mail" is honest but
+visibly unfinished.
+
+### The version pair moved, and that re-prompts everybody
+
+§41's rule is that `TERMS_VERSION` and `terms.html`'s `Last updated` line are
+**one fact in two places**, compared with `!==` so any change re-asks. Editing
+the page without the constant leaves a reader seeing 19 October while the
+server asks about 9 September.
+
+So both moved to `2026-10-19`, and **every account is re-prompted** — which
+§41's own framing says is the mechanism working rather than a cost: a change to
+the terms is meant to be announced rather than slipped in, and §53 bumped for
+one sentence about sub-processors.
+
+**The pricing commit will bump again**, and that is accepted rather than
+avoided: §77 records `terms.html` still scoping itself to *"the free beta at
+this address"*, which is pricing prose belonging to that commit. Two prompts
+for two changes is correct; batching this one into a commit that has not
+happened yet would mean a page whose own date disagrees with the server in the
+meantime. It costs nothing today because signups are closed (§76), so the only
+accounts are the operator's.
+
+`privacy.html`'s date moved on its own — that page is **not** versioned by
+`TERMS_VERSION` and deliberately does not prompt (§41), because a privacy
+notice is information rather than a contract to accept.
+
+### The guard passed on half its own mutation
+
+Worth more than the fix, and it is §9's rule catching me rather than the code.
+
+The first version asserted that each page carried **at least one** `mailto:`.
+`privacy.html` carries **two** — the rights bullet and the Contact section — so
+removing the address from the bullet left the count at one and the test
+**green**. That is §79's exact defect, surviving the guard written for it,
+because a count says nothing about which of them it counted. §50's button-count
+finding and §33's two-right-numbers finding are the same shape; this is the
+third.
+
+`CONTACT_PROMISES` names each promise and the block it lives in, and the
+address has to be reachable **from inside that block**. Two things follow:
+removing either address fails, and a page that *stops* promising fails too —
+with a message saying to delete its row, because a guard that silently covers
+nothing is the no-op-that-reports-success §17 is emphatic about.
+
+Four mutations, each failing exactly one test (§9):
+
+| Mutation | Fails |
+|---|---|
+| the rights bullet loses its address | *`/privacy` offers a contact route it can actually keep* — **and passed before the per-promise rewrite** |
+| `terms.html`'s paragraph loses its address | *`/terms` offers a contact route…* |
+| a placeholder (`you@example.com`) | *`/privacy` offers a contact route…*, on the host pattern |
+| the unqualified *"That is the complete list."* returns | *the privacy page does not claim a completeness that email breaks* |
+
+**Counts:** Node **664/664, 0 skipped** — unchanged, and that is the useful
+figure rather than a null one: it says the `TERMS_VERSION` bump broke nothing,
+which in turn says §41's tests are **version-agnostic** (they intercept
+`/api/me` rather than pinning a date, exactly as that section claims).
+Playwright **167** (164 + the three here), **166 passed**. Smoke **51 local ·
+0 warnings · 0 failed**. All three run.
+
+### The one failure, and why a terms bump is the first suspect
+
+*an owner invites, and the colleague joins* — §54's recorded intermittent at
+2-in-4. **Naming it is not enough here**, and this is the one commit where that
+matters: §41 records a terms change costing **13** failures, ten of them in
+journeys that mention terms nowhere and **four of them team-workspace ones**,
+because nothing was recorded so the modal came back and sat over a page the
+test was clicking. A `TERMS_VERSION` bump re-prompts everybody. So this is
+precisely the failure mode this commit could produce, on precisely the family
+it produced them in.
+
+**Read before re-running** (§9), and the artifact says it is not that:
+
+- **no `modal`, `backdrop`, `terms`, `agree` or `dialog` anywhere in the page
+  snapshot** — §41's signature is a `.modal-backdrop` intercepting a click, and
+  there is none;
+- the owner's Team screen shows the join **succeeded** — *"2 people"*, the
+  colleague listed with a role picker and a Remove button;
+- the hard failure, pulled out of the trace rather than the line reporter, is
+  `locator('tr:has-text("Added By Colleague")')` not found after 25s. The
+  colleague's record never synced back. That is the **sync round trip**, which
+  is what §54 records this test being about, on the **owner's** page, which is
+  what §54 records both of its own occurrences being on.
+
+**Then discriminated by measurement rather than left at that**, because the
+snapshot rules out §41's mechanism and not the whole hypothesis:
+
+| | Result |
+|---|---|
+| 4 isolation runs, bump in place | **4 pass** |
+| 4 isolation runs, `TERMS_VERSION` reverted to `2026-09-09` | **1 FAIL**, 3 pass |
+
+**It fails on the pre-bump code too**, which is §66's standard for this
+exoneration (*"it fails identically with this change stashed"*) and is stronger
+than §77 could manage. 1-in-4 reverted against 0-in-4 bumped is noise either
+side of §54's recorded 2-in-4; the claim is only that the failure exists on
+both sides, not that a rate was measured.
+
+The artifact is kept rather than discarded, because Playwright wipes
+`test-results/` at the start of every run (§30, recorded as a mistake made
+twice) and the eight runs above would have destroyed it.
+
+### Blast radius
+
+`privacy.html` and `terms.html` are in `sw.js`'s `STANDALONE_PAGES` and go
+straight to the network, never precached (§19) — **checked rather than
+assumed**, which is §41's own rule for these two files. So `CACHE_VERSION`
+stays `crmbuilder-v69`. `server.js` is not in `APP_SHELL`, so the constant
+needs no bump either. No new served file, so smoke stays **51 local / 56
+live**.
+
+`docs/API.md` needs nothing: no route, and no response shape moved —
+`termsVersion` on `/api/me` carries a different *value*, which is what that
+field is for. §46's check run rather than the route count read.
+
+**§27's walk needs nothing, and that is checked rather than skipped.** Grepped
+for the stale wording a contact route could create — *"the person who invited
+you"*, *"contact us"*, *"get in touch"* — across `README.md`, `guide.html`,
+`USER-GUIDE.md`, `manual.html`, `BETA.md` and `ONBOARDING.md`: **no hits**, and
+none of them describes the stranded last owner or pins the terms date. No other
+public page promises contact either, so by this commit's own class rule none
+needs an address, and adding one to `guide.html` would be the padding §40 and
+§41 both name as its own inaccuracy.
+
+### What this closes on §79's list, and what it does not
+
+One of the three site requirements an account verification needs. **Pricing and
+a refund/cancellation policy are still missing**, and both belong to the
+pricing commit rather than here — a refund policy published now would promise a
+refund on something nobody can buy. So **verification is still gated on the
+same commit as the price** and its 1–3 days still cannot be got out of the way
+early, which was §79's scheduling finding and is unchanged.
+
+### The dispute and refund events are ticked now
+
+§84 shipped the route for seven `dispute.*` and two `refund.*`; §7's before-live
+item 14 was the dashboard half, and it was done on 2026-10-19. The endpoint
+carries **25** events and the route handles **24** — derived from the four Sets
+rather than added up, per §73's lesson about a list written in a second place,
+and `payment.cancelled` remains the one that is ticked and deliberately
+ignored.
+
+**This closes nothing in §84.** Handling an event and *receiving* one are
+different, and the two reads that section is waiting on both need a real
+dispute body: whether it carries `metadata` after all (§84 tries it first for
+§30's reason), and **whether the provider cancels the subscription on a
+chargeback** — the unread fact the decision to surface rather than enforce a
+lost dispute rests on. Ticking the boxes is what makes either reachable; §9's
+matrix records that test mode may not be able to raise a dispute at all, which
+is the next thing to find out.

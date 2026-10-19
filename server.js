@@ -1368,7 +1368,7 @@ const store = process.env.MONGODB_URI
  * (§30) there is nothing to point it at — the E2E half fakes the version by
  * intercepting `/api/me`, which needs no override at all.
  */
-const TERMS_VERSION = '2026-09-09';
+const TERMS_VERSION = '2026-10-19';
 
 // ------------------------------------------------------------------ auth
 function publicUser(u) {

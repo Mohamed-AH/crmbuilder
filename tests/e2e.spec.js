@@ -4375,6 +4375,89 @@ test('the guide states the beta and lists all four roles', async ({ page }) => {
 });
 
 /*
+ * A page that tells you to get in touch has to carry a way to.
+ *
+ * §79 measured the defect by grepping the five public pages for a payment
+ * prerequisite and finding NO mailto: and no address of any kind — while
+ * privacy.html said "contact us at the address below" with nothing below it,
+ * and terms.html promised twice that you could ask ("ask, and we will talk",
+ * "on request: we will help you answer") with nothing to ask with. A privacy
+ * notice that sends a data subject nowhere is a defect in the document that
+ * exists for compliance, and it was wrong from the day it was written rather
+ * than made stale by a change — which is why §27's walk could never have
+ * caught it.
+ *
+ * The in-app route the Contact section used to offer was worse than absent:
+ * `/api/feedback` is `requireAuth`, so "use Report a problem in the app" is
+ * unavailable to exactly the people who need a route — somebody whose access
+ * request was declined (§20 holds their address and they have no app), or
+ * whose account is already deleted. The address is what works for them.
+ *
+ * ASSERTED PER PROMISE, and the first version of this test was not — which is
+ * recorded because it passed on half its own mutation. It asserted that the
+ * page carried at least one `mailto:`, and privacy.html carries two (the
+ * rights bullet and the Contact section), so **removing the address from the
+ * bullet left the count above zero and the test green** — the exact defect
+ * §79 found, surviving the guard written for it. §9's rule: a count says
+ * nothing about which of them it counted.
+ *
+ * So each promise names the block it lives in and the address has to be
+ * reachable from inside that block. That is also what makes it a guard on the
+ * class rather than the instance: a page that starts promising contact
+ * somewhere new gets a row here, and a page that stops promising loses one.
+ */
+const CONTACT_PROMISES = {
+  '/privacy': [
+    // §43's stranded last owner — the one case self-service genuinely cannot
+    // serve, so the people it strands are the ones with nowhere else to go.
+    { in: 'li', saying: /Ask us/i },
+    { in: 'p', saying: /anything above that you cannot do yourself/i },
+  ],
+  '/terms': [
+    // "ask, and we will talk" and the DSAR-assistance clause both promised a
+    // route this document did not have at all.
+    { in: 'p', saying: /Anything in these terms that says to ask us/i },
+  ],
+};
+
+for (const [path, promises] of Object.entries(CONTACT_PROMISES)) {
+  test(`${path} offers a contact route it can actually keep`, async ({ page }) => {
+    await page.goto(path);
+
+    for (const { in: tag, saying } of promises) {
+      const block = page.locator(tag).filter({ hasText: saying });
+      await expect(block, `${path} lost the promise ${saying} — delete its row here too`).toHaveCount(1);
+      const link = block.locator('a[href^="mailto:"]');
+      await expect(link, `${path}: "${saying}" promises contact with no address in reach`).toHaveCount(1);
+
+      // A bare `mailto:` or a placeholder renders as a perfectly ordinary
+      // link — this file's recurring shape — so the address is asserted to be
+      // one rather than merely present.
+      const href = await link.getAttribute('href');
+      expect(href, `${path} has a mailto that is not an address`).toMatch(/^mailto:[^@\s]+@[^@\s.]+\.[^@\s]+$/);
+      expect(href, `${path} points somewhere that is not ours`).not.toMatch(/example\.|localhost|\.test$/i);
+    }
+  });
+}
+
+test('the privacy page does not claim a completeness that email breaks', async ({ page }) => {
+  await page.goto('/privacy');
+  /*
+   * §40's sentence, which has been false twice — first omitting GitHub, then
+   * Telegram, both found by looking at what the deployment does rather than at
+   * what the code could do. Publishing an address creates a THIRD recipient:
+   * whoever hosts the mailbox holds whatever somebody writes to it.
+   *
+   * So the roster's claim is now scoped to what the app sends, and the mailbox
+   * is disclosed beside it. Asserting the scoping is what stops the unqualified
+   * sentence coming back underneath a published address.
+   */
+  await expect(page.locator('body')).toContainText('complete list of what the app sends');
+  await expect(page.locator('body')).not.toContainText('That is the complete list.');
+  await expect(page.locator('body')).toContainText(/hosts our mail/i);
+});
+
+/*
  * The theme choice, and the four combinations that break a half-built toggle.
  *
  * Nothing in this suite drove `colorScheme` before, so the OS-following half —

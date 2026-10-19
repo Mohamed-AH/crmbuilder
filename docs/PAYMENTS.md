@@ -1495,19 +1495,27 @@ sessions**, or **set with the price decided and the documents walked**.
    | Privacy Policy | ✅ `/privacy` |
    | **pricing** | ❌ — nothing in this repository names a price, deliberately (§71), and `/guide` asserts in a test that it shows no currency figure |
    | **refund and cancellation policy** | ❌ — the word *refund* appears in **no** legal page. §3's lever 5 is the 14-day promise and it has never been written down anywhere a customer can read it |
-   | **a contact route** | ❌ — and worse than absent: `privacy.html` says *"contact us at the address below"* and **there is no address below** |
+   | ~~**a contact route**~~ | ✅ **`contact@nimbleclerk.com`, 2026-10-19** — on `/privacy` twice and `/terms` once, each attached to the promise that needed it, and reachable without an account |
 
-   The last one is a **live defect on a legal page and it is bigger than this
+   The last one was a **live defect on a legal page and bigger than this
    list.** Measured across all five public pages — `privacy.html`, `terms.html`,
-   `guide.html`, `welcome.html`, `index.html` — there is **no `mailto:` and no
-   email address of any kind**, so *"the address below"* is a promise nothing
-   keeps. A privacy notice that tells a data subject to get in touch and gives
+   `guide.html`, `welcome.html`, `index.html` — there was **no `mailto:` and no
+   email address of any kind**, so *"the address below"* was a promise nothing
+   kept. A privacy notice that tells a data subject to get in touch and gives
    them no way to is a **compliance** defect in the document that exists for
-   compliance; the same page also offers *"Ask us"* to somebody who cannot
+   compliance; the same page also offered *"Ask us"* to somebody who cannot
    delete their own account (§15's stranded last owner), which is the one case
-   where self-service cannot work. **Which address goes on a public page is the
-   owner's decision**, which is why it is flagged rather than fixed — but it is
-   worth doing on its own merits whatever happens to payments.
+   where self-service cannot work.
+
+   **Closed, and it was three promises rather than one.** The measurement found
+   the pointer with nothing under it; walking the pages to fix it found that
+   `terms.html` promised a route **twice** — *"ask, and we will talk"* and the
+   DSAR-assistance clause's *"on request"* — in a document with no contact
+   section at all. And the route `privacy.html` *did* offer was worse than
+   absent: *"use Report a problem in the app"* is `requireAuth`, so it is
+   unavailable to a declined access request (§20 holds their address and they
+   have no app) or to somebody whose account is already gone. `CLAUDE.md` §85
+   has the rest, including the sentence this forced on §40's roster.
 
    The other two are the pricing commit's work anyway (§2.1's twelve files),
    which means **verification is gated on the same commit as the price** and
@@ -1591,8 +1599,15 @@ sessions**, or **set with the price decided and the documents walked**.
     which value arrives, so nothing is written until one does (§73: one sample
     is not a vocabulary, and this is zero).
 
-14. **Tick the seven `dispute.*` and two `refund.*` events on the webhook
-    endpoint.** The route handles them (`CLAUDE.md` §84) and **an
+14. ~~**Tick the seven `dispute.*` and two `refund.*` events on the webhook
+    endpoint.**~~ **DONE 2026-10-19** — ticked alongside the sixteen already
+    selected, so the endpoint now carries **25** and the route handles **24**
+    of them (§9 has the derivation). The rest of this item is what the ticking
+    makes answerable rather than what it closes, and it is unchanged: nothing
+    here has seen a real dispute body, so the two reads below are still open
+    and the enforcement decision in `CLAUDE.md` §84 still rests on the second.
+
+    The route handles them (`CLAUDE.md` §84) and **an
     unsubscribed event never arrives however well it would be handled** — the
     code half and the dashboard half are separate, and this one is nobody's but
     the operator's.
@@ -2191,8 +2206,18 @@ would be handled. That is §7's before-live item 14.
 
 **ONE event is now subscribed on the endpoint and not handled by the route**,
 down from three — a different and safer state than the families above, because
-these actually arrive. Sixteen are ticked on the dashboard; **fifteen** are in
-`BILLING_SUBSCRIPTION_EVENTS` plus `BILLING_PAYMENT_EVENTS`:
+these actually arrive. **Twenty-five are ticked on the dashboard** since the
+dispute and refund families were added on 2026-10-19, and **twenty-four** are
+handled across the four Sets — derived rather than added up, per §73:
+
+```sh
+for n in BILLING_SUBSCRIPTION_EVENTS BILLING_PAYMENT_EVENTS \
+         BILLING_DISPUTE_EVENTS BILLING_REFUND_EVENTS; do
+  sed -n "/const $n = new Set/,/\]);/p" server.js | grep -coE "'[a-z_.]+'"
+done            # 12 · 3 · 7 · 2
+```
+
+The one that is ticked and not handled is `payment.cancelled`:
 
 | | What it means | Where it stands |
 |---|---|---|
