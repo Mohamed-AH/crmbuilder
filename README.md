@@ -40,6 +40,8 @@ trying to do, and marks what is current versus frozen. The short version:
 |---|---|
 | **[Landing page](welcome.html)** | The front door — a splash, three beats and where to go next. Served at **`/welcome`**, and the page intended to become `/` at the domain move. |
 | **[What you can do](guide.html)** | The short version for a customer or a prospect — what the app lets you do and what it deliberately does not, in about four minutes. Served at **`/guide`**. |
+| **[Pricing](pricing.html)** | What it costs, and that early access is free. Served at **`/pricing`** — the only place a price is named, deliberately. |
+| **[Refunds and cancellation](refunds.html)** | How to cancel, what a refund covers, and what a lapsed subscription does to your data. Served at **`/refunds`**. |
 | **[User Guide](docs/USER-GUIDE.md)** | End users — every feature, in the order you need it. Also published as a [shareable web manual](docs/manual.html). |
 | **[Onboarding Playbook](docs/ONBOARDING.md)** | Whoever rolls this out to a business: session plans, data migration, week-1 check-in. |
 | **[Demo Script](docs/DEMO-SCRIPT.md)** | A timed 10-minute demo aimed at people who already use professional CRMs. Presenter-facing, deliberately imperative. |
@@ -114,8 +116,12 @@ terms.html            terms of use
 guide.html            "what you can do with it" — the short customer-facing page, served at /guide
 welcome.html          the splash / landing page, served at /welcome — CSS and figure
                       inline, no app JS. Intended to become `/` at the domain move
+pricing.html          the price, served at /pricing — and that early access is free,
+                      which is what keeps the beta framing on the other pages true
+refunds.html          cancelling and refunds, served at /refunds
 css/style.css         styles (Inter, light/dark, desktop-first)
-legal.css             standalone styling for privacy.html, terms.html and guide.html
+legal.css             standalone styling for privacy.html, terms.html, guide.html,
+                      pricing.html and refunds.html
                       (they load no app JS — js/boot-theme.js is the one exception,
                       so the appearance choice reaches them too)
 js/icons.js           inline Lucide SVG icons

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pricing — Nimble Clerk</title>
+<meta name="description" content="What Nimble Clerk costs, and what it costs today.">
+<!-- The stored appearance choice, so a reader who picked dark in the app does
+     not get a light page when they click through. NOT `defer`: deferred runs
+     after parsing, which is the flash this exists to avoid. These pages still
+     render with JavaScript off (§19) — they simply follow the OS then, which
+     is what they did before the choice existed. -->
+<script src="/js/boot-theme.js"></script>
+<link rel="stylesheet" href="/legal.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="back" href="/">← Nimble Clerk</a>
+    <h1>Pricing</h1>
+    <!-- "free during early access" is the live state, and it is also the
+         reason this page can ship before the terms are rewritten: terms.html
+         still says "There is no payment, no subscription, and no contract
+         term", which is TRUE today, and welcome.html and guide.html still
+         frame this as a free beta. This page says the same thing and adds the
+         price that will apply. Nothing anywhere on the site goes false, so
+         this needs neither the TERMS_VERSION bump nor the twelve-file walk in
+         docs/LAUNCH-CHECKLIST.md §2.1 — both of which belong to the commit
+         that actually starts charging.
+
+         The two promises in the callout are docs/PAYMENTS.md §5's wording and
+         they are load-bearing rather than copy: "free for early users" with no
+         qualifier is read as PERMANENT, which is the one thing the
+         grandfathering decision explicitly declines to promise. Notice, not
+         duration — the same sentences the app's own Subscription card uses in
+         free mode (§80), so a reader meets one claim rather than two. -->
+    <p class="updated">Last updated 20 October 2026 · free during early access</p>
+  </header>
+
+  <div class="callout">
+    <p><strong>The short version.</strong> Nimble Clerk is free while it is in
+    early access, and nothing is being charged today. When that ends it will be
+    <strong>$15 a month for a whole workspace</strong> — one price, up to five
+    people, every feature included. <strong>We will tell you before anything
+    changes</strong>, and <strong>you will not be charged without being
+    asked</strong>.</p>
+  </div>
+
+  <h2>One price for the whole workspace</h2>
+  <p>Not per person. A workspace is the shared CRM your team works in, so it
+  costs the same whether one of you is using it or five.</p>
+
+  <div class="table-wrap">
+    <table>
+      <tbody>
+        <tr><td>Monthly</td><td><strong>$15</strong> per workspace, per month</td></tr>
+        <tr><td>Yearly</td><td><strong>$150</strong> per workspace, per year — two months free</td></tr>
+        <tr><td>People</td><td>up to <strong>5</strong> on one workspace</td></tr>
+        <tr><td>Anything else</td><td>nothing — no setup fee, no charge per record, no paid add-ons</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- The currency cost is accepted rather than hidden: docs/PAYMENTS.md §5
+       reversed its own "GBP primary" decision to $15 on instruction, and §3's
+       lever 2 is that a foreign-currency line on a card statement is itself a
+       dispute trigger. Naming it here is the cheap half of that mitigation.
+       It deliberately claims no mechanism — the provider's own conversion fee
+       is documented but has never been seen on one of our charges (§79), and a
+       page is the last place to state an unverified figure as a fact (§38). -->
+  <p>Prices are in <strong>US dollars</strong>. If your card is in another
+  currency you will be charged the equivalent, so the amount on your statement
+  may be a little different from the figure above, and will move with the
+  exchange rate.</p>
+
+  <h2>What you get for it</h2>
+  <p>All of it. There is one plan rather than a ladder of them, so nothing is
+  held back for a higher tier and there is nothing to upgrade to:</p>
+  <ul>
+    <li>Every kind of module, and as many modules, fields and records as you
+    want.</li>
+    <li>Sync between all of your own devices, and one shared workspace for the
+    team.</li>
+    <li>The whole app offline — it works with no connection and catches up
+    afterwards.</li>
+    <li>Export of everything, as JSON or CSV, whenever you like and without
+    asking us.</li>
+  </ul>
+  <!-- §47's rule for guide.html, applied to the page where it matters most:
+       state the limit in the same breath as the capability. A prospect who
+       reads four confident paragraphs and discovers the gaps afterwards is the
+       failure that rule exists to prevent, and a price makes it expensive. -->
+  <p>What it does <em>not</em> do yet is worth reading before you pay for it.
+  It is written out plainly on <a href="/guide">what you can do</a> — every
+  thing the app is good at, with its limit in the same sentence.</p>
+
+  <h2>While it is in early access</h2>
+  <p>There is nothing to pay and no card to enter. You can use the whole
+  product, invite your team, and export all of it, without ever being shown a
+  price.</p>
+  <p>When we do start charging, anyone already using Nimble Clerk will be told
+  first, and will keep using it free for a while afterwards rather than being
+  charged on the day. We are not promising a date, and we are not promising a
+  permanent free plan. What we are promising is that you will hear it from us
+  before it affects you, and that nothing will be taken from a card you have
+  not handed over.</p>
+
+  <h2>Cancelling, and getting your money back</h2>
+  <p>Cancelling takes two clicks in Settings, and it never deletes anything. A
+  payment can be refunded in full within 14 days of being taken. The detail is
+  on <a href="/refunds">refunds and cancellation</a>.</p>
+
+  <h2>Questions</h2>
+  <p>Anything this page does not answer — including whether it would work for
+  how you actually operate — <a href="mailto:contact@nimbleclerk.com">contact@nimbleclerk.com</a>.
+  You do not need an account to ask.</p>
+
+  <footer>
+    <a href="/">Back to Nimble Clerk</a> · <a href="/refunds">Refunds</a> ·
+    <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a>
+  </footer>
+</div>
+</body>
+</html>

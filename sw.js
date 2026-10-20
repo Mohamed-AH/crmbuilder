@@ -83,8 +83,27 @@ self.addEventListener('fetch', (event) => {
    * and opening the manual really did render the CRM. Anything served that is
    * not the app belongs here, which is why the entries are listed beside the
    * server's own PUBLIC_ROOT_FILES / PUBLIC_DOCS rather than added ad hoc.
+   *
+   * A NAVIGATION NO LONGER DEPENDS ON THIS LIST, and that was measured rather
+   * than reasoned: removing /pricing and /refunds from it fails no test at
+   * all, because §63's path gate below (`if (url.pathname !== '/app') return`)
+   * already returns early for every navigation that is not the app. Same shape
+   * as §61's Content-Length and §83's doubled mode check — two guards where
+   * neither half alone is load-bearing, so a reader who mutates one concludes
+   * it is dead code.
+   *
+   * What the entries still do is the NON-navigation case: a `fetch()` or a
+   * prefetch of one of these paths would otherwise fall through to the
+   * cache-first branch at the foot of this file and be kept, which is exactly
+   * how legal.css shipped stale for a whole cache version. Nothing fetches
+   * these pages as subresources today, so there is no reachable failure and
+   * therefore no test — the same status as §30's UNSAFE_KEYS and §52's
+   * redactKey, and worth saying rather than implying. The useful consequence
+   * of the path gate is that a page added here needs NO CACHE_VERSION bump to
+   * be safe from a worker that predates it (§58 bumped for welcome.html before
+   * the gate existed, when it did).
    */
-  const STANDALONE_PAGES = ['/', '/privacy', '/terms', '/guide', '/welcome', '/docs/manual', '/docs/product-tour'];
+  const STANDALONE_PAGES = ['/', '/privacy', '/terms', '/guide', '/welcome', '/pricing', '/refunds', '/docs/manual', '/docs/product-tour'];
   /*
    * …and the files those pages load. The early return below matches a
    * NAVIGATION, so a subresource never reached it: /legal.css fell through to

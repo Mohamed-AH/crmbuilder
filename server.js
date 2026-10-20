@@ -282,6 +282,13 @@ function readOnlyState(org, billingHeld = false) {
      * It says sync rather than "your data", because nothing is deleted and
      * local use continues — the §5/§36 promise, and the sentence a customer
      * will quote back if it is wrong.
+     *
+     * THE SAME THREE FACTS ARE PUBLISHED ON /refunds, which carries the
+     * matching note: cloud sync pauses, nothing is deleted, local use and
+     * export continue. One fact in two places, like TERMS_VERSION and the date
+     * on /terms (§41), so they move together — and the published half is the
+     * one a customer reads before they pay, which makes a disagreement a
+     * promise broken rather than a wording drift.
      */
     return {
       kind: 'billing',
@@ -7485,6 +7492,14 @@ const PUBLIC_ROOT_FILES = [
   // deal now. It carries its own CSS inline and must stay in sw.js's
   // STANDALONE_PAGES, or the worker answers it with the app (§19, §47).
   'welcome.html',
+  // pricing.html and refunds.html are the two pages the payment provider's own
+  // verification requires a live site to show, beside the terms and privacy
+  // pages it already had (docs/PAYMENTS.md §7 item 2, found by §79 while
+  // grepping for a payment prerequisite). Root rather than docs/ so the alias
+  // below gives them /pricing and /refunds — URLs worth putting on something,
+  // and the ones a checkout page links back to. Both must stay in sw.js's
+  // STANDALONE_PAGES, or the worker answers them with the app (§19, §47).
+  'pricing.html', 'refunds.html',
   'legal.css', 'manifest.webmanifest', 'sw.js',
 ];
 

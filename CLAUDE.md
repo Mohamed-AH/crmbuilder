@@ -272,6 +272,13 @@ never change, because everything cross-references them.
 | **A terms bump that re-prompts everybody, twice, on purpose** | §85 · §41 · §53 · §77 |
 | Why `Report a problem` is the wrong route for a rights request | §85 · §18 · §15 |
 | **The dispute and refund events are ticked** — 25 carried, 24 handled | §85 · §84 · §73 |
+| **A price on a page** — `/pricing`, `/refunds`, and nothing charged | §86 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 · §80 |
+| **Naming a price is not charging one**, and the verification it unblocked | §86 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7 |
+| Three sentences a pricing page must NOT contain, and why each | §86 · §82 · §38 |
+| A refund that covers a renewal, because that is the dispute | §86 · §79 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §3 |
+| **A mutation that fails nothing because an earlier commit closed the class** | §86 · §63 · §61 · §83 |
+| A regex that could not cross a line break in the prose it asserted on | §86 · §4 · §9 |
+| The landing page was missing from the guard built for a landing-page defect | §86 · §48 |
 | Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
@@ -316,8 +323,12 @@ privacy.html          privacy policy | terms.html  terms of use  (see §19)
 guide.html            the short "what you can do" page, at /guide (§47)
 welcome.html          the splash / landing page, at /welcome — CSS and figure
                       INLINE, no app JS, and the page meant to become / (§58)
-legal.css             styling for privacy/terms/guide — no app JS, but they DO
-                      load js/boot-theme.js, which is the one exception (§60)
+pricing.html          the price, at /pricing — and that early access is free,
+                      which is what keeps the beta pages true (§86)
+refunds.html          cancelling and refunds, at /refunds (§86) — the data
+                      answer here is readOnlyState()'s, in two places (§41)
+legal.css             styling for privacy/terms/guide/pricing/refunds — no app
+                      JS, but they DO load js/boot-theme.js, the one exception (§60)
 css/style.css         Inter + blue/slate palette, light/dark, desktop-first
 js/icons.js           inline Lucide SVGs (generated — see §6)
 js/boot-icons.js      fills static icon placeholders — a file, not inline (§30 CSP)
@@ -345,19 +356,29 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**664 Node tests pass, and Playwright is 167** — both **observed** after §85's
-three Playwright tests: Node **664/664, 0 skipped** and Playwright **166 of
-167 in 8.8m**, the one failure being §54's intermittent, which §85 discriminated
-against its own `TERMS_VERSION` bump rather than reading the name and moving on.
-Smoke is **51 local · 0 warnings · 0 failed**, also run. (§84's figures were 664
-and 164/164; §83's were 656 and 163-of-164; §81's were 648 and 164; §80's were
-641 and 163; §78's were 638 and 161.)
+**Playwright is 176 and Node is 664** — Playwright **observed** after §86's two
+pages: **176 of 176 in 6.8m**, clean. Smoke is **51 local · 0 warnings · 0
+failed**, also run. (§85's figures were 664 and 166-of-167; §84's 664 and
+164/164; §83's 656 and 163-of-164; §81's 648 and 164; §80's 641 and 163;
+§78's 638 and 161.)
 
-**Node unchanged is the informative figure here**, not a null one: §85 bumped
-`TERMS_VERSION`, and 664/664 is what says §41's tests are version-agnostic
-rather than pinning a date. **A delta is still the thing to check** rather than
-the total — 656 → 664 across §84 says none was lost, where a figure that merely
-*looks* plausible would not. §74 records what carrying one forward costs.
+**Node's 664 is CARRIED, not observed, and that is the distinction §73 got
+wrong.** §86 touched no server behaviour — one allow-list entry and two
+comments — so nothing a Node test can see moved, and the suite was deliberately
+not re-run. That is a different claim from §85's, where 664 was *measured* and
+the fact that it had not moved was the informative part. A carried figure and
+an observed one read identically in a status section unless the difference is
+written down, which is §29's thesis and §73's own mistake: it reprinted §72's
+measured 616 while saying in the next sentence that it had not run the suite,
+and the real figure was 618.
+
+**A delta is still the thing to check** rather than the total — 656 → 664
+across §84 says none was lost, where a figure that merely *looks* plausible
+would not. **Playwright's 167 → 176 is accounted for exactly** (§86: 2 new
+tests, +2 standalone, +3 link guard, +2 contact route, and **0** from the
+dark-mode loop, whose page array is inside one test), and it is accounted for
+because the figure came from `playwright test --list` rather than from adding
+up what was written.
 
 **A clean Playwright run retires none of the three intermittents**, and the
 reason is the same non-result §71 and §77 both record: none of them fired. That
@@ -465,16 +486,34 @@ here, and its trailing slash is what turned §46's wait loop into a no-op.
 - **Receiving a payment, and managing the subscription afterwards** — a signed
   inbound webhook (§69, §70), a hosted checkout link gated so a workspace
   cannot buy a second subscription, and a link to the provider's own portal for
-  cancel, pause, card and invoices (§74). **Nothing is on sale and nothing is
-  enforced**: there is no price (§64), and no code reads the subscription state
-  to decide what a workspace may do.
+  cancel, pause, card and invoices (§74). Disputes and refunds are recorded,
+  and a lost dispute is **surfaced rather than enforced** (§84). Enforcement
+  exists — a workspace past its grace window with no live subscription is held
+  read-only, derived per request rather than scheduled (§83) — and **so does a
+  seat cap of 5, which is the one piece of this that is live today** (§81).
+  **Nothing is on sale**: `billingMode` is `free` on every deployment, which
+  gates the checkout link and the hold alike (§78, §80).
+
+  **There IS a price now** — `$15`/month per workspace, `$150`/year
+  ([`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5) — and it is **published** on
+  `/pricing` beside the cancellation and refund policy on `/refunds` (§86).
+  That is the one claim worth keeping straight: the price is named and nobody
+  is charged, which is why none of §2.1's twelve files has moved. §64's *"there
+  is no price"* is retired.
 - Docs: see `docs/README.md` — the map, and which are frozen
 
 ### Not built yet
 - Email sending, third-party integrations.
-- **Enforcing a subscription** — §74 records the state, and nothing acts on it.
-  Blocked on a price before it is blocked on code (§64,
-  [`docs/SUBSCRIPTION-UX.md`](docs/SUBSCRIPTION-UX.md) Phase 2).
+- ~~**Enforcing a subscription** — §74 records the state, and nothing acts on
+  it. Blocked on a price before it is blocked on code.~~ **Stale since §83,
+  and doubly so since §86** — enforcement is built (§83: the sync seam holds a
+  workspace past its grace window, derived per request) and the price exists
+  and is published. What is left is **flipping `billingMode` to `paid`**, which
+  is a commit rather than a feature: §2.1's twelve files,
+  `TERMS_VERSION`, §2.4's remaining decisions and §27's owed walk. Left struck
+  through rather than deleted because this is §27's drift landing in §2's own
+  status list — the section that exists to say what is true — and it survived
+  three sections that each had reason to look at it.
 - **Per-module permissions** — everyone on a team sees every module. Roles
   govern what you may *do* (§14), not which modules you can see. Considered and
   set aside: it needs per-module filtering in sync, or a member receives rows
@@ -2100,6 +2139,17 @@ what this file is for. The others are written once and quietly rot:
 walked through `README.md`, `guide.html`, `USER-GUIDE.md`, `manual.html`,
 `product-tour.html`, `ONBOARDING.md`, `DEMO-SCRIPT.md` and `BETA.md`'s tester
 note.
+
+**`pricing.html` and `refunds.html` are on the list too, added with §86**, and
+`pricing.html` is the one entry whose staleness is not about a feature: it
+names a figure that also lives in the payment provider's own product, and
+**the provider's copy is the one a customer is actually charged.** §71 kept the
+price out of this repository entirely to avoid that duplication, which was
+right while there was nowhere a customer could read it and is no longer
+possible — a pricing page has to state a price. So the rule is narrower than
+the walk: **change the product and the page in the same sitting**, because the
+failure is not a stale document, it is a published figure that disagrees with
+the charge.
 
 **The criterion is *read directly by an outsider*, not *served*.** `README.md`
 is on the list and 404s in production — it is the repository's front page and
@@ -14014,3 +14064,249 @@ chargeback** — the unread fact the decision to surface rather than enforce a
 lost dispute rests on. Ticking the boxes is what makes either reachable; §9's
 matrix records that test mode may not be able to raise a dispute at all, which
 is the next thing to find out.
+
+
+---
+
+## 86. A price on a page, and the gate it turned out not to be behind
+
+The first commit of the pricing work, and it is two pages: **`/pricing`** and
+**`/refunds`**. Nothing charges, `billingMode` is still `free` on every
+deployment (§78, §80), and **not one word of
+[`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1's twelve files
+changed.**
+
+### The finding: naming a price is not charging one, and that is a schedule
+
+§79 measured three site requirements the payment provider's account
+verification needs and found two missing — a page showing pricing, and a refund
+and cancellation policy. [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7 item 2 then
+concluded that both *"are the pricing commit's work anyway (§2.1's twelve
+files), which means **verification is gated on the same commit as the
+price**"*, so its 1–3 days could not be got out of the way early.
+
+**That was wrong, and the two pages shipping without any of the twelve is the
+proof.** What it conflated was *naming* a price with *charging* one. §2.1 fires
+on the second: the twelve files say the service is free and that there is no
+payment, and **all of that is still true**, because `/pricing` states the price
+*and* that early access is free. `terms.html`'s *"There is no payment, no
+subscription, and no contract term"* stands, `welcome.html`'s beta box stands,
+`guide.html`'s opening callout stands. A reader meets one coherent claim rather
+than two.
+
+So nothing here needs the `TERMS_VERSION` bump (§41) or §27's walk — and
+**verification, the longest-running item on that list, can now run in parallel
+with the biggest one** instead of behind it. That is the whole value of having
+been wrong about it.
+
+### The two promises are §80's sentences, and the three absences are the substance
+
+`/pricing` carries [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5's wording
+verbatim — *we will tell you before anything changes*, *you will not be charged
+without being asked* — because §80 established that **"free for early users"
+with no qualifier is read as PERMANENT**, which is the one thing §2.4's
+grandfathering decision explicitly declines to promise. Notice, not duration.
+Those are the same sentences the app's own Subscription card uses in free mode,
+so the page and the product make one claim; §80 pinned the card and nothing
+pinned the page, which is the half a prospect reads first.
+
+**What the page does NOT say is where the work went.** Each is a sentence it
+would be natural to add and that cannot currently be kept:
+
+| Not said | Why |
+|---|---|
+| *free for ever* / *always free* | §2.4 decided there is **no permanent free tier**. The shorter wording makes the one promise the decision refuses |
+| the **7-day trial** | decided, and it is a field on the provider's product rather than code — but §82 could not verify that a **static** payment link honours it, and that read is still open (§7 item 13). If it does not, the trial needs a Checkout Session, which reverses §72's measured *"one signing secret"* credential surface. §38's rule: a page is the last place to state an intention as a fact, and this one would be quoted back at the checkout that broke it |
+| a **pre-renewal notice** | §3's lever 3, and it is **not built**. What stands in for it is `/refunds` covering a renewal explicitly |
+
+All three are asserted as `not.toContainText`, so adding any of them is a
+decision rather than a line that slips in — §80's own technique, where the bad
+phrasing is named in the guard.
+
+### The refund covers a renewal, and that is the deliberate half
+
+§3's lever 5 is a 14-day refund, and the obvious wording — *your first
+payment* — excludes precisely the dangerous case: **a renewal somebody had
+forgotten**, which leaves a chargeback as their only route. §79 found Visa RDR
+enabled by default at a $100 threshold, which auto-refunds and **auto-loses**,
+so at $15 a disputed charge *cannot be contested at all*. There is no appeal
+stage to be good at, so the only lever left is making sure nobody needs one.
+The policy therefore covers **any payment, including a renewal**, and says so
+in those words.
+
+Lever 4's two-click cancel names the real controls — the card is headed
+**Subscription** and the button reads **Manage subscription** (§74) — checked
+against `js/app.js` rather than written from memory, which is §53's lesson
+about naming UI that does not exist.
+
+### One fact in two places, noted at both ends
+
+`/refunds`' data section publishes the same three facts `readOnlyState()` tells
+a held workspace: **cloud sync pauses, nothing is deleted, local use and export
+continue** (§24 stage B for the behaviour, §36 for export surviving every
+role). That is the `TERMS_VERSION` shape (§41), so both ends carry a note
+saying the other exists — and the published half is read *before* anybody pays,
+which makes a disagreement a **broken promise** rather than a wording drift.
+
+Asserted as the three **facts** rather than as the sentence: pinning
+`server.js`'s exact string would make a wording improvement in the app fail a
+test about a web page.
+
+**This commit creates a SECOND unavoidable duplication, and it is handled
+differently because the failure is worse.** §71 kept the price out of this
+repository entirely — *"nothing in this repository names a price"* — which
+avoided §29's drift by having only one copy, in the provider's product. A
+pricing page cannot do that: it has to state a figure. So the price now lives
+in two places, and unlike the three data facts **the provider's copy is the one
+a customer is actually charged** — so a disagreement is not a stale document,
+it is a published figure that does not match the debit. The rule is therefore
+tighter than §27's walk: change the product and the page in the same sitting.
+Written into §27's list rather than only here, because the walk is what gets
+read.
+
+### The currency cost is named rather than hidden
+
+[`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5 reversed its own *"GBP primary"*
+decision to `$15` on instruction, and §3's lever 2 is that **a
+foreign-currency line on a card statement is itself a dispute trigger**. So the
+page says prices are in US dollars and that a non-USD card will see a
+converted figure that moves with the rate. It deliberately claims **no
+mechanism**: the provider's own conversion fee is documented (§79) and has
+never been seen on one of our charges, and §38's rule applies.
+
+The **statement descriptor** — lever 2's other half, and still an open support
+question (§8) — is not mentioned, because nothing is charged yet so there is no
+statement line to recognise. It belongs in the before-live list, not here.
+
+### No infrastructure on either page, on instruction
+
+Neither page names a host, a provider, a sub-processor or a mailbox. The
+payment provider is disclosed on `privacy.html` as a recipient of personal data
+**when the first real payment runs** (§2.3, and §52's condition with §41's
+precedent), which is a different question from who the customer buys from.
+`privacy.html`'s roster is untouched.
+
+### A mutation that fails nothing, and §63's path gate is why
+
+Both pages went into `sw.js`'s `STANDALONE_PAGES` per that list's own rule —
+*anything served that is not the app belongs here*. **Removing them again
+fails no test at all**, measured rather than reasoned.
+
+§63 replaced the navigation branch's list check with a **path gate**
+(`if (url.pathname !== '/app') return`), so every navigation that is not the
+app already returns early. The list is no longer what protects a navigation.
+Same shape as §61's `Content-Length` and §83's doubled mode check: two guards
+where neither half alone is load-bearing, so a reader who mutates one concludes
+it is dead code.
+
+What the entries still do is the **non-navigation** case — a `fetch()` or a
+prefetch would otherwise fall through to the cache-first branch and be kept,
+which is exactly how `legal.css` shipped stale for a whole cache version (§47).
+Nothing fetches these pages as subresources, so there is no reachable failure
+and therefore **no test**, which is the status of §30's `UNSAFE_KEYS` and §52's
+`redactKey` and is worth saying rather than implying.
+
+**And it settles the `CACHE_VERSION` question from the other direction:** a
+worker that predates these pages cannot answer them with the shell, because it
+already has the gate. §58 bumped for `welcome.html` and had to, before the gate
+existed. **No bump here** — measured, not assumed (§41's rule).
+
+### A test that failed on whitespace, against a page that was right
+
+The first run of the pricing guard failed on
+`toContainText(/tell you before anything changes/i)` — and the artifact showed
+the sentence present. The source **wraps** that phrase across lines, so the
+element's text carries a newline a regex with a plain space cannot cross. A
+failure with nothing to do with the claim being asserted, which is §4's
+async-render trap in a different instrument: read the artifact first (§9), not
+the second run. `\s+` now, which also survives re-wrapping the paragraph —
+and prose gets re-wrapped.
+
+### `/welcome` was missing from the link guard
+
+§48 built that guard after `docs/product-tour.html` shipped a *"Read the
+manual"* button pointing at a build-artifact URL, and its list was
+`/guide`, the two doc pages, `/privacy`, `/terms`. **Not the landing page** —
+the one page a stranger meets first, carrying **15 anchors across 8 distinct
+paths** — counted rather than estimated, because a figure in a note is a figure
+somebody later quotes. Found while
+adding the two new pages, both of which link out to each other and to the legal
+pages. Named rather than quietly closed, because the gap is the interesting
+part: the guard was built from the page the defect was *found* on.
+
+### Verified
+
+Eight mutations. Seven fail the test that names them; the eighth is the
+path-gate finding above.
+
+| Mutation | Fails |
+|---|---|
+| the notice promise dropped from the callout | *the pricing page promises notice rather than duration…* |
+| *always free* in place of *free while in early access* | the same test, on the permanence assertion |
+| a *7-day free trial* sentence added | the same test, on the trial assertion |
+| *Nothing is deleted* removed | *the refund page states what a lapsed subscription does to your data* |
+| *we will email you before each renewal* added | the same test, on the notice assertion |
+| the refund route's address removed | */refunds offers a contact route it can actually keep* |
+| `pricing.html` / `refunds.html` out of `PUBLIC_ROOT_FILES` | **6 E2E tests**, and smoke's *the shareable pages are reachable* — which reports **"served something else"** rather than a 404, because the catch-all answers with the landing page. §28's content-not-status rule doing exactly its job |
+| both pages out of `STANDALONE_PAGES` | **nothing** — see above |
+
+Each content mutation fails **only** its own test, which is what says the two
+new tests cover different things rather than one twice.
+
+**Measured rather than judged**, driving all three touched pages at
+1440×900 / 390×844 / 320×568 in both colour schemes: **no horizontal page
+overflow at any width**, the pricing table never exceeds its `.table-wrap` (so
+it never needs to scroll, the same result §47 measured for the roles table),
+`welcome.html`'s topbar stays **48px** with a fourth nav link — §58's finding
+was a page head going 39px → 130px when something wrapped — and both pages
+theme correctly in light and dark, which the three-branch pattern (§60) gives
+and the dark-mode loop now asserts.
+
+No new CSS and no new class: both pages are built entirely from what
+`legal.css` already defines, checked by listing its selectors rather than
+assuming — §27's invented-class trap has now cost time five times, and
+`.table-wrap` / `table` exist only because §47 added them for `/guide`'s role
+ladder.
+
+**Counts:** smoke **51 local · 0 warnings · 0 failed** — *unchanged, and the
+check reports `6 pages` where it said 4*, because the reachability check is a
+loop and both new pages went into it. An unchanged count beside added coverage
+reads as a mistake later unless it is written down (§46, §58).
+
+Playwright **167 → 176**, run: **176 of 176 in 6.8m, clean.** The total is
+**counted rather than derived** (`playwright test --list`), which is the only
+reason it can be accounted for exactly: **2** new tests, **+2** in the
+standalone-pages loop, **+3** in the link guard (`/welcome` as well as the two
+new pages), **+2** in `CONTACT_PROMISES`. The dark-mode loop adds **none** —
+its page array is inside a single test, which is the sort of thing a derivation
+gets wrong in the plausible direction. §73 and §74 both record what carrying a
+figure forward costs; this one was listed.
+
+**A full run was warranted rather than habitual**: §9 names adding a served
+file as blast radius, because production 404s unless four places agree. And the
+clean run **retires none of the three intermittents** (§2, §77) — none of them
+fired, which is the standing non-result rather than evidence.
+
+Node **664**, untouched and not re-run: no server behaviour moved — one
+allow-list entry and two comments — so there is nothing a Node test could see.
+Said plainly rather than implied, because an unchanged count and an unrun suite
+look identical in a commit message (§9).
+
+### Blast radius
+
+`pricing.html` and `refunds.html` are new served files, so §3's four places had
+to agree: `PUBLIC_ROOT_FILES` in `server.js` (the extensionless alias is
+generated, so `/pricing` and `/refunds` come free), `STANDALONE_PAGES` in
+`sw.js`, `tests/smoke.mjs`, and `CACHE_VERSION` — which **does not move**, for
+the measured reason above. Both are deliberately **absent** from `index.html`
+and `APP_SHELL`: they are not part of the app, the same call §47 made for
+`js/manual-toc.js` and §58 for `welcome.html`.
+
+`docs/API.md` needs nothing: no route and no response shape moved, and it does
+not list public pages — §46's check run rather than the route count read.
+
+**§27's six user-facing documents need nothing from this commit, and the
+condition is the same one §81, §83 and §84 carried: nothing can be bought.**
+No capability moved. The walk still owes **two** items — §81's seat cap, live
+since it shipped, and §83's enforcement, built and not live — and it fires with
+the commit that flips `billingMode` to `paid`.

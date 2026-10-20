@@ -1493,8 +1493,8 @@ sessions**, or **set with the price decided and the documents walked**.
    |---|---|
    | Terms of Service | ✅ `/terms` |
    | Privacy Policy | ✅ `/privacy` |
-   | **pricing** | ❌ — nothing in this repository names a price, deliberately (§71), and `/guide` asserts in a test that it shows no currency figure |
-   | **refund and cancellation policy** | ❌ — the word *refund* appears in **no** legal page. §3's lever 5 is the 14-day promise and it has never been written down anywhere a customer can read it |
+   | ~~**pricing**~~ | ✅ **`/pricing`, 2026-10-20** — the price, the seat cap, the currency, and the early-access state. `/guide`'s no-currency assertion is untouched and still correct: that page is about capability, and the price lives in exactly one place (§71's rule, with the place now existing) |
+   | ~~**refund and cancellation policy**~~ | ✅ **`/refunds`, 2026-10-20** — §3's levers 4 and 5 written down at last: a two-click cancel naming the real control, and a 14-day refund that **covers a renewal explicitly**, because the renewal somebody forgot is the dispute this exists to prevent |
    | ~~**a contact route**~~ | ✅ **`contact@nimbleclerk.com`, 2026-10-19** — on `/privacy` twice and `/terms` once, each attached to the promise that needed it, and reachable without an account |
 
    The last one was a **live defect on a legal page and bigger than this
@@ -1525,9 +1525,24 @@ sessions**, or **set with the price decided and the documents walked**.
    §85 had deferred this to *"§7's before-live list"* and **no such item was
    ever written** — the pointer read as having filed the task.
 
-   The other two are the pricing commit's work anyway (§2.1's twelve files),
-   which means **verification is gated on the same commit as the price** and
-   cannot be started early to get the 1–3 days out of the way.
+   **All five rows are now ticked, and verification is NO LONGER gated on the
+   pricing commit — which reverses what this item said.** The claim was that
+   the two missing pages *"are the pricing commit's work anyway (§2.1's twelve
+   files), which means verification is gated on the same commit as the price"*,
+   so the 1–3 days could not be got out of the way early. That turned out to be
+   wrong, and the reason is worth keeping: **the two pages are shippable
+   without changing a word of the twelve.** `/pricing` states the price *and*
+   the early-access state, so `terms.html`'s "There is no payment, no
+   subscription, and no contract term" stays true, `welcome.html`'s beta box
+   stays true, and `guide.html`'s *"this is a free beta"* stays true. Nothing
+   goes false, so neither the `TERMS_VERSION` bump nor §27's walk is pulled in.
+
+   What was conflated was *naming a price* with *charging one*. §2.1's list
+   fires on the second. `CLAUDE.md` §86 has the commit.
+
+   **So the 1–3 days can start now**, which is the whole value of having been
+   wrong about this: verification is the longest-running item on this list and
+   it no longer sits behind the biggest one.
 3. **One CA session** — §4's five questions, with question 1 now live because
    the account is an individual one. Get the intermediary point in writing.
 4. **File the LUT** for the current financial year if it is not filed.

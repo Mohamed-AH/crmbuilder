@@ -453,8 +453,13 @@ footer { background: var(--paper-sunk); padding: 26px 0 40px; }
       </svg>
       Nimble Clerk
     </a>
+    <!-- This nav is `display: none` at max-width 900px, so the FOOTER link is what
+         carries pricing on a phone. The payment provider's verification wants
+         a live site that shows pricing, and a page nothing links to is
+         reachable rather than shown — so it needs to be in both. -->
     <nav>
       <a href="/guide">What you can do</a>
+      <a href="/pricing">Pricing</a>
       <a href="/docs/product-tour.html">Tour</a>
       <a href="/docs/manual.html">Manual</a>
     </nav>
@@ -673,6 +678,7 @@ footer { background: var(--paper-sunk); padding: 26px 0 40px; }
     <span>Nimble Clerk &mdash; a modular CRM for small businesses.</span>
     <nav>
       <a href="/app">Open the app</a>
+      <a href="/pricing">Pricing</a>
       <a href="/privacy">Privacy</a>
       <a href="/terms">Terms</a>
     </nav>

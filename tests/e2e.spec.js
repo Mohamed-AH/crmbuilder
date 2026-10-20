@@ -4210,6 +4210,8 @@ test.describe('pages that are not the app', () => {
   for (const [path, title] of [
     ['/welcome', 'CRM shaped like'],
     ['/guide', 'What you can do'],
+    ['/pricing', 'Pricing'],
+    ['/refunds', 'Refunds and cancellation'],
     ['/docs/manual.html', 'Nimble Clerk Manual'],
     ['/docs/product-tour.html', 'Build Your Own CRM'],
   ]) {
@@ -4319,7 +4321,12 @@ test.describe('pages that are not the app', () => {
    * resolves. A dead link is this file's recurring failure shape — it looks
    * exactly like a live one until somebody presses it.
    */
-  for (const path of ['/guide', '/docs/manual.html', '/docs/product-tour.html', '/privacy', '/terms']) {
+  // `/welcome` was missing from this list, which is the gap worth naming
+  // rather than quietly closing: it is the LANDING page, so it is the one
+  // whose dead link a stranger meets first, and it carries 15 anchors across
+  // 8 distinct paths — counted, not estimated. Found while adding /pricing and
+  // /refunds, both of which link out to each other and to the legal pages.
+  for (const path of ['/welcome', '/guide', '/pricing', '/refunds', '/docs/manual.html', '/docs/product-tour.html', '/privacy', '/terms']) {
     test(`${path} links nowhere embarrassing, and nowhere broken`, async ({ page }) => {
       await page.goto(path);
       const hrefs = await page.evaluate(() =>
@@ -4418,6 +4425,17 @@ const CONTACT_PROMISES = {
     // route this document did not have at all.
     { in: 'p', saying: /Anything in these terms that says to ask us/i },
   ],
+  // A pricing page with no way to ask a question is a gap on the page where
+  // somebody is deciding whether to pay, and the refund promise is the one
+  // that is WORTHLESS without a route — it is the only thing on /refunds that
+  // cannot be done from inside the app, so an address out of reach there turns
+  // a chargeback control (docs/PAYMENTS.md §3 lever 5) back into a chargeback.
+  '/pricing': [
+    { in: 'p', saying: /Anything this page does not answer/i },
+  ],
+  '/refunds': [
+    { in: 'p', saying: /To ask for one/i },
+  ],
 };
 
 for (const [path, promises] of Object.entries(CONTACT_PROMISES)) {
@@ -4475,6 +4493,95 @@ test('the privacy page does not claim a completeness that email breaks', async (
   await expect(mailRoute, 'the privacy page stopped disclosing the mail route').toHaveCount(1);
   await expect(mailRoute).toContainText(/ImprovMX/i);
   await expect(mailRoute, 'ImprovMX forwards rather than holds — name both hops').toContainText(/forward/i);
+});
+
+/*
+ * The pricing page's two promises, and the three things it must NOT say.
+ *
+ * The promises are docs/PAYMENTS.md §5's wording and they are the same
+ * sentences the app's Subscription card uses in free mode (§80) — one claim in
+ * two places, so a reader who sees both meets one answer. §80 pins the card;
+ * nothing pinned the page, and the page is the half a prospect reads first.
+ *
+ * The absences are the substance. Each is a sentence it would be natural to
+ * add and that we cannot currently keep:
+ *
+ *  - "free for ever" / "always free". §2.4's decision is explicitly NO
+ *    permanent free tier, and §80 records that the unqualified phrasing is
+ *    read as permanent — which is why the copy promises NOTICE rather than
+ *    duration. The one promise the decision declines to make is the one the
+ *    shorter wording accidentally makes.
+ *  - the 7-day trial. Decided, and it is a field on the provider's own product
+ *    rather than code — but §82 could not verify that a STATIC payment link
+ *    honours it, and that read is still open (§7 item 13). If it does not,
+ *    the trial needs a Checkout Session, which reverses §72's measured "one
+ *    signing secret" credential surface. A page is the last place to state an
+ *    intention as a fact (§38), and this one would be quoted back at the
+ *    checkout that broke it.
+ *  - a pre-renewal notice. §3's lever 3, and it is NOT built. The refund
+ *    covering a renewal explicitly is what stands in for it on /refunds.
+ */
+test('the pricing page promises notice rather than duration, and no trial it cannot deliver', async ({ page }) => {
+  await page.goto('/pricing');
+
+  const short = page.locator('.callout').filter({ hasText: /The short version/i });
+  await expect(short).toHaveCount(1);
+  // `\s+` rather than a literal space, and it is not defensive tidiness: the
+  // source wraps both phrases across lines, so the element's text carries a
+  // newline and a regex with a plain space cannot cross it. The first run
+  // failed on exactly that, against a page whose snapshot showed the sentence
+  // present — a failure that has nothing to do with the claim being asserted
+  // (§4's async-render trap, in a different instrument). This form also
+  // survives re-wrapping the paragraph, which prose gets.
+  await expect(short, 'the notice promise is §80 wording, not decoration').toContainText(/tell\s+you\s+before\s+anything\s+changes/i);
+  await expect(short, 'the consent promise is the other half of it').toContainText(/not\s+be\s+charged\s+without\s+being\s+asked/i);
+
+  // The price itself, so a figure cannot drift out of the one page that states
+  // it. Nothing in this repository names a price anywhere else (§71).
+  await expect(page.locator('body')).toContainText('$15');
+  await expect(page.locator('body')).toContainText('$150');
+  // Accepted cost of the $15 reversal, named rather than hidden (§3 lever 2).
+  await expect(page.locator('body'), 'a converted statement line is a dispute trigger — say the currency').toContainText(/US dollars/i);
+
+  const body = page.locator('body');
+  await expect(body, 'no permanent free tier was decided — promise notice, not for ever').not.toContainText(/free (for ever|forever)|always free/i);
+  await expect(body, 'the trial is unverified on a static link (§82) — do not promise it yet').not.toContainText(/trial/i);
+  await expect(body, 'a pre-renewal notice is not built').not.toContainText(/we will (email|remind) you/i);
+});
+
+/*
+ * The refund page's three data facts, which are the app's own.
+ *
+ * readOnlyState() in server.js tells a held workspace that cloud sync is
+ * paused, nothing has been deleted, and local use and export continue. Those
+ * same three facts are published here, so they are one fact in two places like
+ * TERMS_VERSION and the date on /terms (§41) — and the published half is read
+ * BEFORE anybody pays, which makes a disagreement a broken promise rather than
+ * a wording drift. §24 stage B is why that is the behaviour and §36 is why
+ * export survives for every role.
+ *
+ * Asserted as the three facts rather than as the sentence, because pinning
+ * server.js's exact string would make a wording improvement in the app fail a
+ * test about a web page. What must not change is which facts are claimed.
+ */
+test('the refund page states what a lapsed subscription does to your data', async ({ page }) => {
+  await page.goto('/refunds');
+
+  await expect(page.locator('body')).toContainText(/14 days/i);
+
+  const data = page.locator('h2').filter({ hasText: /What happens to your data/i });
+  await expect(data, 'the data section is the one a customer checks before paying').toHaveCount(1);
+
+  const body = page.locator('body');
+  await expect(body, 'the hold pauses sync — say which thing stops').toContainText(/sync[^.]*pause|pause[^.]*sync/i);
+  await expect(body, '§24: a billing hold deletes nothing, and that is the sentence quoted back').toContainText(/[Nn]othing is deleted/);
+  await expect(body, '§36: export stays open for every role, deliberately').toContainText(/[Ee]xport keeps working/);
+
+  // Two clicks, from inside the app, naming controls that exist — the card is
+  // headed "Subscription" and the button reads "Manage subscription" (§74).
+  await expect(body, '§3 lever 4 is a two-click cancel, and it has to name the real control').toContainText(/Manage subscription/);
+
+  await expect(body, 'a pre-renewal notice is not built — the 14-day refund stands in for it').not.toContainText(/we will (email|remind) you/i);
 });
 
 /*
@@ -4539,7 +4646,7 @@ for (const osTheme of ['light', 'dark']) {
      * script tag fails by name.
      */
     test('the standalone pages obey the same choice', async ({ page }) => {
-      const pages = ['/privacy', '/terms', '/guide', '/welcome', '/docs/manual.html', '/docs/product-tour.html'];
+      const pages = ['/privacy', '/terms', '/guide', '/welcome', '/pricing', '/refunds', '/docs/manual.html', '/docs/product-tour.html'];
       for (const [choice, wantDark] of [['dark', true], ['light', false]]) {
         await page.goto('/app');
         await page.waitForFunction(() => typeof THEME !== 'undefined');

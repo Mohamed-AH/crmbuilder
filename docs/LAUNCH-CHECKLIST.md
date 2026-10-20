@@ -869,6 +869,29 @@ Then, by hand, because none of it is greppable:
 > subscription state to decide what a workspace may do. So this part is
 > unblocked on the rail and still blocked on **the price**, which is what fires
 > §2.1's list below.
+>
+> **Updated 2026-10-20: the price is decided and two pages have shipped, and
+> §2.1's list has NOT fired.** The price is `$15`/month per workspace for up to
+> five people, `$150`/year ([`PAYMENTS.md`](PAYMENTS.md) §5, decided
+> 2026-10-17), and `/pricing` and `/refunds` now publish it and the
+> cancellation and refund policy (`CLAUDE.md` §86). **Nothing in the twelve
+> files below changed, and nothing in them went false** — which is the
+> distinction this part was missing: §2.1 fires on **charging**, not on
+> *naming a price*. `/pricing` states the price *and* that early access is
+> free, so `terms.html`'s "There is no payment, no subscription, and no
+> contract term" is still true, and so are `welcome.html`'s beta box and
+> `guide.html`'s opening callout. A reader meets one coherent claim.
+>
+> So the sequencing improved rather than merely advanced: the payment
+> provider's account verification needed a live site showing pricing and a
+> refund policy ([`PAYMENTS.md`](PAYMENTS.md) §7 item 2), that was believed to
+> be gated on this list, and it was not. **The 1–3 day verification can run
+> now, in parallel with everything below.**
+>
+> What still fires this list is the commit that flips `billingMode` to `paid`
+> — the twelve files, `TERMS_VERSION`, §2.3's roster, §2.4's remaining
+> decisions, and §27's walk, which already owes the **seat cap** (`CLAUDE.md`
+> §81, live and undocumented) and **enforcement** (§83, built and not live).
 
 ## 2.1 The claims that become false the moment you charge
 
@@ -881,7 +904,7 @@ product read as inconsistent if it is worked partially.
 | `terms.html` | *"applies to the free beta at this address"* — §1.4 again |
 | `welcome.html` | the amber **beta box** in the splash, and the `FREE BETA` kicker above the headline. A review proposed swapping the box for a positive trust badge at the *domain* move — **do not**: the domain move is not the end of the beta, `terms.html` still says data loss is possible, and §47's rule exists because *"a prospect read four confident minutes and then discovered the framing on the legal page"*. The trust badge is the right thing to put there when the **beta actually ends**, which is a terms change with its own re-prompt (§2.2) |
 | `guide.html` | the opening callout: *"The first one: this is a free beta."* (§47 added it precisely so the framing is not discovered later on the legal page — the same reasoning applies in reverse) |
-| `privacy.html` | the processor roster, and *"That is the complete list."* |
+| `privacy.html` | the processor roster. Its completeness sentence is now scoped — *"That is the complete list of what the app sends anywhere"* (§85, after publishing an address created a recipient), so what §2.3 adds is the payment provider as a **recipient**, and the scoped wording is what must not quietly revert to the unqualified form |
 | `docs/product-tour.html` | *"Nothing to install, nothing to sign up for"* and the comparison framing |
 | `docs/manual.html`, `docs/USER-GUIDE.md` | beta framing in the intro and the limits sections |
 | `docs/ONBOARDING.md`, `docs/DEMO-SCRIPT.md` | the cost objection, answered as "it's free" |
@@ -976,8 +999,16 @@ payment**, not after. Also:
   §30 Phase 4 treatment: its own body limit, its own rate-limit bucket, and
   signature verification. It is not covered by anything `lib/safe-fetch.js`
   does — that guards *outbound* (§38).
-- `terms.html` gains refunds, cancellation, and what happens to data when
-  somebody stops paying.
+- ~~`terms.html` gains refunds, cancellation, and what happens to data when
+  somebody stops paying.~~ **Shipped as `/refunds` instead, 2026-10-20**
+  (`CLAUDE.md` §86), and the separate page is the better shape rather than a
+  convenience: the payment provider's verification wants a refund policy as a
+  **distinct, reachable thing**, and a customer asking "how do I cancel"
+  should not have to read a contract to find out. What `terms.html` still owes
+  is a **link** to it, which belongs in the commit that rewrites that document
+  anyway. The data answer is on `/refunds` and is the same three facts
+  `readOnlyState()` tells a held workspace — one fact in two places, noted at
+  both ends (§41's rule).
 
 ## 2.4 The product decisions pricing forces, which are not text
 

@@ -489,7 +489,12 @@ await check('sync model', async () => {
  * be in somebody's inbox.
  */
 await check('the shareable pages are reachable', async () => {
-  const pages = [['/welcome', 'A CRM shaped like'], ['/guide', 'What you can do'], ['/docs/manual.html', 'Nimble Clerk Manual'], ['/docs/product-tour.html', 'Build Your Own CRM']];
+  // /pricing and /refunds are here for a second reason on top of §47's: the
+  // payment provider's account verification requires a live, publicly
+  // reachable site that SHOWS pricing and a refund policy, so a 404 on either
+  // of them is not only a broken link — it fails verification, which is what
+  // gates live payments (docs/PAYMENTS.md §7 item 2).
+  const pages = [['/welcome', 'A CRM shaped like'], ['/guide', 'What you can do'], ['/pricing', 'One price for the whole workspace'], ['/refunds', 'No notice period and no cancellation fee'], ['/docs/manual.html', 'Nimble Clerk Manual'], ['/docs/product-tour.html', 'Build Your Own CRM']];
   const broken = [];
   for (const [path, marker] of pages) {
     const { res, err } = await get(path);

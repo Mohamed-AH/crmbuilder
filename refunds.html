@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Refunds and cancellation — Nimble Clerk</title>
+<meta name="description" content="How to cancel Nimble Clerk, what a refund covers, and what happens to your data.">
+<!-- The stored appearance choice, so a reader who picked dark in the app does
+     not get a light page when they click through. NOT `defer`: deferred runs
+     after parsing, which is the flash this exists to avoid. These pages still
+     render with JavaScript off (§19) — they simply follow the OS then, which
+     is what they did before the choice existed. -->
+<script src="/js/boot-theme.js"></script>
+<link rel="stylesheet" href="/legal.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="back" href="/">← Nimble Clerk</a>
+    <h1>Refunds and cancellation</h1>
+    <!-- This is docs/PAYMENTS.md §3's levers 4 and 5 written down — a
+         two-click cancel and a 14-day refund — and they are chargeback
+         controls rather than courtesies. §79 found Visa RDR enabled by default
+         at a $100 threshold, which auto-refunds and auto-LOSES a dispute with
+         no defence stage at all for a $15 charge: there is no appeal to be
+         good at, so the only lever left is making sure nobody needs to raise
+         one. Every promise here is cheaper than the dispute it prevents.
+
+         Lever 3 — a notice email before each renewal — is NOT built, so it is
+         deliberately not promised anywhere on this page. What stands in for it
+         is the refund covering a renewal explicitly. -->
+    <p class="updated">Last updated 20 October 2026 · nothing is being charged yet</p>
+  </header>
+
+  <div class="callout">
+    <p><strong>The short version.</strong> Cancel whenever you like, from
+    inside the app, and you keep access to the end of the period you have
+    already paid for. Ask within <strong>14 days</strong> of a payment and we
+    will refund it in full. <strong>Cancelling never deletes anything</strong>
+    — your CRM keeps working on your own device, and you can export all of it
+    at any time.</p>
+  </div>
+
+  <h2>Cancelling</h2>
+  <p>In the app: <strong>Settings → Subscription → Manage subscription</strong>.
+  That opens your own billing page, where cancelling is one more press.</p>
+  <ul>
+    <li><strong>No notice period and no cancellation fee.</strong> You do not
+    have to email us, give a reason, or ask permission.</li>
+    <li><strong>You keep access until the period you paid for runs out.</strong>
+    Cancelling in the middle of a month does not cut you off that day.</li>
+    <li><strong>You can come back.</strong> Subscribing again starts a new
+    period; your workspace is still there.</li>
+  </ul>
+
+  <h2>Refunds</h2>
+  <ul>
+    <!-- "any payment, including a renewal" is the deliberate half. The
+         dangerous case for a dispute is a renewal somebody had forgotten
+         about, and that is precisely the one a policy worded as "your first
+         payment" would exclude — leaving the chargeback as the customer's only
+         route. §3's analysis: at this price a disputed charge cannot be
+         contested at all, so it has to be refunded before it becomes one. -->
+    <li><strong>Within 14 days of any payment — including a renewal — email us
+    and we will refund it in full.</strong> You do not have to say why. If a
+    renewal caught you out, that counts.</li>
+    <li>After 14 days we do not normally refund a period that is already
+    running, but ask anyway. If something was wrong, or the service was not
+    working, say so and we will sort it out.</li>
+    <li>A refund goes back to the card that paid, and usually shows up within a
+    few working days.</li>
+  </ul>
+  <p>To ask for one:
+  <a href="mailto:contact@nimbleclerk.com">contact@nimbleclerk.com</a>. One
+  line is enough — the payment date and the address you signed in with.</p>
+
+  <h2>What happens to your data</h2>
+  <!-- The same three facts the app itself states when a workspace is held for
+       non-payment — see readOnlyState() in server.js, which carries the
+       matching note. They are one fact in two places, like TERMS_VERSION and
+       the date on /terms (§41), so they have to move together: cloud sync
+       pauses, nothing is deleted, and local use and export continue.
+       §24 stage B is why that is the behaviour (the push is refused, the pull
+       is not, nothing reaches deleteAccount) and §36 is why export survives
+       for every role — a customer who stops paying and cannot get their data
+       out is the worst version of this product. -->
+  <p><strong>Nothing is deleted.</strong> Cancelling, letting a subscription
+  lapse, or a payment that fails all do the same single thing: the cloud sync
+  that copies your workspace between devices pauses. Nothing is removed from
+  our side and nothing is removed from yours.</p>
+  <ul>
+    <li>The app <strong>keeps working on the device you are using</strong>,
+    because your CRM lives on that device and always has.</li>
+    <li><strong>Export keeps working</strong> — for everyone on the team, not
+    just the owner. Settings → Export backup still gives you everything as
+    JSON, and every module still exports as CSV.</li>
+    <li>Paying again resumes sync. There is nothing to restore.</li>
+  </ul>
+  <p>Deleting your data is a separate and deliberate act, and only you can do
+  it: <strong>Settings → Danger zone</strong>. The app tells you what each
+  option costs before it does anything.</p>
+
+  <h2>Right now</h2>
+  <p>Nimble Clerk is free while it is in early access, so there is nothing to
+  cancel and nothing to refund yet. This is the policy for when there is —
+  see <a href="/pricing">pricing</a> for what it will cost and what happens to
+  people already using it.</p>
+
+  <footer>
+    <a href="/">Back to Nimble Clerk</a> · <a href="/pricing">Pricing</a> ·
+    <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a>
+  </footer>
+</div>
+</body>
+</html>
