@@ -840,7 +840,7 @@ Then, by hand, because none of it is greppable:
 > **The rail, the price and the chargeback plan live in
 > [`PAYMENTS.md`](PAYMENTS.md)**, researched after this part was written. The
 > split is deliberate and worth keeping: **Part 2 is what charging *breaks*** —
-> twelve files of live text, `TERMS_VERSION`, the privacy roster, and the six
+> thirteen files of live text, `TERMS_VERSION`, the privacy roster, and the six
 > product decisions in §2.4. **`PAYMENTS.md` is what charging *needs*** — a
 > payment rail that works from India, a tax position, and a number.
 >
@@ -874,8 +874,8 @@ Then, by hand, because none of it is greppable:
 > §2.1's list has NOT fired.** The price is `$15`/month per workspace for up to
 > five people, `$150`/year ([`PAYMENTS.md`](PAYMENTS.md) §5, decided
 > 2026-10-17), and `/pricing` and `/refunds` now publish it and the
-> cancellation and refund policy (`CLAUDE.md` §86). **Nothing in the twelve
-> files below changed, and nothing in them went false** — which is the
+> cancellation and refund policy (`CLAUDE.md` §86). **Nothing in the eleven
+> files that were below at the time changed, and nothing in them went false** — which is the
 > distinction this part was missing: §2.1 fires on **charging**, not on
 > *naming a price*. `/pricing` states the price *and* that early access is
 > free, so `terms.html`'s "There is no payment, no subscription, and no
@@ -889,7 +889,7 @@ Then, by hand, because none of it is greppable:
 > now, in parallel with everything below.**
 >
 > What still fires this list is the commit that flips `billingMode` to `paid`
-> — the twelve files, `TERMS_VERSION`, §2.3's roster, §2.4's remaining
+> — the thirteen files, `TERMS_VERSION`, §2.3's roster, §2.4's remaining
 > decisions, and §27's walk, which already owes the **seat cap** (`CLAUDE.md`
 > §81, live and undocumented) and **enforcement** (§83, built and not live).
 
@@ -910,6 +910,38 @@ product read as inconsistent if it is worked partially.
 | `docs/ONBOARDING.md`, `docs/DEMO-SCRIPT.md` | the cost objection, answered as "it's free" |
 | `docs/BETA.md` | the whole tester note |
 | `README.md` | the front page |
+| `pricing.html`, `refunds.html` | *"free during early access"* · *"There is nothing to pay and no card to enter"* — **and the vocabulary problem below, which is this commit's to settle** |
+
+### One period, two names — and the pricing pages introduced the second
+
+Measured rather than noticed in passing, after it was raised:
+
+| Word | Where | Count |
+|---|---|---|
+| **beta** | `welcome.html` 8 · `terms.html` 9 · `privacy.html` 2 · `guide.html` 1 | **20** |
+| **early access** | `pricing.html` 4 · `refunds.html` 1 · `js/app.js`'s free-mode card 1 | **6** |
+
+`CLAUDE.md` §86 took the phrasing from [`PAYMENTS.md`](PAYMENTS.md) §5, whose
+argument was against ***"free for early users"*** — read as permanent — and
+**not** in favour of *early access* over *beta*. Both promise notice rather
+than duration equally well, so §5's reasoning does not choose between them and
+the split is an accident of which document was open.
+
+**Not renamed now, and that is a decision rather than an omission.** The two
+words are not pure synonyms and both are doing work: *beta* carries
+**unfinished, data may be lost**, which is what `terms.html` § *"What you
+should expect from a beta"* and §19's recorded acknowledgement rest on; *early
+access* carries **free for now, with a price published**. A reader meets both
+as "it is free and nothing is charged", which is what each page says, so this
+is cosmetic rather than confusing — and renaming either direction touches
+legal text, which means this list and `TERMS_VERSION` (§2.2) anyway.
+
+So **settle it in the charging commit**, where the terms are being rewritten
+regardless, and settle it in one direction across all twenty-six occurrences.
+Whichever is kept, the `beta`-flavoured claim about data loss has to survive
+the rename: dropping it while keeping the free-period wording is §47's failure
+exactly — a prospect reading four confident minutes and finding the framing
+afterwards on the legal page.
 
 ### `MARKETING.md` — internal, and the one to check before you publish
 

@@ -286,6 +286,9 @@ never change, because everything cross-references them.
 | "Nothing tests this" against "nothing tests this half" | §87 · §60 · §36 |
 | A mutation anchor that matches seven sites | §87 · §73 · §9 |
 | **`playwright test --list` deleted the running suite's store** | §4 · §87 · §32 |
+| **"Terms still says free beta"** — true, and the vocabulary is the real defect | §87 · §86 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1 |
+| One period with two names, and neither is a synonym for the other | §87 · §19 · §80 |
+| A file count written in seven places, retired rather than re-synced | §87 · §29 |
 | Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
@@ -363,12 +366,13 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**Playwright is 177 and Node is 664.** The **177 is observed** — it is the
-denominator a real run prints — and at §87's commit the full run was still in
-flight, so *177 of 177* is **not** claimed here; the three billing tests and
-five mutations were run individually, and §87 says so. Smoke is **51 local · 0
-warnings · 0 failed**, carried from §86: this commit touches
-`tests/e2e.spec.js` and nothing served, so there is no asset for it to see.
+**Playwright is 177 and Node is 664** — Playwright **observed** after §87's
+billing-card test: **177 of 177 in 9.0m**, clean. That figure landed *after*
+§87's commit, whose message deliberately claimed only what had been run by
+then (the three billing tests, the five mutations, and a run at 59 of 177); it
+is recorded here rather than amended into a pushed commit. Smoke is **51 local
+· 0 warnings · 0 failed**, carried from §86: §87 touches `tests/e2e.spec.js`
+and nothing served, so there is no asset for it to see.
 (§86's figures were 664 and 176-of-176; §85's 664 and
 166-of-167; §84's 664 and
 164/164; §83's 656 and 163-of-164; §81's 648 and 164; §80's 641 and 163;
@@ -517,7 +521,7 @@ here, and its trailing slash is what turned §46's wait loop into a no-op.
   ([`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5) — and it is **published** on
   `/pricing` beside the cancellation and refund policy on `/refunds` (§86).
   That is the one claim worth keeping straight: the price is named and nobody
-  is charged, which is why none of §2.1's twelve files has moved. §64's *"there
+  is charged, which is why none of §2.1's list has moved. §64's *"there
   is no price"* is retired.
 - Docs: see `docs/README.md` — the map, and which are frozen
 
@@ -528,7 +532,7 @@ here, and its trailing slash is what turned §46's wait loop into a no-op.
   and doubly so since §86** — enforcement is built (§83: the sync seam holds a
   workspace past its grace window, derived per request) and the price exists
   and is published. What is left is **flipping `billingMode` to `paid`**, which
-  is a commit rather than a feature: §2.1's twelve files,
+  is a commit rather than a feature: §2.1's list,
   `TERMS_VERSION`, §2.4's remaining decisions and §27's owed walk. Left struck
   through rather than deleted because this is §27's drift landing in §2's own
   status list — the section that exists to say what is true — and it survived
@@ -9423,7 +9427,7 @@ stays `crmbuilder-v57` and smoke stays 49 local / 54 live, checked rather than
 assumed (§41's rule for a docs-only change). `docs/API.md` needed nothing: no
 route and no response shape moved, which is the check §46 and §54 both say to
 run instead of reading the route count. §27's user-facing documents needed
-nothing — no capability changed, and the twelve files whose text goes false
+nothing — no capability changed, and the files whose text goes false
 when we *do* charge are already enumerated in the checklist's §2.1 rather than
 edited now.
 
@@ -10855,7 +10859,7 @@ a capability to document — §52's precedent exactly, where the mail adapter
 shipped with no docs walk because no client could reach it.
 
 They get walked **when a price is set**, which is the same moment
-`docs/LAUNCH-CHECKLIST.md` §2.1's twelve-file list fires and
+`docs/LAUNCH-CHECKLIST.md` §2.1's list fires and
 `MARKETING.md`'s *"No per-seat pricing. Free. No ads."* has to be dealt with
 (§48, §64).
 
@@ -11029,7 +11033,7 @@ omission as §70's and §71's** — no `DODO_PRODUCT_ID` is set on any
 deployment, so the Subscription card is absent and nobody has gained a
 capability to document. They get walked when a price is set, which is the same
 moment [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1's
-twelve-file list fires. `privacy.html` likewise: the provider becomes a named
+list fires. `privacy.html` likewise: the provider becomes a named
 recipient of personal data when the **first payment actually runs** — §52's
 condition, §41's precedent, and §40's *"that is the complete list"* having
 already been false twice, both times caught by looking at what the deployment
@@ -11772,7 +11776,7 @@ expired — the product id is set on production, so the card is no longer absent
 for every owner. The surviving reason is narrower and still holds: **there is
 no price**, so nobody can subscribe, so no user has gained a capability to
 document. The walk happens when a price is set, which is the same moment
-[`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1's twelve-file list
+[`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1's list
 fires and `MARKETING.md`'s *"No per-seat pricing. Free. No ads."* has to be
 dealt with (§48, §64). `privacy.html` likewise: the provider is named as a
 recipient of personal data when the **first real payment** runs.
@@ -12073,7 +12077,7 @@ restated rather than the one §70–§72 used.** Checked rather than skipped: no
 one of them mentions subscriptions at all, because **there is no price**, so
 nobody can subscribe and no user has gained a capability to document. The walk
 happens when a price is set, which is the same moment
-[`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1's twelve-file list
+[`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1's list
 fires. `privacy.html` likewise.
 
 ### The production test-mode button, decided rather than left
@@ -12452,7 +12456,7 @@ clean one.** Not *"there is no price"* — there is one — but **nothing is
 enforced and nothing can be bought**: the lever changes no behaviour, and
 `billingMode` is `free` on every deployment. The walk happens when enforcement
 lands, which is the same commit that makes
-[`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1's twelve-file list
+[`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1's list
 fire and bumps `TERMS_VERSION`.
 
 ### Item 2: two holds, because one field fails silently
@@ -14512,8 +14516,55 @@ cause in place to happen again.
 **What was observed at commit time, and §9's rule is why it is written this
 way:** the three billing tests pass in file order, each of the five mutations
 fails the test that names it, and the clean re-run was **still in flight** —
-59 of 177 with zero failures. So the total is measured and the pass is not,
-and a figure that was not observed does not go in a status section.
+59 of 177 with zero failures. So the total was measured and the pass was not,
+and a figure that has not been observed does not go in a commit message.
+
+### One period with two names, and §86 is what gave it the second
+
+Raised as *"terms still says free beta"* — and `terms.html` is **true**, which
+is the first thing to establish rather than the last: nothing charges,
+`billingMode` is `free` on every deployment, so *"There is no payment, no
+subscription, and no contract term"* is a statement of fact. §86's finding was
+that §2.1 fires on **charging**, not on naming a price, and `pricing.html`
+carries that reasoning in its own header comment. Rewriting the terms now would
+publish an intention as a fact, which §38 and §40 both record as the one thing
+a legal page must not do.
+
+**What is genuinely wrong is the vocabulary, and I introduced it.** Measured:
+**beta** 20 (`welcome.html` 8, `terms.html` 9, `privacy.html` 2,
+`guide.html` 1) against **early access** 6 (`pricing.html` 4, `refunds.html` 1,
+and §80's free-mode card). §86 took the phrasing from
+[`docs/PAYMENTS.md`](docs/PAYMENTS.md) §5, whose argument was against *"free
+for early users"* — read as permanent — and **not** in favour of one of these
+two over the other. So §5 does not choose between them and the split is an
+accident of which file was open.
+
+**Not renamed here**, and the reasoning is in
+[`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1 where the charging
+commit will meet it: the words are not synonyms — *beta* carries **unfinished,
+data may be lost**, which §19's recorded acknowledgement rests on, and *early
+access* carries **free for now, with a price published**. Each page says "it is
+free and nothing is charged", so a reader reconciles them; renaming either
+direction touches legal text and therefore that list and `TERMS_VERSION`
+anyway. Settle it there, in one direction, across all twenty-six.
+
+**And §2.1's own count was written in seven places.** Adding `pricing.html` and
+`refunds.html` to that table takes it to **thirteen** distinct files, so every
+*"§2.1's twelve files"* in this file went stale at once — §29's thesis, in the
+number §29 exists to warn about. Re-synced in the checklist and **removed** from
+this file's live pointers rather than corrected in them: the table is the
+authority, and a reference that carries no number cannot go stale. §86's
+narrative keeps its figure, because one of those is a verbatim quotation of
+what [`docs/PAYMENTS.md`](docs/PAYMENTS.md) said at the time.
+
+### The run finished clean
+
+**`177 passed (9.0m)`** — and that is in §2.
+Recorded in the next commit rather than amended into the pushed one, which is
+the same distinction: a message that was honest when written stays as written,
+and the figure it declined to claim arrives where figures live. **The clean run
+retires none of the three intermittents** (§2, §77): none of them fired, which
+is the standing non-result rather than evidence.
 
 **And one list was deliberately left short.** §47's *the files those pages load
 are not cached either* walks `/guide`, `/privacy`, `/terms` and the manual;
