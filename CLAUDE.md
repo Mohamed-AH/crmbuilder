@@ -279,6 +279,13 @@ never change, because everything cross-references them.
 | **A mutation that fails nothing because an earlier commit closed the class** | §86 · §63 · §61 · §83 |
 | A regex that could not cross a line break in the prose it asserted on | §86 · §4 · §9 |
 | The landing page was missing from the guard built for a landing-page defect | §86 · §48 |
+| **Pressing the billing switch** — the test, and the two that must run first | §87 · §78 · §24 |
+| **A probe that healed the bug it was asserting on** — `?fresh=1` rewrites | §87 · §47 · §33 |
+| A stamp no route can clear, so test order is a property of the data | §87 · §78 · §16 |
+| A `finally` that clicked a disabled button and buried the real failure | §87 · §9 · §4 |
+| "Nothing tests this" against "nothing tests this half" | §87 · §60 · §36 |
+| A mutation anchor that matches seven sites | §87 · §73 · §9 |
+| **`playwright test --list` deleted the running suite's store** | §4 · §87 · §32 |
 | Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
@@ -356,16 +363,22 @@ docs/                 user guide, onboarding, demo script, architecture, BETA ru
 
 ## 2. Current status
 
-**Playwright is 176 and Node is 664** — Playwright **observed** after §86's two
-pages: **176 of 176 in 6.8m**, clean. Smoke is **51 local · 0 warnings · 0
-failed**, also run. (§85's figures were 664 and 166-of-167; §84's 664 and
+**Playwright is 177 and Node is 664.** The **177 is observed** — it is the
+denominator a real run prints — and at §87's commit the full run was still in
+flight, so *177 of 177* is **not** claimed here; the three billing tests and
+five mutations were run individually, and §87 says so. Smoke is **51 local · 0
+warnings · 0 failed**, carried from §86: this commit touches
+`tests/e2e.spec.js` and nothing served, so there is no asset for it to see.
+(§86's figures were 664 and 176-of-176; §85's 664 and
+166-of-167; §84's 664 and
 164/164; §83's 656 and 163-of-164; §81's 648 and 164; §80's 641 and 163;
 §78's 638 and 161.)
 
 **Node's 664 is CARRIED, not observed, and that is the distinction §73 got
 wrong.** §86 touched no server behaviour — one allow-list entry and two
-comments — so nothing a Node test can see moved, and the suite was deliberately
-not re-run. That is a different claim from §85's, where 664 was *measured* and
+comments — and §87 touches only `tests/e2e.spec.js`, so nothing a Node test can
+see has moved since it was last measured, and the suite was deliberately not
+re-run. That is a different claim from §85's, where 664 was *measured* and
 the fact that it had not moved was the informative part. A carried figure and
 an observed one read identically in a status section unless the difference is
 written down, which is §29's thesis and §73's own mistake: it reprinted §72's
@@ -376,9 +389,15 @@ and the real figure was 618.
 across §84 says none was lost, where a figure that merely *looks* plausible
 would not. **Playwright's 167 → 176 is accounted for exactly** (§86: 2 new
 tests, +2 standalone, +3 link guard, +2 contact route, and **0** from the
-dark-mode loop, whose page array is inside one test), and it is accounted for
-because the figure came from `playwright test --list` rather than from adding
-up what was written.
+dark-mode loop, whose page array is inside one test), and §87's 176 → 177 is
+one test.
+
+**Take the total from a RUN's own summary rather than `playwright test --list`.**
+§86's `--list` was safe — nothing was running — and it is not safe as a habit:
+that command loads `playwright.config.js`, whose module body deletes
+`DATA_DIR`, so asking it for a count **while a suite is in flight destroys the
+run** (§4, and it cost §87 an hour and 41 false failures). The summary line
+carries the same figure, needs no second invocation, and cannot do that.
 
 **A clean Playwright run retires none of the three intermittents**, and the
 reason is the same non-result §71 and §77 both record: none of them fired. That
@@ -662,6 +681,37 @@ confirmation lines after it never ran — leaving the server up and the output
 looking like a clean finish. Both halves of the fix above are therefore wrong
 for this case. **Record the PID in a SEPARATE Bash call and kill it there**,
 which is the only form that cannot match itself.
+
+**And `playwright test --list` is NOT read-only — it deletes the running
+suite's store.** `playwright.config.js` does `fs.rmSync(DATA_DIR)` in its
+module body, so any command that loads the config performs the cleanup —
+`--list` (measured), and a `-g` run or a second full run, which are runs and
+load it by definition. The guard there is
+`TEST_WORKER_INDEX === undefined`, which covers Playwright's own *workers* and
+cannot see a separate invocation — the config's own comment describes this
+failure and is one case short of it.
+
+Run it alongside a suite in flight and the server's `DATA_DIR` vanishes
+underneath it: every write then 500s (§55's router wrap turning a failed
+`FileStore.save()` into a status), `POST /auth/dev` among them, so `signIn()`
+hangs on `.user-chip` and **every test that signs in fails**. Cost here: 41
+failures across eight describes, a run that took four times its usual duration
+because each one burned a 45s timeout, and an hour reading them. **The page
+snapshot shows anonymous onboarding and the failures name sign-in, so it reads
+as an auth regression** — there is nothing in any artifact pointing at the
+command that caused it. The tell is `du -sh data/e2e` reporting nothing.
+
+Same family as the three notes above and as §47's sweep that healed what it
+was looking for: **run nothing else from `npx playwright` while a suite is
+running**, and get a test count from the run's own summary rather than from
+`--list`.
+
+**Not fixed in the config, deliberately.** Widening the guard to "and no server
+is already listening on `PORT`" means a network probe in a module body that
+must stay synchronous, and §9 names `playwright.config.js` as blast radius by
+name — a cleanup edit there once cost 47 E2E tests with
+`ERR_CONNECTION_REFUSED`. The discipline is cheaper than the guard, and this
+note is the discipline.
 
 **Restarting a test server on the same port is not reliable.** `expireInvite()`
 in `api.test.mjs` stops the server, edits `store.json` and starts it again;
@@ -14310,3 +14360,166 @@ condition is the same one §81, §83 and §84 carried: nothing can be bought.**
 No capability moved. The walk still owes **two** items — §81's seat cap, live
 since it shipped, and §83's enforcement, built and not live — and it fires with
 the commit that flips `billingMode` to `paid`.
+
+
+---
+
+## 87. The billing card's gap was the write, and a probe that healed what it looked for
+
+One E2E test, and three of the four findings are in the test rather than in the
+product — which is what §9's *check it against the broken state* is for.
+
+### The gap was narrower than it was reported
+
+I said in conversation that **no E2E test drove the billing card**. Wrong:
+§78 shipped two — *the billing card previews who would be affected before
+anything is flipped* and *changing the window moves every grace date*. Both
+read the card while `billingMode` is still `free`, which is the state that card
+exists for (§78's dry run, whose whole point is being lookable at before the
+switch can affect anybody).
+
+**What neither does is press the button.** So the gap was the *write* — the
+confirmation, the flip, and the re-render that follows — not the screen. The
+claim never reached this file, so there is nothing to correct in place; it is
+recorded because *"nothing tests this"* and *"nothing tests this half"* are a
+long way apart when deciding what to write.
+
+### The coupling is in the data, and it is permanent
+
+`setBillingMode` stamps `billingModeSetAt`, and **no route ever clears it** —
+switching back to Free rewrites the stamp rather than removing it. So the
+**first flip retires the preview wording for the whole life of the store**, and
+the two tests above assert exactly that wording.
+
+Measured rather than predicted: placed earlier in the file, the new test failed
+both of them. It sits after them now, and `playwright.config.js` is
+`fullyParallel: false, workers: 1`, so file order *is* the ordering.
+
+**Named at both ends**, which is the half that makes it survivable: the preview
+assertion carries *"must run BEFORE the flip test — billingModeSetAt is
+permanent"*, and the flip test's own comment says why it must run last. A
+reorder then fails with a reason rather than as a mystery about dates.
+
+The alternative — restoring `setAt` to 0 — needs a store edit, which is
+`editStore`'s stop-edit-start (§12) and is a Node-test facility. No route
+exposes it, and inventing one to serve a test would be a route a deployment
+could call.
+
+### The read-back I wrote to catch a cache bug healed it instead
+
+The one worth keeping. `renderAdmin()` re-fetches the panel **without**
+`fresh=1`, so a missing `platformCache` invalidation redraws the pre-flip card —
+§78's own bug, and §40's and §24's before it, which have now eaten three
+buttons between them.
+
+My test polled `/api/admin/platform?fresh=1` to confirm the write, **above** the
+card assertions, with a comment claiming that poll was what would catch it. It
+is not: **`?fresh=1` REWRITES the cache rather than bypassing it** (§33), so the
+probe handed the stale render a fresh body. Measured — the `nocacheclear`
+mutation **passed**.
+
+That is §47's self-healing probe in a new place: there, a sweep for cache
+poisoning ended on a path whose response *is* the app shell, which put the real
+shell back and healed the finding before the dump. Here one line of
+confirmation repaired the defect the next line was asserting on.
+
+The card assertions come first now and the read-back goes below, so
+`nocacheclear` fails on `12 × … unexpected value "enabled"` — and the comment
+says which assertion carries the weight rather than claiming it for the poll.
+
+### A failure with no name on it, from a `finally`
+
+`norerender` first failed as a bare **45-second test timeout**. The card never
+redraws, so `[data-billmode="free"]` is still *disabled* — and the `finally`
+clicked it, hanging until the test budget ran out and burying the real
+assertion. `.catch(() => {})` does not help: the click is still awaited.
+
+The restore goes through `PUT /api/admin/billing-mode` now. **The cleanup must
+survive a broken screen**, because the screen is what the test is about; the
+sibling signup test (§16) restores through the UI and carries the same latent
+hazard, left alone rather than widened into this commit.
+
+### Verified
+
+Five mutations, each failing by name (§9):
+
+| Mutation | Fails |
+|---|---|
+| the confirm is shown and its answer ignored | *dismissing the confirmation must leave the mode alone* |
+| no `renderAdmin()` after the flip | *the flipped mode is the one you cannot press* |
+| `platformCache` not invalidated | the same assertion — **and nothing at all before the reordering above** |
+| `data-billmode` renamed | the plans row never appears |
+| the preview wording dropped | *§78: unflipped dates are a preview and must say so* |
+
+**Two mutations failing one assertion is expected rather than sloppy** — they
+are two mechanisms that both leave the card un-redrawn, so a reader should
+expect one failure per *assertion* rather than per test (§78's own note, and
+§83's doubled mode check from the other side).
+
+**A sixth was written and dropped.** An anchor on the `platformCache` line
+alone matches **seven** sites in `server.js`; it is anchored on the log line
+below it, which is unique to this route. A mutation script that silently
+mutates the wrong site is worse than one that fails to apply.
+
+### Blast radius
+
+`tests/e2e.spec.js` only — no product file, no served file, no route. So
+`CACHE_VERSION` stays `crmbuilder-v69`, smoke stays **51 local / 56 live**, and
+`docs/API.md` and §27's six user-facing documents need nothing. Checked against
+the diff rather than assumed (§41).
+
+**A full run was warranted rather than habitual**: the test flips a stored
+operator lever, which §16 names as leaking into everything after it, and the
+suite is sequential so the `finally` is what bounds that.
+
+### The retry hazard, closed after the first run was already launched
+
+`playwright.config.js` is `retries: process.env.CI ? 1 : 0`. So **on CI this
+test can run twice** — and the second attempt starts with `billingModeSetAt`
+already stamped by the first, because the `finally` restores the *mode* and
+nothing can restore the *stamp*.
+
+The first version asserted the preview wording before flipping. That is true
+the first time through and false on every retry, so a retry would have failed
+on the wording rather than on whatever actually went wrong — a failure
+reported in the wrong place, which is the shape this file keeps collecting and
+which the `finally` above had just produced in its own way.
+
+Dropped: the positive preview claim belongs to *the billing card previews…*,
+which runs first and only once. **Everything this test asserts now survives a
+retry unchanged** — in free mode the card still says nothing is enforced, the
+current mode is still the one that cannot be pressed, and after the flip there
+is still no preview to find. Checked rather than argued, by walking the
+pre-flip state a retry would actually see.
+
+### The run that cost an hour, and it was my own command
+
+The first full run came back with **41 failures across eight describes**, every
+one of them anonymous onboarding with `signIn()` hanging on `.user-chip`. It
+reads as an auth regression and it was nothing of the sort: `POST /auth/dev`
+was answering **500**, because `data/e2e` **did not exist** — the server had no
+store directory, so §55's router wrap was correctly turning a failed
+`FileStore.save()` into a status.
+
+**`npx playwright test --list`, run for a test count while the suite was in
+flight, is what deleted it.** The full write-up is in §4; the part that belongs
+here is the diagnosis path, because it is §9's artifact rule earning its keep
+against a strong temptation to re-run: the trace gave the 500, the 500 gave the
+missing directory, and the missing directory named the command. Nothing in any
+artifact points at it, and re-running would have "fixed" it while leaving the
+cause in place to happen again.
+
+**What was observed at commit time, and §9's rule is why it is written this
+way:** the three billing tests pass in file order, each of the five mutations
+fails the test that names it, and the clean re-run was **still in flight** —
+59 of 177 with zero failures. So the total is measured and the pass is not,
+and a figure that was not observed does not go in a status section.
+
+**And one list was deliberately left short.** §47's *the files those pages load
+are not cached either* walks `/guide`, `/privacy`, `/terms` and the manual;
+§86 added `/pricing` and `/refunds` to the other three page arrays and not to
+that one. Checked rather than missed — both new pages load **exactly**
+`/legal.css` and `/js/boot-theme.js`, which is byte-for-byte what `/guide`
+already loads, so an entry there would cover nothing. §40 and §41's rule:
+padding a roster is its own kind of inaccuracy, and a list that grows by
+no-ops stops being read.

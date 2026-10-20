@@ -3198,6 +3198,7 @@ test.describe('admin', () => {
     }
   });
 
+
   /*
    * What the deployment is carrying, on one screen.
    *
@@ -3338,8 +3339,17 @@ test.describe('admin', () => {
     // Free, and saying what that means rather than only naming the state.
     await expect(card).toContainText('free');
     await expect(card).toContainText('No workspace can lose cloud sync');
-    // And the dates below are declared a preview, not a promise.
-    await expect(card).toContainText('preview');
+    /*
+     * And the dates below are declared a preview, not a promise.
+     *
+     * THIS MUST RUN BEFORE *the billing mode is flipped from the panel*.
+     * `setBillingMode` stamps `billingModeSetAt` and no route ever clears it
+     * — switching back to Free rewrites the stamp rather than removing it —
+     * so the first flip retires the preview wording for the whole life of the
+     * store. The suite is `fullyParallel: false, workers: 1`, so file order is
+     * the ordering; moving the flip test above this one fails here, by name.
+     */
+    await expect(card, 'must run BEFORE the flip test — billingModeSetAt is permanent').toContainText('preview');
 
     // The two figures are the decided defaults, and they are controls.
     await expect(card.locator('#grandfather-months')).toHaveValue('12');
@@ -3389,6 +3399,124 @@ test.describe('admin', () => {
     await card.locator('#grandfather-months').selectOption('12');
     await card.locator('#save-billing-windows').click();
     await expect(page.locator('.toast').last()).toContainText('every grace date has moved');
+  });
+
+  /*
+   * The third operator lever, and the one that can take cloud sync away.
+   *
+   * §78 built this card with two E2E tests, and NEITHER presses the button:
+   * both read the card while `billingMode` is still free, which is the state
+   * that card exists for. So the gap was the write — the confirmation, the
+   * flip, and the re-render that follows it.
+   *
+   * THIS MUST RUN AFTER both of them, and the coupling is a property of the
+   * data rather than a preference: `setBillingMode` stamps
+   * `billingModeSetAt`, and **no route ever clears it** — switching back to
+   * Free rewrites the stamp rather than removing it. So the first flip
+   * retires the preview wording for the whole life of the store, and the two
+   * tests above fail by name if this one is moved above them. Measured, not
+   * predicted: placed earlier in the file, it failed exactly those two.
+   *
+   * `playwright.config.js` sets no BILLING_MODE, so the suite's server boots
+   * free (§83) and the enforcement seam is unreachable in every other test.
+   * Flipping to paid makes it reachable, so this restores Free in a `finally`
+   * for the same reason the signup test above does — a stored lever left
+   * changed leaks into everything after it (§16).
+   */
+  test('the billing mode is flipped from the panel, and the confirmation is a real guard', async ({ page }) => {
+    await page.goto('/app');
+    await signIn(page, 'e2e-admin@example.com');
+    await page.goto('/app#/admin');
+
+    // Three `.mode-switch` rows exist now — signups, org creation, plans — so
+    // this one is addressed by the buttons it owns (§24's note, one row later).
+    const plans = page.locator('.mode-switch:has([data-billmode])');
+    await expect(plans).toBeVisible({ timeout: 20000 });
+
+    const card = page.locator('.card').filter({ has: page.locator('h2', { hasText: /^Billing$/ }) });
+
+    /*
+     * The free state, asserted before anything is pressed.
+     *
+     * The PREVIEW wording is deliberately NOT asserted here, though it is on
+     * screen the first time through: `retries: 1` on CI re-runs this test with
+     * `billingModeSetAt` already stamped by the attempt that failed, and no
+     * route can clear it — so a preview assertion would make every retry fail
+     * on the wording instead of on whatever actually went wrong. That claim
+     * belongs to *the billing card previews…* above, which runs first and only
+     * once. Everything asserted here survives a retry unchanged.
+     */
+    await expect(card, 'free mode has to say that nothing is enforced').toContainText(/nothing is enforced/i);
+    await expect(plans.locator('[data-billmode="free"]'), 'the current mode is the one you cannot press').toBeDisabled();
+    await expect(plans.locator('[data-billmode="paid"]')).toBeEnabled();
+
+    // One handler for the whole test, switching behaviour — §21's trap is two
+    // armed handlers firing on one dialog, which surfaces as an unrelated
+    // timeout several steps later.
+    let answer = 'dismiss';
+    page.on('dialog', (d) => (answer === 'accept' ? d.accept() : d.dismiss()));
+
+    const liveMode = async () => {
+      // Read back through the panel route rather than trusting the click, so a
+      // 200 over a write that did not land fails here. `?fresh=1` REWRITES the
+      // cache rather than bypassing it (§33), so this read is deliberately
+      // blind to a missing `platformCache` invalidation — the §78/§40/§24 bug
+      // that has now eaten three buttons. What catches that one is the
+      // `toBeDisabled()` assertion below, because `renderAdmin()` re-fetches
+      // WITHOUT `fresh=1` and would redraw the pre-flip card.
+      const view = await (await page.request.get('/api/admin/platform?fresh=1')).json();
+      return view.billing.mode;
+    };
+
+    try {
+      /*
+       * Declining must change nothing. The confirmation is not a courtesy
+       * here — it names how many workspaces would lose cloud sync today
+       * (§78), which makes it the last thing between an operator and a
+       * customer going read-only. A guard that is shown and not honoured is
+       * worse than none.
+       */
+      await plans.locator('[data-billmode="paid"]').click();
+      await page.waitForTimeout(500);
+      expect(await liveMode(), 'dismissing the confirmation must leave the mode alone').toBe('free');
+
+      answer = 'accept';
+      await plans.locator('[data-billmode="paid"]').click();
+      await expect(page.locator('.toast').last()).toContainText(/paid plans active/i);
+
+      /*
+       * The CARD first, and the ordering is the assertion rather than a
+       * preference. `renderAdmin()` re-fetches the panel WITHOUT `fresh=1`, so
+       * these three can only pass if the write invalidated `platformCache` —
+       * which is §78's own bug, and §40's and §24's before it.
+       *
+       * Reading `liveMode()` here instead would heal what it is looking for:
+       * `?fresh=1` rewrites the cache (§33), so a probe placed above these
+       * lines hands the stale render the fresh body and the mutation passes.
+       * Measured — it did, and that is §47's self-healing probe in a new
+       * place. The server-side read-back goes below.
+       */
+      await expect(plans.locator('[data-billmode="paid"]'), 'the flipped mode is the one you cannot press').toBeDisabled({ timeout: 10000 });
+      await expect(card).toContainText(/Set /);
+      await expect(card, 'a flipped switch has no preview left to show').not.toContainText(/preview/i);
+
+      await expect(async () => {
+        expect(await liveMode()).toBe('paid');
+      }).toPass({ timeout: 10000 });
+    } finally {
+      /*
+       * Restored through the route, never the button. The card is what this
+       * test is about, so a failure above legitimately leaves it showing the
+       * pre-flip state — where `[data-billmode="free"]` is still DISABLED and
+       * clicking it hangs until the test timeout, burying the real assertion
+       * under a 45s timeout with no name on it. Measured on the no-re-render
+       * mutation, which failed that way before this was an API call.
+       */
+      await page.request.put('/api/admin/billing-mode', { data: { mode: 'free' } });
+      await expect(async () => {
+        expect(await liveMode()).toBe('free');
+      }).toPass({ timeout: 10000 });
+    }
   });
 
   test('the deployment card shows the three meters and who is heaviest', async ({ page }) => {
