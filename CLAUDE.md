@@ -148,6 +148,9 @@ never change, because everything cross-references them.
 | **A trailing slash made the live-smoke wait a no-op** — and a repo variable outlived the default it overrides | §63 · §46 · §40 |
 | **Taking payment** — the rail, the price, the chargeback plan, India tax | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) · §72 · §64 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2 |
 | **Setting up and TESTING test-mode payments** — the dashboard steps | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7 · §72 · §65 |
+| **Going LIVE on the payment provider** — the switch, and proving it worked | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7 steps 5 · 5a · 10a |
+| The one action that starts charging, and why it is last | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7 step 10a · §80 · §83 |
+| `BILLING_MODE=paid` in the env charges and enforces nothing | §83 · §78 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7 step 10a |
 | **What a real payment found** — the host, the event list, the card region | §73 · §71 · §70 |
 | A checkout link that renders "This link isn't available" | §73 · §71 |
 | Why a test card is refused rather than declined | §73 · §45 |
@@ -289,6 +292,11 @@ never change, because everything cross-references them.
 | **"Terms still says free beta"** — true, and the vocabulary is the real defect | §87 · §86 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §2.1 |
 | One period with two names, and neither is a synonym for the other | §87 · §19 · §80 |
 | A file count written in seven places, retired rather than re-synced | §87 · §29 |
+| **Auditing a doc instead of confirming it exists** — four stale header claims | §88 · §46 · §29 |
+| **A "not built" list naming two things that were built** | §88 · §83 · §74 · §27 |
+| `5a.` is not a list marker, so its second paragraph is a code block | §88 · §27 · §72 |
+| A markdown sweep that was checked against a fixture, and found nothing | §88 · §9 · §48 |
+| A guarantee corrected in two places and left standing in a third | §88 · §73 · §76 |
 | Why per-seat pricing was rejected, and where the price lives | §64 · §48 · §42 · §23 |
 | **Render deploys from a mirror** — so a push here does not deploy | §65 · [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · `DEPLOYMENT.md` §3 |
 | **Where `LIVE_URL` lives**, and why the mirror is the wrong repo for it | §65 · §46 · §40 |
@@ -380,7 +388,8 @@ and nothing served, so there is no asset for it to see.
 
 **Node's 664 is CARRIED, not observed, and that is the distinction §73 got
 wrong.** §86 touched no server behaviour — one allow-list entry and two
-comments — and §87 touches only `tests/e2e.spec.js`, so nothing a Node test can
+comments — §87 touches only `tests/e2e.spec.js`, and §88 is **documentation
+only**, so nothing a Node test can
 see has moved since it was last measured, and the suite was deliberately not
 re-run. That is a different claim from §85's, where 664 was *measured* and
 the fact that it had not moved was the informative part. A carried figure and
@@ -14574,3 +14583,160 @@ that one. Checked rather than missed — both new pages load **exactly**
 already loads, so an entry there would cover nothing. §40 and §41's rule:
 padding a roster is its own kind of inaccuracy, and a list that grows by
 no-ops stops being read.
+
+
+---
+
+## 88. The live-mode steps existed; the file's own summary of itself did not
+
+Asked whether there is documentation for switching the payment provider to live
+mode, with the standard attached: *"docs must be up to date and accurate."*
+There is — [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7's *Before live mode* list,
+fourteen items, with item 5 the switch itself. **Auditing it rather than
+confirming it is what this section is**, and §46's lesson is the one it keeps
+landing on: a document can read correctly while what it describes has moved.
+
+### The gap: no item flipped the switch that starts charging
+
+Fourteen items covering verification, the MSA, the live product, the second
+webhook endpoint, the four environment variables, the terms bump, §2.1's file
+table and the monitoring question — and **not one of them flips `billingMode`
+to `paid`.** Found by grepping the list for it and getting nothing, which is
+the only reason it was found: every item is something that happens *around* the
+switch, so the list reads as complete.
+
+**Item 10a** now carries it, and three things in it are the substance rather
+than the instruction:
+
+- **It is LAST, and that is free rather than tidy.** §80 withholds the checkout
+  link *entirely* in `free` mode, so the provider can be switched to live, the
+  product re-created, the webhook re-pointed and the whole of step 5 proved
+  against production with **no customer able to reach a checkout**. The
+  provider being live and the app charging are two switches and should be
+  thrown days apart.
+- **`BILLING_MODE=paid` in the environment is NOT this step.** §83: a mode
+  arriving from the env carries `billingModeSetAt: 0` and the hold is guarded
+  on that being non-zero — deliberately, because a window computed from a zero
+  stamp would hold every workspace the instant the variable was set. So the env
+  var publishes the paid state and leaves the enforcement seam **inert**: a
+  deployment that charges and suspends nobody, which nothing would report. The
+  trap is that it is the one spelling of this action a reader would reach for.
+- **Read `pastGrace` before pressing.** §78's card names its own cost first
+  (§21) and the confirmation repeats the count; a non-zero number means
+  somebody loses sync with less than the promised notice.
+
+**Item 5a** is the other half and it is the one that would otherwise be paid
+for by a customer: step 5 said what to change and **nothing said how to confirm
+it**, which leaves *a real card as the first test of four environment
+variables*. Three of its four checks cost nothing, and the fourth cannot be
+finished before the flip — which is §80 working rather than a gap: in `free`
+mode the server returns `checkout: null` **whatever** `DODO_PRODUCT_ID` holds,
+so the app cannot show you that the live product id is good and the `curl` is
+the only thing that checks it while the deployment is still safe.
+
+### The file's header was wrong in four ways at once
+
+Worse than the gap, because the header is what anybody reads before reaching
+§7, and this is the tier §29 defines as **maintained**:
+
+| It said | Actually |
+|---|---|
+| *"The price itself is not decided"* | decided 2026-10-17 and **published** since §86 |
+| *"GBP as the primary currency"* | reversed to **USD** in §5, which carries the reversal struck through |
+| *"Three pieces of code are built"* | **eleven commits** — §69, §70, §71, §73, §74, §76, §78, §80, §81, §83, §84 |
+| *"No deployment sets `DODO_PRODUCT_ID`, so the Subscription card is **absent***" | set on production since §73, in test mode, so the card is **present for every owner** |
+
+The last one is the one that matters, because it is a **guarantee** rather than
+a description: a reader relying on it would believe no owner can see a
+Subscribe button. §73 and §76 both recorded the variable being set and neither
+walked back to the header that promised otherwise — so the correction existed
+in two places and the claim it corrected stood in a third.
+
+**And §6's *"Not built, and listed so the gaps read as checked"* named two
+things that were built.** Enforcement (§83) and the customer portal (§74), in
+the one list whose stated purpose is that the gaps have been checked. Anybody
+planning from it would have built both a second time. Struck through rather
+than deleted, per §29, with the two genuine remaining gaps added: a dispute
+screen, and revenue reporting — which §9 of that file already explains is not
+laziness, since a payment payload carries **no fee field at all** and
+`settlement_amount` is byte-identical on a failed payment and a successful one.
+
+### `Na.` is a safe convention for one paragraph and breaks for two
+
+**A rendering defect in my own two new items, caught before the commit.**
+CommonMark's ordered-list marker is digits followed by `.` or `)`, so `5a.` and
+`10a.` are **paragraphs, not list items** — which is fine for the lead line
+(lazy continuation keeps it together) and fatal for anything after it: a
+blank line then a 4-space indent at top level is an **indented code block**, so
+both of my multi-paragraph bodies would have rendered as monospace on
+github.com.
+
+The convention has precedent — `docs/LAUNCH-CHECKLIST.md` carries `0b.`, `6b.`
+and `7b.` — and **every one of those is a single paragraph**, which is why it
+has never bitten. Checked rather than assumed. Both new items are flush-left
+now, so they render as ordinary paragraphs and a table, and the list resumes at
+`6.` and `11.` exactly as before: a paragraph at column 0 already ended the
+list, so `6.` was already starting a new one with `start="6"`.
+
+**Renumbering was the alternative and is worse.** "step 5", "step 9" and
+"step 10" are referenced throughout that file and from this one, so renumbering
+twelve items to insert two breaks every cross-reference — §29's rule for plan
+documents, which keep their original numbers for exactly this reason.
+
+### A checker, and it was verified against the broken state
+
+`scratchpad/mdcode.mjs` — a blank line, then four spaces of indent, while not
+inside a list item. **Checked against a fixture reproducing the defect** (§9: a
+check that has only ever seen the fixed state proves nothing): it flags the
+pseudo-item's second paragraph and correctly leaves a real list item's second
+paragraph alone.
+
+Swept every markdown file in the repository — `CLAUDE.md`, `README.md`,
+`DEPLOYMENT.md`, `MARKETING.md`, and all of `docs/` and `docs/archive/` —
+and **all of them are clean**. Worth recording for §48's own reason — *"a clean
+sweep is worth recording too"*, because *"I checked and there was nothing"* is
+what stops the next reader re-running it on a hunch. Four of that section's
+five sweeps came back clean as well, and the one that did not is why it was
+worth running all five.
+
+### Two counts derived rather than carried
+
+- **24 of 25 events handled** — summed from the four `Set`s in `server.js`
+  (12 subscription + 3 payment + 7 dispute + 2 refund), which matches §85's
+  figure. Derived because §73 records a typed event list costing a real event
+  *and* the first derivation written to replace it dropping three more.
+- **The *"§2.1's twelve files"* references in `docs/PAYMENTS.md` were stale,
+  and §87's own sweep missed them.** That sweep was of *this* file and said so
+  — *"removed from this file's live pointers"* — so the claim was accurate and
+  the coverage was one file wide. The number is **gone** from all three rather
+  than corrected to thirteen: the table is the authority, and a reference that
+  carries no number cannot go stale. §29's thesis, found in the commit that
+  claimed to have re-synced it.
+
+### Blast radius
+
+**Documentation only.** No code, no served file, no route, no wire change — so
+`CACHE_VERSION` stays `crmbuilder-v69`, the counts do not move, and no suite
+can see it. Checked against the diff rather than assumed (§41's rule for a
+docs-only change).
+
+`docs/API.md` needs nothing: no route and no response shape moved, which is the
+check §46 and §54 both say to run instead of reading the route count. §27's six
+user-facing documents need nothing either, and the condition is §86's
+unchanged: nothing can be bought, so no capability moved. That walk still owes
+**two** items — §81's seat cap, live, and §83's enforcement, not — and it fires
+with the commit that presses step 10a.
+
+### What is still the owner's, and unchanged by this
+
+Verification is **done** (2026-10-20, all three sections approved, as an
+individual), and both halves turned on together where item 2 predicted they
+might not. The account is **still in Test Mode**, which is the next step rather
+than an oversight: verification is permission to go live, not the switch.
+
+Still outside this session (§8 — it reaches neither host): §7 item 13's one
+test-mode trial, which answers both whether a static link honours
+`Trial Period Days` *and* which status a trialing subscription reports; item
+14's two remaining reads, which need a real dispute body and one of which the
+§84 enforcement decision rests on; the fee percentage, on a marketing page the
+egress proxy blocks (§79); and the CA session and the LUT filing.

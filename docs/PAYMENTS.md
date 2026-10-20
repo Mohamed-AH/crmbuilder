@@ -2,8 +2,11 @@
 
 > **Current reference.** This sits in `docs/`, the tier `CLAUDE.md` §29 defines
 > as maintained — not `docs/archive/`, which is frozen. Researched 2026-10-07,
-> **rewritten 2026-10-13 around the rail actually chosen.** If you change
-> something it names, change it here too.
+> **rewritten 2026-10-13 around the rail actually chosen**, and this header
+> **re-synced 2026-10-20** against what had actually shipped — it was still
+> saying the price was undecided, the currency GBP, the code three pieces, and
+> `DODO_PRODUCT_ID` unset on every deployment. All four were false. If you
+> change something this file names, change it here too.
 >
 > **The rail is decided: [Dodo Payments](https://dodopayments.com) as merchant
 > of record, and the account exists.** Signed up as an **individual**, which is
@@ -11,18 +14,33 @@
 > reason this moved off the recommendation below. §2 records the decision and
 > the objection it overrides, honestly rather than quietly.
 >
-> **Shape and currency are also decided:** per-workspace tiers rather than
-> per-seat, and **GBP as the primary currency** — both chosen by the owner,
-> recorded here rather than argued for. **The price itself is not decided**, and
-> it gates more than it looks: `CLAUDE.md` §27's doc walk,
-> [`LAUNCH-CHECKLIST.md`](LAUNCH-CHECKLIST.md) §2.1's twelve files, and
-> `MARKETING.md`'s *"No per-seat pricing. Free. No ads."*
+> **Shape, currency and the price are all decided now** — per-workspace tiers
+> rather than per-seat, **$15/month** or **$150/year** for up to five users, and
+> **USD** rather than the GBP this file first chose. All three were the owner's
+> call; §5 carries each with its cost stated and the currency reversal struck
+> through rather than rewritten. ~~The price itself is not decided~~ was true
+> until 2026-10-17, and it is **published** on `/pricing` since `CLAUDE.md` §86 —
+> which found that *naming* a price does not fire
+> [`LAUNCH-CHECKLIST.md`](LAUNCH-CHECKLIST.md) §2.1, because that list is about
+> **charging**. `MARKETING.md`'s *"No per-seat pricing. Free. No ads."* is still
+> owed, and is a publish-time gate rather than a doc walk (`CLAUDE.md` §48).
 >
-> **Three pieces of code are built and nothing takes money.** `CLAUDE.md` §69
-> (signature verification), §70 (the webhook route) and §71 (the checkout link).
-> No deployment sets `DODO_PRODUCT_ID`, so the Subscription card is **absent**
-> rather than broken, and nothing anywhere reads subscription state to decide
-> what a workspace may do. §6 is what is built; §7 is how to set up and test it.
+> **The code is now most of the way built and still nothing takes money.** It
+> grew well past the three pieces this paragraph used to name: `CLAUDE.md` §69
+> (signature verification), §70 (the webhook route), §71 (the checkout link),
+> §74 (the duplicate gate and the portal), §78 (the operator lever and the
+> grandfather cutoff), §81 (the seat cap, **live today**), §83 (enforcement at
+> the sync seam) and §84 (disputes and refunds, surfaced rather than enforced).
+> §6 is what is built; §7 is how to set up and test it.
+>
+> **What makes "nothing takes money" true is one switch, not an absence.**
+> `billingMode` is `free` on every deployment, and in that mode the server
+> withholds the checkout link entirely (§80) — so enforcement is inert and no
+> customer can reach a checkout. ~~No deployment sets `DODO_PRODUCT_ID`~~ is
+> **stale and was the earlier guarantee**: production has set it since
+> `CLAUDE.md` §73, in **test mode**, so the Subscription card is present for
+> every owner and shows §80's free-mode promise. Signups are closed, so the only
+> accounts that can reach it are the operator's (§76). §7 step 10a is the flip.
 >
 > **This file is deliberately unserved.** `PUBLIC_DOCS` in `server.js` is
 > `['manual.html', 'product-tour.html']` and nothing else under `docs/` is
@@ -31,7 +49,7 @@
 >
 > **Scope.** This is the *commercial* half: how money reaches an Indian bank
 > account from a UK customer, what a chargeback costs and who bears it, and what
-> to charge. The *consequences* of charging — the twelve files whose text goes
+> to charge. The *consequences* of charging — the files whose text goes
 > false, `TERMS_VERSION`, the privacy roster, and the six product decisions
 > pricing forces — are [`LAUNCH-CHECKLIST.md`](LAUNCH-CHECKLIST.md) **Part 2**,
 > and are not restated here. Read both.
@@ -1020,14 +1038,23 @@ as an FX rate.
 
 ## 6. What is built, and the constraints it was built under
 
-Three commits, and **none of them takes money**: `CLAUDE.md` §69, §70, §71.
+~~Three commits~~ — **eleven, and none of them takes money**: `CLAUDE.md` §69,
+§70, §71, §73, §74, §76, §78, §80, §81, §83, §84. The *"three commits"* opener
+stood here until 2026-10-20 and was **eight commits** out of date — all of them
+inside the week since the 2026-10-13 rewrite, which is how fast this tier
+drifts when the work is moving. §27's thesis in the tier §29 defines as
+maintained.
 
 | | |
 |---|---|
 | `lib/webhook-verify.js` | **Standard Webhooks** signature verification. CommonJS, `.js` not `.mjs` (§38's Node-version trap), not under `js/` — `tests/smoke.mjs` asserts it 404s. Never throws; returns a `code` so a route can tell a wrong secret from a replay from a mismatch |
-| `POST /api/payments/dodo` | the one route in the application with **no session behind it**, so the signature *is* the authentication. Raw parser mounted **before** the global JSON one, own body limit, own rate bucket |
-| `GET /api/org/billing` | owner-only, returns `{ enabled, checkout, billing }`. `enabled` exists so *"nobody has paid"* and *"this deployment cannot receive a confirmation"* are not the same answer |
-| the Subscription card | four states, a static checkout link, and a return handler that strips the provider's appended query |
+| `POST /api/payments/dodo` | the one route in the application with **no session behind it**, so the signature *is* the authentication. Raw parser mounted **before** the global JSON one, own body limit, own rate bucket. **24 of the 25 subscribed events are handled** — subscriptions, payments, disputes and refunds (§84); `payment.cancelled` is ticked and deliberately ignored |
+| attribution | `data.metadata.wsId` off the checkout link first, then a **reverse lookup on `payment_id`** against a 12-deep window on the meta doc — because a dispute payload names no workspace at all (§84) |
+| `GET /api/org/billing` | owner-only, returns `{ mode, live, enabled, checkout, portal, billing }`. `enabled` exists so *"nobody has paid"* and *"this deployment cannot receive a confirmation"* are not the same answer; `mode` and `live` exist so the card's three null-checkout states are not one (§80) |
+| the Subscription card | the free-mode promise, a static checkout link gated so a workspace cannot buy twice, the provider's portal for cancel/pause/card/invoices, a return handler that strips the appended query, and advice rather than only a status (§76) |
+| `PUT /api/admin/billing-mode` | the operator lever, with the grandfather cutoff and a **dry run** that says who would be affected before anything is flipped (§78) |
+| the sync seam | a workspace past its grace window with no live subscription is held **read-only, derived per request** rather than scheduled (§83). Inert in `free` mode |
+| the seat cap | **5, and it is the one piece of this that is live today** — members *plus* unused invites, checked at the mint and again at the join (§81) |
 
 ### The constraints, each a restatement of a rule this codebase already had
 
@@ -1072,14 +1099,36 @@ Three commits, and **none of them takes money**: `CLAUDE.md` §69, §70, §71.
 
 ### Not built, and listed so the gaps read as checked
 
-- **Enforcement.** Nothing reads `billing` to decide what a workspace may do.
-  That is a pricing decision before it is code, and §17's *"nothing is
-  enforced"* still stands.
-- **Tiers.** One `DODO_PRODUCT_ID`. This becomes a map, not a redesign.
-- **A customer-portal link.** The card's button is the same checkout URL for a
-  subscriber as for a new customer. §3's lever 4 is why this is next.
+**Two of the four entries here were BUILT and this list still said they were
+not, until 2026-10-20.** That is the worse half of the header's drift: a list
+whose stated purpose is *"so the gaps read as checked"* was naming enforcement
+and a portal as outstanding, so anybody planning from it would have built both
+a second time. Struck through rather than deleted, per §29.
+
+- ~~**Enforcement.** Nothing reads `billing` to decide what a workspace may
+  do.~~ **Built — `CLAUDE.md` §83.** The sync seam holds a workspace past its
+  grace window with no live subscription, derived per request. §17's *"nothing
+  is enforced"* is no longer the state; what keeps it harmless is
+  `billingMode` being `free` on every deployment, which is a switch rather
+  than an absence (§7 step 10a).
+- ~~**A customer-portal link.** The card's button is the same checkout URL for
+  a subscriber as for a new customer.~~ **Built — `CLAUDE.md` §74.** Cancel,
+  pause, resume, change the card, reactivate after dunning and invoices are
+  all one pasted `DODO_PORTAL_URL` and no code here. §3's lever 4 is
+  therefore spent rather than owed.
+- **Tiers.** Still one `DODO_PRODUCT_ID`. This becomes a map, not a redesign.
 - **A `webhook-id` store.** Costed and declined — the clock already dedupes
   *and* orders, which the id does not.
+- **Revenue reporting, and it is not laziness.** `payout.*` is unhandled, and
+  §9's finding is why it would not help anyway: a payment payload carries **no
+  fee field at all**, and `settlement_amount` is byte-identical on a failed
+  payment and a successful one. So revenue cannot be read off payment webhooks
+  — a payout record is the only place the provider's fee appears, and it is
+  what would fill §5's blank column.
+- **Any screen for a dispute.** The fields are on `GET /api/org/billing` and
+  the card does not read them (§84). A decision rather than markup: a dispute
+  is between the customer and *their* bank, so there is a real argument the
+  right reader is the operator.
 
 ---
 
@@ -1088,6 +1137,14 @@ Three commits, and **none of them takes money**: `CLAUDE.md` §69, §70, §71.
 **For test mode, end to end.** The ordering is load-bearing in three places and
 each is called out. Nothing here charges a real card, and step 3 is what stops
 it emailing real people.
+
+> **Looking for LIVE mode?** It is the *Before live mode* list at the end of
+> this section, not a separate part: **step 5** is the switch itself (the
+> product, the second webhook endpoint, and the four environment variables
+> that move together), **step 5a** is how to prove it worked without a real
+> card, and **step 10a** is the flip that actually starts charging — which is
+> deliberately last, because in `free` mode nobody can reach a checkout at
+> all. Everything numbered before them is what has to be true first.
 
 ### Why the provider's own CLI cannot replace step 9
 
@@ -1476,13 +1533,34 @@ sessions**, or **set with the price decided and the documents walked**.
    published on a pricing page this session cannot reach, so it is one browser
    visit rather than a contract read. **Ask for the per-seller dispute rate at
    the same time**, since that is the one commercial question no page answered.
-2. **Account Verification — 1–3 business days, and THREE of its requirements
-   are things this site does not have.** Live mode exists at signup; live
-   payments and payouts turn on separately, and payouts additionally need the
-   bank form approved plus a Monitoring Review plus compliance review. The
-   individual path is Product Information → **KYC** (government photo ID from an
-   accepted country, plus a selfie liveness check) → **Bank Verification**, whose
-   *"account holder's name must match your Identity Verification document."*
+2. ~~**Account Verification — 1–3 business days, and THREE of its requirements
+   are things this site does not have.**~~ **DONE 2026-10-20**, and it came
+   back faster than the 1–3 days this item budgeted. All three sections read
+   **Approved** — Product Information, Personal Information (KYC), Bank
+   Verification — under *"Live payments are active · You can now receive and
+   pay out · Verification is complete"*, verifying **as an individual**, which
+   is the path §2 chose the rail for.
+
+   **Both halves turned on together, which this item predicted might not
+   happen.** It says live payments and payouts turn on separately and that
+   payouts additionally need a Monitoring Review plus compliance review; the
+   dashboard reports *receive **and** pay out* in one sentence, so either
+   those ran inside the same window or they do not gate an individual seller.
+   Measured from the screen rather than inferred, and the distinction only
+   matters if a payout is ever withheld — at which point this is the sentence
+   that says it was not expected.
+
+   **The account is still in Test Mode**, which is the next step rather than
+   an oversight: verification is permission to go live, not the switch. The
+   banner and the Test/Live toggle are both on that page.
+
+   What it said before, kept because the requirements are what the rows below
+   record: live mode exists at signup; live payments and payouts turn on
+   separately, and payouts additionally need the bank form approved plus a
+   Monitoring Review plus compliance review. The individual path is Product
+   Information → **KYC** (government photo ID from an accepted country, plus a
+   selfie liveness check) → **Bank Verification**, whose *"account holder's
+   name must match your Identity Verification document."*
 
    And the part that is **ours**: the live site *"must be publicly reachable and
    show pricing, Terms of Service, Privacy Policy, a refund and cancellation
@@ -1562,6 +1640,42 @@ sessions**, or **set with the price decided and the documents walked**.
    repository knows the trial exists, so a live product created without it
    charges the first payment immediately and the only thing that would say so
    is a customer's card statement.
+
+5a. **Prove the live switch worked — and three of the four checks cost
+nothing.** Added 2026-10-20: step 5 said what to change and nothing said how to
+confirm it, which leaves **a real customer's card as the first test** of four
+environment variables. Every test-mode check in §7 above has a live
+equivalent, and they are worth running in this order.
+
+| Check | How | A pass is |
+|---|---|---|
+| the live **webhook secret** | *Webhooks → Testing → **Send example*** against the live endpoint — their docs say it is signed the same way as a real event, which is why §7 step 9 trusts it | **200**, and the Subscription card **unchanged**. The example payload carries no `metadata.wsId`, so §70 logs it and discards it: an unchanged screen is the pass, and §7 step 9 says the same thing because it reads as a failure |
+| the live **product id** | the `curl` in §7 step 7, against `checkout.dodopayments.com` with no `test.` | **200**, or any redirect that is not `/error/not-found`. §73: both hosts 307 an id they do not know, so a wrong host and a wrong id are indistinguishable from the browser |
+| the live **portal URL** | open `DODO_PORTAL_URL` | the sign-in page on a host with **no `test.` prefix**. A test-mode link left here sends paying customers to a portal where they have no account (§74) |
+| the **env vars reached the deployment** | `curl -s https://nimbleclerk.com/healthz` for the commit (step 0), then sign in as an owner and open Settings | see the wrinkle below |
+
+**The last one cannot be finished before the flip, and that is §80 working
+rather than a gap.** In `free` mode the server returns `checkout: null`
+**whatever** `DODO_PRODUCT_ID` holds (`server.js:6038` — measured), so the app
+cannot show you that the live product id is good. That is exactly why the
+`curl` above is in this table: it is the only thing that checks the id while
+the deployment is still safe. `enabled` on `GET /api/org/billing` is the half
+that *is* visible — it reports whether a webhook secret is set at all, which is
+the variable whose absence §70 answers **503** for.
+
+**The one scenario no amount of this reaches is a real card**, because test
+cards do not exist in live mode. The bounded way to run it is to buy your own
+subscription at the real price and then cancel and refund it — which also
+exercises `refund.succeeded`, an event this deployment has never received
+(§9). Two things to know first: **it is not free, and the treatment is known
+while the amounts are not** — §3's lever 5 records that a refund reverses the
+tax *and* charges a refund fee while *"the Payment Fees entry has no
+reversal"*, so the original transaction fee is kept either way, and both
+figures sit on the pricing page the egress proxy blocks (§8's one remaining
+fee row). And an **India-issued card is required** if the checkout renders in
+INR (§7 step 10), which is the same region rule that cost a real failed
+payment in test mode.
+
 6. **Answer §2.4's six product decisions** — quotas, non-payment, export when
    suspended, the signup gate, where plan state lives, and what happens to
    everybody currently on the free beta. **Grandfathering is settled in
@@ -1578,13 +1692,45 @@ sessions**, or **set with the price decided and the documents walked**.
    been published** — rewriting a source does nothing about a post written from
    it months ago. If the answer is "nowhere yet", write that down; it is the
    cheapest state this will ever be in.
-9. **Walk §2.1's twelve files** and §2.5's doc list, and add the provider to
+9. **Walk §2.1's file table** and §2.5's doc list, and add the provider to
    `privacy.html`'s recipient roster — §40's *"that is the complete list"* has
    already been false twice, both times caught by looking at what the
    deployment does rather than at what the code could do.
 10. **Bump `TERMS_VERSION`** — everybody re-prompted, which is the mechanism
     working (§41, §2.2). The billing prompt goes **after** the terms modal, or
     it asks for money before agreement.
+10a. **Flip `billingMode` to `paid` — in *Admin → Billing*, NOT in the
+environment.** This list was written without it and every other item is
+something that happens *around* the switch, so the one action that actually
+starts charging was the one nobody had written down. Found on 2026-10-20 by
+grepping this list for it and getting nothing.
+
+**It is the LAST step, after everything above.** Every other item is reversible
+or invisible; this one is what makes a customer's card get debited, and
+`CLAUDE.md` §80 is why the ordering is free rather than merely tidy: in `free`
+mode the server withholds the checkout link **entirely**, so the Dodo account
+can be switched to Live Mode, the product re-created, the webhook re-pointed
+and the whole of step 5 proved against production, with **no customer able to
+reach a checkout** until this is pressed. The provider being live and the app
+charging are two switches, and they should be thrown days apart.
+
+**`BILLING_MODE=paid` in the environment is NOT this step, and it enforces
+nothing.** `CLAUDE.md` §83: a mode that arrives from the env carries
+`billingModeSetAt: 0`, and the hold is guarded on that being non-zero —
+deliberately, because a window computed from a zero stamp would hold every
+workspace the instant the variable was set, with no notice and §80's card
+promising the opposite. So the env var publishes the paid state and leaves the
+enforcement seam inert: **a half-live deployment that charges and suspends
+nobody, which nothing would report.** The variable is a default for a
+deployment that has never set one (§16's precedence) and the panel is the live
+value.
+
+The card names its own cost first (§21): it reports how many workspaces would
+be past their grace date today, and the confirmation repeats the count. **A
+non-zero number there means somebody loses sync with less than the promised
+notice** — the floor exists to make it zero, so read it before pressing rather
+than after.
+
 11. **Decide how a stopped webhook endpoint gets noticed.** Their documentation
     states plainly that **the webhooks dashboard offers no email alerts for
     failing deliveries** — monitoring is the **Logs** and **Activity** tabs,
