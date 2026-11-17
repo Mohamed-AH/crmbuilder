@@ -1501,6 +1501,30 @@ PATCH https://test.dodopayments.com/subscriptions/{id}
 { "status": "cancelled" }
 ```
 
+**This step was not done, and the renewal fired on the predicted date.** On
+**2026-11-14** a `[TEST MODE]` receipt arrived in the owner's real inbox:
+₹7,488.18, line item *Nimble Clerk — Team × 1* at `$64.73`, card ending
+**1450**, `pay_0NrtyYHaFVeG9Xu1NI1oT`. That is the 14 October subscription
+renewing itself, and §9's own payload table had the date a month in advance —
+`data.next_billing_date: "2026-11-14T03:12:14.213422Z"`. Nothing was charged
+(test mode, the India Visa test card from step 10) and nothing in the app
+could have caused it: `billingMode` is `free` everywhere, so no checkout link
+is issued at all (`CLAUDE.md` §80). **It renews again on 14 December** unless
+it is cancelled, and §74 recorded **six subscriptions across two workspaces**
+on this account, so expect more than one and more than one date.
+
+Two things that reading the receipt settles:
+
+- **The amount drifts.** ₹7,587.26 in October against ₹7,488.18 now, about
+  1.3%, consistent with the INR/USD rate moving on a USD-priced product
+  presented in INR (§8's adaptive-currency row). A receipt renders the line
+  converted, so it cannot decompose the figure further — it is **not**
+  evidence about the fee.
+- **Test-mode customer email is ON**, which is step 18's question answered by
+  the symptom rather than by the setting: step 3 said to turn it off before
+  the first payment. The renewal happens either way; the email is how you find
+  out it did.
+
 **18 · Decide whether to turn test-mode email back on.** Step 3 turned it off.
 If a dunning or receipt email is ever going to be tested, it has to go back on
 first — and §3's lever 3 depends on those emails existing in **live** mode, so

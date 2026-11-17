@@ -151,6 +151,7 @@ never change, because everything cross-references them.
 | **Going LIVE on the payment provider** — the switch, and proving it worked | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7 steps 5 · 5a · 10a |
 | The one action that starts charging, and why it is last | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7 step 10a · §80 · §83 |
 | `BILLING_MODE=paid` in the env charges and enforces nothing | §83 · §78 · [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7 step 10a |
+| **An unexplained `[TEST MODE]` receipt** — a test subscription renewing itself | [`docs/PAYMENTS.md`](docs/PAYMENTS.md) §7 step 17 · §9 · §80 |
 | **What a real payment found** — the host, the event list, the card region | §73 · §71 · §70 |
 | A checkout link that renders "This link isn't available" | §73 · §71 |
 | Why a test card is refused rather than declined | §73 · §45 |
