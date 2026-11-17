@@ -142,6 +142,18 @@ never change, because everything cross-references them.
 | **The fix became the pin** — an override whose target the next advisory named | §89 · §61 · §62 |
 | The first time the blocking audit gate actually fired | §89 · §61 · §25 |
 | A floor that admits the version it was raised to escape | §89 · §29 |
+| **The site-wide audit** — what it found, and what it must not re-raise | [`docs/AUDIT.md`](docs/AUDIT.md) · §90 · §30 · §61 |
+| **An admin told to sign in while signed in** — a refusal for "not yet known" | §90 · §26 · §19 · §3 |
+| A seam built for exactly this, used once in the whole app (`Cloud.ready`) | §90 · §3 · §11 |
+| **A brief that asked about a language the product does not have** | §90 · §57 |
+| Links that pass in light and vanish in dark, and the guard that watched the background | §90 · §60 · §59 |
+| **An absent viewport meta is invisible to a desktop window** | §90 · §48 · §47 |
+| A scroll container that stops the page breaking and cannot be reached | §90 · §47 · §36 |
+| **Nothing is compressed** — 645 KB cold, and the one command that settles it live | §90 · §8 · §3 |
+| A failed payment's id evicting the window that attributes a dispute | §90 · §84 · §73 |
+| **Cache poisoning closed as a CLASS**, driven rather than read | §90 · §63 · §47 · §19 |
+| A probe whose own numbers exposed it measuring the wrong screen | §90 · §4 · §15 |
+| Why an audit records what it swept and found nothing in | §90 · §48 |
 | **Moving to the new domain** — where it stands, what lands when | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.6 · §1.0b |
 | The DNS pre-flight, the mail records that must survive, and the `www` 301 nobody owns | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0c · §1.6 step 2 |
 | Why the `/`→`/app` swap cannot be pushed before the switch | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · §46 |
@@ -390,11 +402,23 @@ and nothing served, so there is no asset for it to see.
 164/164; §83's 656 and 163-of-164; §81's 648 and 164; §80's 641 and 163;
 §78's 638 and 161.)
 
-**Node's 664 is CARRIED, not observed, and that is the distinction §73 got
+**Node's 664 is OBSERVED again as of §89** — `664 of 664, 0 failed, 0 skipped`
+in 24s, re-run because `body-parser` moved and body parsing is every-route
+surface (§9). Smoke was re-run with it: **51 passed · 0 warnings · 0 failed**.
+Playwright was **not** re-run there and 177 is carried from §87; §90 is
+documentation only and re-ran nothing, so both figures stand as §89 left them.
+**0 skipped is worth reading**: §55's Windows skips are platform-conditional
+and this is Linux, where `resilience.test.mjs` can make a write fail.
+
+The paragraph below is kept because the *distinction* is the point, and it
+describes §86–§88 correctly.
+
+**Node's 664 was CARRIED, not observed, across §86–§88, and that is the
+distinction §73 got
 wrong.** §86 touched no server behaviour — one allow-list entry and two
 comments — §87 touches only `tests/e2e.spec.js`, and §88 is **documentation
-only**, so nothing a Node test can
-see has moved since it was last measured, and the suite was deliberately not
+only**, so nothing a Node test could
+see had moved since it was last measured, and the suite was deliberately not
 re-run. That is a different claim from §85's, where 664 was *measured* and
 the fact that it had not moved was the informative part. A carried figure and
 an observed one read identically in a status section unless the difference is
@@ -14842,3 +14866,171 @@ No served file changed, so `CACHE_VERSION` stays `crmbuilder-v69` and the smoke
 count stays 51 local / 56 live; checked against the diff rather than assumed
 (§41). `docs/API.md` needs nothing — no route and no response shape moved, which
 is the check §46 and §54 both say to run instead of reading the route count.
+
+
+---
+
+## 90. The site-wide audit, and three guards that watched the wrong thing
+
+[`docs/AUDIT.md`](docs/AUDIT.md) is the report — 22 findings, **none of them
+fixed**, each a commit to come with its own regression test (§9). This section
+is the part worth keeping here: **why the existing guards missed what they
+missed**, which is more reusable than the list.
+
+**The brief asked for seven areas and one of them did not exist.** *"Factual
+accuracy in both Arabic and English"* — measured: zero Arabic codepoints in
+any source file, no `dir="rtl"`, no string table, and `lang="en"` on all seven
+root pages. `docs/ROADMAP.md` §5 is the *plan* for Arabic. Dropped on
+instruction rather than re-aimed, because that section already holds the
+analysis. Recorded because a premise error in a brief is worth measuring
+before it is worked.
+
+**Scope:** nine public pages × 2 themes × 4 widths, the app's five views and
+its modals, the 8-route server delta since §61, the service worker, and the
+cold-start payload. Driven as an owner and signed out — **not as a viewer**,
+which is named in the report as the likeliest place the next finding sits
+(§36's own finding came from exactly that instrument).
+
+### The probes are not Playwright tests, and that is §4
+
+Loading `playwright.config.js` runs `fs.rmSync(DATA_DIR)` in its module body,
+so anything that loads it performs the cleanup. Standalone Playwright through
+`createRequire` — ESM cannot resolve the global install — plus axe-core
+injected as an **init script**, because `script-src 'self'` refuses
+`addScriptTag`. That refusal is §30 Phase 4 working, and it is worth knowing
+the header is tight enough to block an auditing tool.
+
+**The instrument was validated against a deliberately broken fixture before
+any figure was trusted** — grey-on-white text, an `alt`-less image, no `lang`,
+a 10px button, a 3000px block. It caught all five, and two calibration facts
+came out of it that change how the report reads: axe's `meta-viewport` rule is
+about `user-scalable=no` and **cannot see an absent viewport tag**, and
+`heading-order` fires only on a skip *between* headings. Both are checked from
+the DOM inventory instead. §9's rule — a check that has only ever seen the
+fixed state proves nothing — applied to the measuring tool rather than to the
+code.
+
+### The three findings whose guards were watching the wrong thing
+
+**An admin who reloads `/app#/admin` is told to sign in, and it never
+recovers.** Measured with `Cloud.user.role === 'platformAdmin'` and
+`isAuthed === true`, still saying it eight seconds later. §3's paint-first
+invariant means `renderAdmin()` runs before `/api/me` resolves, so
+`Cloud.user` is null and the early branch fires — and `Cloud.isAuthed` is
+false at that instant too, so it picks the *worse* of its two messages. It
+never repaints because `syncInBackground()` only calls `route()` when the
+scope changed or when there are no modules, which its own comment scopes to
+the onboarding screen.
+
+Two things make this the best finding of the set. **`Cloud.ready` exists for
+precisely this** — its comment reads *"the first paint happens before that, so
+the UI needs to distinguish 'no server' from 'not yet'"* — and appears
+**once** in the whole app, in `renderSidebar`. And the role is not even
+missing: `crmb:user` holds it and `offlineIdentity()` reads it back, just not
+until after the paint. It is §26's recorded defect in a new place, word for
+word: *"it named the wrong rule, because this fires precisely when the
+client's idea of its own role is stale."*
+
+**Every inline link on five public pages is ~2:1 in dark mode.** `legal.css`
+styles two anchors — `header a.back` and `footer a` — so body links fall to
+the browser default `#0000ee`. In light that is ~8.6:1 and **passes**, which
+is why it survived; in dark it is 2.0:1 on `/pricing`, `/refunds`, `/guide`,
+`/privacy` and `/terms`, including the `mailto:` §85 published so a data
+subject could exercise their rights. §60's dark-mode E2E asserts computed
+**`backgroundColor`**, deliberately — so a foreground was never in view.
+`--accent` for dark already exists at `#6aa6ff`, which §59 measured at 7.64:1.
+
+**Both doc pages render at 980px on a phone**, scaled to 0.42, so 16px text
+arrives at ~6.7px. They have no viewport meta. §48 measured the manual's
+mobile Contents toggle "at a 390px viewport" and found it worked — correct,
+and a desktop Chromium window has no 980px fallback, so the defect is
+invisible to it. It needs device emulation.
+
+**The shape all three share:** a guard that measured the right thing on the
+wrong axis. Background not foreground; window width not layout viewport;
+"is the role allowed" not "is the role known yet". None of them is a careless
+guard — each is the guard somebody wrote for the defect in front of them.
+
+### Four more worth naming here
+
+- **A scroll container that stops the page breaking and cannot be reached.**
+  `div.table-wrap` keeps `pageScrollsSideways` false at every width on every
+  page — §47's wrapper doing exactly its job — and `scrollable-region-focusable`
+  (WCAG 2.1.1, level A) fires on it: a keyboard user cannot scroll the table
+  inside. The same shape on the kanban's `div.kanban`.
+- **The kanban board is mouse-only.** `div.kanban-card` with
+  `draggable="true"`, `tabindex: null`, `role: null` — measured in all four
+  combinations. The table's rows carry `tabindex="0"` and an Enter handler, and
+  the sortable headers carry `role="button"` plus Enter/Space, so the model to
+  copy is twenty lines away.
+- **Nothing is compressed.** `/app` is 18 requests and **645 KB** cold, with
+  `js/app.js` at 380 KB and `Content-Encoding` absent on all eleven text assets
+  over 8 KB. There is no `compression` dependency. Measured locally, and §8
+  means the live answer may differ — so the report carries the one `curl` that
+  settles it rather than asserting it.
+- **A failed payment's id evicts the window that attributes a dispute.**
+  `PAYMENT_ID_HISTORY` is 12 and exists only because a dispute payload carries
+  no `metadata` (§84). `payment.failed` is in `BILLING_PAYMENT_EVENTS`, and §73
+  measured that a failed payment and its retry carry *different* ids — so
+  dunning fills the window while a chargeback window runs to 120 days. **A
+  dispute can only be against money that moved**, so a failed id can never be
+  the one a dispute names: recording it has no upside and evicts ids that do.
+
+### What was clean, and why that is in the report
+
+§48's rule: *"I checked and there was nothing"* is what stops the next reader
+re-running it on a hunch. The two that cost the most to establish:
+
+**Service-worker cache poisoning is closed as a class** — 13 paths, **one
+fresh profile each**, asserting on the first load of `/app` afterwards. §19
+and §47 each had to fix an instance, and §47's own probe reported "none" while
+the defect was live, because it visited every path in one profile and ended on
+a path whose response *is* the shell, healing what it was looking for. §63's
+path gate closes it, and this is the first time that has been driven rather
+than read.
+
+And **every factual claim that can be checked locally is in sync**: the price
+against `docs/PAYMENTS.md` §5, `TERMS_VERSION` against both legal pages'
+dates (§41's pair), `/refunds`' three data facts against `readOnlyState()`
+word for word (§86's pair), every `Settings → …` path named on a public page
+against `js/app.js` (§53's rule), "five users" against `SEAT_CAP`, four roles
+against `TEAM_ROLES`, "Twelve field types" against 12. Zero console errors
+across 72 public-page runs and every app view. No credential committed.
+`platform` holds five non-secret decisions. The webhook's parser ordering,
+status choices, rate limit and three sibling routes' coercion all hold.
+
+### The probe's own numbers exposed it measuring the wrong screen
+
+Worth more than any single finding. The first app pass reported
+`dashboard (signed in)` and `settings (signed in)` at **88 characters of main
+text each** — the same number — and both carried the *Contacts* module's copy.
+Two causes, both already written down here: after onboarding and after a claim
+the app lands on a **module**, not the dashboard; and `goto('/app#/settings')`
+from another hash is a same-document change that **does not re-render** (§15,
+which hit the Team screen the same way).
+
+So every measurement in the second pass navigates, **reloads**, and then
+**asserts which view it landed on** by reading the `h1`. That assertion is
+what turned "admin has no h1" from a shrug into the A1 finding — `<h1>Admin</h1>`
+is at `js/app.js:6294`, so the h1 was not missing, the *view* was.
+
+**A measurement that cannot say what it measured is not a measurement.** §4
+already says it for tests — *"wait on rendered state, or you sample the
+previous render and the assertion passes for the wrong reason"* — and the two
+identical 88s are what made it visible here. A figure that merely looks
+plausible would not have.
+
+### Blast radius
+
+**Documentation only** — `docs/AUDIT.md`, `docs/README.md` and this file. No
+code, no served file, no route, no wire change, so `CACHE_VERSION` stays
+`crmbuilder-v69`, the route count stays 63 and the smoke count stays 51 local
+/ 56 live; checked against the diff rather than assumed (§41).
+`docs/AUDIT.md` is unserved by construction — verified 404, which is what
+lets it be blunt (§28, §29). `docs/API.md` needs nothing: no route and no
+response shape moved.
+
+§27's six user-facing documents need nothing, and that is checked rather than
+skipped: an audit changes no capability. The **findings** will touch them —
+P1-8 is `docs/product-tour.html`'s missing consent paragraph, and that is
+§27's walk arriving as a finding rather than as a step.
