@@ -139,6 +139,9 @@ never change, because everything cross-references them.
 | **Why the CI audit gate stays at `high`** | §61 · §25 · §30 |
 | **A critical advisory that does not apply** — and what would arm it | §62 · §30 · §61 |
 | `trust proxy` is a hop count, and why a CDN changes that | §62 · §30 |
+| **The fix became the pin** — an override whose target the next advisory named | §89 · §61 · §62 |
+| The first time the blocking audit gate actually fired | §89 · §61 · §25 |
+| A floor that admits the version it was raised to escape | §89 · §29 |
 | **Moving to the new domain** — where it stands, what lands when | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.6 · §1.0b |
 | The DNS pre-flight, the mail records that must survive, and the `www` 301 nobody owns | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0c · §1.6 step 2 |
 | Why the `/`→`/app` swap cannot be pushed before the switch | [`docs/LAUNCH-CHECKLIST.md`](docs/LAUNCH-CHECKLIST.md) §1.0b · §46 |
@@ -14741,3 +14744,101 @@ test-mode trial, which answers both whether a static link honours
 14's two remaining reads, which need a real dispute body and one of which the
 §84 enforcement decision rests on; the fee percentage, on a marketing page the
 egress proxy blocks (§79); and the CA session and the LUT filing.
+
+
+---
+
+## 89. The fix became the pin, and the gate fired for the first time
+
+Found while sizing a site-wide audit, before any of it started: **the blocking
+CI security job was red, and had been since 22 October.** Not a finding of the
+audit — a precondition for it, so it landed first and on its own.
+
+```sh
+npm audit --omit=dev --audit-level=high      # .github/workflows/test.yml:101
+# body-parser <1.20.9   Severity: high
+# DoS via trailing bytes after a compressed request body
+```
+
+`body-parser` 1.20.9 was published **2026-10-22**, so every push from that date
+carried a lockfile that fails that command — §87's and §88's among them. **This
+is the first time §61 R5's gate has actually fired**; §62's critical was patched
+before a run could reach it. It did its job, and nothing downstream of it says
+so, which is the ordinary shape of a gate nobody has seen go red.
+
+### The finding: §61's fix is what the next advisory named
+
+§61 R5 added `"qs": "^6.16.0"` because express 4.22.2 — the last of the 4.x
+line — pins `qs@~6.15.1`, a range that forbids the version fixing two
+moderates. Both were **fixed in 6.16.0**, which is what the override exists to
+reach.
+
+A third advisory then named **`6.7.0 - 6.16.0` inclusive**. So the version that
+was the fix is the version that is vulnerable, and the override that closed
+§61's finding is what was holding it.
+
+**The caret had already solved it and the lockfile was simply stale.**
+`^6.16.0` admits 6.16.1 and 6.17.1, so `npm update` moved it with no manifest
+change at all — measured, the whole diff was **6 lines of
+`package-lock.json`**. Which makes the interesting half not the bump but what
+the bump leaves behind: **a floor that still admits 6.16.0**, the one version
+the advisory names.
+
+Raised to `^6.16.1`. CI runs `npm ci` and takes the lockfile, so the floor was
+never live *for CI* — and nothing else here promises to, which is the whole
+reason an override exists rather than a lockfile pin (§61: *a guarantee made
+local and testable rather than emergent*). **A floor has to sit above the whole
+advisory range, not at the version that was the answer last time.**
+
+### body-parser needed no override, and never did
+
+Worth stating because the two look like one problem and are not. express
+4.22.2's own range is `~1.20.5`, which admits 1.20.9 — so §61's note that
+*"`npm audit fix` can move body-parser and CANNOT move express"* is confirmed
+rather than restated, and that half genuinely is a lockfile refresh. Checked
+rather than assumed: the two advisories arrived together and the obvious read
+is that both need the same treatment.
+
+### The reasoning beside it had gone stale, in §29's exact shape
+
+`package.json` carries a `comment:overrides` key — JSON has no comments — and
+it read *"both moderate qs advisories … are fixed in 6.16.0"*. True when
+written, and now naming the vulnerable version as the remedy. A reader meeting
+`^6.16.0` in the manifest and 6.17.1 in the lockfile had nothing to tell them
+why they disagreed.
+
+Rewritten to lead with the mechanism rather than the version, so the next
+advisory in that range does not make it stale again: the floor must clear the
+range, and the reason the override exists at all is express's tilde.
+
+### What was NOT changed, deliberately
+
+- **Not express 5**, which pins a fixed `qs` and is the real answer. §55 and
+  §61 both declined it, and *"not a change to make inside a security patch"*
+  holds here twice over: this one is a precondition for an audit.
+- **The gate stays at `high`** (§61 R5, on §25's reasoning). It has now been
+  vindicated rather than merely argued for, which is the opposite of a reason
+  to loosen it.
+
+### Verified
+
+| | |
+|---|---|
+| `npm audit --omit=dev --audit-level=high` | **0 vulnerabilities**, exit 0 |
+| Node suite | **664 of 664, 0 failed, 0 skipped**, 24s |
+| Smoke | **51 passed · 0 warnings · 0 failed**, localhost |
+| Installed | `express` 4.22.2 unchanged · `body-parser` 1.20.8 → **1.20.9** · `qs` 6.16.0 → **6.17.1** |
+
+**664 is OBSERVED here, not carried**, which is the distinction §2 names and
+§73 got wrong. Body parsing is every-route surface, so the full suite is what
+§9's blast-radius rule asks for rather than a targeted run — and the figure
+matching §2's exactly is what says nothing was lost.
+
+**Smoke's verdict line now names its target** — *"target http://localhost:8321
+— local build, not a deployment"* — which is §75 working as written, read off a
+real run rather than assumed.
+
+No served file changed, so `CACHE_VERSION` stays `crmbuilder-v69` and the smoke
+count stays 51 local / 56 live; checked against the diff rather than assumed
+(§41). `docs/API.md` needs nothing — no route and no response shape moved, which
+is the check §46 and §54 both say to run instead of reading the route count.
